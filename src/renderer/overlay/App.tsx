@@ -38,6 +38,7 @@ import {
 import { useVoice } from './useVoice'
 import { deriveView } from './viewFlags'
 import { keyPolicy, type KeyAction } from './keyPolicy'
+import { routeStream } from './streamRouting'
 
 interface Failure {
   message: string
@@ -311,38 +312,42 @@ export function App() {
    * flight keeps the previous answer visible until the first chunk arrives.
    */
   const onStream = useCallback((event: StreamEvent) => {
-    if (event.requestId === ignoredRequestRef.current) return
-    if (requestIdRef.current && event.requestId !== requestIdRef.current) return
-    if (event.type === 'chunk') {
-      // The first words of the answer are on screen, so the spoken phrase has done
-      // its job: it was there to confirm what was heard while the model thought,
-      // and leaving it in the field from then on is the leftover question that
-      // every follow-up had to be appended to.
-      if (spokenPromptRef.current) {
-        spokenPromptRef.current = false
-        setPrompt('')
-      }
-      if (replaceOnChunkRef.current) {
-        replaceOnChunkRef.current = false
-        setAnswer(event.delta)
-      } else {
-        setAnswer((prev) => prev + event.delta)
-      }
-      return
-    }
-    // An answer that never streamed (an action with no prose, a failure) leaves
-    // the phrase behind too: the card has stopped working on it either way.
-    if (spokenPromptRef.current) {
+    // Which events belong to this card is decided in `streamRouting.ts`; the refs
+    // stay here because they are one piece of coupled state, not four.
+    const action = routeStream(event, {
+      requestId: requestIdRef.current,
+      ignoredRequest: ignoredRequestRef.current,
+      replaceOnChunk: replaceOnChunkRef.current,
+      spokenPrompt: spokenPromptRef.current
+    })
+    if (action.kind === 'ignore') return
+
+    // The spoken phrase was there to confirm what was heard while the model
+    // thought. From the first sign of an answer it is the leftover question every
+    // follow-up had to be appended to, so it goes — on any event that gets here,
+    // including one that never streamed.
+    if (action.clearSpoken) {
       spokenPromptRef.current = false
       setPrompt('')
     }
+
+    if (action.kind === 'append') {
+      setAnswer((prev) => prev + action.text)
+      return
+    }
+    if (action.kind === 'replace') {
+      replaceOnChunkRef.current = false
+      setAnswer(action.text)
+      return
+    }
+
     requestIdRef.current = null
     replaceOnChunkRef.current = false
     setBusy(false)
-    if (event.type === 'done') {
-      setAnswer(event.text)
+    if (action.kind === 'done') {
+      setAnswer(action.text)
     } else {
-      setFailure({ message: event.message, retryable: event.retryable })
+      setFailure({ message: action.message, retryable: action.retryable })
     }
   }, [])
 
