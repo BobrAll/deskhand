@@ -52,8 +52,9 @@ caseless, onClosed })` вместо двух копий создания окн�
 19 строк импортов), контракт `OverlayHost` → `main/overlay/host.ts`; `windows.ts` больше не тянет тип из
 контроллера. `npm test` 53 файла / 1139 тестов, typecheck и build зелёные.
 ## Last commit
-3523a7d refactor(overlay): the host contract as its own module (R18)
+11cc70c docs(refactor): record existing plan approval (P2)
 ## Log (одна строка на задачу: ID — hash — итог)
+P2 — 11cc70c — закрыт пропущенный пункт ожидания: утверждение Александром уже записано в Current; статус добавлен в 04-refactor-plan.md. Код не менялся, отдельные согласования §7 остаются открытыми. typecheck/test/build зелёные (53 файла / 1139 тестов). Следующая задача — R19.
 T01 — bd12743 — 56 каналов CH + `shell:open-external`: направление/payload/хендлер/потребитель; 6 окон с webPreferences и создателями; перепроверены 5 фактов CONTEXT.md.
 T04 — f416865 — карты windows.ts (секции, `OverlayHost`, 10 модульных `let`, грейс-период), overlay/App.tsx (13 state + 18 ref, 7 подписок), settings/App.tsx (черновик↔диск, дебаунс 450 мс → `settings:hold` → грейс-период); сквозные дубли — в §8.
 T02 — dcd00ba — 20 команд helper'а (argv/ответ/обёртка/вызывающий/fallback), 3 потока событий, тайминги и лимиты `probe`; побочный эффект `probe` — запись AXEnhancedUserInterface/AXManualAccessibility в целевое приложение; расхождения с CONTEXT.md — в §9.6.
