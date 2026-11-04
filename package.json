@@ -20,7 +20,8 @@
     "build:whisper": "node scripts/build-whisper.mjs",
     "pack": "electron-vite build && electron-builder --mac --dir",
     "dist": "electron-vite build && electron-builder --mac",
-    "test:gesture": "node scripts/test-gesture.mjs"
+    "test:gesture": "node scripts/test-gesture.mjs",
+    "test:native": "node scripts/test-native.mjs"
   },
   "build": {
     "appId": "com.bobr.smartcursor",

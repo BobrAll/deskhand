@@ -20,6 +20,24 @@
 - **Тесты**: `src/main/response.test.ts` — «differs on a marker that starts mid-line» и
   «differs on a text tail that ends with @».
 
+## R3 — `front` печатает `accessibility` числом, а `bounds` — с заглавных букв
+
+- **Где**: `src/main/native/helper.m:102` (`@"accessibility" : @(AXIsProcessTrusted())` — это `@YES/@NO`,
+  а `@YES`/`@NO` в `NSDictionary` — это `NSNumber` с 1/0) и `helper.m:103` (`result[@"bounds"] = win[kCGWindowBounds]`,
+  то есть словарь CGWindow с ключами `X`/`Y`/`Width`/`Height`).
+- **Как воспроизвести**: `./resources/smartcursor-helper front` →
+  `{"bounds":{"X":95,"Height":820,"Y":33,"Width":1280},"accessibility":1,...}`.
+- **Ожидание**: `helper.ts:118` читает `payload.accessibility === true`, а `mapBounds` (`helper.ts:93`) ищет
+  `X ?? x` — то есть обе ветки формально предусмотрены.
+- **По факту**: `accessibility === true` не выполняется никогда (приходит `1`), поэтому `RawFrontApp.accessibility`
+  всегда `false`, даже когда доступ выдан. То же самое в `helperPermissions` (`helper.ts:373`): его
+  `accessibility` тоже всегда `false`, а на нём держится fallback в `permissions.ts:45` — то есть fallback
+  мёртв. `bounds` разбирается корректно (`X ?? x` спасает), здесь проблемы нет.
+  Практический эффект: «нет прав Accessibility» показывается и при выданных правах — ровно тот случай,
+  который RULES.md §«Безопасность» запрещает чинить без разрешения.
+- **Тесты**: `scripts/test-native.mjs` (T31) фиксирует оба факта как known bug; `helper.test.ts` мокает
+  JSON и потому этого не видит.
+
 ## R2 — `VoiceKeyListener` никогда не увеличивает паузу перед перезапуском
 
 - **Где**: `src/main/voice/listen.ts` — `launch()` сбрасывает `failures = 0` на событии `ready`,
