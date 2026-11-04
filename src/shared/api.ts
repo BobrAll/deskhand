@@ -36,6 +36,13 @@ export interface SettingsBundle {
   keys: KeyStatus[]
   permissions: PermissionState
   encryptionAvailable: boolean
+  /**
+   * Set only by `settings.save` when the requested hotkey could not be
+   * registered and the previous binding was put back. The window uses it to drag
+   * the draft back to the stored combination instead of retrying a write the
+   * system refuses. Absent everywhere else — `settings.load` never sets it.
+   */
+  hotkeyError?: boolean
 }
 
 export interface ActionResult {

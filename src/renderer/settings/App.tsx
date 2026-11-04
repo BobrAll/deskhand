@@ -175,7 +175,7 @@ export function App() {
       setBundle(saved)
       writtenRef.current = written
       failedRef.current = null
-      const hotkeyError = Boolean((saved as SettingsBundle & { hotkeyError?: boolean }).hotkeyError)
+      const hotkeyError = Boolean(saved.hotkeyError)
       setDraft((current) => {
         if (!current) return current
         // A rejected hotkey comes back with the previous binding restored, and the
