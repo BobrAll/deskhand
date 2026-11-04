@@ -8,7 +8,7 @@
 `readMicrophonePermission`), typecheck (node+web) и build зелёные. `knip` чист по exports/files, остались
 только подсказки конфигурации. Следующая — A3 (дубли).
 ## Last commit
-749feae docs(refactor): record A2 decisions in the docs that mentioned them
+f48a304 docs(refactor): close A2 in PROGRESS and TASKS
 ## Log (одна строка на задачу: ID — hash — итог)
 T01 — bd12743 — 56 каналов CH + `shell:open-external`: направление/payload/хендлер/потребитель; 6 окон с webPreferences и создателями; перепроверены 5 фактов CONTEXT.md.
 T04 — f416865 — карты windows.ts (секции, `OverlayHost`, 10 модульных `let`, грейс-период), overlay/App.tsx (13 state + 18 ref, 7 подписок), settings/App.tsx (черновик↔диск, дебаунс 450 мс → `settings:hold` → грейс-период); сквозные дубли — в §8.
