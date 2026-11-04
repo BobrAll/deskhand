@@ -94,15 +94,16 @@ typecheck/test/build → коммит → PROGRESS. После крупных г
 - [x] R07 `shared/metrics.ts`: ширины 360/112/80 — один источник для windows.ts и overlay/App.tsx; страж-тест на возврат литерала. → 81e1fdf
 - [x] R08 `main/layerWindow.ts`: окна-слои pointer+cursor (20 из 23 строк совпадают); `acceptFirstMouse` — параметр.
       → 7940fa7 (различия — параметры: `acceptFirstMouse`, `caseless`, `onClosed`; +8 тестов, 3 мутации ловятся)
-- [ ] R09 `main/native/tapListener.ts`: общий слушатель CGEventTap для voice/gesture; различия (launch/args/тексты/stop) сохранить
-      дословно, тесты `listen.test.ts` ×2 не менять.
+- [x] R09 `main/native/tapListener.ts`: общий слушатель CGEventTap для voice/gesture; различия (launch/args/тексты/stop) сохранить
+      дословно, тесты `listen.test.ts` ×2 не менять. → c3b10cb (оба тест-файла зелёные без правок; R2 переехал в общий класс)
 
 ### Волна 3 — вынос из крупных, main (КТ3 после R12)
-- [ ] R10 `main/bubble.ts`: геометрия пузыря (clamp/roomAround/placeAnchor/xFor/yFor/positionOverlay/resizeAtAnchor,
-      windows.ts:204-357) чистыми функциями + тест без Electron.
-- [ ] R11 `main/overlay/request.ts`: сборка запроса (overlay.ts:825-1036, 212 строк) с двумя колбэками вместо await;
-      доказательство — `prompt.test.ts` зелёный без правки снапшотов.
-- [ ] R12 `main/overlay/verify.ts`: `verify()` (overlay.ts:1286-1444, 159 строк), вход 11 полей, выход 3 значений. Риск высокий.
+- [x] R10 `main/bubble.ts`: геометрия пузыря (clamp/roomAround/placeAnchor/xFor/yFor/positionOverlay/resizeAtAnchor,
+      windows.ts:204-357) чистыми функциями + тест без Electron. → 7d601e1 (26 тестов, `windows.ts` −151 строка)
+- [x] R11 `main/overlay/request.ts`: сборка запроса (overlay.ts:825-1036, 212 строк) с двумя колбэками вместо await;
+      доказательство — `prompt.test.ts` зелёный без правки снапшотов. → 9ab9769 (17 тестов, снапшоты не сдвинулись)
+- [x] R12 `main/overlay/verify.ts`: `verify()` (overlay.ts:1286-1444, 159 строк), вход 11 полей, выход 3 значений. Риск высокий.
+      → eafb799 + 89159ed (20 тестов, `held`/`suppressed` остались в `send`, `overlay.ts` 1463 → 1303 строки)
 
 ### Волна 4 — вынос из крупных, renderer (КТ4 после R17; только чистые модули, jsdom нет)
 - [ ] R13 `overlay/metrics.ts` + `overlay/viewFlags.ts`: константы размеров и `deriveView()` — чистые выражения.
