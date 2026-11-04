@@ -72,8 +72,11 @@ A1 крупные модули, A2 мусор (включая три сущно�
 ## Open questions
 - РЕШЕНО (Александр, сессия T01): 6 неиспользуемых методов моста (`settings.validateHotkey`, `onboarding.close`, `quickActions.defaults`, `permissions.microphone`, `voice.micPermission`, `voice.requestMicPermission`) и канал `shell:open-external` разрешено удалить в A2. Удалять с grep-доказательствами по правилу 7, отдельными коммитами.
 - T14: `normalizeSettings({})` возвращает `models: {openrouter:'', openai:'', anthropic:''}`, а не модели из `DEFAULT_SETTINGS`. Практически безопасно (`llm/index.ts:resolveModel` падает на `providerInfo().defaultModel`), но это единственный блок, который не совпадает с дефолтами. Тесты закрепляют как есть; менять — по твоему «ок».
-- T34 → T35: `hideOverlayOnBlur` — тик в «Поведении» сохраняется, но нигде в `main/` не читается (все 7 вхождений — `types.ts`, `defaults.ts`, `settings/App.tsx`; `on('blur')` нет ни в `windows.ts`, ни в `overlay.ts`). Реши, что это: недоделанная функция (реализовать в A4) или мусор (убрать тик в A2). Пока записано в BUGS.md R4.
-- T34 → T35: окно `hud` мертво (`update()` без вызовов). Удалять его целиком в A2 или оставить как заготовку под будущий индикатор у курсора? Сейчас 411 строк и 20 тестов поддерживаются без пользы.
+- РЕШЕНО (Александр, сессия T35, «ок» на план по умолчанию):
+  - `hideOverlayOnBlur` — не трогать сейчас; остаётся BUGS.md R4. Разбирать в A2 вместе с вопросом «дореализовать или убрать тик».
+  - `hud` (411 строк + 20 тестов) — удалить в A2 отдельным коммитом, с grep-доказательствами по правилу 7.
+  - `AnnotationStream` (`annotations.ts`) — удалить в A2 тем же пакетом; потребитель только `.scratch/annot-probe/probe.ts`.
+  - `normalizeSettings({})` с пустыми `models` (с T14) — оставить как есть: `resolveModel` подставляет `providerInfo().defaultModel`, поведение безопасное.
 ## Заметки (посторонние находки)
 - T34: `hud` (411 строк, 94 % покрытия тестами) — мёртвое окно: `createCursorHud` создаётся в `index.ts:38`, уничтожается в `:239`, `getState` отдаётся в `ipc.ts:108`, но `update()` не вызывается ни из одного места. Индикатор голоса переехал в карточку ещё в исходном коммите (`overlay/App.tsx:938`, «бары вместо поля ввода»). Не удалял (правило 7) — кандидат в A2 вместе с `AnnotationStream` и `helperPing`/`helperCursor`.
 - T34: `hideOverlayOnBlur` — мёртвая настройка с живым тиком в UI: 7 вхождений по `src/`, все в `types.ts`/`defaults.ts`/`settings/App.tsx`, в `main/` потребителя нет. Записана как BUGS.md R4. Если в A2 будем чистить мусор — это не «мусор», а недоделанная функция: либо реализовать (нужен `on('blur')` в `windows.ts`), либо убрать тик.
