@@ -13,17 +13,17 @@
 ## Фаза 1 — базовая линия и тесты
 - [x] T10 Baseline: `typecheck`, чистый `build`, метрики (файлы/строки по директориям, размеры бандлов, время сборки, jscpd, knip),
       список файлов и размеров `out/` → 01-baseline.md. Если что-то не проходит — стоп и вопрос мне.
-- [ ] T11 Vitest (devDep), конфиг с алиасом @shared, env node, скрипты test/test:watch/test:coverage; тесты не ломают typecheck/build.
+- [x] T11 Vitest (devDep), конфиг с алиасом @shared, env node, скрипты test/test:watch/test:coverage; тесты не ломают typecheck/build.
       Один дымовой тест. Один коммит `chore: add vitest`.
-- [ ] T12 Тесты response.ts (ResponseStream): хвост `@po`/`@cl` на границе чанков, строка с `@` но не командой, проглатывание мусорных
+- [x] T12 Тесты response.ts (ResponseStream): хвост `@po`/`@cl` на границе чанков, строка с `@` но не командой, проглатывание мусорных
       координат, CRLF/пустые строки, `«»`. ИНВАРИАНТ: любая нарезка на чанки (по символу, по 2, по строкам, целиком) → идентичный результат.
-- [ ] T13 Тесты agent/protocol.ts + annotations.ts: все команды, процентные/мусорные числа, лимиты 6/4000/10000, label.
-- [ ] T14 Тесты normalizeSettings(): пустой/null/не-объект, частичные данные, лишние ключи, ПЕРЕИМЕНОВАННЫЙ ключ (значение теряется —
+- [x] T13 Тесты agent/protocol.ts + annotations.ts: все команды, процентные/мусорные числа, лимиты 6/4000/10000, label.
+- [x] T14 Тесты normalizeSettings(): пустой/null/не-объект, частичные данные, лишние ключи, ПЕРЕИМЕНОВАННЫЙ ключ (значение теряется —
       закрепить), clamp, мусорные массивы (quickActions, excludedApps), невалидный provider, вложенные voice/gestures/agent.
-- [ ] T15 Тесты settings/store.ts (битый файл → пересоздание, memoryFallback) и secrets.ts (мок safeStorage: enc:/plain:, залоченный Keychain,
+- [x] T15 Тесты settings/store.ts (битый файл → пересоздание, memoryFallback) и secrets.ts (мок safeStorage: enc:/plain:, залоченный Keychain,
       нет ключа). Только in-memory/tmp, без реальных данных.
-- [ ] T16 Golden-снапшоты prompt.ts по матрице: провайдер × агент вкл/выкл × скриншот есть/нет × язык × quickAction.
-- [ ] T17 Тесты agent/plan.ts (normalizePlan, лимиты), verdict.ts («нельзя верить @done вместе с действиями»), targeting.ts.
+- [x] T16 Golden-снапшоты prompt.ts по матрице: провайдер × агент вкл/выкл × скриншот есть/нет × язык × quickAction.
+- [x] T17 Тесты agent/plan.ts (normalizePlan, лимиты), verdict.ts («нельзя верить @done вместе с действиями»), targeting.ts.
 - [ ] T18 Тесты agent/geometry.ts, outline.ts, keys.ts; shared/ (intent, defaults, guard'ы); СНАПШОТ набора IPC-каналов.
 - [ ] T19 Тесты llm/http.ts: readSse (чанки посреди события, комментарии `:`), toProviderError (401/402/404/413/429/5xx → точные тексты),
       toTransportError, abort/таймаут. fetch — мок с SSE-фикстурами.
