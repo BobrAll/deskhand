@@ -19,3 +19,15 @@
   проявляется; (2) — косметика на последней строке ответа.
 - **Тесты**: `src/main/response.test.ts` — «differs on a marker that starts mid-line» и
   «differs on a text tail that ends with @».
+
+## R2 — `VoiceKeyListener` никогда не увеличивает паузу перед перезапуском
+
+- **Где**: `src/main/voice/listen.ts` — `launch()` сбрасывает `failures = 0` на событии `ready`,
+  а `scheduleRestart()` вызывается только из обработчиков `exit`/`error` после `ready`.
+- **Как воспроизвести**: дать хелперу напечатать `{"event":"ready"}` и завершиться — 8 раз подряд.
+- **Ожидание**: паузы 1 s, 2 s, 4 s … 30 s, после шести неудач перезапуски прекращаются
+  (так задумано по комментарию в `scheduleRestart`).
+- **По факту**: `failures` каждый раз сбрасывается в 0, поэтому пауза всегда 1000 мс и лимит
+  «> 6» недостижим: сломанный хелпер перезапускается бесконечно. Ветка «не было `ready`» —
+  единственная, где перезапуска нет вовсе.
+- **Тесты**: `src/main/voice/listen.test.ts` — «keeps restarting with a 1 s backoff forever».
