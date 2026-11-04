@@ -68,6 +68,10 @@ function load(win: BrowserWindow, page: string): void {
 }
 
 function clamp(value: number, min: number, max: number): number {
+  // `overlay:resize` is not type-checked at the IPC boundary, and `setBounds`
+  // throws in the native layer on NaN. The floor is the honest answer for
+  // "there is no number at all".
+  if (!Number.isFinite(value)) return min
   return Math.min(Math.max(value, min), max)
 }
 
@@ -599,6 +603,9 @@ let passthrough = false
 let settingsWindow: BrowserWindow | null = null
 let onboardingWindow: BrowserWindow | null = null
 
+/** Set by `settings:hold` while the renderer still has edits to write. */
+let settingsBusy = false
+
 function baseOptions(
   title: string,
   width: number,
@@ -708,10 +715,6 @@ export function closeOnboardingWindow(): void {
   if (onboardingWindow && !onboardingWindow.isDestroyed()) onboardingWindow.close()
 }
 
-function closeSettingsWindow(): void {
-  if (settingsWindow && !settingsWindow.isDestroyed()) settingsWindow.close()
-}
-
 /**
  * Closes the settings window, letting any in-flight write land first.
  *
@@ -719,16 +722,13 @@ function closeSettingsWindow(): void {
  * closing — the «Закрыть» button, ⌘W, the red traffic light — goes through the
  * same grace period instead of only the one that happens to call this.
  */
-export function closeSettingsWindowWhenSettled(): void {
-  closeSettingsWindow()
+export function closeSettingsWindow(): void {
+  if (settingsWindow && !settingsWindow.isDestroyed()) settingsWindow.close()
 }
 
-/** Set by `settings:hold` while the renderer still has edits to write. */
 export function markSettingsBusy(busy: boolean): void {
   settingsBusy = busy
 }
-
-let settingsBusy = false
 
 /**
  * Brings the most relevant open window back to the foreground after the app is

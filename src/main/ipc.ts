@@ -33,13 +33,13 @@ import { deleteApiKey, encryptionAvailable, keyStatuses, setApiKey } from './set
 import { getSettings, patchSettings } from './settings/store'
 import {
   closeOnboardingWindow,
-  closeSettingsWindowWhenSettled,
+  closeSettingsWindow,
   markSettingsBusy,
   openSettingsWindow
 } from './windows'
 import { downloadModel, importModel, voiceStatus } from './voice/whisper'
 
-const PROVIDER_IDS: ProviderId[] = ['openrouter', 'openai', 'anthropic']
+const PROVIDER_IDS: ProviderId[] = PROVIDERS.map((provider) => provider.id)
 
 function isProvider(value: unknown): value is ProviderId {
   return typeof value === 'string' && (PROVIDER_IDS as string[]).includes(value)
@@ -183,7 +183,7 @@ export function registerIpc(deps: IpcDeps): void {
   ipcMain.handle(CH.settings.pickApp, () => pickApplication())
 
   ipcMain.on(CH.settings.open, () => openSettingsWindow())
-  ipcMain.on(CH.settings.close, () => closeSettingsWindowWhenSettled())
+  ipcMain.on(CH.settings.close, () => closeSettingsWindow())
   // The renderer says "edits are still being written" before it asks to close and
   // clears the flag once the last write has landed. Without it, ⌘W during the
   // 450 ms debounce would destroy the window and take the edit with it.
@@ -294,7 +294,4 @@ export function registerIpc(deps: IpcDeps): void {
   app.on('second-instance', () => {
     void deps.overlay.open()
   })
-
-  // Referenced so the providers list stays part of the shared contract.
-  void PROVIDERS
 }

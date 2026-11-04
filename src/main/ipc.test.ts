@@ -101,7 +101,6 @@ vi.mock('./settings/store', async () => {
 
 vi.mock('./windows', () => ({
   openSettingsWindow: () => undefined,
-  closeSettingsWindowWhenSettled: () => undefined,
   closeSettingsWindow: () => undefined,
   closeOnboardingWindow: () => undefined,
   markSettingsBusy: () => undefined,

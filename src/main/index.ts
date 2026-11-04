@@ -84,7 +84,8 @@ function quit(): void {
 }
 
 function bootstrap(): void {
-  Menu.setApplicationMenu(    Menu.buildFromTemplate([
+  Menu.setApplicationMenu(
+    Menu.buildFromTemplate([
       {
         label: app.name,
         submenu: [
