@@ -112,14 +112,13 @@ console.log('\nfront')
     String(json.accessibility)
   )
   if ('bounds' in json) {
-    // KNOWN BUG: the bounds dictionary uses CGWindow keys (`X`, `Y`, `Width`,
-    // `Height`), not the lowercase names `mapBounds` looks for. See BUGS.md R3.
+    // The CGWindow dictionary uses capitalised keys; `mapBounds` reads both
+    // spellings, so this is the contract rather than a quirk.
     const bounds = json.bounds ?? {}
-    const keys = Object.keys(bounds).sort()
     check(
-      'bounds carries X/Y/Width/Height (known: capitalised)',
+      'bounds carries X/Y/Width/Height',
       ['Height', 'Width', 'X', 'Y'].every((key) => typeof bounds[key] === 'number'),
-      keys.join(',')
+      Object.keys(bounds).sort().join(',')
     )
   }
   if ('title' in json) check('title is a string', typeof json.title === 'string')

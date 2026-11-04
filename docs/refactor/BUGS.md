@@ -20,23 +20,22 @@
 - **Тесты**: `src/main/response.test.ts` — «differs on a marker that starts mid-line» и
   «differs on a text tail that ends with @».
 
-## R3 — `front` печатает `accessibility` числом, а `bounds` — с заглавных букв
+## R3 — `front` печатает `accessibility` числом, а `helper.ts` ждёт `true`
 
-- **Где**: `src/main/native/helper.m:102` (`@"accessibility" : @(AXIsProcessTrusted())` — это `@YES/@NO`,
-  а `@YES`/`@NO` в `NSDictionary` — это `NSNumber` с 1/0) и `helper.m:103` (`result[@"bounds"] = win[kCGWindowBounds]`,
-  то есть словарь CGWindow с ключами `X`/`Y`/`Width`/`Height`).
+- **Где**: `src/main/native/helper.m:102` — `result[@"accessibility"] = @(AXIsProcessTrusted())`.
+  `AXIsProcessTrusted()` возвращает `Boolean` (`unsigned char`), поэтому `@(...)` боксит его как число,
+  а не как `NSNumber`-boolean; в JSON уходит `1`/`0`.
 - **Как воспроизвести**: `./resources/smartcursor-helper front` →
-  `{"bounds":{"X":95,"Height":820,"Y":33,"Width":1280},"accessibility":1,...}`.
-- **Ожидание**: `helper.ts:118` читает `payload.accessibility === true`, а `mapBounds` (`helper.ts:93`) ищет
-  `X ?? x` — то есть обе ветки формально предусмотрены.
-- **По факту**: `accessibility === true` не выполняется никогда (приходит `1`), поэтому `RawFrontApp.accessibility`
-  всегда `false`, даже когда доступ выдан. То же самое в `helperPermissions` (`helper.ts:373`): его
-  `accessibility` тоже всегда `false`, а на нём держится fallback в `permissions.ts:45` — то есть fallback
-  мёртв. `bounds` разбирается корректно (`X ?? x` спасает), здесь проблемы нет.
-  Практический эффект: «нет прав Accessibility» показывается и при выданных правах — ровно тот случай,
-  который RULES.md §«Безопасность» запрещает чинить без разрешения.
-- **Тесты**: `scripts/test-native.mjs` (T31) фиксирует оба факта как known bug; `helper.test.ts` мокает
-  JSON и потому этого не видит.
+  `{"bounds":{"X":95,...},"ok":true,"accessibility":1,...}`. Для сравнения `permissions` печатает
+  `"accessibility":true` — там в `@(...)` попадает `BOOL`.
+- **Ожидание**: `helper.ts:118` сравнивает строго — `payload.accessibility === true`.
+- **По факту**: `RawFrontApp.accessibility` всегда `false`, даже при выданных правах. Поле нигде не
+  читается (`activeApp.ts` его не переносит в `ActiveAppInfo`), так что эффекта в UI сейчас нет —
+  но это тихая ловушка для того, кто однажды на него положится. `helperPermissions` (`helper.ts:373`)
+  не задет: команда `permissions` печатает настоящий boolean. `bounds` тоже в порядке —
+  `mapBounds` (`helper.ts:93`) читает и `X`, и `x`.
+- **Тесты**: `scripts/test-native.mjs` (T31) фиксирует факт как known bug; `helper.test.ts` мокает
+  JSON с `true` и потому этого не видит.
 
 ## R2 — `VoiceKeyListener` никогда не увеличивает паузу перед перезапуском
 
