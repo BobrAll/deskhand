@@ -5,7 +5,7 @@
 проходит на реальном бинаре. T34 добавила два документа: MANUAL_SMOKE.md (12 разделов, что проверять руками)
 и 02-test-plan.md (66.15 % строк / 92.54 % ветвей, что не покрыто и почему). T35 — контрольная точка: сводка ниже, жду, пока прогонишь MANUAL_SMOKE.md.
 ## Last commit
-0e3c2e3 docs(bugs): record the two defects found in the manual run
+28ec462 docs(bugs): pin the exact mechanisms behind R5 and R6
 ## Log (одна строка на задачу: ID — hash — итог)
 T01 — bd12743 — 56 каналов CH + `shell:open-external`: направление/payload/хендлер/потребитель; 6 окон с webPreferences и создателями; перепроверены 5 фактов CONTEXT.md.
 T04 — f416865 — карты windows.ts (секции, `OverlayHost`, 10 модульных `let`, грейс-период), overlay/App.tsx (13 state + 18 ref, 7 подписок), settings/App.tsx (черновик↔диск, дебаунс 450 мс → `settings:hold` → грейс-период); сквозные дубли — в §8.
