@@ -21,7 +21,8 @@
     "pack": "electron-vite build && electron-builder --mac --dir",
     "dist": "electron-vite build && electron-builder --mac",
     "test:gesture": "node scripts/test-gesture.mjs",
-    "test:native": "node scripts/test-native.mjs"
+    "test:native": "node scripts/test-native.mjs",
+    "lint": "eslint src"
   },
   "build": {
     "appId": "com.bobr.smartcursor",
@@ -106,9 +107,11 @@
     "electron": "33.2.0",
     "electron-builder": "25.1.8",
     "electron-vite": "2.3.0",
+    "eslint": "9.39.5",
     "react": "18.3.1",
     "react-dom": "18.3.1",
     "typescript": "5.6.3",
+    "typescript-eslint": "8.72.1",
     "vite": "5.4.10",
     "vitest": "^2.1.9"
   }
