@@ -37,6 +37,7 @@ import {
 } from './metrics'
 import { useVoice } from './useVoice'
 import { deriveView } from './viewFlags'
+import { keyPolicy, type KeyAction } from './keyPolicy'
 
 interface Failure {
   message: string
@@ -789,80 +790,84 @@ export function App() {
     setNotice('Скопировано в буфер обмена')
   }, [answer])
 
-  useEffect(() => {
-    const handler = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') {
-        event.preventDefault()
-        // While a plan runs, Escape is "стоп", not "закрыть": the card closing
-        // would hide the very row that reports what was interrupted, and the
-        // user pressing Escape is watching the screen, not the bubble.
-        const phase = agentRef.current?.phase
-        // `checking` belongs to the run as much as the plan does: the user is
-        // waiting on a request they can still stop, and Escape closing the card
-        // instead would hide the row that reports whether the thing worked. It
-        // stops differently, though: during the check nothing is moving, so there
-        // is no run to stop — the request in flight is what has to be cancelled.
-        if (phase === 'checking') {
-          const id = requestIdRef.current
-          if (!id) {
-            window.smartCursor.overlay.close()
-            return
-          }
-          // Same shape as a spoken question interrupting an answer: the request is
-          // marked ignored *before* it is cancelled, so a chunk already in flight
-          // cannot land on a card that stopped waiting for it.
-          ignoredRequestRef.current = id
-          requestIdRef.current = null
-          setBusy(false)
-          // The row is set here rather than left to the answer: the main process
-          // clears it on its own path, but a check cancelled inside the stream
-          // produces neither a verdict nor a `done`, and a card stuck on
-          // "проверяю" over nothing is the one thing this feature must never show.
-          setAgent({
-            phase: 'aborted',
-            step: 0,
-            total: 0,
-            label: '',
-            plan: [],
-            message: 'Проверка остановлена.'
-          })
-          window.smartCursor.overlay.cancel(id)
-          return
-        }
-        if (phase === 'arming' || phase === 'acting') {
-          void window.smartCursor.agent.stop()
-          return
-        }
+  /**
+   * Performs what `keyPolicy` decided.
+   *
+   * The decision is a pure function of the key and the card's state; the effects
+   * need the live component, so they stay here. `cancel` is the one branch with
+   * real work in it, and it is spelled out because the order matters: the request
+   * is marked ignored *before* it is cancelled, so a chunk already in flight
+   * cannot land on a card that stopped waiting for it.
+   */
+  const perform = useCallback(
+    (action: Exclude<KeyAction, null>) => {
+      if (action === 'close') {
         window.smartCursor.overlay.close()
         return
       }
-
-      const meta = event.metaKey || event.ctrlKey
-      if (meta && event.key === 'Enter') {
-        event.preventDefault()
+      if (action === 'stopAgent') {
+        void window.smartCursor.agent.stop()
+        return
+      }
+      if (action === 'cancel') {
+        const id = requestIdRef.current
+        if (!id) {
+          window.smartCursor.overlay.close()
+          return
+        }
+        ignoredRequestRef.current = id
+        requestIdRef.current = null
+        setBusy(false)
+        // The row is set here rather than left to the answer: the main process
+        // clears it on its own path, but a check cancelled inside the stream
+        // produces neither a verdict nor a `done`, and a card stuck on
+        // "проверяю" over nothing is the one thing this feature must never show.
+        setAgent({
+          phase: 'aborted',
+          step: 0,
+          total: 0,
+          label: '',
+          plan: [],
+          message: 'Проверка остановлена.'
+        })
+        window.smartCursor.overlay.cancel(id)
+        return
+      }
+      if (action === 'paste') {
         void paste()
         return
       }
-      if (meta && event.key.toLowerCase() === 'c') {
-        const selection = window.getSelection()?.toString() ?? ''
-        if (!selection && answer.trim()) {
-          event.preventDefault()
-          void copy()
-        }
+      if (action === 'copy') {
+        void copy()
         return
       }
-      if (event.key === 'Enter' && !meta && !event.shiftKey) {
-        const target = event.target as HTMLElement | null
-        if (target?.tagName === 'TEXTAREA') {
-          event.preventDefault()
-          send(prompt)
-        }
-      }
+      send(prompt)
+    },
+    [copy, paste, prompt, send]
+  )
+
+  useEffect(() => {
+    const handler = (event: KeyboardEvent): void => {
+      const action = keyPolicy({
+        key: event.key,
+        meta: event.metaKey || event.ctrlKey,
+        shift: event.shiftKey,
+        tagName: (event.target as HTMLElement | null)?.tagName ?? null,
+        agentPhase: agentRef.current?.phase ?? null,
+        hasRequestId: Boolean(requestIdRef.current),
+        hasSelection: Boolean(window.getSelection()?.toString()),
+        hasAnswer: Boolean(answer.trim())
+      })
+      if (!action) return
+      // ⌘C without a selection is ours; with one, `keyPolicy` has already said
+      // `null` and the browser keeps the default copy.
+      event.preventDefault()
+      perform(action)
     }
 
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [answer, copy, paste, prompt, send])
+  }, [answer, perform])
 
   // Nothing at all until the renderer knows whether a turn is running — see
   // `ready` in `useVoice`.
@@ -928,11 +933,28 @@ export function App() {
           setPrompt(event.target.value)
           setTyping(true)
         }}
+        /*
+          The field's own Enter, kept separate from the window handler on purpose
+          (A1.7). Both ask `keyPolicy` — the same decision — but they are two call
+          sites because the textarea sees the keystroke first and swallows it: the
+          window handler is the fallback for Enter pressed anywhere else. Merging
+          them would change which element consumes the key.
+        */
         onKeyDown={(event) => {
-          if (event.key === 'Enter' && !event.shiftKey && !event.metaKey && !event.ctrlKey) {
-            event.preventDefault()
-            send(prompt)
+          if (keyPolicy({
+            key: event.key,
+            meta: event.metaKey || event.ctrlKey,
+            shift: event.shiftKey,
+            tagName: 'TEXTAREA',
+            agentPhase: null,
+            hasRequestId: false,
+            hasSelection: false,
+            hasAnswer: Boolean(answer.trim())
+          }) !== 'send') {
+            return
           }
+          event.preventDefault()
+          send(prompt)
         }}
       />
     </>
