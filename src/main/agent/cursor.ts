@@ -21,12 +21,10 @@
  * element inside a stationary layer stays on the compositor and is exact.
  */
 
-import { join } from 'node:path'
 import { BrowserWindow, screen } from 'electron'
 import { CH } from '@shared/ipc'
 import type { AgentCursorFrame, AgentEvent, ScreenRect } from '@shared/types'
-import { denyExternalLinks } from '../denyExternalLinks'
-import { loadPage } from '../pageLoad'
+import { createLayerWindow } from '../layerWindow'
 
 /** How long the renderer's fade-out runs before the window is actually hidden. */
 const EXIT_MS = 160
@@ -83,58 +81,18 @@ let turn = 0
 let waitTimer: NodeJS.Timeout | null = null
 
 function createWindow(): BrowserWindow {
-  const next = new BrowserWindow({
-    x: 0,
-    y: 0,
-    width: 400,
-    height: 300,
-    show: false,
-    frame: false,
-    transparent: true,
-    backgroundColor: '#00000000',
-    hasShadow: false,
-    resizable: false,
-    movable: false,
-    minimizable: false,
-    maximizable: false,
-    fullscreenable: false,
-    // Same trick as the drawing layer: it is a picture, not a window. Showing it
-    // must not activate the app or pull the caret out of the field being typed
-    // into, and it must not appear in the window switcher.
-    focusable: false,
-    skipTaskbar: true,
+  return createLayerWindow({
+    page: 'cursor',
     acceptFirstMouse: false,
-    roundedCorners: false,
-    webPreferences: {
-      preload: join(__dirname, '../preload/index.js'),
-      sandbox: false,
-      contextIsolation: true,
-      nodeIntegration: false
+    caseless: true,
+    onClosed: () => {
+      win = null
+      loaded = null
+      visible = false
+      placedOn = null
+      frame = null
     }
   })
-
-  // Clicks belong to whatever is underneath: the whole point is to watch the
-  // assistant operate the app behind the ring.
-  next.setIgnoreMouseEvents(true, { forward: true })
-  // 'screen-saver' is the level above full-screen apps and the Dock.
-  next.setAlwaysOnTop(true, 'screen-saver')
-  next.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
-  // The ring must never be photographed into the screenshot the continuation
-  // step is reasoned about, or the model would see our own mark on the target.
-  next.setContentProtection(true)
-
-  next.on('closed', () => {
-    win = null
-    loaded = null
-    visible = false
-    placedOn = null
-    frame = null
-  })
-
-  denyExternalLinks(next, { caseless: true })
-
-  loadPage(next, 'cursor')
-  return next
 }
 
 /**

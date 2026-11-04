@@ -18,12 +18,10 @@
  * is one multiply by the layer size — no Retina, no scale factor, no guessing.
  */
 
-import { join } from 'node:path'
-import { BrowserWindow } from 'electron'
+import type { BrowserWindow } from 'electron'
 import { CH } from '@shared/ipc'
 import type { Annotation, PointerPayload, PointerShape, ScreenRect } from '@shared/types'
-import { denyExternalLinks } from './denyExternalLinks'
-import { loadPage } from './pageLoad'
+import { createLayerWindow } from './layerWindow'
 
 let pointerWindow: BrowserWindow | null = null
 let visible = false
@@ -34,56 +32,16 @@ let ready: Promise<void> | null = null
 let placedOn: ScreenRect | null = null
 
 function createWindow(): BrowserWindow {
-  const win = new BrowserWindow({
-    x: 0,
-    y: 0,
-    width: 400,
-    height: 300,
-    show: false,
-    frame: false,
-    transparent: true,
-    backgroundColor: '#00000000',
-    hasShadow: false,
-    resizable: false,
-    movable: false,
-    minimizable: false,
-    maximizable: false,
-    fullscreenable: false,
-    // These two turn it into a painting layer instead of a window: it cannot be
-    // focused (so it never activates the app) and it skips the window switcher.
-    focusable: false,
-    skipTaskbar: true,
+  return createLayerWindow({
+    page: 'pointer',
     acceptFirstMouse: true,
-    roundedCorners: false,
-    webPreferences: {
-      preload: join(__dirname, '../preload/index.js'),
-      sandbox: false,
-      contextIsolation: true,
-      nodeIntegration: false
+    onClosed: () => {
+      pointerWindow = null
+      visible = false
+      placedOn = null
+      ready = null
     }
   })
-
-  // Clicks, drags and scrolls belong to whatever is underneath.
-  win.setIgnoreMouseEvents(true, { forward: true })
-  // 'screen-saver' is the level above full-screen apps and the Dock.
-  win.setAlwaysOnTop(true, 'screen-saver')
-  win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
-  // The pointer must never appear in the next screenshot: it would feed our own
-  // circles back into the model, and it would be photographed if the window
-  // happens to sit behind the layer.
-  win.setContentProtection(true)
-
-  win.on('closed', () => {
-    pointerWindow = null
-    visible = false
-    placedOn = null
-    ready = null
-  })
-
-  denyExternalLinks(win)
-
-  loadPage(win, 'pointer')
-  return win
 }
 
 /**
