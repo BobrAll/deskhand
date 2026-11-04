@@ -10,6 +10,7 @@
 
 import { spawn, type ChildProcess } from 'node:child_process'
 import { createInterface } from 'node:readline'
+import { FUNCTION_CODES, VOICE_KEY_CODES as KEY_CODES } from '@shared/keycodes'
 
 export type TapEvent = 'press' | 'release' | 'cancel' | 'ready' | 'reenabled'
 
@@ -20,96 +21,6 @@ export interface VoiceKeyListenerOptions {
   onEvent(event: TapEvent): void
   /** Fatal problems only: the combination is unusable or the tap was refused. */
   onError(message: string): void
-}
-
-/** kVK_* codes for the keys a push-to-talk shortcut may reasonably use. */
-const KEY_CODES: Record<string, number> = {
-  space: 49,
-  tab: 48,
-  enter: 36,
-  return: 36,
-  escape: 53,
-  backspace: 51,
-  delete: 117,
-  up: 126,
-  down: 125,
-  left: 123,
-  right: 124,
-  home: 115,
-  end: 119,
-  pageup: 116,
-  pagedown: 121,
-  ',': 43,
-  '.': 47,
-  '/': 44,
-  ';': 41,
-  "'": 39,
-  '[': 33,
-  ']': 30,
-  '\\': 42,
-  '-': 27,
-  '=': 24,
-  '`': 50,
-  a: 0,
-  s: 1,
-  d: 2,
-  f: 3,
-  h: 4,
-  g: 5,
-  z: 6,
-  x: 7,
-  c: 8,
-  v: 9,
-  b: 11,
-  q: 12,
-  w: 13,
-  e: 14,
-  r: 15,
-  y: 16,
-  t: 17,
-  o: 31,
-  u: 32,
-  i: 34,
-  p: 35,
-  l: 37,
-  j: 38,
-  k: 40,
-  n: 45,
-  m: 46,
-  '1': 18,
-  '2': 19,
-  '3': 20,
-  '4': 21,
-  '5': 23,
-  '6': 22,
-  '7': 26,
-  '8': 28,
-  '9': 25,
-  '0': 29
-}
-
-/** Function keys have a non-contiguous table; only F1–F20 are usable. */
-const FUNCTION_CODES: Record<number, number> = {
-  1: 122,
-  2: 120,
-  3: 99,
-  4: 118,
-  5: 96,
-  6: 97,
-  7: 98,
-  8: 100,
-  9: 101,
-  10: 109,
-  11: 103,
-  12: 111,
-  13: 105,
-  14: 107,
-  15: 113,
-  16: 106,
-  17: 64,
-  18: 79,
-  19: 80,
-  20: 90
 }
 
 const MODIFIER_FLAGS: Record<string, number> = {

@@ -2,106 +2,17 @@
  * Shortcuts as the model writes them ("cmd+s", "enter", "ctrl+shift+tab") turned
  * into the two numbers the helper posts: a virtual key code and a modifier mask.
  *
- * This is a second table on purpose. `voice/listen.ts` parses the *user's*
+ * This is a second parser on purpose. `voice/listen.ts` parses the *user's*
  * push-to-talk accelerator, where a bare key is never valid and only a handful
  * of combinations make sense; here a bare `enter` is the most common thing in
  * the world, and the set of keys a plan may press is the whole keyboard. Sharing
- * one table would mean one of the two callers bending its rules for the other.
+ * one parser would mean one of the two callers bending its rules for the other.
+ * The keycodes themselves are shared (`@shared/keycodes`); the grammar is not.
  *
- * No Electron or Node imports: the table is pure data and can be tested alone.
+ * No Electron or Node imports: the parser and the data it reads are testable alone.
  */
 
-/** `kVK_*` codes. Values are the hardware codes, not the characters. */
-const KEY_CODES: Record<string, number> = {
-  return: 36,
-  enter: 36,
-  tab: 48,
-  space: 49,
-  escape: 53,
-  esc: 53,
-  backspace: 51,
-  delete: 117,
-  forwarddelete: 117,
-  up: 126,
-  down: 125,
-  left: 123,
-  right: 124,
-  home: 115,
-  end: 119,
-  pageup: 116,
-  pagedown: 121,
-  ',': 43,
-  '.': 47,
-  '/': 44,
-  ';': 41,
-  "'": 39,
-  '[': 33,
-  ']': 30,
-  '\\': 42,
-  '-': 27,
-  '=': 24,
-  '`': 50,
-  a: 0,
-  s: 1,
-  d: 2,
-  f: 3,
-  h: 4,
-  g: 5,
-  z: 6,
-  x: 7,
-  c: 8,
-  v: 9,
-  b: 11,
-  q: 12,
-  w: 13,
-  e: 14,
-  r: 15,
-  y: 16,
-  t: 17,
-  '1': 18,
-  '2': 19,
-  '3': 20,
-  '4': 21,
-  '5': 23,
-  '6': 22,
-  '7': 26,
-  '8': 28,
-  '9': 25,
-  '0': 29,
-  o: 31,
-  u: 32,
-  i: 34,
-  p: 35,
-  l: 37,
-  j: 38,
-  k: 40,
-  n: 45,
-  m: 46
-}
-
-/** F1–F20 have a non-contiguous table of their own. */
-const FUNCTION_CODES: Record<number, number> = {
-  1: 122,
-  2: 120,
-  3: 99,
-  4: 118,
-  5: 96,
-  6: 97,
-  7: 98,
-  8: 100,
-  9: 101,
-  10: 109,
-  11: 103,
-  12: 111,
-  13: 105,
-  14: 107,
-  15: 113,
-  16: 106,
-  17: 64,
-  18: 79,
-  19: 80,
-  20: 90
-}
+import { FUNCTION_CODES, KEY_CODES } from '@shared/keycodes'
 
 const MODIFIER_FLAGS: Record<string, number> = {
   // kCGEventFlagMaskCommand / Shift / Control / Alternate
