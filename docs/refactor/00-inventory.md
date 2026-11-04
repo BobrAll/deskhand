@@ -359,3 +359,99 @@ E. **Разметка вкладок** — 405–822 (тонкая, состоя
 | `mode` в overlay читается только через `modeRef` (304) в разметке не участвует | `overlay/App.tsx:185` | не баг; при выносе отправки `mode` можно свести к ref |
 | `ruler` — единственное модульное состояние в renderer | `overlay/App.tsx:129` | влияет на тестируемость `measureLine` (нужен мок canvas) |
 | Оба `App.tsx` не имеют общего слоя с `main` кроме `@shared/*` и `window.smartCursor` | — | границы для Фазы 2 заданы: renderer ↔ main только через preload-контракт |
+
+
+## 9. helper-контракт (T02)
+
+Источник: `src/main/native/helper.m` (1356 строк, `main` — 1201–1356) + мост `src/main/native/helper.ts` (413 строк).
+
+### 9.1 Транспорт
+
+- Бинарь `resources/smartcursor-helper` (собирается `npm run build:helper`, в git не лежит; уходит в extraResources).
+  Поиск пути — `resolveHelperPath()` (`native/helper.ts:37`): packaged → `process.resourcesPath/smartcursor-helper`;
+  dev → `app.getAppPath()/resources/…`, затем `cwd/resources/…`. Кэш на процесс; не найден → `console.warn` + `null`.
+- **One-shot**: `runHelper(args, timeoutMs = 4000)` (`helper.ts:57`) — `execFile(binary, args, { timeout, maxBuffer: 8 MB })`.
+  Ответ — ровно один JSON-объект одной строкой (`emit()` — `helper.m:24`, с `\n` и `fflush`), читается как `JSON.parse(stdout.trim())`.
+- **Отказ транспорта**: ошибка `execFile` (бинарь не запустился / таймаут / **exit ≠ 0**) → `null`; невалидный JSON → `null`.
+  Отсюда важное: команды, которые печатают `{ok:false,error:…}` и делают `return 1` (`missing-command`, `unknown-command`,
+  `missing-arguments`, `bad-arguments`), до JS **не доезжают** — превращаются в `null` по exit-коду.
+  Доходят только ошибки с `return 0` (`accessibility-denied`, `bad-payload`, `empty-target`, `app-not-running`,
+  `no-frontmost-application`, `no-target-app`, `tap-create-failed`, `multitouch-unavailable`, `no-trackpad`).
+- Код `payload.error` не пробрасывается ни одной обёрткой: все проверяют только `ok`, поэтому «нет прав Accessibility»
+  и «нет бинаря» для вызывающего неразличимы (исключение — `voice`/`gesture`, они читают `error` сами).
+- **Долгоживущие**: `spawn` + `readline` по stdout, один JSON на строку, процесс живёт до `SIGTERM`.
+
+### 9.2 Команды (ровно 20 ветвей `strcmp`, `helper.m:1208–1352`)
+
+| Команда | argv | Успешный ответ (stdout JSON) | Ошибки (`ok:false`) | Обёртка в TS | Вызывающий → потребитель | Fallback при null/false |
+|---|---|---|---|---|---|---|
+| `permissions` | — | `{ok, accessibility, screenRecording, version:"1"}` | — | `helperPermissions(false)` :367 | `permissions.ts:44` (`readPermissions`, только если Electron сказал «нет») | нет → `null` |
+| `request-permissions` | — | то же + системные промпты (`AXIsProcessTrustedWithOptions`, `CGRequestScreenCaptureAccess`) | — | `helperPermissions(true)` :367 | `permissions.ts:99` (`requestPermissions`) | нет |
+| `cursor` | — | `{ok, x, y, screen{x,y,width,height}, scale}` (top-left) | — | `helperCursor()` :379 | **никем не вызывается** (только экспорт) | нет |
+| `apps` | — | `{ok, apps:[{bundleId,name}]}`, сортировка по `name` | — | `helperRunningApps()` :394 | `ipc.ts:191` (`CH.settings.runningApps`) → `settings/App.tsx:109` | osascript (только bundleId, `name = bundleId`) |
+| `front` | — | `{ok, bundleId, name, pid, accessibility, [windowId, bounds{x,y,width,height}, title]}` | `no-frontmost-application` | `helperFront()` :105 | `overlay.ts:517`, `agent/index.ts:362,381`, `paste/index.ts:30`, `context/activeApp.ts:12` | osascript ×3 (bundleId, name, unix id); окно/bounds/title = `null`, `accessibility = false` |
+| `copy` | — | `{ok}` (Cmd+C через CGEvent) | `accessibility-denied` | `helperSendKey('copy')` :145 | `context/selection.ts:25` | osascript `keystroke "c" using command down` |
+| `paste` | — | `{ok}` (Cmd+V) | `accessibility-denied` | `helperSendKey('paste')` :145 | `paste/index.ts:60` | osascript `keystroke "v" …` |
+| `activate` | `<bundleId\|pid\|имя>` | `{ok, pid}` | `empty-target`, `app-not-running` | `helperActivate({bundleId,pid})` :156 | `paste/index.ts:24`, `overlay.ts:679`, `agent/index.ts:368` | сначала bundleId, затем pid (второй вызов), затем osascript `tell application id … to activate` |
+| `move` | `<x> <y>` | `{ok}` | `accessibility-denied` | `helperMoveMouse` :178 | `agent/index.ts:287` | нет → `false` |
+| `click` | `<x> <y> [left\|right\|double]` | `{ok}` | `accessibility-denied` | `helperClick` :186 | `agent/index.ts:291` | нет |
+| `drag` | `<x1> <y1> <x2> <y2>` | `{ok}` | `accessibility-denied` | `helperDrag` :201 | `agent/index.ts:296` | нет |
+| `scroll` | `<dx> <dy>` | `{ok}` | `accessibility-denied` | `helperScroll` :216 | `agent/index.ts:299` | нет |
+| `key` | `<keyCode> <flags>` | `{ok}` | `accessibility-denied` | `helperPressKey` :233 | `agent/index.ts:305` | нет |
+| `type` | `<base64 utf8>` | `{ok, length}` | `accessibility-denied`, `bad-payload` | `helperTypeText` :222 (пустая строка → `true` без вызова) | `agent/index.ts:301` | нет |
+| `focused` | `[pid]` | `{ok, pid, [focused]}` | `accessibility-denied` | `helperFocused` :277 | `agent/index.ts:267` (`typingBlocked`) | нет; `null` = «не знаю» → печатать разрешено |
+| `probe` | `[pid] [x y]` | `{ok, pid, app, targets[], [chain[]], [focused], elapsedMs}` | `accessibility-denied`, `no-target-app` | `helperProbe` :295 (timeout 3000) | `agent/index.ts:205` (`probeAt`, кэш `PROBE_FRESH_MS`), `agent/outline.ts:135` | нет → `null` («целимся по точке модели») |
+| `ping` | — | `{ok, version:"1"}` | — | **обёртки нет** | **никем не вызывается** | — |
+| `watch` | `[mouse]` | поток (см. 5.3) | `accessibility-denied`, `tap-create-failed` | `watchForAbort()` :332 | `agent/index.ts:384` | нет; без watcher'а план не прерывается |
+| `voice` | `<keyCode> <flags> [swallow]` | поток (см. 5.3) | `accessibility-denied`, `tap-create-failed` | `VoiceKeyListener` (`voice/listen.ts:210`) | `voice/index.ts:405` | нет; `error` → `describeTapError` (`listen.ts:304`) |
+| `gesture` | `<fingers> <holdMs>` | поток (см. 5.3) | `multitouch-unavailable`, `no-trackpad`, `bad-arguments` | `TrackpadGestureListener` (`gesture/listen.ts:71`) | `gesture/index.ts:62` | нет; `error` → `describeGestureError` (`listen.ts:167`) |
+
+Валидация аргументов в самом helper'е (то, что TS не повторяет): `gesture` требует `fingers ∈ [2,4]` и `holdMs ∈ [100,2000]`
+(`helper.m:1238`) — иначе `bad-arguments`; `type` — валидный base64+UTF-8, иначе `bad-payload`; `click` — `which` вне
+`right`/`double` молча становится `left` (`helper.m:1262–1266`); `activate` с числом в начале трактуется как pid,
+иначе bundleId, затем имя приложения.
+
+### 9.3 События долгоживущих процессов (JSON на строку)
+
+| Команда | Аргументы | События | Обёртка → потребитель |
+|---|---|---|---|
+| `watch` | `[mouse]` | `{ok,event:"ready"}` → `{event:"escape"}` \| `{event:"mousemove",x,y}` | `watchForAbort` :332 → `agent/index.ts:384`. `ready` игнорируется; порог «человек двинул мышь» — 12 pt; собственные события помечены `kAgentEventTag` = `'SCGR'` и не считаются; Escape — только `keyDown` |
+| `voice` | `<keyCode> <flags> [swallow]` | `{ok,event:"ready",keyCode,flags}` → `press` \| `release` \| `cancel` \| `reenabled` | `VoiceKeyListener` → `voice/index.ts:405`. `reenabled` приходит после таймаута tap'а; Escape во время удержания → `cancel` |
+| `gesture` | `<fingers> <holdMs>` | `{ok,event:"ready",fingers}` → `tap` \| `press` \| `release` \| `cancel` | `TrackpadGestureListener` → `gesture/index.ts:62`. **stdout уводится в `/dev/null`** (`helper.m:716–721`), JSON пишется в `dup(STDOUT_FILENO)`, поэтому readline по pipe продолжает работать |
+
+### 9.4 Тайминги и лимиты (влияют на таймауты обёрток)
+
+- `click`: hover 90 мс → down/up → 40 + 60 мс на клик; `double` — два полных клика (`helper.m:218–246`).
+- `drag`: 90 мс + 12 промежуточных `mouseDragged` по 18 мс (`helper.m:248–285`).
+- `type`: 8 мс на символ, Unicode-события (layout-independent, флаги обнуляются) — отсюда `timeout = min(30 000, 4 000 + 40·len)` в `helperTypeText`.
+- `key`: 30 мс между down и up.
+- `probe`: `targets` — BFS с бюджетом 600 мс, ≤ 4000 узлов, глубина ≤ 40, messaging timeout 0.4 с на атрибут, ≤ 400 целей,
+  дедуп по `role|title|value|description|frame`; `chain` — ≤ 6 уровней вверх (0.3 с); тексты усечены до 120 символов
+  (с «…», переводы строк → пробел); `actions` ≤ 6; рамки уже 2 pt отбрасываются. Таймаут обёртки 3000 мс.
+- Таймаут по умолчанию для всех остальных — 4000 мс.
+
+### 9.5 `probe`: побочные эффекты (проверено по коду, `helper.m:1133–1171`)
+
+- **Пишет в чужой процесс**: `AXUIElementSetAttributeValue(app, AXEnhancedUserInterface, true)` и
+  `AXManualAccessibility, true` на AX-элементе **целевого** приложения (`helper.m:1154–1159`). Это единственный
+  side effect: включает accessibility-дерево Chromium-приложений (Chrome/Electron/Slack/VS Code) и держится до конца
+  жизни того приложения; откатить из helper'а нельзя.
+- Читает: `AXUIElementCopyElementAtPosition` + подъём по родителям, `axCollectTargets` (BFS с бюджетом), `axFocusedElement`.
+- **Не делает**: не постит CGEvent, не двигает курсор, не пишет файлы, не показывает TCC-промпты, не спавнит процессы.
+- Риск по времени: чтение атрибутов блокирует целевое приложение до 0.4 с на атрибут, суммарно до ~600 мс —
+  `probe` вызывается на каждый шаг плана и на `@look`, то есть это регулярная нагрузка на чужой UI-поток.
+- `probe` без `x y` не считает `chain` (только `targets`) — так его использует `outline.ts`.
+
+### 9.6 Расхождения с CONTEXT.md
+
+| Факт в CONTEXT.md | Проверка | Итог |
+|---|---|---|
+| «Ошибка/невалидный JSON → null, вызывающий деградирует на osascript» (стр. 25) | osascript-fallback есть только у 4 обёрток: `front`, `helperSendKey` (copy/paste), `activate`, `apps`. Остальные 12 (`move`, `click`, `drag`, `scroll`, `key`, `type`, `focused`, `probe`, `permissions`, `cursor`) возвращают `null`/`false` без fallback | неточно: fallback не общий |
+| «helper.m, 1529 строк» (стр. 23) | `wc -l` → **1356** | расхождение (уже зафиксировано в T01) |
+| «20 команд: permissions, request-permissions, … ping» (стр. 27–28) | в `main` ровно 20 ветвей `strcmp` | подтверждено |
+| «Долгоживущие: watch/voice/gesture (spawn+readline)» (стр. 26) | у всех трёх `spawn`+`readline`; у `gesture` stdout предварительно уведён в `/dev/null` | подтверждено, с уточнением |
+| «аргументы argv (`type` — payload base64)» (стр. 25) | подтверждено; пустая строка вообще не отправляется | подтверждено |
+| «События: ready, press, release, cancel, reenabled, escape, mousemove, tap» (стр. 29) | все восемь есть; `ready` общий для трёх процессов | подтверждено |
+
+Посторонние находки (в BUGS.md не пишу — это не баги): `ping` не имеет обёртки и никем не вызывается;
+`helperCursor()` экспортируется, но не вызывается (кандидат для A2).
