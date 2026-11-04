@@ -260,11 +260,6 @@ export interface AppSettings {
   /** Electron accelerator string, e.g. "Alt+Space". */
   hotkey: string
   captureScreenshotByDefault: boolean
-  /**
-   * Whether the overlay closes itself as soon as it loses focus. Off by default:
-   * switching to another app (Cmd+Tab / Alt+Tab) must not throw away the answer.
-   */
-  hideOverlayOnBlur: boolean
   screenshotMaxSide: number
   screenshotQuality: number
   quickActions: QuickAction[]

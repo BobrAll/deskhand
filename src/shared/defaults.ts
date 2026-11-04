@@ -290,7 +290,6 @@ export const DEFAULT_SETTINGS: AppSettings = {
   systemPrompt: DEFAULT_SYSTEM_PROMPT,
   hotkey: 'Alt+Space',
   captureScreenshotByDefault: true,
-  hideOverlayOnBlur: false,
   screenshotMaxSide: 1600,
   screenshotQuality: 70,
   quickActions: DEFAULT_QUICK_ACTIONS,
@@ -424,10 +423,6 @@ export function normalizeSettings(input: unknown): AppSettings {
       typeof raw.captureScreenshotByDefault === 'boolean'
         ? raw.captureScreenshotByDefault
         : DEFAULT_SETTINGS.captureScreenshotByDefault,
-    hideOverlayOnBlur:
-      typeof raw.hideOverlayOnBlur === 'boolean'
-        ? raw.hideOverlayOnBlur
-        : DEFAULT_SETTINGS.hideOverlayOnBlur,
     screenshotMaxSide: Math.round(
       clamp(raw.screenshotMaxSide, MIN_SIDE, MAX_SIDE, DEFAULT_SETTINGS.screenshotMaxSide)
     ),

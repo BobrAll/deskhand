@@ -102,11 +102,11 @@ describe('normalizeSettings: extra keys are dropped', () => {
 
 describe('normalizeSettings: a renamed key silently loses its value', () => {
   it('drops a key that was renamed on disk', () => {
-    // Old builds wrote `hideOnBlur`; the current name is `hideOverlayOnBlur`.
-    const result = normalizeSettings({ hideOnBlur: true })
+    // Old builds wrote `screenshotSide`; the current name is `screenshotMaxSide`.
+    const result = normalizeSettings({ screenshotSide: 900 })
 
-    expect(result.hideOverlayOnBlur).toBe(DEFAULT_SETTINGS.hideOverlayOnBlur)
-    expect(result).not.toHaveProperty('hideOnBlur')
+    expect(result.screenshotMaxSide).toBe(DEFAULT_SETTINGS.screenshotMaxSide)
+    expect(result).not.toHaveProperty('screenshotSide')
   })
 
   it('loses a renamed key inside a nested object too', () => {
@@ -211,11 +211,14 @@ describe('normalizeSettings: numeric clamps', () => {
 
 describe('normalizeSettings: booleans', () => {
   it('keeps booleans and falls back on anything else', () => {
-    expect(normalizeSettings({ hideOverlayOnBlur: true }).hideOverlayOnBlur).toBe(true)
-    expect(normalizeSettings({ hideOverlayOnBlur: 'true' }).hideOverlayOnBlur).toBe(false)
     expect(normalizeSettings({ captureScreenshotByDefault: false }).captureScreenshotByDefault).toBe(
       false
     )
+    expect(normalizeSettings({ captureScreenshotByDefault: true }).captureScreenshotByDefault).toBe(
+      true
+    )
+    // A string is not a boolean: the field keeps its default rather than truthiness.
+    expect(normalizeSettings({ launchAtLogin: 'true' }).launchAtLogin).toBe(false)
     expect(normalizeSettings({ launchAtLogin: 1 }).launchAtLogin).toBe(false)
     expect(normalizeSettings({ onboardingCompleted: 'yes' }).onboardingCompleted).toBe(false)
   })

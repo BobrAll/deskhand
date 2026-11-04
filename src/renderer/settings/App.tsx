@@ -623,15 +623,6 @@ export function App() {
               Запускать при входе в систему
             </label>
 
-            <label className="check">
-              <input
-                type="checkbox"
-                checked={draft.hideOverlayOnBlur}
-                onChange={(event) => patch({ hideOverlayOnBlur: event.target.checked })}
-              />
-              Скрывать поле ответа при переключении на другое приложение
-            </label>
-
             <div className="row-grid">
               <div className="field">
                 <label>Длинная сторона скриншота · {draft.screenshotMaxSide}px</label>
