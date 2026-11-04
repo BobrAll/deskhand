@@ -115,7 +115,6 @@ describe('preload: the exposed bridge', () => {
     expect(Object.keys(api).sort()).toEqual([
       'agent',
       'agentCursor',
-      'hud',
       'onboarding',
       'overlay',
       'permissions',
@@ -141,7 +140,7 @@ describe('preload: the exposed bridge', () => {
     expect(declared).toContain('settings.hold')
     expect(declared).toContain('voice.onDownloadProgress')
     expect(declared).not.toContain('overlay.nope')
-    expect(declared.length).toBeGreaterThan(50)
+    expect(declared.length).toBeGreaterThanOrEqual(45)
   })
 })
 

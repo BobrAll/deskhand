@@ -11,7 +11,6 @@ import type {
   ContextFlags,
   ContextSnapshot,
   DownloadProgress,
-  HudFrame,
   KeyStatus,
   OverlayState,
   PasteResult,
@@ -97,18 +96,6 @@ export interface SmartCursorApi {
   /** Used only by the transparent drawing layer. */
   pointer: {
     onDraw(handler: (payload: PointerPayload) => void): Unsubscribe
-  }
-  /**
-   * Used only by the bubble that follows the cursor during push-to-talk. It
-   * renders state it is given: it never records and never sends anything.
-   */
-  hud: {
-    onState(handler: (frame: HudFrame) => void): Unsubscribe
-    /**
-     * The latest frame. The window is created ahead of time, so its page can
-     * finish loading after a turn has already started.
-     */
-    getState(): Promise<HudFrame | null>
   }
   /**
    * Used only by the ring that follows the pointer while an agent plan runs.

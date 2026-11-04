@@ -21,7 +21,6 @@ import type { ActionResult, AppPickResult, SettingsBundle } from '@shared/api'
 import type { OverlayController } from './overlay'
 import type { VoiceController } from './voice'
 import type { GestureController } from './gesture'
-import type { CursorHud } from './hud'
 import { testApiKey } from './llm/testKey'
 import { helperRunningApps, type RunningApp } from './native/helper'
 import {
@@ -92,8 +91,6 @@ export interface IpcDeps {
   voice: VoiceController
   /** Three-finger trackpad gestures: tap opens the card, hold records. */
   gestures: GestureController
-  /** The bubble at the cursor: asked for its last frame when its page mounts. */
-  hud: CursorHud
   /** Re-registers the global hotkey; false means the combination is taken. */
   applyHotkey(accelerator: string): boolean
   applyLaunchAtLogin(enabled: boolean): void
@@ -101,10 +98,6 @@ export interface IpcDeps {
 }
 
 export function registerIpc(deps: IpcDeps): void {
-  // ---- bubble -------------------------------------------------------------
-  // Read-only: the bubble is a display and never reports anything back.
-  ipcMain.handle(CH.hud.getState, () => deps.hud.getState())
-
   // ---- overlay -----------------------------------------------------------
   ipcMain.handle(CH.overlay.getState, () => deps.overlay.state())
 

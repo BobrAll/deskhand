@@ -3,7 +3,6 @@
 exports[`CH: the channel set is a wire protocol > keeps the size of every namespace 1`] = `
 {
   "agent": 5,
-  "hud": 2,
   "onboarding": 2,
   "overlay": 15,
   "permissions": 4,
@@ -78,14 +77,6 @@ exports[`CH: the channel set is a wire protocol > matches the snapshot 1`] = `
   [
     "pointer.draw",
     "pointer:draw",
-  ],
-  [
-    "hud.state",
-    "hud:state",
-  ],
-  [
-    "hud.getState",
-    "hud:get-state",
   ],
   [
     "settings.load",

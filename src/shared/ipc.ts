@@ -43,20 +43,6 @@ export const CH = {
     /** main -> drawing layer: shapes to show (or to fade out). */
     draw: 'pointer:draw'
   },
-  /**
-   * The bubble that follows the cursor while push-to-talk is active. It is its
-   * own window so it can appear on the key press — before the card has finished
-   * collecting context — and so it can follow the pointer around the screen.
-   */
-  hud: {
-    /** main -> bubble: the current turn, or `visible: false` to fade out. */
-    state: 'hud:state',
-    /**
-     * bubble -> main, on mount: the latest state. The window is prewarmed, so
-     * its page may still be loading when the first press goes out.
-     */
-    getState: 'hud:get-state'
-  },
   settings: {
     load: 'settings:load',
     save: 'settings:save',

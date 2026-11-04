@@ -156,7 +156,6 @@ function fakeDeps(): IpcDeps {
       applySettings: vi.fn(),
       status: vi.fn(() => ({ gestureError: null }))
     } as unknown as IpcDeps['gestures'],
-    hud: { getState: vi.fn(() => null) } as unknown as IpcDeps['hud'],
     applyHotkey: vi.fn(() => true),
     applyLaunchAtLogin: vi.fn(),
     quit: vi.fn()
@@ -184,7 +183,6 @@ const MAIN_TO_RENDERER = new Set<string>([
   CH.overlay.stream,
   CH.overlay.annotations,
   CH.pointer.draw,
-  CH.hud.state,
   CH.agent.event,
   CH.agent.cursor,
   CH.voice.event,
@@ -237,7 +235,6 @@ describe('registerIpc: every channel has exactly one handler', () => {
       CH.settings.load,
       CH.settings.save,
       CH.permissions.status,
-      CH.hud.getState,
       CH.agent.availability,
       CH.voice.status
     ]) {

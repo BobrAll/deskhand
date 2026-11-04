@@ -7,8 +7,6 @@ exports[`preload: the exposed bridge > matches the snapshot of the method set 1`
   "agent.setEnabled",
   "agent.stop",
   "agentCursor.onState",
-  "hud.getState",
-  "hud.onState",
   "onboarding.complete",
   "onboarding.openSettings",
   "overlay.cancel",

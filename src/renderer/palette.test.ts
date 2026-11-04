@@ -26,7 +26,6 @@ const WINDOWS: Record<string, string[]> = {
   overlay: ['styles/base.css', 'overlay/overlay.css'],
   settings: ['styles/base.css', 'settings/settings.css'],
   onboarding: ['styles/base.css', 'onboarding/onboarding.css'],
-  hud: ['styles/base.css', 'hud/hud.css'],
   cursor: ['styles/base.css', 'cursor/cursor.css'],
   pointer: ['styles/base.css', 'pointer/pointer.css']
 }
@@ -153,13 +152,13 @@ describe('palette: per-window colours', () => {
     expect(light['--panel-drawing']).toBe('rgba(249, 249, 251, 0.42)')
   })
 
-  it('keeps the hud and cursor chrome identical in both appearances', () => {
-    // Both are glass over someone else's content rather than surfaces to read on,
-    // so they are deliberately not theme-dependent (see the comments in the sheets).
-    for (const window of ['hud', 'cursor']) {
+  it('keeps the cursor chrome identical in both appearances', () => {
+    // The ring is glass over someone else's content rather than a surface to read
+    // on, so it is deliberately not theme-dependent (see the comments in the sheet).
+    for (const window of ['cursor']) {
       const dark = resolveWindow(window, 'dark')
       const light = resolveWindow(window, 'light')
-      const own = Object.keys(dark).filter((name) => /^--(hud|cursor)-/.test(name))
+      const own = Object.keys(dark).filter((name) => /^--cursor-/.test(name))
       expect(own.length, window).toBeGreaterThan(3)
       for (const name of own) {
         expect(light[name], `${window} ${name}`).toBe(dark[name])

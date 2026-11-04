@@ -15,7 +15,6 @@ import type {
   ContextFlags,
   ContextSnapshot,
   DownloadProgress,
-  HudFrame,
   OverlayState,
   PointerPayload,
   ProviderId,
@@ -59,10 +58,6 @@ const api: SmartCursorApi = {
     setEnabled: (enabled: boolean) =>
       ipcRenderer.invoke(CH.agent.setEnabled, enabled) as Promise<AgentAvailability>,
     stop: () => ipcRenderer.invoke(CH.agent.stop)
-  },
-  hud: {
-    onState: (handler) => subscribe<HudFrame>(CH.hud.state, handler),
-    getState: () => ipcRenderer.invoke(CH.hud.getState) as Promise<HudFrame | null>
   },
   agentCursor: {
     onState: (handler) => subscribe<AgentCursorFrame>(CH.agent.cursor, handler)

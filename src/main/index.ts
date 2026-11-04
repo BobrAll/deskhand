@@ -10,7 +10,6 @@ import { app, Menu, nativeTheme } from 'electron'
 import { createOverlayController } from './overlay'
 import { createVoiceController } from './voice'
 import { createGestureController } from './gesture'
-import { createCursorHud } from './hud'
 import { registerHotkey, unregisterHotkey } from './hotkey'
 import { registerIpc } from './ipc'
 import { createTray, destroyTray, refreshTray } from './tray'
@@ -28,20 +27,6 @@ import { encryptionAvailable } from './settings/secrets'
 // hide the moment focus moved elsewhere.)
 
 const overlay = createOverlayController(overlayHost)
-
-/**
- * The bubble that follows the cursor while the microphone is open.
- *
- * It avoids the card's rectangle, because the card opens down-and-right of the
- * pointer — exactly where a naive "below the cursor" pill would land.
- */
-const hud = createCursorHud({
-  avoid: () => {
-    const win = overlayHost.window()
-    if (!win || !win.isVisible()) return null
-    return win.getBounds()
-  }
-})
 
 /**
  * Push-to-talk. The controller needs the overlay (it opens the card and types the
@@ -130,7 +115,7 @@ function bootstrap(): void {
 
   // IPC registration must happen before anything that can throw: without it the
   // settings window opens but every `invoke` rejects, so it stays empty forever.
-  registerIpc({ overlay, voice, hud, gestures, applyHotkey, applyLaunchAtLogin, quit })
+  registerIpc({ overlay, voice, gestures, applyHotkey, applyLaunchAtLogin, quit })
 
   createTray({
     toggle: () => {
@@ -236,6 +221,5 @@ if (!app.requestSingleInstanceLock()) {
     destroyTray()
     destroyPointer()
     destroyAgentCursor()
-    hud.destroy()
   })
 }

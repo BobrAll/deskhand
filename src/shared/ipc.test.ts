@@ -54,7 +54,6 @@ describe('CH: the channel set is a wire protocol', () => {
   it('keeps the namespaces the app is built around', () => {
     expect(Object.keys(CH).sort()).toEqual([
       'agent',
-      'hud',
       'onboarding',
       'overlay',
       'permissions',

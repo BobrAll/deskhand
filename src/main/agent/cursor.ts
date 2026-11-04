@@ -9,15 +9,14 @@
  * plan that was — the card may even be behind the window the assistant is
  * operating. The ring answers "where", the caption answers "what".
  *
- * The three properties from `pointer.ts` and `hud.ts` apply unchanged: it must
+ * The three properties from `pointer.ts` apply unchanged: it must
  * never take focus (`focusable: false` + `showInactive`), never eat clicks
  * (`setIgnoreMouseEvents`), and never end up in the next screenshot
  * (`setContentProtection`). A highlight that was photographed would come back to
  * the model as "there is a ring on your screen" and, worse, as a target.
  *
- * Geometry. Unlike the listening chip this layer is display-sized: the ring is
- * moved with a CSS `translate` on every follow tick instead of by moving the
- * window. macOS composites a window move on the main thread and a pointer that
+ * Geometry. This layer is display-sized: the ring is moved with a CSS
+ * `translate` on every follow tick instead of by moving the window. macOS composites a window move on the main thread and a pointer that
  * the helper warps across the screen would make that visibly late; moving one
  * element inside a stationary layer stays on the compositor and is exact.
  */

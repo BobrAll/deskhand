@@ -198,42 +198,6 @@ export interface AgentCursorFrame {
 /** Lifecycle of one push-to-talk turn, mirrored into the overlay. */
 export type VoicePhase = 'idle' | 'listening' | 'transcribing'
 
-/** The two states the cursor bubble can show: it never shows "idle". */
-export type VoiceHudPhase = 'listening' | 'transcribing'
-
-/**
- * What the chip next to the cursor draws.
- *
- * Deliberately smaller than `VoiceEvent`: the chip is a glance-level signal
- * ("it hears me"), so it carries a phase and a loudness and nothing else. No
- * clock, no label — a timer at the cursor is one more thing to read while
- * writing, and the length of a dictation is not something anyone acts on. The
- * transcript and the errors belong in the card, where they can be read and
- * edited.
- */
-export interface VoiceHudState {
-  /** `false` plays the fade-out; the window is hidden right after it. */
-  visible: boolean
-  phase: VoiceHudPhase
-  /** 0..1 loudness of the latest audio block; opens the bars. */
-  level: number
-}
-
-/** Which way the chip hangs off the pointer, clear of the assistant card. */
-export type HudSide = 'below' | 'above' | 'left' | 'right'
-
-/**
- * One frame sent to the chip: the state plus the geometry.
- *
- * `anchor` is the pointer *inside the layer*. The layer is a small window placed
- * around the cursor; when it has to be clamped at a screen edge the pointer is no
- * longer at its centre, so the chip must not assume the middle of the window.
- */
-export interface HudFrame extends VoiceHudState {
-  anchor: { x: number; y: number }
-  side: HudSide
-}
-
 /** One turn of the voice pipeline: what the overlay needs to animate. */
 export interface VoiceEvent {
   phase: VoicePhase
