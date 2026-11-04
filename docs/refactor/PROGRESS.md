@@ -1,13 +1,14 @@
 # PROGRESS
 ## Current
-Фаза 0 закрыта: T01, T02, T03, T04. Дальше: T10 (baseline).
+Фаза 0 закрыта (T01–T04), T10 закрыта: baseline снят в 01-baseline.md. Дальше: T11 (vitest).
 ## Last commit
-f0d2d6a docs(refactor): map overlay.ts sections, state and responsibilities
+4c70051 docs(refactor): record baseline metrics, bundles and duplication
 ## Log (одна строка на задачу: ID — hash — итог)
 T01 — bd12743 — 56 каналов CH + `shell:open-external`: направление/payload/хендлер/потребитель; 6 окон с webPreferences и создателями; перепроверены 5 фактов CONTEXT.md.
 T04 — f416865 — карты windows.ts (секции, `OverlayHost`, 10 модульных `let`, грейс-период), overlay/App.tsx (13 state + 18 ref, 7 подписок), settings/App.tsx (черновик↔диск, дебаунс 450 мс → `settings:hold` → грейс-период); сквозные дубли — в §8.
 T02 — dcd00ba — 20 команд helper'а (argv/ответ/обёртка/вызывающий/fallback), 3 потока событий, тайминги и лимиты `probe`; побочный эффект `probe` — запись AXEnhancedUserInterface/AXManualAccessibility в целевое приложение; расхождения с CONTEXT.md — в §9.6.
 T03 — f0d2d6a — карта overlay.ts (§10): 11 секций с номерами строк, `send` = 658 строк (41 % файла), 6 переменных замыкания с временем жизни и писателем/читателем, 5 инвариантов «на дисциплине вызовов»; `verify()` внутри `send` замыкается на 6 величин и мутирует 3.
+T10 — 4c70051 — baseline: typecheck pass, build pass (1.03 с real, 680 КБ out/), `src/` 82 файла / 18 760 строк, jscpd 1.42 % (242 строки, 20 клонов), knip с конфигом — 2 unused files / 19 exports / 29 types; расхождение: заявленные «jscpd 0.22 %» невоспроизводимы — 01-baseline.md §4.
 ## Blocked
 ## Open questions
 - РЕШЕНО (Александр, сессия T01): 6 неиспользуемых методов моста (`settings.validateHotkey`, `onboarding.close`, `quickActions.defaults`, `permissions.microphone`, `voice.micPermission`, `voice.requestMicPermission`) и канал `shell:open-external` разрешено удалить в A2. Удалять с grep-доказательствами по правилу 7, отдельными коммитами.
@@ -24,3 +25,4 @@ T03 — f0d2d6a — карта overlay.ts (§10): 11 секций с номер�
 - T02: `ping` — единственная команда helper'а без обёртки в `native/helper.ts` и без единого вызова; `helperCursor()` экспортируется, но не вызывается никем. Оба — кандидаты в A2 (правило 7: не удалял).
 - T02: `payload.error` не читает ни одна обёртка, кроме `voice`/`gesture`; «нет прав Accessibility» и «нет бинаря» для вызывающего неразличимы (оба → `null`/`false`). Поведение сохраняем, но при тестах helper'а (T22) это надо фиксировать.
 - T02: `runHelper` возвращает `null` на любом `exit ≠ 0`, поэтому ошибки `missing-arguments`/`bad-arguments`/`unknown-command` (helper печатает JSON и делает `return 1`) до JS не доходят.
+- T10: `knip` без конфига бесполезен (70 «unused files» = весь `src/`): entry points заданы в `electron.vite.config.ts` и 6 `index.html`. Нужен `knip.json` или запуск с `-c` — решай ты.

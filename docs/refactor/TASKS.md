@@ -11,7 +11,7 @@
 - [x] T04 Карты windows.ts, renderer/overlay/App.tsx, renderer/settings/App.tsx — так же → 00-inventory.md.
 
 ## Фаза 1 — базовая линия и тесты
-- [ ] T10 Baseline: `typecheck`, чистый `build`, метрики (файлы/строки по директориям, размеры бандлов, время сборки, jscpd, knip),
+- [x] T10 Baseline: `typecheck`, чистый `build`, метрики (файлы/строки по директориям, размеры бандлов, время сборки, jscpd, knip),
       список файлов и размеров `out/` → 01-baseline.md. Если что-то не проходит — стоп и вопрос мне.
 - [ ] T11 Vitest (devDep), конфиг с алиасом @shared, env node, скрипты test/test:watch/test:coverage; тесты не ломают typecheck/build.
       Один дымовой тест. Один коммит `chore: add vitest`.
