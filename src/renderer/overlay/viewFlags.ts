@@ -8,8 +8,8 @@
  * they were checked by eye.
  *
  * They are pure: the same inputs give the same flags, nothing is read from a ref
- * and nothing is written. The card is then a matter of rendering them, and
- * `MANUAL_SMOKE §2.1`, §4 and §7 are the check that the rendering still matches.
+ * and nothing is written. The card is then a matter of rendering them; visual
+ * checks cover the folded card, answer layout, and agent row.
  */
 
 import type { AgentAvailability, OverlayState, RefineDirection } from '@shared/types'

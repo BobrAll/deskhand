@@ -15,7 +15,7 @@
  * textarea sees the keystroke first and stops it, so the window handler is the
  * fallback for Enter pressed anywhere else. Merging them into one listener would
  * change which element swallows the key — that is a behaviour change, not a
- * refactor (A1.7).
+ * refactor.
  */
 
 /**

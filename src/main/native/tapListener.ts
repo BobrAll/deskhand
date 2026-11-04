@@ -21,7 +21,7 @@
  *   `lastError`; the voice listener only reports it.
  * - `stop()` — only the voice listener forgets its accelerator.
  *
- * The known backoff defect (BUGS.md R2: `failures` is reset by every `ready`, so
+ * The known backoff defect (`failures` is reset by every `ready`, so
  * the cap is unreachable in practice) lives here now and therefore reproduces in
  * both listeners exactly as before; the characterization tests in both
  * `listen.test.ts` files pin it.

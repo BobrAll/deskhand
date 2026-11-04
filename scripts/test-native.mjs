@@ -105,7 +105,6 @@ console.log('\nfront')
   check('pid is a number', typeof json.pid === 'number')
   // KNOWN BUG: `front` prints `accessibility` as 1/0, not as a JSON boolean, so
   // `helperFront()`'s strict `payload.accessibility === true` is always false.
-  // See docs/BUGS.md R3.
   check(
     'accessibility is a number 0/1 (known: not a boolean)',
     json.accessibility === 0 || json.accessibility === 1,

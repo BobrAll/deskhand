@@ -266,7 +266,7 @@ describe('TrackpadGestureListener: restart and stop', () => {
   })
 
   it('keeps restarting with a 1 s backoff forever (KNOWN BUG: characterization)', () => {
-    // Same shape as `voice/listen.ts` (BUGS.md R2): `ready` resets `failures`,
+    // Same shape as `voice/listen.ts`: `ready` resets `failures`,
     // so the exponential growth and the six-failure cap are unreachable.
     const { tap } = listener()
     tap.start()

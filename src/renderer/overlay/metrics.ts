@@ -8,8 +8,7 @@
  * numbers; everything here is the renderer's own business.
  *
  * A layout change is a change to this file, and it is checked by eye:
- * `MANUAL_SMOKE §2.1` (the card at rest and unfolded), §4 (line wrapping at
- * 112/80/360) and §7 (the agent row).
+ * the card at rest and unfolded, line wrapping at 112/80/360, and the agent row.
  */
 
 import { BUBBLE_NARROW_WIDTH, BUBBLE_VOICE_WIDTH, BUBBLE_WIDTH } from '@shared/metrics'
