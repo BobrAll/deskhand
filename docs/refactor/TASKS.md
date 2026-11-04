@@ -81,7 +81,7 @@ typecheck/test/build → коммит → PROGRESS. После крупных г
 - [x] R01 Гигиена `main/`: `PROVIDER_IDS` из `PROVIDERS` + снять `void PROVIDERS` (ipc.ts:42,298), `Number.isFinite` в `clamp`
       (windows.ts:70), `let settingsBusy` выше пользователя, снять синоним `closeSettingsWindowWhenSettled` (+ ipc.ts:203),
       пробелы в index.ts:87. Поведение не меняется. → fa8b283. A4.8 #1 и #8 не вошли (правки поведения, ждут вопроса 4).
-- [ ] R02 Контракт `hotkeyError`: поле в `SettingsBundle` (shared/api.ts), убрать приведение в settings/App.tsx:178.
+- [x] R02 Контракт `hotkeyError`: поле в `SettingsBundle` (shared/api.ts), убрать приведение в settings/App.tsx:178. → fb0d190
 - [ ] R03 `main/pageLoad.ts`: три копии «dev ? loadURL : loadFile» (windows.ts:64, pointer.ts:34, cursor.ts:83) → одна функция.
 - [ ] R04 `main/denyExternalLinks.ts`: четыре копии `setWindowOpenHandler` → одна, флаг `/i` остаётся параметром (без унификации).
 - [ ] R05 Внутрифайловые дубли: `imagePart()` вместо трёх regex (overlay.ts:960,1181,1360) и `resolveArea()` вместо второго
