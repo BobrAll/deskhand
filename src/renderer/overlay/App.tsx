@@ -22,7 +22,6 @@ import type {
   ResponseMode,
   StreamEvent
 } from '@shared/types'
-import { looksLikeAction } from '@shared/intent'
 import {
   CARET_SLACK,
   CHROME_WIDTH,
@@ -37,6 +36,7 @@ import {
   clamp
 } from './metrics'
 import { useVoice } from './useVoice'
+import { deriveView } from './viewFlags'
 
 interface Failure {
   message: string
@@ -965,37 +965,32 @@ export function App() {
     )
   }
 
-  const { context, flags, quickActions, setupNotice, warnings } = state
+  const { context, flags, quickActions, setupNotice } = state
   const selection = context.selection
   const screenshot = context.screenshot
-  /** Everything below the field is folded away until the chevron is pressed. */
-  const showMeta = expanded && !hasAnswer && !failure
-  const canPaste = hasAnswer && !busy
   /**
-   * The two ways mouse control can be missing.
+   * Everything the card decides about itself, in one place and out of this file.
    *
-   * `off` is the state the app ships in, and it is the one that used to be
-   * invisible: the assistant could see the screen but not touch it, so "открой
-   * вкладку" came back as a drawing of the tab button with no explanation. The
-   * card names it and offers the switch, because a whole settings window for one
-   * checkbox is why the mode stays unused.
+   * The flags are a pure function of the session, the drawer and the last request
+   * — see `viewFlags.ts`. They used to be expressions here, which meant they could
+   * only be checked by looking at the card.
    */
-  const agentOff = !state.agent.enabled
-  const agentBlocked = state.agent.enabled && !state.agent.ready
-  const agentNotice = agentBlocked ? (state.agent.reason ?? null) : null
-  /**
-   * The request on screen was phrased as an action («запусти видео»), and the
-   * mode that would have performed it is off.
-   *
-   * This is the one case where "why did it draw instead of doing?" has an honest
-   * answer, so the card gives it at the moment the user is looking at the drawing
-   * rather than in a settings window they have no reason to open. `refine` is
-   * excluded: rewriting an answer is never an action request.
-   */
-  const actionAsk = !last?.refine && looksLikeAction(last?.prompt ?? '')
-  const hint = warnings.filter(Boolean)[0] ?? agentNotice
-  /** Anything the user has to see even in the folded, one-line state. */
-  const alert = Boolean(blocked || setupNotice || failure || hint)
+  const {
+    showMeta,
+    canPaste,
+    agentOff,
+    agentBlocked,
+    actionAsk,
+    hint,
+    alert
+  } = deriveView({
+    session: state,
+    expanded,
+    hasAnswer,
+    busy,
+    failed: Boolean(failure),
+    last
+  })
 
   return (
     // While the assistant is painting on the screen the card turns into a much
