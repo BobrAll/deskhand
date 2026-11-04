@@ -1,16 +1,19 @@
 # PROGRESS
 ## Current
-T02 закрыта (00-inventory.md §9: helper-контракт). Дальше: T03, затем T10.
+Фаза 0 закрыта: T01, T02, T03, T04. Дальше: T10 (baseline).
 ## Last commit
-dcd00ba docs(refactor): add helper command contract inventory
+f0d2d6a docs(refactor): map overlay.ts sections, state and responsibilities
 ## Log (одна строка на задачу: ID — hash — итог)
 T01 — bd12743 — 56 каналов CH + `shell:open-external`: направление/payload/хендлер/потребитель; 6 окон с webPreferences и создателями; перепроверены 5 фактов CONTEXT.md.
 T04 — f416865 — карты windows.ts (секции, `OverlayHost`, 10 модульных `let`, грейс-период), overlay/App.tsx (13 state + 18 ref, 7 подписок), settings/App.tsx (черновик↔диск, дебаунс 450 мс → `settings:hold` → грейс-период); сквозные дубли — в §8.
 T02 — dcd00ba — 20 команд helper'а (argv/ответ/обёртка/вызывающий/fallback), 3 потока событий, тайминги и лимиты `probe`; побочный эффект `probe` — запись AXEnhancedUserInterface/AXManualAccessibility в целевое приложение; расхождения с CONTEXT.md — в §9.6.
+T03 — f0d2d6a — карта overlay.ts (§10): 11 секций с номерами строк, `send` = 658 строк (41 % файла), 6 переменных замыкания с временем жизни и писателем/читателем, 5 инвариантов «на дисциплине вызовов»; `verify()` внутри `send` замыкается на 6 величин и мутирует 3.
 ## Blocked
 ## Open questions
 - РЕШЕНО (Александр, сессия T01): 6 неиспользуемых методов моста (`settings.validateHotkey`, `onboarding.close`, `quickActions.defaults`, `permissions.microphone`, `voice.micPermission`, `voice.requestMicPermission`) и канал `shell:open-external` разрешено удалить в A2. Удалять с grep-доказательствами по правилу 7, отдельными коммитами.
 ## Заметки (посторонние находки)
+- T03: `emit` в overlay.ts принимает `string`, а не ключ `CH` (`overlay.ts:287`) — единственная точка, где типобезопасность каналов теряется; поведение не менял.
+- T03: `MAX_SHOT_AGE_MS` (`overlay.ts:400`) — единственная константа объявлена в теле контроллера, а не в блоке 114–169. Не баг, но при разрезании файла её место придётся выбирать.
 - Расхождения с CONTEXT.md: helper.m 1356 строк (не 1529); overlay.css объявляет 6 кастом-свойств, ни одного общего имени с base.css (не «~24 1:1») — дедупликация (а) в A3 под вопросом; IPC-подписки в 6 файлах (не 5).
 - `shell:open-external` (`ipc.ts:317`) — канал вне `CH`, в preload не экспортирован; по факту мёртвый (дублируется `setWindowOpenHandler` в 4 окнах). Кандидат в BUGS/A2, не удалял.
 - `permissions:microphone` / `permissions:request-microphone` вызываются и напрямую, и через дубли в неймспейсе `voice` (`preload:111-112`).
