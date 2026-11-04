@@ -84,8 +84,8 @@
   `painting`, где `next` — снимок, сделанный до закрытия. `close()` обнуляет `session.annotations` и зовёт
   `hideAnnotations()`, но **не обнуляет `session`** и не проверяет `generation`. Отложенный
   `showAnnotations` с непустым `next` снова делает `visible = true` + `showInactive()`
-  (`pointer.ts:212-214`) и возвращает фигуру. Окно возможно узкое (микротаски), но гварда нет вообще.
-  Отдельно: `showAnnotations` сначала `await ensureWindow()` (`pointer.ts:190`), и на самом первом рисунке
+  (`pointer.ts:211-213`) и возвращает фигуру. Окно возможно узкое (микротаски), но гварда нет вообще.
+  Отдельно: `showAnnotations` сначала `await ensureWindow()` (`pointer.ts:194`), и на самом первом рисунке
   это ожидание длинное (до 1500 мс, `pointer.ts:124`). Если `close()` случился внутри него, фигура
   нарисуется уже после закрытия карточки — и останется до следующего `hideAnnotations`.
 - **Тесты**: нет. Обе механики требуют реального Electron-окна и фокуса; `turnStream.test.ts` работает на
@@ -99,7 +99,7 @@
 и ответ/действие тоже не появляется.
 
 - **Где**: `src/main/voice/index.ts:259-280` (`onTap('press')`), `src/main/overlay.ts:287-291` (`emit`),
-  `src/main/overlay.ts:574-578` (ранний выход `openInternal`), `src/renderer/overlay/App.tsx:932`,
+  `src/main/overlay.ts:574-578` (ранний выход `openInternal`), `src/renderer/overlay/App.tsx:934`,
   `src/main/windows.ts:515-519` (`setVoice`).
 - **Ожидание**: пока микрофон открыт, в карточке идут бары; после распознавания — текст и ответ.
 - **По факту**: три места, где обратная связь теряется, все подтверждены кодом:
@@ -107,7 +107,7 @@
      (`overlay.ts:288-290`). `setPhase('listening')` вызывается **до** `host.open()`, поэтому на первом
      нажатии после запуска (окно ещё не создано) все `voice.event` пропадают. Спасает только `attach()`
      в рендерере, который спрашивает фазу уже после монтирования.
-  2. **Рендерер ничего не рисует до `voice.ready`.** `App.tsx:932` — `if (!voice.ready) return null`, а
+  2. **Рендерер ничего не рисует до `voice.ready`.** `App.tsx:934` — `if (!voice.ready) return null`, а
      `ready` ставится после `api.attach()` (`useVoice.ts:259-271`). Пока `attach()` не ответил, окно пустое,
      даже если фаза уже `listening`.
   3. **Исключённое приложение.** `press` успевает сделать `setVoice(true)` + `record` (`voice/index.ts:260-264`),
