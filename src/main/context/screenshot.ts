@@ -26,7 +26,7 @@
  */
 
 import { execFile } from 'node:child_process'
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { nativeImage, screen } from 'electron'
@@ -271,8 +271,3 @@ export async function captureScreenshot(
   }
 }
 
-/** Writes a data URL to a temp file; used by the settings preview. */
-export async function dataUrlToFile(dataUrl: string, file: string): Promise<void> {
-  const base64 = dataUrl.split(',')[1] ?? ''
-  await writeFile(file, Buffer.from(base64, 'base64'))
-}

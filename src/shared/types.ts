@@ -23,7 +23,7 @@ export interface QuickAction {
 }
 
 /** What a finished transcript does: ask the model, or type it into the app. */
-export type VoiceAction = 'command' | 'dictate'
+type VoiceAction = 'command' | 'dictate'
 
 /** Hold-to-talk input: a local whisper model turns speech into text. */
 export interface VoiceSettings {
@@ -118,7 +118,7 @@ export interface AgentSettings {
  * the result is still unverified — that word is the whole claim the user is
  * checking against the screen.
  */
-export type AgentPhase =
+type AgentPhase =
   | 'idle'
   | 'arming'
   | 'acting'
@@ -474,7 +474,7 @@ export interface PermissionState {
 /** How a finished answer should be reworked: shorter or more detailed. */
 export type RefineDirection = 'shorter' | 'longer'
 
-export interface RefineRequest {
+interface RefineRequest {
   direction: RefineDirection
   /** The answer the user is looking at; the model reworks this exact text. */
   baseAnswer: string
@@ -509,7 +509,7 @@ export interface ContextFlags {
   includeScreenshot: boolean
 }
 
-export interface OverlayNotice {
+interface OverlayNotice {
   kind: 'info' | 'warning' | 'error'
   message: string
   /** Optional call to action rendered as a link-button in the overlay. */

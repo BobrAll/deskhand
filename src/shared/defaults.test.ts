@@ -100,13 +100,15 @@ describe('normalizeSettings: extra keys are dropped', () => {
   })
 })
 
-describe('normalizeSettings: a renamed key silently loses its value', () => {
-  it('drops a key that was renamed on disk', () => {
-    // Old builds wrote `screenshotSide`; the current name is `screenshotMaxSide`.
-    const result = normalizeSettings({ screenshotSide: 900 })
+describe('normalizeSettings: a retired key silently loses its value', () => {
+  it('drops a key the schema no longer has', () => {
+    // A2 removed the `hideOverlayOnBlur` toggle; a settings file written by an
+    // older build must still load, with the key dropped and everything else intact.
+    const result = normalizeSettings({ hideOverlayOnBlur: true, hotkey: 'Cmd+Shift+J' })
 
-    expect(result.screenshotMaxSide).toBe(DEFAULT_SETTINGS.screenshotMaxSide)
-    expect(result).not.toHaveProperty('screenshotSide')
+    expect(result).not.toHaveProperty('hideOverlayOnBlur')
+    expect(result.hotkey).toBe('Cmd+Shift+J')
+    expect(result.captureScreenshotByDefault).toBe(DEFAULT_SETTINGS.captureScreenshotByDefault)
   })
 
   it('loses a renamed key inside a nested object too', () => {

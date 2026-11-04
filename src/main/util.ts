@@ -23,9 +23,3 @@ export function truncate(text: string, max: number): { text: string; truncated: 
   return { text: text.slice(0, max), truncated: true }
 }
 
-/** Short, direction-free description of a failure for the user. */
-export function errorMessage(error: unknown): string {
-  if (error instanceof Error) return error.message
-  if (typeof error === 'string') return error
-  return 'Неизвестная ошибка'
-}

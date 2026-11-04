@@ -77,7 +77,7 @@ export interface AgentRunResult {
 }
 
 /** One action that ran, as the continuation prompt describes it. */
-export interface PerformedStep {
+interface PerformedStep {
   label: string
   ok: boolean
 }
@@ -600,4 +600,3 @@ export function createAgentController(host: AgentHost) {
   }
 }
 
-export type AgentController = ReturnType<typeof createAgentController>

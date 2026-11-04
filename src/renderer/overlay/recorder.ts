@@ -24,7 +24,7 @@ const MAX_SECONDS = 120
 /** Below this the recording is silence, not speech. */
 const SILENCE_RMS = 0.0035
 
-export interface RecordedAudio {
+interface RecordedAudio {
   /** 16 kHz mono 16-bit WAV, base64. */
   wavBase64: string
   durationMs: number

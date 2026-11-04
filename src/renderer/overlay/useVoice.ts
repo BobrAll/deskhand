@@ -24,7 +24,7 @@ interface Recorder {
   stop(capture: boolean): Promise<{ wavBase64: string; durationMs: number } | null>
 }
 
-export interface VoiceState {
+interface VoiceState {
   phase: VoicePhase
   /** 0..1, the loudness the main process forwards to the cursor chip. */
   level: number

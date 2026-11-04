@@ -43,7 +43,7 @@ function keyFromEvent(event: KeyboardEvent): string | null {
   return CODE_MAP[event.code] ?? null
 }
 
-export function toAccelerator(event: KeyboardEvent): string | null {
+function toAccelerator(event: KeyboardEvent): string | null {
   const key = keyFromEvent(event)
   if (!key) return null
 

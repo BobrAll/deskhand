@@ -19,8 +19,8 @@ import type { OverlayHost } from './overlay'
  * a small pill about three times as wide as the single line it is tall; it widens
  * to `OVERLAY_WIDTH` only when content actually needs the room.
  */
-export const OVERLAY_WIDTH = 360
-export const OVERLAY_NARROW_WIDTH = 112
+const OVERLAY_WIDTH = 360
+const OVERLAY_NARROW_WIDTH = 112
 /**
  * The floor for the width. A voice turn shows nothing but a few bars, and the
  * window shrinks to fit them so the animation sits right next to the pointer
@@ -44,15 +44,15 @@ const OVERLAY_MIN_WIDTH = 44
  * rectangle, so an otherwise empty voice window still cast a soft grey card over
  * the document behind it.
  */
-export const OVERLAY_VOICE_WIDTH = 80
+const OVERLAY_VOICE_WIDTH = 80
 /**
  * The window is exactly as tall as the folded bubble: one 17px text line plus
  * 6px of padding and the 1px edge on each side (31px). Anything taller leaves a
  * strip of bare vibrancy under the card, which reads as the panel being bigger —
  * and more transparent — than it is.
  */
-export const OVERLAY_MIN_HEIGHT = 31
-export const OVERLAY_MAX_HEIGHT = 520
+const OVERLAY_MIN_HEIGHT = 31
+const OVERLAY_MAX_HEIGHT = 520
 
 /** Clearance between the pointer and the bubble, in points. */
 const GAP = 10
@@ -708,7 +708,7 @@ export function closeOnboardingWindow(): void {
   if (onboardingWindow && !onboardingWindow.isDestroyed()) onboardingWindow.close()
 }
 
-export function closeSettingsWindow(): void {
+function closeSettingsWindow(): void {
   if (settingsWindow && !settingsWindow.isDestroyed()) settingsWindow.close()
 }
 

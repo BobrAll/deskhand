@@ -27,13 +27,6 @@ export interface StreamChunk {
   delta: string
 }
 
-export interface StreamFailure {
-  /** Human readable, already localised for the overlay. */
-  message: string
-  retryable: boolean
-  status?: number
-}
-
 export class ProviderError extends Error {
   readonly retryable: boolean
   readonly status: number | undefined

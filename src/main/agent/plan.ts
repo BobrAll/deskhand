@@ -25,7 +25,7 @@ export const MAX_PLAN_STEPS = 6
 /** Longer than this is a paragraph pasted by accident, not a field being filled. */
 export const MAX_TYPE_CHARS = 600
 
-export interface PlanRejection {
+interface PlanRejection {
   step: number
   label: string
   reason: string

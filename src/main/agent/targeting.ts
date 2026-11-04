@@ -48,7 +48,7 @@ export interface ScreenPoint {
   y: number
 }
 
-export type TargetSource =
+type TargetSource =
   /** The point landed inside a clickable element; its rectangle keeps the aim. */
   | 'point'
   /** An element with the model's label was found; its centre is used. */
