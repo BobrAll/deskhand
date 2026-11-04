@@ -106,11 +106,17 @@ typecheck/test/build → коммит → PROGRESS. После крупных г
       → eafb799 + 89159ed (20 тестов, `held`/`suppressed` остались в `send`, `overlay.ts` 1463 → 1303 строки)
 
 ### Волна 4 — вынос из крупных, renderer (КТ4 после R17; только чистые модули, jsdom нет)
-- [ ] R13 `overlay/metrics.ts` + `overlay/viewFlags.ts`: константы размеров и `deriveView()` — чистые выражения.
-- [ ] R14 `overlay/keyPolicy.ts`: политика клавиш (Escape ×3, ⌘⏎, ⌘C, Enter). ОБА обработчика Enter сохранить.
-- [ ] R15 `overlay/streamRouting.ts`: маршрутизация чанков по requestId; refs остаются в App.
-- [ ] R16 `settings/applyGate.ts`: `holdReasonFor`/`unsaved`/`writable` + одна пара границ вместо трёх копий 64…8192.
-- [ ] R17 `settings/{ApplyStatus,PermissionRow,QuickActionsEditor}.tsx`: перенос один-в-один, пропсы не меняются.
+- [x] R13 `overlay/metrics.ts` + `overlay/viewFlags.ts`: константы размеров и `deriveView()` — чистые выражения.
+      → ae6ab18 + 3bca0cb + dda9380 (10 + 18 тестов; страж R07 переадресован на новый модуль)
+- [x] R14 `overlay/keyPolicy.ts`: политика клавиш (Escape ×3, ⌘⏎, ⌘C, Enter). ОБА обработчика Enter сохранить.
+      → eb32169 (18 тестов; оба вызова `keyPolicy` на месте — A1.7 соблюдён)
+- [x] R15 `overlay/streamRouting.ts`: маршрутизация чанков по requestId; refs остаются в App.
+      → e44f1d0 (14 тестов; refs не переезжали)
+- [x] R16 `settings/applyGate.ts`: `holdReasonFor`/`unsaved`/`writable` + одна пара границ вместо трёх копий 64…8192.
+      → b0080ac (26 тестов; литералов 64/8192 в `App.tsx` не осталось)
+- [x] R17 `settings/{ApplyStatus,PermissionRow,QuickActionsEditor}.tsx`: перенос один-в-один, пропсы не меняются.
+      → 82110fd (8 тестов; **критерий «≤520 строк» не выполнен**: 762 строки — см. PROGRESS, остаток ниже)
+- [ ] R17-остаток `settings/App.tsx` 762 строки: шесть секций JSX (`:381-760`) → `sections/*.tsx`. Только после КТ4.
 
 ### Волна 5 — структура (КТ5 после R19)
 - [ ] R18 `git mv main/overlay.ts → main/overlay/index.ts` + вынос `OverlayHost` в `overlay/host.ts`. Два коммита (правило 5).
