@@ -24,18 +24,18 @@
       нет ключа). Только in-memory/tmp, без реальных данных.
 - [x] T16 Golden-снапшоты prompt.ts по матрице: провайдер × агент вкл/выкл × скриншот есть/нет × язык × quickAction.
 - [x] T17 Тесты agent/plan.ts (normalizePlan, лимиты), verdict.ts («нельзя верить @done вместе с действиями»), targeting.ts.
-- [ ] T18 Тесты agent/geometry.ts, outline.ts, keys.ts; shared/ (intent, defaults, guard'ы); СНАПШОТ набора IPC-каналов.
-- [ ] T19 Тесты llm/http.ts: readSse (чанки посреди события, комментарии `:`), toProviderError (401/402/404/413/429/5xx → точные тексты),
+- [x] T18 Тесты agent/geometry.ts, outline.ts, keys.ts; shared/ (intent, defaults, guard'ы); СНАПШОТ набора IPC-каналов.
+- [x] T19 Тесты llm/http.ts: readSse (чанки посреди события, комментарии `:`), toProviderError (401/402/404/413/429/5xx → точные тексты),
       toTransportError, abort/таймаут. fetch — мок с SSE-фикстурами.
-- [ ] T20 Тесты OpenAIProvider и OpenRouter: URL, заголовки, golden тела запроса, [DONE], невалидный JSON; OpenRouter = OpenAI + 2 заголовка.
-- [ ] T21 Тесты Anthropic: system отдельно, картинки как source, text_delta, message_stop, заголовки, ошибки.
-- [ ] T22 Тесты native/helper.ts: runHelper на моке execFile (успех, невалидный JSON → null, таймаут, maxBuffer, base64 для `type`),
+- [x] T20 Тесты OpenAIProvider и OpenRouter: URL, заголовки, golden тела запроса, [DONE], невалидный JSON; OpenRouter = OpenAI + 2 заголовка.
+- [x] T21 Тесты Anthropic: system отдельно, картинки как source, text_delta, message_stop, заголовки, ошибки.
+- [x] T22 Тесты native/helper.ts: runHelper на моке execFile (успех, невалидный JSON → null, таймаут, maxBuffer, base64 для `type`),
       парсинг строк `watch`.
-- [ ] T23 Тесты context/{collect,selection,activeApp} на моке helper'а, включая деградацию на osascript. Busy-loop — мок.
-- [ ] T24 Тесты paste/clipboard.ts: ПОРЯДОК вызовов (сохранить → записать → Cmd+V → восстановить), Promise-очередь, fallback.
-- [ ] T25 Тесты voice/listen.ts (парсинг событий, рестарт tap) и voice/whisper.ts (аргументы, разбор вывода; child_process мок).
-- [ ] T26 Тесты voice/index.ts (стейт-машина: press → запись → release → whisper → вставка, Escape-cancel, reenabled) и gesture/*.
-- [ ] T27 Тесты agent/index.ts и agent/cursor.ts на fake helper'е: план → выполнение → @look → верификация → «Готово», кэш probe,
+- [x] T23 Тесты context/{collect,selection,activeApp} на моке helper'а, включая деградацию на osascript. Busy-loop — мок.
+- [x] T24 Тесты paste/clipboard.ts: ПОРЯДОК вызовов (сохранить → записать → Cmd+V → восстановить), Promise-очередь, fallback.
+- [x] T25 Тесты voice/listen.ts (парсинг событий, рестарт tap) и voice/whisper.ts (аргументы, разбор вывода; child_process мок).
+- [x] T26 Тесты voice/index.ts (стейт-машина: press → запись → release → whisper → вставка, Escape-cancel, reenabled) и gesture/*.
+- [x] T27 Тесты agent/index.ts и agent/cursor.ts на fake helper'е: план → выполнение → @look → верификация → «Готово», кэш probe,
       abort при движении мыши. Fake timers аккуратно.
 - [ ] T28 Шов для сквозного сценария №1: найди в overlay.ts логику «стрим → ResponseStream → paint/emit» и, если её нельзя тестировать
       как есть, вынеси ДОСЛОВНЫМ переносом (отдельный коммит `refactor(seam)`), затем тест с фейковым провайдером. Не получилось за

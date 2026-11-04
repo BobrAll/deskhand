@@ -1,9 +1,11 @@
 # PROGRESS
 ## Current
-Фаза 0 закрыта (T01–T04), T10 закрыта: baseline снят в 01-baseline.md. T11–T17 закрыты: vitest поднят, 302 теста
-в 10 файлах, `npm test` зелёный, typecheck/build не тронуты. Дальше: T18.
+Фаза 0 закрыта (T01–T04), T10 закрыта: baseline снят в 01-baseline.md. T11–T27 закрыты: 22 файла / 537 тестов
+на мои задачи, весь `npm test` — 35 файлов / 875 тестов, typecheck и build зелёные, поведение не менялось.
+T28 (шов `refactor(seam)`) и T29–T31 уже закоммичены параллельными сессиями (79172e6, ea456aa, 3b4f4c7,
+7a4876d, a7332c1) — их галочки оставлены их сессиям. Дальше: T32 и далее.
 ## Last commit
-3171a2b test(agent): cover plan normalisation, verdict and targeting
+4b34dcb test(agent): cover the runner guards, abort paths and cursor layer
 ## Log (одна строка на задачу: ID — hash — итог)
 T01 — bd12743 — 56 каналов CH + `shell:open-external`: направление/payload/хендлер/потребитель; 6 окон с webPreferences и создателями; перепроверены 5 фактов CONTEXT.md.
 T04 — f416865 — карты windows.ts (секции, `OverlayHost`, 10 модульных `let`, грейс-период), overlay/App.tsx (13 state + 18 ref, 7 подписок), settings/App.tsx (черновик↔диск, дебаунс 450 мс → `settings:hold` → грейс-период); сквозные дубли — в §8.
@@ -17,11 +19,23 @@ T14 — 57fa9ec — `normalizeSettings()` 50 тестов: пустой/null/п�
 T15 — 4addc4f — `settings/store.ts` 12 тестов (in-memory electron-store: битый файл → `clearInvalidConfig` → флаг recovered → memoryFallback, нечитаемый `get`, падение `set`) и `secrets.ts` 18 тестов (мок safeStorage: enc:/plain:, залоченный Keychain, пустой payload, `keyStatuses`). Мутации: `clearInvalidConfig:false` и снятый `trim` ключа ловятся.
 T16 — e01cb65 — golden-снапшоты `prompt.ts`: 16 вариантов `buildRequest` (mode × act × image × язык) + `buildContinue`/`buildVerify`/`buildRefine`, плюс проверки блока контекста, порядка инструментов (@click до @point), лимитов 12000/8000 и заметок про историю/недоступное управление. Провайдер в промпт не входит (он в заголовках) — ось «провайдер» из T16 неприменима.
 T17 — 3171a2b — `agent/plan.ts` + `verdict.ts` (33 теста) и `targeting.ts` (33 теста): лимиты 6/600, отключённые печать и клавиши (с приоритетом над мусорным шагом), координаты вне кадра, `@done`/`@look` обрывают план, «@done вместе с действиями — не пропуск»; в targeting — три правила (точка внутри / label / snap), conflict-путь, отбраковка нецелей. Мутации ловятся.
+T18 — bf636cb — geometry/keys/outline (59 тестов) + shared: intent (12), defaults-guards (25), снапшот IPC-каналов (56 каналов, счётчики по неймспейсам). Мутации clamp'а, второй клавиши, MAX_ITEMS, QUESTION_AT_START, схемы URL — ловятся.
+T19 — d2fb771 — `llm/http.ts` 41 тест: readSse (чанки посреди события, комментарии `:`, побайтовый UTF-8, склейка нескольких `data:`, release ридера), toProviderError (401/402/403/404/413/429/5xx → точные тексты), toTransportError. CRLF разделителем НЕ считается — закреплено как характеристика.
+T20 — be979b0 — `llm/openai.ts` 26 тестов: URL/заголовки/golden тело, `[DONE]`, битый JSON, `Ошибка модели:`, OpenRouter = [OI] + `HTTP-Referer`/`X-Title` и свой текст про баланс. Мутации `[DONE]` и `max_tokens` ловятся.
+T21 — 6fc48d3 — `llm/anthropic.ts` 28 тестов: system вынесен из messages, картинки как `source`, `text_delta`/`message_stop`, ровно 3 заголовка и без `Authorization`, 529. Мутации system и message_stop ловятся.
+T22 — 7f2f492 — `native/helper.ts` 56 тестов: helperBinary (packaged/unpackaged, негативный кэш), runHelper (argv, таймаут 4000, maxBuffer), helperFront с деградацией на osascript, base64 для `type`, парсинг `watch`. `process.resourcesPath` в тестах задаётся через defineProperty.
+T23 — ff7a69e — context: activeApp, selection (busy-loop обойдён spy на `Date.now` + мок `delay`; дедлайн 450 мс, обрезка 24 000), collect (матрица флагов, исключённое приложение, проглоченное падение selection). Мутации флага скриншота и восстановления буфера ловятся.
+T24 — aed4544 — paste: порядок `writeText → delay 40 → delay 300 → restoreClipboard`, активация → ожидание окна (1500/50) → вставка → восстановление, три fallback-сообщения; clipboard — Promise-очередь и приоритет png → bookmark → text/html/rtf.
+T25 — 5e40248 — voice/listen.ts 33 теста (parseAccelerator, argv `voice 49 … swallow`, рестарт tap, проброс событий) и whisper.ts 36 (argv, `-nt/-np`, потоки = min(8, max(2, ядра/2)), фильтр `(music)`/`[BLANK_AUDIO]`, скачивание модели). НАЙДЕН БАГ: экспоненциальный backoff недостижим — BUGS.md R2, тест-характеризация.
+T26 — fcb57be — voice/index.ts 45 тестов (press → record → release → whisper → вставка, minDuration/maxDuration читаются в момент события, watchdog 5 с и 30 с, supersede, `· на глаз`-эквивалент уровня, attach/mode/stop) и gesture: index 15 + listen 20 (argv `gesture 3 400`, ready/tap/press/release/cancel, коды ошибок, тот же backoff-баг R2).
+T27 — 4b34dcb — agent/index.ts 41 тест (три причины недоступности, порядок passthrough → arming → шаги, guard'ы печати/клавиш, проверка реального фокуса, конфликт цели, `@done` → «Готово» против «Выполнено», verify скрывает «Готово», abort по Escape/мыши, активация только своей цели) и cursor.ts 29 тестов (окно, якорь, флип подписи, follow 16 мс, parking внутри turn, токены turn'ов, fade-out 160 мс).
 ## Blocked
 ## Open questions
 - РЕШЕНО (Александр, сессия T01): 6 неиспользуемых методов моста (`settings.validateHotkey`, `onboarding.close`, `quickActions.defaults`, `permissions.microphone`, `voice.micPermission`, `voice.requestMicPermission`) и канал `shell:open-external` разрешено удалить в A2. Удалять с grep-доказательствами по правилу 7, отдельными коммитами.
 - T14: `normalizeSettings({})` возвращает `models: {openrouter:'', openai:'', anthropic:''}`, а не модели из `DEFAULT_SETTINGS`. Практически безопасно (`llm/index.ts:resolveModel` падает на `providerInfo().defaultModel`), но это единственный блок, который не совпадает с дефолтами. Тесты закрепляют как есть; менять — по твоему «ок».
 ## Заметки (посторонние находки)
+- T18–T27: набор тестов вырос с 302 до 875 тестов; ни одна строка продуктового кода не менялась — только новые `*.test.ts` (+ снапшот `shared/__snapshots__/ipc.test.ts.snap`).
+- T25: `voice/listen.ts` и `gesture/listen.ts` не используют экспоненциальный backoff — `launch()` сбрасывает `failures` на `ready`, поэтому рестарт всегда 1000 мс. Не чинил (правило «поведение неизменно»), закреплено характеризацией и BUGS.md R2.
 - T03: `emit` в overlay.ts принимает `string`, а не ключ `CH` (`overlay.ts:287`) — единственная точка, где типобезопасность каналов теряется; поведение не менял.
 - T03: `MAX_SHOT_AGE_MS` (`overlay.ts:400`) — единственная константа объявлена в теле контроллера, а не в блоке 114–169. Не баг, но при разрезании файла её место придётся выбирать.
 - Расхождения с CONTEXT.md: helper.m 1356 строк (не 1529); overlay.css объявляет 6 кастом-свойств, ни одного общего имени с base.css (не «~24 1:1») — дедупликация (а) в A3 под вопросом; IPC-подписки в 6 файлах (не 5).
