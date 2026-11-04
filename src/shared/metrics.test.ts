@@ -69,10 +69,14 @@ describe('metrics: the widths have one source', () => {
   })
 
   it('is what the overlay renderer lays itself out with', () => {
-    const source = read('renderer/overlay/App.tsx')
+    // R13 moved the renderer's constants into `overlay/metrics.ts`, so the
+    // renderer half of this guard reads that file: the widths still have to come
+    // from here and still must not be written out anywhere in the renderer.
+    const source = read('renderer/overlay/metrics.ts')
     for (const name of ['BUBBLE_WIDTH', 'BUBBLE_NARROW_WIDTH', 'BUBBLE_VOICE_WIDTH']) {
       expect(source, name).toContain(name)
     }
     expect(source).not.toMatch(/const (NARROW_WIDTH|VOICE_WIDTH|FULL_WIDTH) = \d/)
+    expect(read('renderer/overlay/App.tsx')).not.toMatch(/const (NARROW_WIDTH|VOICE_WIDTH|FULL_WIDTH) = \d/)
   })
 })
