@@ -4,13 +4,17 @@
 39 файлов / 940 тестов. T34 добавила два документа: MANUAL_SMOKE.md и 02-test-plan.md. T35 — контрольная
 точка №1: прогон MANUAL_SMOKE сделан, три дефекта записаны в BUGS R5–R7 (не чинились, ждут «ок»), ответы на
 4 вопроса — в разделе «Open questions».
-Фаза 2: **A1, A2, A3 закрыты**. A1 — 03-audit.md A1.0–A1.7. A2 — мусор вычищен шестью коммитами
+Фаза 2: **A1, A2, A3, A4 закрыты**. A1 — 03-audit.md A1.0–A1.7. A2 — мусор вычищен шестью коммитами
 (`npm test` 39 файлов / 940 тестов, typecheck и build зелёные, `knip` чист). A3 — 03-audit.md A3.0–A3.11:
 из известных дублей (а)–(г) подтверждён только (г), плюс найдены 8 механических мест под вынос
 (`pageLoad`, `denyExternalLinks`, `resolveArea`, `imagePart`, `metrics`, `layerWindow`, `tapListener`)
-и данные таблицы клавиш; два вопроса — в «Open questions». Следующая — A4.
+и данные таблицы клавиш; два вопроса — в «Open questions». A4 — 03-audit.md A4.0–A4.8: проводка IPC
+образцовая (50 каналов / 37 хендлеров / preload 1:1, 13 push-only, расхождений 0), слои чистые, циклов нет;
+найдены 8 мелких дефектов гигиены, 4 крупных долга (overlay.ts 1 409 строк без теста, геометрия пузыря,
+разнос windows.ts, ESLint) и 5 вопросов — в «Open questions». **Фаза 2 закрыта.** Следующая — P1
+(план фазы 3), затем P2 `[STOP]`.
 ## Last commit
-436cfe8 docs(refactor): audit the known duplicates and decide what to extract (A3)
+f35b082 docs(refactor): audit architecture and hygiene (A4)
 ## Log (одна строка на задачу: ID — hash — итог)
 T01 — bd12743 — 56 каналов CH + `shell:open-external`: направление/payload/хендлер/потребитель; 6 окон с webPreferences и создателями; перепроверены 5 фактов CONTEXT.md.
 T04 — f416865 — карты windows.ts (секции, `OverlayHost`, 10 модульных `let`, грейс-период), overlay/App.tsx (13 state + 18 ref, 7 подписок), settings/App.tsx (черновик↔диск, дебаунс 450 мс → `settings:hold` → грейс-период); сквозные дубли — в §8.
@@ -44,6 +48,7 @@ T34 — 296b6a1 + ae0517d — документы вместо кода: `MANUAL_
 A1 — 1c35276 — аудит четырёх крупных модулей в `03-audit.md` (только чтение, код не менялся): 48 строк таблиц, у каждого пункта `файл:строки` · проблема · доказательство · риск · покрыто тестами. `overlay.ts` — 10 ответственностей, `send` = 658 строк (41.7 %), `verify()` на 159 строк внутри `send` с 11 зависимостями и 3 мутациями, 3 копии разбора data URL, 3 копии system-сообщения, `session` — 135 упоминаний в 127 строках. `windows.ts` — 6 ответственностей и 11 модульных `let`; геометрия = 154 строки чистых решений (единственный крупный отделимый кусок); 5 копий `setWindowOpenHandler` и 4 копии «dev ? loadURL : loadFile» по `main/`, причём копии уже разошлись флагом `/i`; `closeSettingsWindowWhenSettled` — синоним без своей логики. `overlay/App.tsx` — `App()` 1 184 строки, 55 хуков, JSX 301 строка; 3 версии протокола «бросить запрос» (из них кнопка «Стоп» единственная без `ignoredRequestRef`), 2 копии обнуления сессии, зеркала ref пишутся в теле рендера, `mode` — запись без читателей. `settings/App.tsx` — `App()` 744 строки, 27 хуков, 418 строк JSX, 21 из 22 `patch(` в разметке, граница `64…8192` записана трижды, `hotkeyError` живёт вне типа под приведением, `unsaved` содержит недостижимую ветку. Итог: 11 кандидатов «выносимо без смены поведения» в порядке цены (первый — `overlayRequest.ts`, 212 строк, единственный шов `send`, который не двигает экран) и 9 узлов «держатся только дисциплиной вызовов». Побочно: Enter в поле обслуживают два обработчика — проверено по исходникам `react-dom` и запуском приложения, дефектом не является (отменяется до сети при скриншоте по умолчанию), но вынос `keyPolicy.ts` обязан сохранить оба вызова; `knip` дал 2 unused files / 5 exports / 22 types, но `toAccelerator` — ложное срабатывание; пункт (а) инвентаря «overlay.css повторяет 24 переменные base.css» в текущем дереве НЕ воспроизводится (0 общих имён) — дедупликация в A3 не нужна; пункты (в) и (г) подтверждены.
 A2 — ef7d703 + 091fd80 + 3fba8c7 + 077b216 + 2b3bd94 + 749feae — мусор вычищен, шесть коммитов по одному решению. (1) ef7d703 — мёртвая поверхность IPC: 6 методов моста (`voice.micPermission`, `voice.requestMicPermission`, `quickActions.defaults`, `onboarding.close`, `settings.validateHotkey`, `permissions.microphone`), канал `shell:open-external` (жил вне `CH`, дублировался четырьмя `setWindowOpenHandler`) и две осиротевшие функции — `canRegister` (`hotkey.ts`, единственный вызов был в удалённом хендлере) и `readMicrophonePermission` (`permissions.ts`, то же); `permissions:request-microphone` намеренно оставлен — его зовут настройки и онбординг. (2) 091fd80 — окно `hud` целиком: `main/hud.ts` + `hud.test.ts` (20 тестов) + `renderer/hud/*` (html/css/main.ts), namespace в `api.ts`/`ipc.ts`/`preload`, `CursorHud` из `IpcDeps`, создание и `destroy()` в `index.ts`, вход `electron.vite.config.ts`, паттерны `knip.json`; четыре типа (`VoiceHudPhase`/`VoiceHudState`/`HudSide`/`HudFrame`) ушли вместе с ним. (3) 3fba8c7 — `AnnotationStream` из `annotations.ts` (60 строк): ни одного конструктора в `src/`, единственный потребитель — `.scratch/annot-probe/probe.ts`; это же был единственный выживший мутант T33. (4) 077b216 — тик `hideOverlayOnBlur` (BUGS.md R4): поле, дефолт, ветка нормализации и чекбокс убраны, `on('blur')` не дописывали (это новая функция, а не уборка); решение Александра — «делай просто все». (5) 2b3bd94 — unused exports по knip, каждый проверен руками (правило 7): удалены `dataUrlToFile`, `errorMessage`, `AgentController`, `StreamFailure`; сужены до модульных пять `OVERLAY_*` констант, `closeSettingsWindow`, `toAccelerator` и 14 типов без внешних импортёров. (6) 749feae — документы под решения: BUGS.md R4 закрыт, MANUAL_SMOKE §9.8 и §12 без hud и без тика, CONTEXT.md без выбывшего ключа. `test:gesture` оценён и оставлен: `scripts/test-gesture.mjs` компилирует `scripts/gesture.test.c` (11 проверок, 0 падений) и не запускает ни helper, ни систему — безопасен. Корневой `index.js` (67 КБ собранного бандла, в `.gitignore` как `/index.js`) удалён с диска; в git его не было, поэтому коммита не требует. Проверка: typecheck (node+web) pass, `npx vitest run` 39 файлов / 940 тестов pass, `npm run build` pass, `knip` — 0 unused files/exports (только 4 подсказки конфигурации и `clang` как unlisted binary), `depcheck` — 0 лишних зависимостей (остались ложные «missing» на алиасы `@shared/*`).
 A3 — 436cfe8 — дубли: jscpd после A2 = 19 клонов / 270 строк (0.96 %; ts 235, css 0, markup-шапки 35). (а) `overlay.css` vs `base.css` — 0 общих имён, выносить нечего; (б) `settings/App.tsx:337-357` ↔ `onboarding/App.tsx:57-83` — 10 общих строк, но `setBundle`+`save`+таймер различаются → целиком не выносить; (в) 13 IPC-подписок в 5 файлах, общего состояния нет → не выносить; (г) `KEY_CODES` 62/64 и `FUNCTION_CODES` 20/20 совпадают с точностью до записи (скрипт-сверка, 0 расхождений), `MODIFIER_FLAGS` — надмножество → выносить ТОЛЬКО данные, таблицы модификаторов не сливать (иначе `super+s` станет валидным хоткеем); helper/osascript — один `runOsascript` (`helper.ts:75-87`), дубля нет; окна: `loadPage` ×3, `setWindowOpenHandler` ×4 (в `cursor.ts:139` уже разошёлся флагом `/i`), опции слоя 20 из 23/22 строк — все три под вынос. Плюс внутрифайловые: data URL ×3 и system-префикс ×3 в `overlay.ts`, bounds→area в `screenshot.ts`, `clamp01` ×3. Не трогаем: токены окон, `index.html` ×5, тестовые обвязки.
+A4 — f35b082 — архитектура и гигиена (только чтение). Проводка IPC — эталонная: 50 каналов, 37 хендлеров (23 handle + 14 on), preload использует все 50, `invoke`↔`handle` 23↔23 и `send`↔`on` 14↔14 совпадают как множества, 13 каналов push-only; `madge` — 0 циклов на 111 файлах; слои чистые (`shared` без electron, `main` без renderer, `renderer` без `main`), `any` 0, non-null `!` 0, приведений 38. Найдено: (1) `ipc.ts:294-296` — второй `app.on('second-instance')` поверх `index.ts:188-190`; (2) `ipc.ts:298-299` `void PROVIDERS` + `PROVIDER_IDS` руками против `PROVIDERS`; (3) `hotkeyError` вне `SettingsBundle` под приведением в `App.tsx:178`; (4) `open()` зовётся 7 раз без `.catch`, внутри `openInternal` нет `try`, глобальных `unhandledRejection` нет; (5) 4 `async`-обработчика в `settings/App.tsx` без `try`; (6) `ErrorBoundary` нет ни в одном окне; (7) `clamp` без `Number.isFinite`; (8) `let settingsBusy` объявлен ниже пользователя. Глобальное состояние: 38 модульных `let` (cursor.ts 12, windows.ts 11, pointer.ts 5) + 27 в замыканиях — вердикт «не чинить», кроме порядка объявления. helper.m (1 356 строк) — только анализ: `main` = 20 `strcmp`, две политики на отказ Accessibility, дублей внутри нет. ESLint 9 + typescript-eslint 8 `recommended` по 106 файлам — 2 замечания (оба `_`-префикс в тестах); Prettier 3 — 84 файла / 1 377 строк диффа → рекомендация «ESLint да, Prettier отдельным коммитом после фазы 3». Итог: 8 мелких дефектов (все низкий риск) + 4 долга (overlay.ts высокий, геометрия/разнос windows.ts средние, ESLint низкий) + 5 вопросов.
 ## T35 — контрольная точка №1 (сводка для тебя)
 
 **Где мы.** Фаза 1 (тесты) закрыта: T11–T34. Поведение не менялось ни на строку — за всю фазу
@@ -115,12 +120,54 @@ A1 крупные модули, A2 мусор (включая три сущно�
   (`agent/cursor.ts:139`), в трёх других копиях флага нет; (2) разрешить `super`/`meta`/`opt` в настройках
   хоткея (`voice/listen.ts:115-124` знает 7 модификаторов против 10 в `agent/keys.ts`) — иначе `Super+Space`
   остаётся ошибкой ввода; сливать `MODIFIER_FLAGS` без этого решения нельзя.
+- A4, нужен твой ответ (5 вопросов, все — из `03-audit.md` A4.8):
+  1. **ESLint** (9 + `typescript-eslint` 8, набор `recommended`, `argsIgnorePattern: '^_'`) и `.editorconfig` —
+     добавляем? Замер: 2 замечания на 106 файлов, оба в тестах (`_handler`, `_options`). Правило 3 разрешает
+     (devDependencies), поведение не меняется.
+  2. **Prettier** — после фазы 3 отдельным коммитом `style:`, или не добавляем вовсе? Замер: 84 файла из 106,
+     1 377 строк диффа. Моя рекомендация — после фазы 3, иначе коммит неревьюируем.
+  3. **`settingsWereRecovered`** (`store.ts:85`) вычисляется, покрыт тестами и не вызывается ниоткуда в prod:
+     забытый индикатор «настройки восстановлены после порчи файла» (тогда задача в фазу 5) или мёртвый код
+     (тогда удаляем вместе с тестами)?
+  4. **Дефекты 1 и 8** из таблицы A4.8 — это исправления поведения: второй запуск `.app` перестанет звать
+     `open()` дважды; ошибки в настройках начнут показываться вместо тихого unhandled rejection. По правилу 2
+     чиню только с «ок». Записывать в `BUGS.md` как R8/R9 или сразу задачами в план фазы 3?
+  5. **Долги A–C** (продолжить вынос из `createOverlayController`; вынести геометрию пузыря в `main/bubble.ts`;
+     разнести `windows.ts`) — в план фазы 3? Порядок предлагаю B → C → A: от локального к рискованному, и A
+     только после того, как B и C покажут, что тесты на вынесенном пишутся без моков Electron.
 - РЕШЕНО (Александр, сессия T35, «ок» на план по умолчанию):
   - `hideOverlayOnBlur` — не трогать сейчас; остаётся BUGS.md R4. Разбирать в A2 вместе с вопросом «дореализовать или убрать тик».
   - `hud` (411 строк + 20 тестов) — удалить в A2 отдельным коммитом, с grep-доказательствами по правилу 7.
   - `AnnotationStream` (`annotations.ts`) — удалить в A2 тем же пакетом; потребитель только `.scratch/annot-probe/probe.ts`.
   - `normalizeSettings({})` с пустыми `models` (с T14) — оставить как есть: `resolveModel` подставляет `providerInfo().defaultModel`, поведение безопасное.
 ## Заметки (посторонние находки)
+- A4: проводка IPC проверена скриптом, а не глазами — 50 каналов `CH`, 37 хендлеров (23 `handle` + 14 `on`),
+  `invoke`↔`handle` и `send`↔`on` совпадают как множества, 13 каналов только main→renderer. Ни одного хендлера
+  вне `CH`, ни одного канала без хендлера (кроме push). `ipc.test.ts:200-260` держит этот инвариант.
+- A4: `madge --circular` по 111 файлам — циклов нет. Слои чистые: `shared` не знает electron, `main` не тянет
+  renderer, `preload` не тянет `main`, `renderer` не тянет `main` (только `@shared/*`, 17 импортов).
+- A4: глобальное состояние посчитано скриптом — 38 модульных `let` в 10 файлах (`agent/cursor.ts` 12,
+  `windows.ts` 11, `pointer.ts` 5, `store.ts` 3, `tray.ts` 2, остальные по одному) плюс 27 в замыканиях фабрик
+  (`voice/index.ts` 11, `agent/index.ts` 8, `overlay.ts` 5, `gesture/index.ts` 3). Вердикт — не чинить: оконные
+  синглтоны это модель Electron, а замыкания уже инкапсуляция.
+- A4: `open()` зовётся из 7 мест (`ipc.ts:295`, `index.ts:38,55,72,122,180,189`), ни одно не ставит `.catch`,
+  а внутри `openInternal` (`overlay.ts:502-624`) нет `try`. `process.on('unhandledRejection')` и
+  `uncaughtException` в проекте отсутствуют — отказ карточки диагностируется только консолью.
+- A4: 58 `catch` в 25 файлах (без тестов), из них 15 пустых — и все 15 с объясняющим комментарием, то есть это
+  осознанный best-effort, а не проглоченные ошибки. Реальная проблема — асимметрия (см. A4.4.1–A4.4.3).
+- A4: ESLint 9 + `typescript-eslint` 8 (`recommended`) прогнан из `/tmp/a4lint` по 106 файлам — 2 замечания,
+  оба `no-unused-vars` на `_`-префикс в тестах. Prettier 3 с `--single-quote --no-semi --print-width 100
+  --trailing-comma none` — 84 файла, 1 377 строк. В проект ничего не добавлялось (правило 3).
+- A4: `helper.m` — 1 356 строк, 43 `static` + `main` (157 строк), 5 глобальных, 5 секций `// MARK:`. Внутри
+  дублей под вынос нет (это подтверждает A3: клоны helper-обвязки в `listen.ts`, не в C). Две политики на
+  один отказ Accessibility: `agentRequireAccessibility` → exit 1, `commandVoice` → exit 0; родитель видит
+  `null` в обоих случаях.
+- A4: `windows.ts:739` — комментарий утверждает «tray-only (accessory) activation policy», но
+  `setActivationPolicy` не вызывается нигде, а `LSUIElement` в `package.json:build.mac.extendInfo` нет:
+  приложение стартует обычным, с иконкой в Dock (что верно и описано в `index.ts:24-27`). Комментарий пережил код.
+- A4: 6 экспортов имеют единственного потребителя — тесты: `isPointerVisible`, `currentHotkey`,
+  `settingsWereRecovered`, `helperCursor`, `toFramePoint`, `isDownloading`. Пять из них — нормальные
+  аксессоры, `settingsWereRecovered` — единственный, где функциональность не доехала до UI.
 - A3: (а) подтверждено повторно — `overlay.css` объявляет 3 своих токена (`:24-39`), `base.css` — 23, общих имён НОЛЬ, jscpd по css — 0 клонов. Дедупликация не нужна, заявление в CONTEXT.md §Renderer снять (сделано).
 - A3: (в) подписок не 7 «в одном файле и по одной в четырёх», а 13 в 5 файлах: `overlay/App.tsx` 7 (`:423,424,449,452,453,456,820`), `overlay/useVoice.ts` 3 (`:232,237,241`), `settings/VoiceTab.tsx` 1 (`:47`), `pointer/main.ts` 1 (`:17`), `cursor/main.ts` 1 (`:20`). В `settings/App.tsx` подписок IPC нет вовсе.
 - A3: (г) сверка скриптом — `KEY_CODES` 62 общих записи (из 64 в `keys.ts` и 62 в `voice`), `FUNCTION_CODES` 20/20, `MODIFIER_FLAGS` 7 общих; расхождений в значениях 0. `keys.ts` лишний знает `esc`, `forwarddelete`, `meta`, `super`, `opt`.
