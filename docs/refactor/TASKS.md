@@ -8,7 +8,7 @@
 - [ ] T02 Таблица helper-контракта: команда → argv → формат ответа → кто вызывает → fallback → 00-inventory.md. Прочитай `probe` в helper.m
       на побочные эффекты и запиши вывод.
 - [ ] T03 Карта overlay.ts: ответственности, границы секций (строки), разделяемое внутреннее состояние → 00-inventory.md.
-- [ ] T04 Карты windows.ts, renderer/overlay/App.tsx, renderer/settings/App.tsx — так же → 00-inventory.md.
+- [x] T04 Карты windows.ts, renderer/overlay/App.tsx, renderer/settings/App.tsx — так же → 00-inventory.md.
 
 ## Фаза 1 — базовая линия и тесты
 - [ ] T10 Baseline: `typecheck`, чистый `build`, метрики (файлы/строки по директориям, размеры бандлов, время сборки, jscpd, knip),
