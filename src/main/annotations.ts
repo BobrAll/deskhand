@@ -113,66 +113,6 @@ export function parseAnnotationLine(line: string): ParsedLine | null {
 }
 
 /**
- * Streaming filter: splits the incoming deltas into answer text and annotations.
- *
- * The only state is the tail of a line that has not been finished yet. Feeding a
- * chunk that ends mid-line therefore produces the safe text immediately and
- * holds the rest back, so `@po` never leaks into the answer.
- */
-export class AnnotationStream {
-  private pending = ''
-  private shapes: Annotation[] = []
-
-  /** Removes protocol syntax from a delta; returns the text to show. */
-  push(delta: string): { text: string; annotations: Annotation[] } {
-    this.pending += delta
-    const annotations: Annotation[] = []
-    let text = ''
-
-    let newline = this.pending.indexOf('\n')
-    while (newline !== -1) {
-      const line = this.pending.slice(0, newline)
-      this.pending = this.pending.slice(newline + 1)
-      const parsed = parseAnnotationLine(line)
-      if (parsed) {
-        annotations.push(...parsed.annotations)
-        if (parsed.text) text += `${parsed.text}\n`
-      } else {
-        text += `${line}\n`
-      }
-      newline = this.pending.indexOf('\n')
-    }
-
-    // A protocol line that is still being typed must not be flushed as text. The
-    // check is cheap and only looks at the start of the tail.
-    if (this.pending.trimStart().startsWith('@')) {
-      this.shapes.push(...annotations)
-      return { text, annotations }
-    }
-
-    text += this.pending
-    this.pending = ''
-    this.shapes.push(...annotations)
-    return { text, annotations }
-  }
-
-  /** Flushes whatever is left when the stream ends. */
-  finish(): { text: string; annotations: Annotation[] } {
-    const tail = this.pending
-    this.pending = ''
-    if (!tail) return { text: '', annotations: [] }
-    const parsed = parseAnnotationLine(tail)
-    if (parsed) return { text: parsed.text, annotations: parsed.annotations }
-    return { text: tail, annotations: [] }
-  }
-
-  /** Everything drawn for the current request, in arrival order. */
-  collected(): Annotation[] {
-    return this.shapes
-  }
-}
-
-/**
  * Drops annotations that cannot be drawn sensibly.
  *
  * Models are unreliable with coordinates: a shape covering a third of the screen
