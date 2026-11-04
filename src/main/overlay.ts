@@ -34,10 +34,10 @@ import { getProvider, resolveModel } from './llm'
 import { ProviderError, type ChatMessage, type ContentPart } from './llm/provider'
 import { copyText, pasteAnswer } from './paste'
 import { hideAnnotations, showAnnotations } from './pointer'
-import { buildContinue, buildVerify } from './prompt'
-import { readVerdict } from './agent/verdict'
+import { buildContinue } from './prompt'
 import { imagePart } from './imagePart'
 import { buildTurnRequest } from './overlay/request'
+import { shouldVerify, verifyResult } from './overlay/verify'
 import { consumeTurnStream } from './turnStream'
 import { helperActivate, helperFront } from './native/helper'
 import { getApiKey } from './settings/secrets'
@@ -149,25 +149,7 @@ const HISTORY_TURNS = 2
  */
 const MAX_HISTORY_ANSWER_CHARS = 1_500
 
-/**
- * How many verification requests one turn may spend.
- *
- * Two is "посмотреть, и если не вышло — исправить и посмотреть ещё раз". A third
- * would be an agent loop the user never asked for, and by then the honest answer
- * is the screenshot itself: "не получилось, вот что на экране" beats a third
- * guess about why.
- */
-const MAX_CHECKS = 2
 
-/**
- * Pause before the verification screenshot, in ms.
- *
- * A menu is drawn after the click that opened it, a list re-sorts after the
- * keystroke that filtered it. Photographing the screen in the same millisecond
- * catches a half-open panel, and the check then reports a failure that is really
- * a frame taken too early — worse than no check at all, because it is confident.
- */
-const VERIFY_SETTLE_MS = 320
 
 export function createOverlayController(host: OverlayHost) {
   let session: Session | null = null
@@ -1119,9 +1101,14 @@ export function createOverlayController(host: OverlayHost) {
       // disagree: exactly the turns that withheld «Готово» are the turns that get
       // checked, and a text-only answer is never sent to a screenshot it has no
       // claim about.
-      const shouldVerify = willVerify && !interrupted && (performedLines.length > 0 || claimedDone)
-
-      if (shouldVerify) {
+      if (
+        shouldVerify({
+          willVerify,
+          interrupted,
+          performed: performedLines.length,
+          claimedDone
+        })
+      ) {
         suppressed = true
         held = ''
         // Said before the request, not after: the runner has just announced the
@@ -1135,15 +1122,30 @@ export function createOverlayController(host: OverlayHost) {
           plan: []
         })
 
-        const verified = await verify()
+        const check = await verifyResult({
+          settings,
+          requestId: request.requestId,
+          prompt: request.prompt,
+          apiKey,
+          maxTokens,
+          performedLines,
+          signal: abort.signal,
+          isAlive: () => Boolean(session),
+          publishAgent,
+          capture: () => captureFor(session as Session),
+          streamRound,
+          execute: (run) => agent.execute(run),
+          lastPhase: () => agent.last().phase,
+          delay
+        })
         if (abort.signal.aborted || !session) return
 
-        if (verified === true) {
+        if (check.outcome === 'confirmed') {
           // Verified: the plan did what it claimed. The card says so in the agent
           // row and stays free of prose, exactly like every other action turn —
           // the evidence sentence was for us, not for the user.
           publishAgent({ phase: 'done', step: 0, total: 0, label: 'Готово', plan: [] })
-        } else if (verified === false) {
+        } else if (check.outcome === 'unconfirmed') {
           // Looked, and the request is not fulfilled. The row must not claim
           // success, and the model's own words — what it actually sees — are the
           // answer, because a screenshot is a better explanation than a status.
@@ -1155,177 +1157,15 @@ export function createOverlayController(host: OverlayHost) {
             plan: [],
             message: 'По экрану не видно, что просьба выполнена.'
           })
+          // The check's words are the answer: what is on the screen, described by
+          // the model that just looked at it, instead of a status word about a
+          // claim nobody could confirm. Whatever the turn narrated earlier stays
+          // dropped — a plan ran, so those sentences came before it.
+          suppressed = false
+          held = check.evidence
         }
-        // `null` means the check never ran (no screenshot): `verify` has already
-        // said why, and the honest "не подтверждено" stands.
-      }
-
-      /**
-       * Asks the model whether the request is fulfilled, retrying once if it is
-       * not and a correction is still possible.
-       *
-       * Returns `true` when the screen confirms it, `false` when the model looked
-       * and said no, and `null` when it never got to look — a missing screenshot
-       * must not be reported as either outcome.
-       */
-      async function verify(): Promise<boolean | null> {
-        // Re-stated here because the guard in `send` narrows `apiKey` outside this
-        // closure only; without a key the check cannot run, and that is not the
-        // same statement as "the request is not fulfilled".
-        if (!session || !apiKey) return null
-        let evidence = ''
-
-        /**
-         * Ends the check when the turn was cancelled under it.
-         *
-         * Escape, a new question and closing the card all arrive as an abort, and
-         * none of them has a plan to stop — there is nothing moving, only a
-         * request in flight. Without this the row would keep saying "проверяю"
-         * over a request that will never answer.
-         */
-        const bail = (): null => {
-          if (session) {
-            publishAgent({
-              phase: 'aborted',
-              step: 0,
-              total: 0,
-              label: '',
-              plan: [],
-              message: 'Проверка остановлена.'
-            })
-          }
-          return null
-        }
-
-        for (let check = 1; check <= MAX_CHECKS; check += 1) {
-          if (check > 1) {
-            // A correction ran, so the screen moved again: the row goes back to
-            // "проверяю" for the second look instead of keeping the fix's own
-            // "Выполнено" — which is the exact sentence under test.
-            publishAgent({
-              phase: 'checking',
-              step: 0,
-              total: 0,
-              label: 'Проверяю по экрану, выполнена ли просьба',
-              plan: []
-            })
-          }
-          // A forced capture, not `ensureFreshScreenshot`: that helper happily
-          // reuses a shot younger than 600 ms, and the shot it would reuse was
-          // taken *while the plan was running*. The whole question here is what
-          // the screen looks like after the last action, so the delay is part of
-          // the answer and the picture has to be a new one.
-          await delay(VERIFY_SETTLE_MS)
-          if (abort.signal.aborted || !session) return bail()
-          const shot = await captureFor(session)
-          if (abort.signal.aborted || !session) return bail()
-          if (!shot) {
-            publishAgent({
-              phase: 'error',
-              step: 0,
-              total: 0,
-              label: '',
-              plan: [],
-              message: 'Не удалось посмотреть на экран — результат не проверен.'
-            })
-            return null
-          }
-
-          const freshArea = shot.area
-          const checkRequest = buildVerify({
-            performed: performedLines,
-            prompt: request.prompt,
-            // The last check may not act: a fix it invents would be executed with
-            // no chance to look at the result, which is the blind click this whole
-            // mechanism exists to prevent. It reports instead.
-            canFix: check < MAX_CHECKS
-          })
-
-          const parts: ContentPart[] = []
-          const image = imagePart(shot.dataUrl)
-          if (image) parts.push(image)
-          parts.push({ type: 'text', text: checkRequest.userText })
-
-          // A new local name on purpose: the outer `round` holds the plan's answer
-          // and is still read after this block, so a verdict must not overwrite it.
-          const verdict = await streamRound({
-            messages: [
-              {
-                role: 'system',
-                parts: [
-                  {
-                    type: 'text',
-                    text: `${settings.systemPrompt.trim()}\n\n${checkRequest.modeInstruction}`
-                  }
-                ]
-              },
-              { role: 'user', parts }
-            ],
-            requestId: request.requestId,
-            maxTokens,
-            signal: abort.signal,
-            // Drawing has no place in a check: an arrow painted over the result
-            // would be photographed into the next frame and read as part of the
-            // interface.
-            canDraw: false,
-            area: freshArea,
-            apiKey,
-            // The verdict is held: for a successful check it is discarded, and for
-            // a failed one it becomes the answer. Streaming it first would mean
-            // printing a sentence and then contradicting it with a red row.
-            holdText: true
-          })
-          if (abort.signal.aborted || !session) return bail()
-          evidence = verdict.text
-
-          const plan = normalizePlan(verdict.steps, { settings: settings.agent, area: freshArea })
-          const answer = readVerdict(plan, { canFix: check < MAX_CHECKS })
-
-          // A pass needs nothing else: the screen was seen and the claim matches it.
-          if (answer.kind === 'confirmed') return true
-          // Not done, and the answer explains what is on screen instead of claiming
-          // otherwise. Those words are the reply the user gets.
-          if (answer.kind === 'unconfirmed') break
-
-          const fix = await agent.execute({
-            requestId: request.requestId,
-            prompt: request.prompt,
-            steps: answer.actions,
-            area: freshArea,
-            finished: false,
-            // The correction is judged the same way: it does not get to declare
-            // itself done, the second look does.
-            verify: true,
-            skipped: plan.rejected.map((entry) => entry.reason)
-          })
-          if (abort.signal.aborted || !session) return bail()
-          for (const step of fix.performed) {
-            performedLines.push(step.ok ? step.label : `${step.label} (не удалось)`)
-          }
-          if (fix.message || fix.performed.length === 0) {
-            // A correction stopped by the user is not a verdict: they ended the
-            // turn themselves and the runner has already published the reason.
-            // Reporting "не выполнено" over it would blame the result for a
-            // decision that was theirs.
-            if (agent.last().phase === 'aborted') return null
-            // A fix that broke off stops the checks: the card already explains why,
-            // and another screenshot would just re-take the same broken screen.
-            break
-          }
-        }
-
-        // The turn ends unverified. The check's words are the answer: what is
-        // actually on the screen, described by the model that just looked at it.
-        // That is a better reply than a status word about a claim nobody could
-        // confirm — and it is the only honest thing to say, because the card is
-        // about to show a red row saying exactly this.
-        //
-        // Whatever the turn narrated earlier is still dropped: a plan ran, so those
-        // sentences were written before it, and repeating them here would put back
-        // the claim the check just refused to confirm.
-        suppressed = false
-        held = evidence
-        return false
+        // `not-run` means it never got to look (no screenshot): the check has
+        // already said why, and the honest "не подтверждено" stands.
       }
 
       // No step ever ran: the held prose is the answer, and it can be shown now.
