@@ -13,13 +13,64 @@ function flatten(node: unknown, prefix = ''): Array<[string, string]> {
   return out
 }
 
+const channels = flatten(CH)
+
 describe('CH (smoke)', () => {
   it('exposes a non-empty map of namespaced channel names', () => {
-    const channels = flatten(CH)
-
     expect(channels.length).toBeGreaterThan(0)
     for (const [path, channel] of channels) {
       expect(channel, path).toMatch(/^[a-z][a-z0-9-]*:[a-z][a-z0-9-]*$/)
     }
+  })
+})
+
+/**
+ * The channel set is a wire protocol: main, preload and the renderer bundles are
+ * built together, but a renamed string silently breaks the two ends apart. The
+ * snapshot is the alarm.
+ */
+describe('CH: the channel set is a wire protocol', () => {
+  it('matches the snapshot', () => {
+    expect(channels).toMatchSnapshot()
+  })
+
+  it('names every channel exactly once', () => {
+    const names = channels.map(([, channel]) => channel)
+    expect(new Set(names).size).toBe(names.length)
+  })
+
+  it('names each channel after its own path in the map', () => {
+    // `settings.hold` must be `settings:hold`: the namespace is not decoration,
+    // it is how the two ends agree on who owns the handler.
+    for (const [path, channel] of channels) {
+      const [namespace, key] = path.split('.')
+      // Both halves are kebab-cased: `quickActions.defaults` is `quick-actions:defaults`.
+      const kebab = (part: string): string =>
+        part.replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`)
+      expect(channel, path).toBe(`${kebab(namespace)}:${kebab(key)}`)
+    }
+  })
+
+  it('keeps the namespaces the app is built around', () => {
+    expect(Object.keys(CH).sort()).toEqual([
+      'agent',
+      'hud',
+      'onboarding',
+      'overlay',
+      'permissions',
+      'pointer',
+      'quickActions',
+      'settings',
+      'voice'
+    ])
+  })
+
+  it('keeps the size of every namespace', () => {
+    const counts: Record<string, number> = {}
+    for (const [path] of channels) {
+      const namespace = path.split('.')[0]
+      counts[namespace] = (counts[namespace] ?? 0) + 1
+    }
+    expect(counts).toMatchSnapshot()
   })
 })
