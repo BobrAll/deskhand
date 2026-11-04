@@ -116,7 +116,9 @@ typecheck/test/build → коммит → PROGRESS. После крупных г
       → b0080ac (26 тестов; литералов 64/8192 в `App.tsx` не осталось)
 - [x] R17 `settings/{ApplyStatus,PermissionRow,QuickActionsEditor}.tsx`: перенос один-в-один, пропсы не меняются.
       → 82110fd (8 тестов; **критерий «≤520 строк» не выполнен**: 762 строки — см. PROGRESS, остаток ниже)
-- [ ] R17-остаток `settings/App.tsx` 762 строки: шесть секций JSX (`:381-760`) → `sections/*.tsx`. Только после КТ4.
+- [x] R17-остаток `settings/App.tsx` 762 строки: шесть секций JSX (`:381-760`) → `sections/*.tsx`. Только после КТ4.
+      → a078ef3 (четыре файла в `sections/`, `App.tsx` 762 → 456; `VoiceTab`/`AgentTab` уже были компонентами
+      и остались вызовами в `App` — обёртка на три строки была бы файлом ради файла)
 
 ### Волна 5 — структура (КТ5 после R19)
 - [ ] R18 `git mv main/overlay.ts → main/overlay/index.ts` + вынос `OverlayHost` в `overlay/host.ts`. Два коммита (правило 5).
