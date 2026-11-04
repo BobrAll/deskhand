@@ -11,7 +11,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { AppSettings, KeyStatus, PermissionState, ProviderId, QuickAction } from '@shared/types'
+import type { AppSettings, KeyStatus, PermissionState, ProviderId } from '@shared/types'
 import { DEFAULT_SYSTEM_PROMPT, PROVIDERS, normalizeBaseUrl, providerInfo } from '@shared/defaults'
 import type { AppPickResult, RunningAppInfo, SettingsBundle } from '@shared/api'
 import { HotkeyField, prettyHotkey } from './HotkeyField'
@@ -23,6 +23,9 @@ import {
   invalidBaseUrlProviders,
   writableSettings
 } from './applyGate'
+import { ApplyStatus, type ApplyState } from './ApplyStatus'
+import { PermissionRow } from './PermissionRow'
+import { QuickActionsEditor } from './QuickActionsEditor'
 import { AgentTab } from './AgentTab'
 import { VoiceTab } from './VoiceTab'
 
@@ -51,7 +54,6 @@ interface Banner {
  * change still waiting for the debounce, one that is in flight, and one the
  * settings themselves refuse (an invalid base URL, an empty prompt field).
  */
-type ApplyState = 'idle' | 'pending' | 'saving' | 'saved' | 'held' | 'error'
 
 export function App() {
   const [bundle, setBundle] = useState<SettingsBundle | null>(null)
@@ -755,118 +757,6 @@ export function App() {
           <button onClick={() => void closeWindow()}>Закрыть</button>
         </div>
       </main>
-    </div>
-  )
-}
-
-/**
- * The one line that replaces the save button.
- *
- * With nothing to save it says nothing: a footer that permanently announces
- * "Применено" trains people to stop reading it, and the whole point of removing
- * the button is that the state has to be believable without being checked.
- */
-function ApplyStatus(props: { state: ApplyState; holdReason: string | null }) {
-  if (props.state === 'idle') return null
-  const bad = props.state === 'error' || props.state === 'held'
-  const text =
-    props.state === 'pending'
-      ? 'Применяю…'
-      : props.state === 'saving'
-        ? 'Сохраняю…'
-        : props.state === 'saved'
-          ? 'Применено'
-          : props.state === 'held'
-            ? (props.holdReason ?? 'Изменения не применены')
-            : 'Не применено — попробуйте ещё раз'
-  return (
-    <span className={`banner ${bad ? 'err' : 'ok'}`} title={props.holdReason ?? undefined}>
-      {text}
-    </span>
-  )
-}
-
-function PermissionRow(props: {
-  title: string
-  description: string
-  granted: boolean
-  onRequest(): Promise<void>
-  onOpen(): void
-}) {
-  return (
-    <div className="permission">
-      <div>
-        <div className="permission-title">
-          {props.title} {props.granted ? <span className="ok">✓</span> : <span className="warn">—</span>}
-        </div>
-        <div className="hint">{props.description}</div>
-      </div>
-      <div className="permission-actions">
-        {!props.granted && (
-          <button className="primary" onClick={() => void props.onRequest()}>
-            Запросить
-          </button>
-        )}
-        <button onClick={props.onOpen}>Системные настройки</button>
-      </div>
-    </div>
-  )
-}
-
-function QuickActionsEditor(props: {
-  actions: QuickAction[]
-  onChange(actions: QuickAction[]): void
-}) {
-  const update = (index: number, changes: Partial<QuickAction>): void => {
-    props.onChange(props.actions.map((action, i) => (i === index ? { ...action, ...changes } : action)))
-  }
-
-  return (
-    <div className="quick-actions">
-      {props.actions.map((action, index) => (
-        <div key={action.id} className="quick-action">
-          <input
-            className="qa-label"
-            value={action.label}
-            placeholder="Название"
-            onChange={(event) => update(index, { label: event.target.value })}
-          />
-          <select
-            className="qa-mode"
-            value={action.mode}
-            onChange={(event) =>
-              update(index, { mode: event.target.value === 'analyze' ? 'analyze' : 'insert' })
-            }
-          >
-            <option value="insert">вставка</option>
-            <option value="analyze">анализ</option>
-          </select>
-          <textarea
-            className="qa-prompt"
-            rows={2}
-            value={action.prompt}
-            placeholder="Промпт"
-            onChange={(event) => update(index, { prompt: event.target.value })}
-          />
-          <button
-            className="ghost"
-            title="Удалить"
-            onClick={() => props.onChange(props.actions.filter((_, i) => i !== index))}
-          >
-            ✕
-          </button>
-        </div>
-      ))}
-      <button
-        onClick={() =>
-          props.onChange([
-            ...props.actions,
-            { id: `custom-${Date.now().toString(36)}`, label: 'Новое действие', prompt: '', mode: 'insert' }
-          ])
-        }
-      >
-        + Добавить действие
-      </button>
     </div>
   )
 }
