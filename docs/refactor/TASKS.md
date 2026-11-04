@@ -45,7 +45,7 @@
 - [x] T31 Отдельный скрипт `test:native`: контракт helper'а только на ping/permissions/front/apps/cursor (macOS, не входит в `test`).
 - [x] T32 Тесты отделимой логики hotkey/permissions/tray/hud/pointer (только состояния, расчёты, решения). Окна не создавать.
 - [x] T33 Сквозная проверка качества: для P0-модулей убедись, что мутации ловятся; Stryker — только если ставится быстро (иначе пропусти).
-- [ ] T34 MANUAL_SMOKE.md (пошагово с ожидаемым результатом: onboarding, права, хоткей, 3+ приложения, поток в overlay, @point/@click,
+- [x] T34 MANUAL_SMOKE.md (пошагово с ожидаемым результатом: onboarding, права, хоткей, 3+ приложения, поток в overlay, @point/@click,
       агентный сценарий, вставка, push-to-talk, Escape, жесты, смена провайдера/testKey, сохранение настроек, tray, обе темы, hud/pointer/cursor)
       и 02-test-plan.md (что покрыто, что нет и почему).
 - [ ] T35 [STOP] Контрольная точка №1. Сводка для меня: baseline, список тестов, BUGS.md, вопросы. Жди, пока я прогоню MANUAL_SMOKE.md.
