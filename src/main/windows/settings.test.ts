@@ -1,0 +1,118 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+interface WindowDouble {
+  options: Record<string, unknown>
+  destroyed: boolean
+  show: ReturnType<typeof vi.fn>
+  focus: ReturnType<typeof vi.fn>
+  close(): void
+  emit(event: string): boolean
+}
+const state = vi.hoisted(() => ({ windows: [] as WindowDouble[] }))
+
+vi.mock('electron', async () => {
+  const { EventEmitter } = await import('node:events')
+  class Window extends EventEmitter {
+    destroyed = false
+    show = vi.fn()
+    focus = vi.fn()
+    webContents = { setWindowOpenHandler: vi.fn() }
+    constructor(readonly options: Record<string, unknown>) {
+      super()
+      state.windows.push(this)
+    }
+    isDestroyed(): boolean { return this.destroyed }
+    close(): void {
+      const event = { preventDefault: vi.fn() }
+      this.emit('close', event)
+      if (!event.preventDefault.mock.calls.length) {
+        this.destroyed = true
+        this.emit('closed')
+      }
+    }
+  }
+  return { BrowserWindow: Window, app: { focus: vi.fn() } }
+})
+vi.mock('../pageLoad', () => ({ loadPage: vi.fn() }))
+
+beforeEach(() => {
+  vi.resetModules()
+  state.windows = []
+  vi.useFakeTimers()
+})
+afterEach(() => vi.useRealTimers())
+
+const load = () => import('./settings')
+
+describe('settings window lifecycle', () => {
+  it('keeps the options and waits for ready-to-show before showing', async () => {
+    const api = await load()
+    api.openSettingsWindow()
+    const win = state.windows[0]
+    expect(win.options).toMatchObject({
+      width: 980, height: 760, minWidth: 820, minHeight: 560, show: false,
+      webPreferences: {
+        preload: expect.stringContaining('/preload/index.js'),
+        sandbox: false, contextIsolation: true, nodeIntegration: false
+      }
+    })
+    expect(win.show).not.toHaveBeenCalled()
+    win.emit('ready-to-show')
+    expect(win.show).toHaveBeenCalledOnce()
+  })
+
+  it('reuses and focuses the live singleton', async () => {
+    const api = await load()
+    const first = api.openSettingsWindow()
+    expect(api.openSettingsWindow()).toBe(first)
+    expect(state.windows).toHaveLength(1)
+    expect(state.windows[0].focus).toHaveBeenCalledOnce()
+  })
+
+  it('waits in 80 ms steps for an in-flight write', async () => {
+    const api = await load()
+    api.openSettingsWindow()
+    api.markSettingsBusy(true)
+    api.closeSettingsWindow()
+    vi.advanceTimersByTime(80)
+    expect(state.windows[0].destroyed).toBe(false)
+    api.markSettingsBusy(false)
+    vi.advanceTimersByTime(79)
+    expect(state.windows[0].destroyed).toBe(false)
+    vi.advanceTimersByTime(1)
+    expect(state.windows[0].destroyed).toBe(true)
+  })
+
+  it('closes after the 1200 ms ceiling even if the renderer stays busy', async () => {
+    const api = await load()
+    api.openSettingsWindow()
+    api.markSettingsBusy(true)
+    state.windows[0].close()
+    vi.advanceTimersByTime(1199)
+    expect(state.windows[0].destroyed).toBe(false)
+    vi.advanceTimersByTime(1)
+    expect(state.windows[0].destroyed).toBe(true)
+  })
+
+  it('clears both the singleton and busy flag on closed', async () => {
+    const api = await load()
+    api.openSettingsWindow()
+    api.markSettingsBusy(true)
+    state.windows[0].emit('closed')
+    api.openSettingsWindow()
+    api.closeSettingsWindow()
+    expect(state.windows).toHaveLength(2)
+    expect(state.windows[1].destroyed).toBe(true)
+  })
+
+  it('keeps onboarding separate and returns settings first for activation', async () => {
+    const api = await load()
+    const onboarding = api.openOnboardingWindow()
+    const settings = api.openSettingsWindow()
+    expect(api.openOnboardingWindow()).toBe(onboarding)
+    expect(api.settingsWindows()).toEqual([settings, onboarding])
+    expect(state.windows[0].options).toMatchObject({ width: 760, height: 660, resizable: false })
+    api.closeOnboardingWindow()
+    expect(api.settingsWindows()).toEqual([settings, null])
+  })
+})

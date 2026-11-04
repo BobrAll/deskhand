@@ -22,6 +22,15 @@ import {
 } from '../bubble'
 import { denyExternalLinks } from '../denyExternalLinks'
 import { loadPage } from '../pageLoad'
+import { settingsWindows } from './settings'
+
+export {
+  openSettingsWindow,
+  openOnboardingWindow,
+  closeOnboardingWindow,
+  closeSettingsWindow,
+  markSettingsBusy
+} from './settings'
 
 /**
  * The overlay is a small bubble next to the cursor, not a window: it appears as a
@@ -432,133 +441,6 @@ export const overlayHost: OverlayHost = {
  */
 let passthrough = false
 
-let settingsWindow: BrowserWindow | null = null
-let onboardingWindow: BrowserWindow | null = null
-
-/** Set by `settings:hold` while the renderer still has edits to write. */
-let settingsBusy = false
-
-function baseOptions(
-  title: string,
-  width: number,
-  height: number
-): Electron.BrowserWindowConstructorOptions {
-  return {
-    width,
-    height,
-    show: false,
-    title,
-    backgroundColor: '#0f1115',
-    titleBarStyle: 'hiddenInset',
-    trafficLightPosition: { x: 16, y: 18 },
-    webPreferences: {
-      preload,
-      sandbox: false,
-      contextIsolation: true,
-      nodeIntegration: false
-    }
-  }
-}
-
-export function openSettingsWindow(): BrowserWindow {
-  if (settingsWindow && !settingsWindow.isDestroyed()) {
-    settingsWindow.show()
-    settingsWindow.focus()
-    return settingsWindow
-  }
-
-  const win = new BrowserWindow({
-    ...baseOptions('Smart Cursor — настройки', 980, 760),
-    minWidth: 820,
-    minHeight: 560
-  })
-  settingsWindow = win
-  win.once('ready-to-show', () => {
-    win.show()
-    try {
-      app.focus({ steal: true })
-    } catch {
-      /* ignore */
-    }
-  })
-  /**
-   * ⌘W and the red traffic light both come through here, not through
-   * `settings:close`, so the grace period for an in-flight write has to live on
-   * the window as well — otherwise the one gesture everybody uses to close a
-   * window would be the one that loses the last keystroke.
-   */
-  let closing = false
-  win.on('close', (event) => {
-    if (closing || !settingsBusy) return
-    event.preventDefault()
-    closing = true
-    // Polled rather than a fixed wait: a write usually lands in a few
-    // milliseconds, and making the user watch a 1.2 s pause for it would be its
-    // own small bug. The ceiling only exists so a wedged renderer cannot make the
-    // window unclosable.
-    const deadline = Date.now() + 1200
-    const attempt = (): void => {
-      if (win.isDestroyed()) return
-      if (!settingsBusy || Date.now() >= deadline) {
-        win.close()
-        return
-      }
-      setTimeout(attempt, 80)
-    }
-    setTimeout(attempt, 80)
-  })
-  win.on('closed', () => {
-    settingsWindow = null
-    settingsBusy = false
-  })
-  denyExternalLinks(win)
-  loadPage(win, 'settings')
-  return win
-}
-
-export function openOnboardingWindow(): BrowserWindow {
-  if (onboardingWindow && !onboardingWindow.isDestroyed()) {
-    onboardingWindow.show()
-    onboardingWindow.focus()
-    return onboardingWindow
-  }
-
-  const win = new BrowserWindow({ ...baseOptions('Smart Cursor', 760, 660), resizable: false })
-  onboardingWindow = win
-  win.once('ready-to-show', () => {
-    win.show()
-    try {
-      app.focus({ steal: true })
-    } catch {
-      /* ignore */
-    }
-  })
-  win.on('closed', () => {
-    onboardingWindow = null
-  })
-  loadPage(win, 'onboarding')
-  return win
-}
-
-export function closeOnboardingWindow(): void {
-  if (onboardingWindow && !onboardingWindow.isDestroyed()) onboardingWindow.close()
-}
-
-/**
- * Closes the settings window, letting any in-flight write land first.
- *
- * The waiting itself lives on the window's `close` handler, so every route to
- * closing — the «Закрыть» button, ⌘W, the red traffic light — goes through the
- * same grace period instead of only the one that happens to call this.
- */
-export function closeSettingsWindow(): void {
-  if (settingsWindow && !settingsWindow.isDestroyed()) settingsWindow.close()
-}
-
-export function markSettingsBusy(busy: boolean): void {
-  settingsBusy = busy
-}
-
 /**
  * Brings the most relevant open window back to the foreground after the app is
  * re-activated. With the tray-only (accessory) activation policy macOS can leave
@@ -566,7 +448,7 @@ export function markSettingsBusy(busy: boolean): void {
  * makes sure an already-open window is shown again rather than silently missing.
  */
 export function showActiveWindow(): void {
-  const candidates = [overlayWindow, settingsWindow, onboardingWindow]
+  const candidates = [overlayWindow, ...settingsWindows()]
   for (const win of candidates) {
     if (win && !win.isDestroyed() && win.isVisible()) {
       win.show()
