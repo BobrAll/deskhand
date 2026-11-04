@@ -45,7 +45,7 @@ OpenAIProvider (OpenRouter: другой baseUrl + HTTP-Referer/X-Title; кон�
 
 ## Хранилище
 Два electron-store. `smart-cursor` → {settings: AppSettings} (provider, models, baseUrls, temperature, maxTokens, systemPrompt,
-hotkey, captureScreenshotByDefault, hideOverlayOnBlur, screenshotMaxSide, screenshotQuality, quickActions[], excludedApps[],
+hotkey, captureScreenshotByDefault, screenshotMaxSide, screenshotQuality, quickActions[], excludedApps[],
 launchAtLogin, onboardingCompleted, voice{…}, gestures{…}, agent{…}). `smart-cursor-secrets` → {secrets: Record<ProviderId,
 "enc:<b64>"|"plain:<b64>">} через safeStorage. Миграций нет: normalizeSettings() (defaults.ts:~392) валидирует каждое поле с
 fallback на дефолт (clamp, sanitize*); битый файл → пересоздание (clearInvalidConfig); полный отказ → memoryFallback.
