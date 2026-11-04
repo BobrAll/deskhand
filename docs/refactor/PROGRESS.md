@@ -21,9 +21,14 @@
 объявленного, теперь совпадает с реализацией. Поведение не менялось; `npm test` 39 файлов / 940 тестов,
 **R03 закрыта** — `main/pageLoad.ts`: три копии «dev ? loadURL : loadFile» (`windows.ts:64`,
 `pointer.ts:34`, `agent/cursor.ts:83`, где страница была зашита) сведены в одну функцию с параметром
-`page`. typecheck и build зелёные. Следующая — **R04**.
+`page`. **R04 закрыта** — `main/denyExternalLinks.ts`: четыре копии `setWindowOpenHandler` сведены в одну функцию,
+флаг `/i` остался параметром `caseless` (его передаёт только `agent/cursor.ts` — унификация была бы сменой
+поведения и ждёт ответа на вопрос 2). Новый `denyExternalLinks.test.ts` — 8 тестов на фейковом окне,
+включая «`HTTPS://` не открывается в трёх окнах и открывается в окне агента»; мутация «всегда
+case-insensitive» ловится. `npm test` 40 файлов / 948 тестов, typecheck и build зелёные.
+Следующая — **R05**.
 ## Last commit
-6bf9dab refactor(main): extract pageLoad from three window modules (R03)
+7782649 refactor(main): extract denyExternalLinks from four windows (R04)
 ## Log (одна строка на задачу: ID — hash — итог)
 T01 — bd12743 — 56 каналов CH + `shell:open-external`: направление/payload/хендлер/потребитель; 6 окон с webPreferences и создателями; перепроверены 5 фактов CONTEXT.md.
 T04 — f416865 — карты windows.ts (секции, `OverlayHost`, 10 модульных `let`, грейс-период), overlay/App.tsx (13 state + 18 ref, 7 подписок), settings/App.tsx (черновик↔диск, дебаунс 450 мс → `settings:hold` → грейс-период); сквозные дубли — в §8.
@@ -62,6 +67,7 @@ P1 — 6dddbbb — `04-refactor-plan.md`: 6 волн / 21 шаг (R01–R21 в T
 R01 — fa8b283 — гигиена `main/` (A4.8 #2, #4, #5, #6, #7), поведение не менялось: `PROVIDER_IDS` = `PROVIDERS.map(p => p.id)` вместо ручного списка и снят мёртвый `void PROVIDERS` (`ipc.ts`); `clamp` возвращает `min` на нечисле — `overlay:resize` не проверяет тип на границе IPC, а `setBounds({width:NaN})` бросает из нативного слоя; `let settingsBusy` поднят к остальным оконным `let` (читался на 46 строк выше объявления); `closeSettingsWindowWhenSettled` удалён как синоним без логики — `closeSettingsWindow` экспортирована, `ipc.ts` зовёт её напрямую, грейс-период остался в `close`-хуке; убран артефакт форматирования в `index.ts:87`. Побочно: `ipc.test.ts` не пришлось править — мок `./windows` уже объявлял оба имени. A4.8 #1 (второй `second-instance`) и #8 (`try`/`catch` в настройках) в R01 намеренно не вошли: это правки поведения, они ждут ответа на вопрос 4.
 R02 — fb0d190 — контракт `hotkeyError` (A4.8 #3): поле объявлено опциональным в `SettingsBundle` (`shared/api.ts`), присваивание в `ipc.ts:140` осталось как было, приведение `(saved as SettingsBundle & { hotkeyError?: boolean })` в `renderer/settings/App.tsx:178` заменено на `saved.hotkeyError`. Теперь `tsc` ловит переименование флага в main: раньше ветка 181–198 (сброс `writtenRef`, баннер на 2600 мс, `applyState='error'`) молча перестала бы срабатывать, и отклонённый хоткей ретраился бы каждые 450 мс бесконечно. Поле помечено опциональным, а не обязательным, потому что `settings.load` его не отдаёт — обязательное заставило бы `bundle()` в `ipc.ts` ставить `false` в ответе, который раньше поля не имел вовсе.
 R03 — 6bf9dab — `main/pageLoad.ts` (`loadPage(win, page)`), три копии сведены: `windows.ts` (локальная `load`), `pointer.ts` (локальная `loadPage`) и `agent/cursor.ts` (там `page` был зашит как `'cursor'` — теперь параметр). Тела были идентичны, различалось только имя функции и страница; `join`/`__dirname` остались нужны во всех трёх файлах для `preload`, поэтому импортов не убирал. Тестов на создание окон нет — по плану проверка на КТ1 (`MANUAL_SMOKE §12`, §1), кода поведения не менял: тот же `process.env['ELECTRON_RENDERER_URL']`, тот же `join(__dirname, '../renderer/<page>/index.html')`.
+R04 — 7782649 — `main/denyExternalLinks.ts`: четыре копии `setWindowOpenHandler` (`windows.ts` ×2, `pointer.ts`, `agent/cursor.ts`) → `denyExternalLinks(win, { caseless })`. Расхождение, которое было в дереве, не спрятано, а названо: `caseless: true` передаёт только `agent/cursor.ts` (там был `/i`), три остальных окна сохранили регистрозависимый regex — унификация это смена поведения (план §7, вопрос 2). Новый тест `denyExternalLinks.test.ts` (8 кейсов, фейковое окно + мок `shell`): http/https открываются, `file:`/`javascript:`/`about:`/`ftp:` — только `deny`, `HTTPS://` открывается лишь при `caseless`, `httpsx://` не считается http. Мутация «всегда CASELESS» → 1 красный. `shell` из трёх модулей убран, из `electron` импортируется только в новом файле.
 ## T35 — контрольная точка №1 (сводка для тебя)
 
 **Где мы.** Фаза 1 (тесты) закрыта: T11–T34. Поведение не менялось ни на строку — за всю фазу
