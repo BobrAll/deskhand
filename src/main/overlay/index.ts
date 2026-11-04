@@ -38,42 +38,12 @@ import { buildContinue } from '../prompt'
 import { imagePart } from '../imagePart'
 import { buildTurnRequest } from './request'
 import { shouldVerify, verifyResult } from './verify'
+import type { OverlayHost } from './host'
 import { consumeTurnStream } from '../turnStream'
 import { helperActivate, helperFront } from '../native/helper'
 import { getApiKey } from '../settings/secrets'
 import { getSettings, patchSettings } from '../settings/store'
 import { delay } from '../util'
-
-export interface OverlayHost {
-  /** Creates the window off-screen ahead of the first key press. */
-  prewarm(): void
-  /** Shows the window at the given size, positioned near the cursor. */
-  show(height: number, width?: number): void
-  /**
-   * Shows it without taking focus.
-   *
-   * Push-to-talk uses this while it is still reading the frontmost app: a focused
-   * overlay would become the "active app" the context is collected from.
-   */
-  showInactive(height: number, width?: number): void
-  /** Resizes the window, keeping it on screen. */
-  resize(height: number, width?: number): void
-  /**
-   * Tells the window whether shapes are painted on the screen right now, so it
-   * can drop its native blur while they are: a frosted card over the very spot
-   * an arrow points at would smear the thing being pointed at.
-   */
-  setDrawing(active: boolean): void
-  /** Drops the window's blur while a voice turn shows bare bars. */
-  setVoice(active: boolean): void
-  /**
-   * Makes the card transparent to the mouse and gives up focus, so a synthetic
-   * click lands on the app the plan is about instead of on our own panel.
-   */
-  setPassthrough(active: boolean): void
-  hide(): void
-  window(): BrowserWindow | null
-}
 
 interface Session {
   id: string

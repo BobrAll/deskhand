@@ -12,7 +12,7 @@ import {
   BUBBLE_VOICE_WIDTH,
   BUBBLE_WIDTH
 } from '@shared/metrics'
-import type { OverlayHost } from './overlay'
+import type { OverlayHost } from './overlay/host'
 import {
   boundsFor,
   clamp,
