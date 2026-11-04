@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 /**
  * `helper.ts` keeps the resolved binary path in a module-level cache, so every
  * test imports a fresh copy. Electron, the file system and `child_process` are
- * mocked: no real helper is ever spawned (see docs/refactor/RULES.md).
+ * mocked: no real helper is ever spawned.
  */
 const state = vi.hoisted(() => ({
   /** Paths that `existsSync` reports as present. */

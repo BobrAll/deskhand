@@ -267,7 +267,7 @@ describe('ResponseStream: any chunking gives an identical result', () => {
 
   // KNOWN BUG: characterization — `push()` decides whether to hold the tail by
   // looking at the whole pending string, so a tail that starts with text is
-  // flushed before its `@` ever arrives. See docs/refactor/BUGS.md (R1).
+  // flushed before its `@` ever arrives. See docs/BUGS.md (R1).
   it('differs on a marker that starts mid-line (known bug)', () => {
     const wholeLine = whole(`x ${CLICK_LINE}\n`)
     expect(wholeLine.text).toBe(`x ${CLICK_LINE}\n`)

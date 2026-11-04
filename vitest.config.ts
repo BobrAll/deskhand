@@ -5,7 +5,7 @@ import { defineConfig } from 'vitest/config'
  * Test runner for the pure logic of `src/`.
  *
  * Nothing here touches Electron, the real electron-store, Keychain or the
- * network: suites mock those explicitly (see docs/refactor/RULES.md).
+ * network: suites mock those explicitly.
  */
 export default defineConfig({
   resolve: {

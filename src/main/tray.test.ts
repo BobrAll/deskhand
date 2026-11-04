@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
  * The tray menu is the app's only persistent surface, and it is built from the
  * current settings — so the two things worth pinning are the menu it builds and
  * the fact that every item reaches the action it names. The window objects are
- * fakes; nothing is created (docs/refactor/RULES.md).
+ * fakes; nothing is created.
  */
 
 const env = vi.hoisted(() => ({

@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 /**
- * The polling loop in `readSelection` is a busy-wait on `Date.now()` (RULES.md:
- * do not rewrite it). Fake timers that replace `Date` would hang it forever, so
+ * The polling loop in `readSelection` is a busy-wait on `Date.now()`.
+ * Fake timers that replace `Date` would hang it forever, so
  * the clock is a plain spy that advances 35 ms per read, and `delay` is mocked.
  */
 const state = vi.hoisted(() => ({

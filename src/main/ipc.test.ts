@@ -10,7 +10,7 @@ import { CH } from '@shared/ipc'
  * because both sides are typed by hand against `SmartCursorApi`.
  *
  * Electron, the store and the helper are mocked: no window, no Keychain, no
- * binary, no network (docs/refactor/RULES.md).
+ * binary, no network.
  */
 
 const electron = vi.hoisted(() => {

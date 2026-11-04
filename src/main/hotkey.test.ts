@@ -6,7 +6,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
  * the combination free, and what happens when macOS refuses it.
  *
  * `globalShortcut` is mocked: registering a real accelerator on this machine would
- * steal the combination from the user (docs/refactor/RULES.md).
+ * steal the combination from the user.
  */
 
 const shortcut = vi.hoisted(() => ({

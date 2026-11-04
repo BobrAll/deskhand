@@ -9,7 +9,7 @@
 // Only the read-only commands are exercised — `ping`, `permissions`, `front`,
 // `apps`, `cursor`. Nothing here moves the mouse, presses a key, types, pastes,
 // activates another app, records voice or asks for permissions: those are
-// deliberately absent, see docs/refactor/RULES.md §"Безопасность среды".
+// deliberately absent to keep this contract check read-only.
 //
 // Not part of `npm test`: it needs macOS, the built binary and a real session.
 // Run it with `npm run test:native`.
@@ -105,7 +105,7 @@ console.log('\nfront')
   check('pid is a number', typeof json.pid === 'number')
   // KNOWN BUG: `front` prints `accessibility` as 1/0, not as a JSON boolean, so
   // `helperFront()`'s strict `payload.accessibility === true` is always false.
-  // See docs/refactor/BUGS.md R3.
+  // See docs/BUGS.md R3.
   check(
     'accessibility is a number 0/1 (known: not a boolean)',
     json.accessibility === 0 || json.accessibility === 1,
