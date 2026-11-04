@@ -382,7 +382,7 @@ stdout → `JSON.parse` с проглатыванием мусора → `reader
 `main/denyExternalLinks.ts` (низкий «как есть»), `resolveArea()` в `screenshot.ts` (низкий),
 `imagePart()` в `overlay.ts` (низкий), `shared/metrics.ts` (средний — видно только глазами),
 `main/layerWindow.ts` (средний — видно только глазами), `main/native/tapListener.ts` (средний, есть
-тесты); плюс данные `shared/keycodes.ts` (низкий, есть тесты). Пункт (г) — **не** сливать таблицы:
+тесты), `shared/keycodes.ts` — только данные таблиц (низкий, есть тесты). Пункт (г) — **не** сливать таблицы:
 `MODIFIER_FLAGS` в `voice` обязан остаться 7-элементным, иначе `super+s` станет допустимым хоткеем.
 
 Потолок после всех выносов: jscpd ≈ 0.4 % — останутся тестовые обвязки, `index.html` и мелочи
