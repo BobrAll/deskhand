@@ -273,6 +273,61 @@ describe('resolveTarget: snapping to a neighbour', () => {
 
     expect(result.source).toBe('model')
   })
+
+  it('reaches 48 points even when the frame is too small to earn that reach', () => {
+    // On a small frame the diagonal-based reach shrinks below the floor, so this
+    // is the only place SNAP_MIN is the deciding number: 45 points out snaps,
+    // because the floor is 48 and not something smaller.
+    const result = resolveTarget({
+      rough: { x: 225, y: 115 },
+      probe: probe([element({ frame: { x: 100, y: 100, width: 80, height: 30 } })]),
+      area: { x: 0, y: 0, width: 600, height: 400 }
+    })
+
+    expect(result.source).toBe('snap')
+  })
+
+  it('does not reach past the diagonal-based limit on a large frame', () => {
+    // 100 points away on a 1440×900 frame is outside reach; the same gap would
+    // be inside it if the share of the diagonal were loosened.
+    const result = resolveTarget({
+      rough: { x: 280, y: 115 },
+      probe: probe([element({ frame: { x: 100, y: 100, width: 80, height: 30 } })]),
+      area
+    })
+
+    expect(result.source).toBe('model')
+  })
+
+  it('caps the reach at 160 points even on a 4K frame', () => {
+    // On 3840×2160 the diagonal-based reach would be ~220, and an uncapped one
+    // would start guessing at controls two hundred points from the aim. 180 away
+    // is outside the cap, so this is where the ceiling does its work.
+    const result = resolveTarget({
+      rough: { x: 360, y: 115 },
+      probe: probe([element({ frame: { x: 100, y: 100, width: 80, height: 30 } })]),
+      area: { x: 0, y: 0, width: 3840, height: 2160 }
+    })
+
+    expect(result.source).toBe('model')
+  })
+})
+
+describe('resolveTarget: how strict a far-away label match has to be', () => {
+  it('rejects a label that is merely similar when the point is nowhere near it', () => {
+    // «Отмена» vs «Отменить» is a real pair of neighbours on screen, so the floor
+    // sits above their score: a similarity that close must not move the click.
+    expect(textMatchScore('Отмена', 'Отменить')).toBeLessThan(0.75)
+
+    const result = resolveTarget({
+      rough: { x: 700, y: 700 },
+      label: 'Отмена',
+      probe: probe([element({ title: 'Отменить', frame: { x: 100, y: 100, width: 80, height: 30 } })]),
+      area
+    })
+
+    expect(result.source).toBe('model')
+  })
 })
 
 describe('resolveTarget: elements that cannot be targets', () => {

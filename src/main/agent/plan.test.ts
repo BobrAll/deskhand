@@ -46,6 +46,12 @@ describe('normalizePlan: limits', () => {
     expect(plan.steps[0].action).toEqual({ kind: 'type', text: 'я'.repeat(MAX_TYPE_CHARS) })
   })
 
+  it('keeps the documented 600-character ceiling', () => {
+    // The test above compares against the constant itself, so it stays green if
+    // the number moves. Only a literal pins what the product promises.
+    expect(MAX_TYPE_CHARS).toBe(600)
+  })
+
   it('rejects an empty typed text', () => {
     const plan = normalize([step('Печать', { kind: 'type', text: '   ' })])
 

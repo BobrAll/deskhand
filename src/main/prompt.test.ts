@@ -426,6 +426,12 @@ describe('buildRefine', () => {
     expect(userText).not.toContain('я'.repeat(MAX_ANSWER_CHARS + 1))
   })
 
+  it('keeps the documented 8000-character ceiling', () => {
+    // The cap test above compares against the constant itself, so it stays green
+    // when the number moves. Only a literal pins what the prompt promises.
+    expect(MAX_ANSWER_CHARS).toBe(8_000)
+  })
+
   it('never offers a tool', () => {
     const { modeInstruction } = buildRefine({
       baseAnswer: 'ответ',

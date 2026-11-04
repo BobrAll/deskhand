@@ -292,6 +292,48 @@ describe('consumeTurnStream: a round that is no longer wanted', () => {
     expect(result.text).toBe('Смотри:\n')
   })
 
+  it('does not paint a shape that arrives after the card is gone', async () => {
+    // The per-delta `isAlive` check is what stops the *next* delta, not just the
+    // prose of the current one: `paint` has no aliveness of its own, so a marker
+    // parsed after the card closed would otherwise be drawn on a screen nobody
+    // is looking at.
+    const out = recorder()
+    let alive = true
+    await consumeTurnStream({
+      provider: fakeProvider(['Смотри. ', '@point circle 0.5 0.5\n']),
+      messages: MESSAGES,
+      apiKey: '',
+      streamOptions: STREAM_OPTIONS,
+      isAlive: () => alive,
+      onShapes: out.onShapes,
+      onText: (delta) => {
+        out.onText(delta)
+        alive = false
+      }
+    })
+
+    expect(out.shapes).toEqual([])
+  })
+
+  it('hands the tail to onText when it never became a marker', async () => {
+    // `@po` looks like the start of a marker, so the parser holds it back until
+    // the stream ends. Only `finish()` can decide it is prose, which means the
+    // last thing the user reads arrives through the tail path.
+    const out = recorder()
+    const result = await consumeTurnStream({
+      provider: fakeProvider(['Готово\n@po']),
+      messages: MESSAGES,
+      apiKey: '',
+      streamOptions: STREAM_OPTIONS,
+      isAlive: () => true,
+      onShapes: out.onShapes,
+      onText: out.onText
+    })
+
+    expect(out.text.join('')).toBe('Готово\n@po\n')
+    expect(result.text).toBe('Готово\n@po\n')
+  })
+
   it('lets a provider failure propagate, because the caller owns the retry', async () => {
     const boom = new Error('provider exploded')
     const onShapes = vi.fn()
