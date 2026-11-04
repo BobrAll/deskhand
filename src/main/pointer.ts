@@ -19,9 +19,10 @@
  */
 
 import { join } from 'node:path'
-import { BrowserWindow, shell } from 'electron'
+import { BrowserWindow } from 'electron'
 import { CH } from '@shared/ipc'
 import type { Annotation, PointerPayload, PointerShape, ScreenRect } from '@shared/types'
+import { denyExternalLinks } from './denyExternalLinks'
 import { loadPage } from './pageLoad'
 
 let pointerWindow: BrowserWindow | null = null
@@ -79,10 +80,7 @@ function createWindow(): BrowserWindow {
     ready = null
   })
 
-  win.webContents.setWindowOpenHandler(({ url }) => {
-    if (/^https?:\/\//.test(url)) void shell.openExternal(url)
-    return { action: 'deny' }
-  })
+  denyExternalLinks(win)
 
   loadPage(win, 'pointer')
   return win

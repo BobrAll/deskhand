@@ -22,9 +22,10 @@
  */
 
 import { join } from 'node:path'
-import { BrowserWindow, screen, shell } from 'electron'
+import { BrowserWindow, screen } from 'electron'
 import { CH } from '@shared/ipc'
 import type { AgentCursorFrame, AgentEvent, ScreenRect } from '@shared/types'
+import { denyExternalLinks } from '../denyExternalLinks'
 import { loadPage } from '../pageLoad'
 
 /** How long the renderer's fade-out runs before the window is actually hidden. */
@@ -130,10 +131,7 @@ function createWindow(): BrowserWindow {
     frame = null
   })
 
-  next.webContents.setWindowOpenHandler(({ url }) => {
-    if (/^https?:\/\//i.test(url)) void shell.openExternal(url)
-    return { action: 'deny' }
-  })
+  denyExternalLinks(next, { caseless: true })
 
   loadPage(next, 'cursor')
   return next

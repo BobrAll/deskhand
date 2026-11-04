@@ -5,8 +5,9 @@
  */
 
 import { join } from 'node:path'
-import { app, BrowserWindow, screen, shell } from 'electron'
+import { app, BrowserWindow, screen } from 'electron'
 import type { OverlayHost } from './overlay'
+import { denyExternalLinks } from './denyExternalLinks'
 import { loadPage } from './pageLoad'
 
 /**
@@ -177,10 +178,7 @@ function createOverlayWindow(): BrowserWindow {
     voice = false
   })
 
-  win.webContents.setWindowOpenHandler(({ url }) => {
-    if (/^https?:\/\//.test(url)) void shell.openExternal(url)
-    return { action: 'deny' }
-  })
+  denyExternalLinks(win)
 
   // The flags are not reset here: if this window was forced into existence by a
   // live voice turn, that turn is still running and its bars have to stay bare.
@@ -674,10 +672,7 @@ export function openSettingsWindow(): BrowserWindow {
     settingsWindow = null
     settingsBusy = false
   })
-  win.webContents.setWindowOpenHandler(({ url }) => {
-    if (/^https?:\/\//.test(url)) void shell.openExternal(url)
-    return { action: 'deny' }
-  })
+  denyExternalLinks(win)
   loadPage(win, 'settings')
   return win
 }
