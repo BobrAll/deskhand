@@ -1,10 +1,10 @@
 # PROGRESS
 ## Current
-Фаза 0 закрыта (T01–T04), T10 закрыта: baseline снят в 01-baseline.md. T11–T32 закрыты: весь `npm test` —
-40 файлов / 959 тестов, typecheck (node+web) и build зелёные, поведение не менялось. `npm run test:native`
-проходит на реальном бинаре. Дальше: T33 (мутационная проверка P0), затем T34 (MANUAL_SMOKE + 02-test-plan).
+Фаза 0 закрыта (T01–T04), T10 закрыта: baseline снят в 01-baseline.md. T11–T33 закрыты: весь `npm test` —
+40 файлов / 967 тестов, typecheck (node+web) и build зелёные, поведение не менялось. `npm run test:native`
+проходит на реальном бинаре. Дальше: T34 (MANUAL_SMOKE + 02-test-plan), затем T35 — стоп-точка для тебя.
 ## Last commit
-bf4cc9c test(main): cover hotkey, permissions, tray, hud and pointer decisions
+7d17660 test(quality): pin limits and reach thresholds that survived mutation
 ## Log (одна строка на задачу: ID — hash — итог)
 T01 — bd12743 — 56 каналов CH + `shell:open-external`: направление/payload/хендлер/потребитель; 6 окон с webPreferences и создателями; перепроверены 5 фактов CONTEXT.md.
 T04 — f416865 — карты windows.ts (секции, `OverlayHost`, 10 модульных `let`, грейс-период), overlay/App.tsx (13 state + 18 ref, 7 подписок), settings/App.tsx (черновик↔диск, дебаунс 450 мс → `settings:hold` → грейс-период); сквозные дубли — в §8.
@@ -33,6 +33,7 @@ T29 — 3b4f4c7 — IPC: `ipc.test.ts` (9 тестов) — у каждого к
 T30 — 7a4876d — палитра: `renderer/palette.test.ts` (8 тестов) — резолв `--var` по каждому из 6 окон в светлой и тёмной теме (base.css + своя css, каскад в порядке подключения), 21 базовый токен одинаков во всех окнах, светлая тема инвертирует все цвета кроме радиусов, hud/cursor не зависят от темы, `--ink` один, снапшот 12 наборов, поиск висячих `var(--x)` без fallback. Мутации: `--accent` в светлой теме и `--hud-radius` — ловятся.
 T31 — a7332c1 — `scripts/test-native.mjs` + `npm run test:native` (не входит в `test`): ping/permissions/front/apps/cursor на реальном бинаре + путь ошибки (`unknown-command`, exit≠0, JSON всё равно печатается). НАЙДЕН БАГ: `front` печатает `accessibility` числом 1/0, а `helper.ts:118` ждёт `=== true` → поле всегда `false`; закреплено как known bug и записано в BUGS.md R3 (коммит 68df0e6).
 T32 — bf4cc9c — отделимая логика: `hotkey.test.ts` (15) — замена/повтор/потеря регистрации, пустая комбинация, бросок ОС, `canRegister` не оставляет заявку; `permissions.test.ts` (19) — какой источник побеждает, только `granted`, fallback на helper лишь для Accessibility, три броска Electron, порядок запросов, три панели настроек; `tray.test.ts` (12) — пункты меню, подсказка хоткея после `refreshTray`, все 5 кликов, переиспользование и `destroy`; `hud.test.ts` (20) — выбор стороны (below/right/above), клэмп слоя к рабочей области, anchor, показ один раз, fade 160 мс, «поздний paint не воскрешает ход», флаги окна; `pointer.test.ts` (18) — маппинг 0..1 → точки, минимальное кольцо 16+6, клэмп к краям, `placeOn` без переустановки, revision, fade 240 мс. Мутации: порядок сторон в `pickSide`, пустая комбинация в `registerHotkey`, `minRadius` — ловятся.
+T33 — 7d17660 — мутационная проверка P0 на изолированной копии дерева (`/tmp/mut/work`, реальное дерево не трогал): 42 мутанта по response, annotations, protocol, plan, verdict, targeting, prompt, llm/{http,openai,anthropic}, native/helper, paste/{index,clipboard}, turnStream, voice/whisper, shared/{defaults,ipc}, settings/store, preload, hotkey. Поймано 41/42 (мутанты гонялись по одному: мутация → `npx vitest run <свой файл>` → откат). Четыре мутанта первого прохода выживали и закрыты новыми тестами: `SNAP_MIN` (45pt на кадре 600×400, где 5 % диагонали = 36), `SNAP_SHARE` (120pt на 1440×900 против достижимых 84.9), `SNAP_MAX` (180pt на 4K против потолка 160), `LABEL_FLOOR` («Отмена»/«Отменить» = 0.625, между слабым 0.55 и строгим 0.75); плюс `MAX_TYPE_CHARS` и `MAX_ANSWER_CHARS` проверялись через саму константу — добавлены литеральные `toBe(600)` / `toBe(8_000)`. Повторный прогон по выжившим — 8/8. Единственный невылеченный выживший — `AnnotationStream.push` в `annotations.ts`: класс нигде в `src/` не используется (мёртвый код, кандидат в A2), тест на него не писал. Stryker не ставил: `@stryker-mutator/core` 10.x доступен, но тянет раннер + пер-мутантный прогон файла, а по правилу 3 новая зависимость без твоего согласия невозможна.
 ## Blocked
 ## Open questions
 - РЕШЕНО (Александр, сессия T01): 6 неиспользуемых методов моста (`settings.validateHotkey`, `onboarding.close`, `quickActions.defaults`, `permissions.microphone`, `voice.micPermission`, `voice.requestMicPermission`) и канал `shell:open-external` разрешено удалить в A2. Удалять с grep-доказательствами по правилу 7, отдельными коммитами.
@@ -63,3 +64,5 @@ T32 — bf4cc9c — отделимая логика: `hotkey.test.ts` (15) — �
 - T15: `patchSettings` при упавшем `set` возвращает новое значение, но `memoryFallback` не выставляется (он читается только когда стор не открылся), поэтому следующий `getSettings()` отдаёт старое. Известный баг, закреплён тестом.
 - T16: `buildRefine` не передаёт `draw`/`act` — refine никогда не предлагает инструменты. Похоже на задуманное, но не задокументировано.
 - T11: `vitest run` печатает предупреждение «CJS build of Vite's Node API is deprecated» — версия vite 5.4.10, обновлять по правилу 3 нельзя, на результат не влияет.
+- T33: `AnnotationStream` (`annotations.ts:122`) экспортируется, но в `src/` не используется никем — единственный потребитель — `.scratch/annot-probe/probe.ts`; поэтому мутация «хвост-маркер не удерживается» в нём не ловится. Тест не писал (модуль вне задачи), кандидат в A2.
+- T33: `MAX_PLAN_STEPS` и `MAX_SELECTION_CHARS` уже были закреплены литералами в тестах — их мутации ловились и до T33; `MAX_TYPE_CHARS` (plan) и `MAX_ANSWER_CHARS` — нет.
