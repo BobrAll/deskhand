@@ -7,6 +7,7 @@
 import { join } from 'node:path'
 import { app, BrowserWindow, screen, shell } from 'electron'
 import type { OverlayHost } from './overlay'
+import { loadPage } from './pageLoad'
 
 /**
  * The overlay is a small bubble next to the cursor, not a window: it appears as a
@@ -60,12 +61,6 @@ const GAP = 10
 const MARGIN = 8
 
 const preload = join(__dirname, '../preload/index.js')
-
-function load(win: BrowserWindow, page: string): void {
-  const devServer = process.env['ELECTRON_RENDERER_URL']
-  if (devServer) void win.loadURL(`${devServer}/${page}/index.html`)
-  else void win.loadFile(join(__dirname, `../renderer/${page}/index.html`))
-}
 
 function clamp(value: number, min: number, max: number): number {
   // `overlay:resize` is not type-checked at the IPC boundary, and `setBounds`
@@ -202,7 +197,7 @@ function createOverlayWindow(): BrowserWindow {
     pendingShow = null
     if (pending) performShow(pending.height, pending.width, pending.activate)
   })
-  load(win, 'overlay')
+  loadPage(win, 'overlay')
   return win
 }
 /**
@@ -683,7 +678,7 @@ export function openSettingsWindow(): BrowserWindow {
     if (/^https?:\/\//.test(url)) void shell.openExternal(url)
     return { action: 'deny' }
   })
-  load(win, 'settings')
+  loadPage(win, 'settings')
   return win
 }
 
@@ -707,7 +702,7 @@ export function openOnboardingWindow(): BrowserWindow {
   win.on('closed', () => {
     onboardingWindow = null
   })
-  load(win, 'onboarding')
+  loadPage(win, 'onboarding')
   return win
 }
 

@@ -22,6 +22,7 @@ import { join } from 'node:path'
 import { BrowserWindow, shell } from 'electron'
 import { CH } from '@shared/ipc'
 import type { Annotation, PointerPayload, PointerShape, ScreenRect } from '@shared/types'
+import { loadPage } from './pageLoad'
 
 let pointerWindow: BrowserWindow | null = null
 let visible = false
@@ -30,12 +31,6 @@ let ready: Promise<void> | null = null
 
 /** Where the layer currently sits; re-positioning on every draw would flicker. */
 let placedOn: ScreenRect | null = null
-
-function loadPage(win: BrowserWindow, page: string): void {
-  const devServer = process.env['ELECTRON_RENDERER_URL']
-  if (devServer) void win.loadURL(`${devServer}/${page}/index.html`)
-  else void win.loadFile(join(__dirname, `../renderer/${page}/index.html`))
-}
 
 function createWindow(): BrowserWindow {
   const win = new BrowserWindow({

@@ -25,6 +25,7 @@ import { join } from 'node:path'
 import { BrowserWindow, screen, shell } from 'electron'
 import { CH } from '@shared/ipc'
 import type { AgentCursorFrame, AgentEvent, ScreenRect } from '@shared/types'
+import { loadPage } from '../pageLoad'
 
 /** How long the renderer's fade-out runs before the window is actually hidden. */
 const EXIT_MS = 160
@@ -80,12 +81,6 @@ let turn = 0
 /** Stage a `done` into `waiting` after a beat; cancelled by the next step. */
 let waitTimer: NodeJS.Timeout | null = null
 
-function loadPage(target: BrowserWindow): void {
-  const devServer = process.env['ELECTRON_RENDERER_URL']
-  if (devServer) void target.loadURL(`${devServer}/cursor/index.html`)
-  else void target.loadFile(join(__dirname, '../renderer/cursor/index.html'))
-}
-
 function createWindow(): BrowserWindow {
   const next = new BrowserWindow({
     x: 0,
@@ -140,7 +135,7 @@ function createWindow(): BrowserWindow {
     return { action: 'deny' }
   })
 
-  loadPage(next)
+  loadPage(next, 'cursor')
   return next
 }
 
