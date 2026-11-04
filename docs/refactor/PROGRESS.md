@@ -63,9 +63,15 @@ R21: Александр явно одобрил ESLint 9 + typescript-eslint 8 +
 `.editorconfig`, `npm run lint`; 0 замечаний, существующие зависимости не обновлялись.
 Правки имён в тестах не понадобились: разрешение `_`-аргументов решает оба прежних замечания.
 КТ6: автоматические проверки зелёные (55/1159); §7 MANUAL_SMOKE ожидает Александра.
+**Код плана завершён: R01–R21 закрыты.** F1: автоматическая часть и `05-report.md` готовы
+(`f1988cb`); 55 файлов / 1159 тестов, lint/typecheck/build/coverage зелёные. Покрытие строк
+72,46% (только TS по текущему include), jscpd 0,53%; снапшоты, prompt.ts, helper.m и
+electron-builder config без изменений. **F1 остаётся открытой до ручной приёмки Александром**
+(КТ5 целиком, КТ6 §7, финальный MANUAL_SMOKE). GUI и реальные команды helper не запускались.
 ## Last commit
-b2b0244 chore(lint): add ESLint and editor configuration (R21)
+f1988cb docs(refactor): report final metrics and pending acceptance (F1)
 ## Log (одна строка на задачу: ID — hash — итог)
+F1 (автоматическая часть) — f1988cb — 05-report.md: метрики, сравнение out/resources, неизменность снапшотов и ограничения; ручная приёмка ожидается, F1 не закрыта.
 R21 — b2b0244 — ESLint recommended и .editorconfig; lint/typecheck/test/build зелёные; 55/1159, обновлений прежних версий нет.
 R20 — 6ea3a8a — агентные раунды вынесены с явными зависимостями и сохранёнными guard-ами; 14 новых тестов, 55/1159, все проверки зелёные.
 R19 — 83c8fcc + a749c46 — разнесены жизненные циклы окон и baseOptions, порядок активации сохранён; 6 тестов, КТ5 ожидает ручного прогона.
@@ -187,6 +193,7 @@ A1 крупные модули, A2 мусор (включая три сущно�
 
 ## Blocked
 ## Open questions
+- Актуализация 2026-11-05: пункт 1 групп A4 и P1 (ESLint 9 + typescript-eslint 8 + .editorconfig) явно одобрен Александром и выполнен в R21; остальные согласования не расширялись.
 - РЕШЕНО (Александр, сессия T01): 6 неиспользуемых методов моста (`settings.validateHotkey`, `onboarding.close`, `quickActions.defaults`, `permissions.microphone`, `voice.micPermission`, `voice.requestMicPermission`) и канал `shell:open-external` разрешено удалить в A2. Удалять с grep-доказательствами по правилу 7, отдельными коммитами.
 - T14: `normalizeSettings({})` возвращает `models: {openrouter:'', openai:'', anthropic:''}`, а не модели из `DEFAULT_SETTINGS`. Практически безопасно (`llm/index.ts:resolveModel` падает на `providerInfo().defaultModel`), но это единственный блок, который не совпадает с дефолтами. Тесты закрепляют как есть; менять — по твоему «ок».
 - A3, нужен твой «ок» (это смена поведения, а не дедупликация): (1) свести все четыре
