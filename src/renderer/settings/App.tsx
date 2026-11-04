@@ -12,22 +12,22 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { AppSettings, KeyStatus, PermissionState, ProviderId } from '@shared/types'
-import { DEFAULT_SYSTEM_PROMPT, PROVIDERS, normalizeBaseUrl, providerInfo } from '@shared/defaults'
+import { PROVIDERS } from '@shared/defaults'
 import type { AppPickResult, RunningAppInfo, SettingsBundle } from '@shared/api'
-import { HotkeyField, prettyHotkey } from './HotkeyField'
+import { prettyHotkey } from './HotkeyField'
 import {
-  MAX_TOKENS_MAX,
-  MAX_TOKENS_MIN,
   hasUnsaved,
   holdReasonFor,
   invalidBaseUrlProviders,
   writableSettings
 } from './applyGate'
 import { ApplyStatus, type ApplyState } from './ApplyStatus'
-import { PermissionRow } from './PermissionRow'
-import { QuickActionsEditor } from './QuickActionsEditor'
 import { AgentTab } from './AgentTab'
 import { VoiceTab } from './VoiceTab'
+import { ProviderSection } from './sections/ProviderSection'
+import { BehaviorSection } from './sections/BehaviorSection'
+import { ActionsSection } from './sections/ActionsSection'
+import { PrivacySection } from './sections/PrivacySection'
 
 type Tab = 'provider' | 'behavior' | 'voice' | 'agent' | 'actions' | 'privacy'
 
@@ -342,14 +342,6 @@ export function App() {
     return <div className="pending">Загрузка настроек…</div>
   }
 
-  const info = providerInfo(draft.provider)
-  const status = providerKeys[draft.provider]
-  // An invalid override is rejected instead of being silently replaced by the
-  // default, so a typo cannot quietly send traffic to the official host.
-  const baseUrlError = invalidBaseUrls.includes(draft.provider)
-    ? 'Некорректный адрес: нужен http(s)-адрес вида https://host/v1.'
-    : null
-
   return (
     <div className="shell">
       <aside className="sidebar">
@@ -379,227 +371,26 @@ export function App() {
 
       <main className="content">
         {tab === 'provider' && (
-          <section>
-            <h2>Модель и ключ</h2>
-            <p className="hint">
-              Ключ хранится в связке ключей macOS (Keychain) и никогда не показывается целиком.
-            </p>
-
-            <div className="field">
-              <label>Провайдер</label>
-              <div className="segmented">
-                {PROVIDERS.map((provider) => (
-                  <button
-                    key={provider.id}
-                    className={draft.provider === provider.id ? 'active' : ''}
-                    onClick={() => patch({ provider: provider.id })}
-                  >
-                    {provider.label}
-                    {providerKeys[provider.id]?.configured && <span className="badge">ключ</span>}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <div className="field">
-              <label>Модель</label>
-              <input
-                value={draft.models[draft.provider]}
-                onChange={(event) =>
-                  patch({ models: { ...draft.models, [draft.provider]: event.target.value } })
-                }
-                placeholder={info?.defaultModel}
-              />
-              <div className="chips">
-                {info?.popularModels.map((model) => (
-                  <button
-                    key={model}
-                    className="chip"
-                    onClick={() => patch({ models: { ...draft.models, [draft.provider]: model } })}
-                  >
-                    {model}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <div className="field">
-              <label>Base URL · {info?.label}</label>
-              <div className="key-row">
-                <input
-                  value={draft.baseUrls[draft.provider]}
-                  onChange={(event) =>
-                    patch({ baseUrls: { ...draft.baseUrls, [draft.provider]: event.target.value } })
-                  }
-                  placeholder={info?.defaultBaseUrl}
-                  spellCheck={false}
-                />
-                <button
-                  className="ghost"
-                  disabled={!draft.baseUrls[draft.provider]}
-                  onClick={() =>
-                    patch({ baseUrls: { ...draft.baseUrls, [draft.provider]: '' } })
-                  }
-                >
-                  Сбросить
-                </button>
-              </div>
-              {baseUrlError ? (
-                <div className="hint err">{baseUrlError}</div>
-              ) : (
-                <div className="hint">
-                  {draft.baseUrls[draft.provider]
-                    ? `Запросы пойдут на ${normalizeBaseUrl(draft.baseUrls[draft.provider])}. Пустое поле — ${info?.defaultBaseUrl}.`
-                    : `Корень API, без /chat/completions. По умолчанию: ${info?.defaultBaseUrl}.`}
-                </div>
-              )}
-            </div>
-
-            <div className="field">
-              <label>Ключ API {info?.label}</label>
-              {status?.configured ? (
-                <div className="key-row">
-                  <span className="ok">Ключ сохранён</span>
-                  <button onClick={() => void removeKey()}>Удалить</button>
-                </div>
-              ) : (
-                <div className="key-row">
-                  <input
-                    type="password"
-                    value={keyInput}
-                    onChange={(event) => setKeyInput(event.target.value)}
-                    placeholder="sk-…"
-                    onKeyDown={(event) => {
-                      if (event.key === 'Enter') void saveKey()
-                    }}
-                  />
-                  <button className="primary" disabled={testing || !keyInput.trim()} onClick={() => void saveKey()}>
-                    {testing ? 'Проверка…' : 'Проверить и сохранить'}
-                  </button>
-                </div>
-              )}
-              {info && (
-                <div className="hint">
-                  Получить ключ:{' '}
-                  <a href={info.keyUrl} target="_blank" rel="noreferrer">
-                    {info.keyUrl}
-                  </a>
-                </div>
-              )}
-            </div>
-
-            <div className="row-grid">
-              <div className="field">
-                <label>Температура · {draft.temperature.toFixed(1)}</label>
-                <input
-                  type="range"
-                  min={0}
-                  max={2}
-                  step={0.1}
-                  value={draft.temperature}
-                  onChange={(event) => patch({ temperature: Number(event.target.value) })}
-                />
-              </div>
-              <div className="field">
-                <label>Максимум токенов</label>
-                <input
-                  type="number"
-                  min={MAX_TOKENS_MIN}
-                  max={MAX_TOKENS_MAX}
-                  step={MAX_TOKENS_MIN}
-                  value={draft.maxTokens}
-                  onChange={(event) => patch({ maxTokens: Number(event.target.value) })}
-                />
-              </div>
-            </div>
-
-            <div className="field">
-              <label>Системный промпт</label>
-              <textarea
-                rows={4}
-                value={draft.systemPrompt}
-                onChange={(event) => patch({ systemPrompt: event.target.value })}
-              />
-              <div className="key-row">
-                <span className="hint">
-                  Пустое поле не применяется: стереть промпт нельзя, только заменить.
-                </span>
-                <button
-                  className="ghost"
-                  disabled={draft.systemPrompt === DEFAULT_SYSTEM_PROMPT}
-                  onClick={() => patch({ systemPrompt: DEFAULT_SYSTEM_PROMPT })}
-                >
-                  Вернуть стандартный
-                </button>
-              </div>
-            </div>
-          </section>
+          <ProviderSection
+            draft={draft}
+            patch={patch}
+            providerKeys={providerKeys}
+            invalidBaseUrls={invalidBaseUrls}
+            keyInput={keyInput}
+            onKeyInput={setKeyInput}
+            testing={testing}
+            onSaveKey={() => void saveKey()}
+            onRemoveKey={() => void removeKey()}
+          />
         )}
 
         {tab === 'behavior' && (
-          <section>
-            <h2>Поведение</h2>
-
-            <div className="field">
-              <label>Глобальная горячая клавиша</label>
-              <HotkeyField
-                value={draft.hotkey}
-                onChange={(accelerator) => {
-                  setHotkeyError(null)
-                  patch({ hotkey: accelerator })
-                }}
-              />
-              {hotkeyError && <div className="hint err">{hotkeyError}</div>}
-            </div>
-
-            <label className="check">
-              <input
-                type="checkbox"
-                checked={draft.captureScreenshotByDefault}
-                onChange={(event) => patch({ captureScreenshotByDefault: event.target.checked })}
-              />
-              Делать скриншот, когда нет выделения — по нему ассистент сам решает,
-              что обвести и куда показать стрелкой
-            </label>
-
-            <label className="check">
-              <input
-                type="checkbox"
-                checked={draft.launchAtLogin}
-                onChange={(event) => patch({ launchAtLogin: event.target.checked })}
-              />
-              Запускать при входе в систему
-            </label>
-
-            <div className="row-grid">
-              <div className="field">
-                <label>Длинная сторона скриншота · {draft.screenshotMaxSide}px</label>
-                <input
-                  type="range"
-                  min={480}
-                  max={2400}
-                  step={80}
-                  value={draft.screenshotMaxSide}
-                  onChange={(event) => patch({ screenshotMaxSide: Number(event.target.value) })}
-                />
-              </div>
-              <div className="field">
-                <label>Качество JPEG · {draft.screenshotQuality}</label>
-                <input
-                  type="range"
-                  min={30}
-                  max={95}
-                  step={5}
-                  value={draft.screenshotQuality}
-                  onChange={(event) => patch({ screenshotQuality: Number(event.target.value) })}
-                />
-              </div>
-            </div>
-
-            <div className="hint">
-              Меньше длинная сторона и качество — быстрее ответ и меньше расход токенов.
-            </div>
-          </section>
+          <BehaviorSection
+            draft={draft}
+            patch={patch}
+            hotkeyError={hotkeyError}
+            onHotkeyError={setHotkeyError}
+          />
         )}
 
         {tab === 'voice' && (
@@ -636,115 +427,18 @@ export function App() {
           />
         )}
 
-        {tab === 'actions' && (
-          <section>
-            <h2>Быстрые действия</h2>
-            <p className="hint">Порядок кнопок в оверлее. Пустые поля игнорируются.</p>
-            <QuickActionsEditor
-              actions={draft.quickActions}
-              onChange={(quickActions) => patch({ quickActions })}
-            />
-          </section>
-        )}
+        {tab === 'actions' && <ActionsSection draft={draft} patch={patch} />}
 
         {tab === 'privacy' && (
-          <section>
-            <h2>Приватность и доступ</h2>
-
-            <div className="permissions">
-              <PermissionRow
-                title="Универсальный доступ"
-                description="Нужен, чтобы читать выделенный текст и вставлять ответ."
-                granted={permissions?.accessibility ?? false}
-                onRequest={async () => {
-                  const next = await window.smartCursor.permissions.request()
-                  setBundle((prev) => (prev ? { ...prev, permissions: next } : prev))
-                }}
-                onOpen={() => window.smartCursor.permissions.open('accessibility')}
-              />
-              <PermissionRow
-                title="Запись экрана"
-                description="Нужна для скриншота активного окна."
-                granted={permissions?.screenRecording ?? false}
-                onRequest={async () => {
-                  const next = await window.smartCursor.permissions.request()
-                  setBundle((prev) => (prev ? { ...prev, permissions: next } : prev))
-                }}
-                onOpen={() => window.smartCursor.permissions.open('screenRecording')}
-              />
-              <PermissionRow
-                title="Микрофон"
-                description="Нужен для голосового ввода: удержание клавиши записывает речь."
-                granted={permissions?.microphone ?? false}
-                onRequest={async () => {
-                  const granted = await window.smartCursor.permissions.requestMicrophone()
-                  setBundle((prev) =>
-                    prev ? { ...prev, permissions: { ...prev.permissions, microphone: granted } } : prev
-                  )
-                }}
-                onOpen={() => window.smartCursor.permissions.open('microphone')}
-              />
-            </div>
-
-            <div className="field">
-              <label>Исключённые приложения</label>
-              <p className="hint">
-                В этих приложениях Smart Cursor не читает текст и не делает скриншоты.
-              </p>
-              <div className="excluded-list">
-                {draft.excludedApps.map((bundleId) => (
-                  <div key={bundleId} className="excluded-row">
-                    <span className="mono">{bundleId}</span>
-                    <button
-                      className="ghost"
-                      onClick={() =>
-                        patch({
-                          excludedApps: draft.excludedApps.filter((item) => item !== bundleId)
-                        })
-                      }
-                    >
-                      ✕
-                    </button>
-                  </div>
-                ))}
-                {draft.excludedApps.length === 0 && <div className="hint">Список пуст.</div>}
-              </div>
-              <div className="key-row">
-                <select
-                  value=""
-                  onChange={(event) => {
-                    const bundleId = event.target.value
-                    if (bundleId && !draft.excludedApps.includes(bundleId)) {
-                      patch({ excludedApps: [...draft.excludedApps, bundleId] })
-                    }
-                  }}
-                >
-                  <option value="">Выбрать из запущенных…</option>
-                  {apps
-                    .filter((app) => !draft.excludedApps.includes(app.bundleId))
-                    .map((app) => (
-                      <option key={app.bundleId} value={app.bundleId}>
-                        {app.name}
-                      </option>
-                    ))}
-                </select>
-                <button
-                  onClick={async () => {
-                    const picked = await window.smartCursor.settings.pickApp()
-                    await addExcluded(picked)
-                  }}
-                >
-                  Выбрать .app…
-                </button>
-              </div>
-            </div>
-
-            {!bundle.encryptionAvailable && (
-              <div className="notice err">
-                Шифрование Keychain недоступно — ключи API не будут сохранены.
-              </div>
-            )}
-          </section>
+          <PrivacySection
+            draft={draft}
+            patch={patch}
+            permissions={permissions}
+            encryptionAvailable={bundle.encryptionAvailable}
+            apps={apps}
+            setBundle={setBundle}
+            onAddExcluded={(picked) => void addExcluded(picked)}
+          />
         )}
 
         <div className="footer">

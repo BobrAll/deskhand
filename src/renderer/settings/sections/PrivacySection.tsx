@@ -1,0 +1,134 @@
+/**
+ * The «Приватность» tab: the three permission rows, excluded apps, encryption notice.
+ *
+ * Moved out of `App.tsx` verbatim. `setBundle` is passed through as it is rather
+ * than wrapped in three separate callbacks: every handler here writes a fresh
+ * `permissions` object into the bundle, and the bundle is the "saved" side of the
+ * auto-apply comparison — the footer would otherwise announce a pending write for
+ * a value that is already on disk.
+ */
+
+import type { Dispatch, SetStateAction } from 'react'
+import type { AppSettings, PermissionState } from '@shared/types'
+import type { AppPickResult, RunningAppInfo, SettingsBundle } from '@shared/api'
+import { PermissionRow } from '../PermissionRow'
+
+interface PrivacySectionProps {
+  draft: AppSettings
+  patch(changes: Partial<AppSettings>): void
+  permissions: PermissionState | null
+  encryptionAvailable: boolean
+  apps: RunningAppInfo[]
+  setBundle: Dispatch<SetStateAction<SettingsBundle | null>>
+  onAddExcluded(picked: AppPickResult | null): void
+}
+
+export function PrivacySection({
+  draft,
+  patch,
+  permissions,
+  encryptionAvailable,
+  apps,
+  setBundle,
+  onAddExcluded
+}: PrivacySectionProps) {
+  return (
+    <section>
+      <h2>Приватность и доступ</h2>
+
+      <div className="permissions">
+        <PermissionRow
+          title="Универсальный доступ"
+          description="Нужен, чтобы читать выделенный текст и вставлять ответ."
+          granted={permissions?.accessibility ?? false}
+          onRequest={async () => {
+            const next = await window.smartCursor.permissions.request()
+            setBundle((prev) => (prev ? { ...prev, permissions: next } : prev))
+          }}
+          onOpen={() => window.smartCursor.permissions.open('accessibility')}
+        />
+        <PermissionRow
+          title="Запись экрана"
+          description="Нужна для скриншота активного окна."
+          granted={permissions?.screenRecording ?? false}
+          onRequest={async () => {
+            const next = await window.smartCursor.permissions.request()
+            setBundle((prev) => (prev ? { ...prev, permissions: next } : prev))
+          }}
+          onOpen={() => window.smartCursor.permissions.open('screenRecording')}
+        />
+        <PermissionRow
+          title="Микрофон"
+          description="Нужен для голосового ввода: удержание клавиши записывает речь."
+          granted={permissions?.microphone ?? false}
+          onRequest={async () => {
+            const granted = await window.smartCursor.permissions.requestMicrophone()
+            setBundle((prev) =>
+              prev ? { ...prev, permissions: { ...prev.permissions, microphone: granted } } : prev
+            )
+          }}
+          onOpen={() => window.smartCursor.permissions.open('microphone')}
+        />
+      </div>
+
+      <div className="field">
+        <label>Исключённые приложения</label>
+        <p className="hint">
+          В этих приложениях Smart Cursor не читает текст и не делает скриншоты.
+        </p>
+        <div className="excluded-list">
+          {draft.excludedApps.map((bundleId) => (
+            <div key={bundleId} className="excluded-row">
+              <span className="mono">{bundleId}</span>
+              <button
+                className="ghost"
+                onClick={() =>
+                  patch({
+                    excludedApps: draft.excludedApps.filter((item) => item !== bundleId)
+                  })
+                }
+              >
+                ✕
+              </button>
+            </div>
+          ))}
+          {draft.excludedApps.length === 0 && <div className="hint">Список пуст.</div>}
+        </div>
+        <div className="key-row">
+          <select
+            value=""
+            onChange={(event) => {
+              const bundleId = event.target.value
+              if (bundleId && !draft.excludedApps.includes(bundleId)) {
+                patch({ excludedApps: [...draft.excludedApps, bundleId] })
+              }
+            }}
+          >
+            <option value="">Выбрать из запущенных…</option>
+            {apps
+              .filter((app) => !draft.excludedApps.includes(app.bundleId))
+              .map((app) => (
+                <option key={app.bundleId} value={app.bundleId}>
+                  {app.name}
+                </option>
+              ))}
+          </select>
+          <button
+            onClick={async () => {
+              const picked = await window.smartCursor.settings.pickApp()
+              onAddExcluded(picked)
+            }}
+          >
+            Выбрать .app…
+          </button>
+        </div>
+      </div>
+
+      {!encryptionAvailable && (
+        <div className="notice err">
+          Шифрование Keychain недоступно — ключи API не будут сохранены.
+        </div>
+      )}
+    </section>
+  )
+}
