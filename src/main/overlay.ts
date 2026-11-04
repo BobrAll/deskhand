@@ -30,6 +30,7 @@ import { normalizePlan } from './agent/plan'
 import { describeScreen } from './agent/outline'
 import { collectContext } from './context/collect'
 import { captureScreenshot } from './context/screenshot'
+import { imagePart } from './imagePart'
 import { getProvider, resolveModel } from './llm'
 import { ProviderError, type ChatMessage, type ContentPart } from './llm/provider'
 import { copyText, pasteAnswer } from './paste'
@@ -957,8 +958,8 @@ export function createOverlayController(host: OverlayHost) {
 
     const parts: ContentPart[] = []
     if (useImage && session.snapshot.screenshot) {
-      const match = /^data:(image\/[\w+.-]+);base64,(.*)$/i.exec(session.snapshot.screenshot.dataUrl)
-      if (match) parts.push({ type: 'image', mimeType: match[1], base64: match[2] })
+      const image = imagePart(session.snapshot.screenshot.dataUrl)
+      if (image) parts.push(image)
     }
     parts.push({ type: 'text', text: userText })
 
@@ -1178,8 +1179,8 @@ export function createOverlayController(host: OverlayHost) {
 
         const continueParts: ContentPart[] = []
         if (shot) {
-          const match = /^data:(image\/[\w+.-]+);base64,(.*)$/i.exec(shot.dataUrl)
-          if (match) continueParts.push({ type: 'image', mimeType: match[1], base64: match[2] })
+          const image = imagePart(shot.dataUrl)
+          if (image) continueParts.push(image)
         }
         continueParts.push({ type: 'text', text: continuation.userText })
 
@@ -1357,8 +1358,8 @@ export function createOverlayController(host: OverlayHost) {
           })
 
           const parts: ContentPart[] = []
-          const match = /^data:(image\/[\w+.-]+);base64,(.*)$/i.exec(shot.dataUrl)
-          if (match) parts.push({ type: 'image', mimeType: match[1], base64: match[2] })
+          const image = imagePart(shot.dataUrl)
+          if (image) parts.push(image)
           parts.push({ type: 'text', text: checkRequest.userText })
 
           // A new local name on purpose: the outer `round` holds the plan's answer
