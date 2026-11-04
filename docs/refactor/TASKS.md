@@ -5,7 +5,7 @@
 ## Фаза 0 — документы (без правок кода)
 - [x] T01 IPC-таблица: канал → направление → payload → хендлер → потребитель (+ webPreferences и создатель каждого из 6 окон)
       → docs/refactor/00-inventory.md (раздел IPC/окна). Выборочно перепроверь 3–4 факта из CONTEXT.md, расхождения — в PROGRESS.
-- [ ] T02 Таблица helper-контракта: команда → argv → формат ответа → кто вызывает → fallback → 00-inventory.md. Прочитай `probe` в helper.m
+- [x] T02 Таблица helper-контракта: команда → argv → формат ответа → кто вызывает → fallback → 00-inventory.md. Прочитай `probe` в helper.m
       на побочные эффекты и запиши вывод.
 - [ ] T03 Карта overlay.ts: ответственности, границы секций (строки), разделяемое внутреннее состояние → 00-inventory.md.
 - [x] T04 Карты windows.ts, renderer/overlay/App.tsx, renderer/settings/App.tsx — так же → 00-inventory.md.
