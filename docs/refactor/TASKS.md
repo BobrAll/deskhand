@@ -121,7 +121,9 @@ typecheck/test/build → коммит → PROGRESS. После крупных г
       и остались вызовами в `App` — обёртка на три строки была бы файлом ради файла)
 
 ### Волна 5 — структура (КТ5 после R19)
-- [ ] R18 `git mv main/overlay.ts → main/overlay/index.ts` + вынос `OverlayHost` в `overlay/host.ts`. Два коммита (правило 5).
+- [x] R18 `git mv main/overlay.ts → main/overlay/index.ts` + вынос `OverlayHost` в `overlay/host.ts`. Два коммита (правило 5).
+      → 0ded440 (перенос + 19 строк импортов; `windows.ts`/`ipc.ts`/`index.ts` правок не потребовали —
+      каталог резолвится как модуль) + 3523a7d (`host.ts`; `windows.ts` импортирует тип из него, а не из контроллера)
 
 ### Волна 6 — рискованное (КТ6 после R21)
 - [ ] R19 Разнос `windows.ts`: `windows/index.ts` (карточка) + `windows/settings.ts` (настройки/онбординг) + `base.ts`. Высокий риск.
