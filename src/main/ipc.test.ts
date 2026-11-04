@@ -215,9 +215,8 @@ describe('registerIpc: every channel has exactly one handler', () => {
   it('wires no channel that is not in the shared map', () => {
     wire()
     const known = new Set(channels.map(([, channel]) => channel))
-    // `shell:open-external` is a known leftover outside `CH` (see PROGRESS notes).
     const extra = [...electron.handles.keys(), ...electron.ons.keys()].filter(
-      (channel) => !known.has(channel) && channel !== 'shell:open-external'
+      (channel) => !known.has(channel)
     )
     expect(extra).toEqual([])
   })

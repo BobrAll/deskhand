@@ -163,25 +163,6 @@ describe('readPermissions: which source wins', () => {
   })
 })
 
-describe('readMicrophonePermission', () => {
-  it('is true only for an explicit grant', async () => {
-    const { readMicrophonePermission } = await loadPermissions()
-
-    env.microphone = 'granted'
-    expect(await readMicrophonePermission()).toBe(true)
-    env.microphone = 'denied'
-    expect(await readMicrophonePermission()).toBe(false)
-    env.microphone = 'unknown'
-    expect(await readMicrophonePermission()).toBe(false)
-  })
-
-  it('is false when the API throws', async () => {
-    env.throwMicrophone = true
-    const { readMicrophonePermission } = await loadPermissions()
-    expect(await readMicrophonePermission()).toBe(false)
-  })
-})
-
 describe('requestMicrophonePermission', () => {
   it('does not ask when the microphone is already granted', async () => {
     env.microphone = 'granted'

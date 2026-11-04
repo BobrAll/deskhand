@@ -4,12 +4,11 @@ exports[`CH: the channel set is a wire protocol > keeps the size of every namesp
 {
   "agent": 5,
   "hud": 2,
-  "onboarding": 3,
+  "onboarding": 2,
   "overlay": 15,
-  "permissions": 5,
+  "permissions": 4,
   "pointer": 1,
-  "quickActions": 1,
-  "settings": 11,
+  "settings": 10,
   "voice": 13,
 }
 `;
@@ -117,10 +116,6 @@ exports[`CH: the channel set is a wire protocol > matches the snapshot 1`] = `
     "settings:pick-app",
   ],
   [
-    "settings.validateHotkey",
-    "settings:validate-hotkey",
-  ],
-  [
     "settings.open",
     "settings:open",
   ],
@@ -145,10 +140,6 @@ exports[`CH: the channel set is a wire protocol > matches the snapshot 1`] = `
     "permissions:open",
   ],
   [
-    "permissions.microphone",
-    "permissions:microphone",
-  ],
-  [
     "permissions.requestMicrophone",
     "permissions:request-microphone",
   ],
@@ -159,14 +150,6 @@ exports[`CH: the channel set is a wire protocol > matches the snapshot 1`] = `
   [
     "onboarding.openSettings",
     "onboarding:open-settings",
-  ],
-  [
-    "onboarding.close",
-    "onboarding:close",
-  ],
-  [
-    "quickActions.defaults",
-    "quick-actions:defaults",
   ],
   [
     "agent.event",

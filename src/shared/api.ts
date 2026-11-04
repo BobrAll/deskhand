@@ -18,7 +18,6 @@ import type {
   PermissionState,
   PointerPayload,
   ProviderId,
-  QuickAction,
   SendRequest,
   StreamEvent,
   TestKeyResult,
@@ -127,7 +126,6 @@ export interface SmartCursorApi {
     testKey(provider: ProviderId, key: string, baseUrl?: string): Promise<TestKeyResult>
     runningApps(): Promise<RunningAppInfo[]>
     pickApp(): Promise<AppPickResult | null>
-    validateHotkey(accelerator: string): Promise<ActionResult>
     open(): void
     close(): void
     /**
@@ -142,18 +140,12 @@ export interface SmartCursorApi {
   onboarding: {
     complete(): Promise<void>
     openSettings(): void
-    close(): void
   }
   permissions: {
     status(): Promise<PermissionState>
     request(): Promise<PermissionState>
     open(kind: 'accessibility' | 'screenRecording' | 'microphone'): void
-    /** Microphone state alone: asking for all three on launch is too much. */
-    microphone(): Promise<boolean>
     requestMicrophone(): Promise<boolean>
-  }
-  quickActions: {
-    defaults(): Promise<QuickAction[]>
   }
   /**
    * Agent mode. The card renders what the main process reports and can stop it;
@@ -203,9 +195,6 @@ export interface SmartCursorApi {
     failed(message: string): void
     /** Loudness of the block just captured, 0..1, for the waveform. */
     level(level: number): void
-    /** Whether the microphone is already granted; true means recording can start. */
-    micPermission(): Promise<boolean>
-    requestMicPermission(): Promise<boolean>
     status(): Promise<VoiceStatus>
     /** Downloads one catalog model; progress arrives through `onDownloadProgress`. */
     download(model: string): Promise<VoiceStatus>

@@ -55,22 +55,6 @@ export function unregisterHotkey(): void {
   }
 }
 
-/** Checks whether an accelerator is available without keeping it claimed. */
-export function canRegister(accelerator: string): boolean {
-  const candidate = accelerator.trim()
-  if (!candidate) return false
-  if (candidate === current) return true
-  if (globalShortcut.isRegistered(candidate)) return false
-  let ok = false
-  try {
-    ok = globalShortcut.register(candidate, () => undefined)
-  } catch {
-    ok = false
-  }
-  if (ok) globalShortcut.unregister(candidate)
-  return ok
-}
-
 export function currentHotkey(): string | null {
   return current
 }

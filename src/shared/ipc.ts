@@ -65,7 +65,6 @@ export const CH = {
     testKey: 'settings:test-key',
     runningApps: 'settings:running-apps',
     pickApp: 'settings:pick-app',
-    validateHotkey: 'settings:validate-hotkey',
     open: 'settings:open',
     close: 'settings:close',
     /**
@@ -82,17 +81,11 @@ export const CH = {
     status: 'permissions:status',
     request: 'permissions:request',
     open: 'permissions:open',
-    /** Microphone TCC state: needed before the first hold-to-talk turn. */
-    microphone: 'permissions:microphone',
     requestMicrophone: 'permissions:request-microphone'
   },
   onboarding: {
     complete: 'onboarding:complete',
-    openSettings: 'onboarding:open-settings',
-    close: 'onboarding:close'
-  },
-  quickActions: {
-    defaults: 'quick-actions:defaults'
+    openSettings: 'onboarding:open-settings'
   },
   /**
    * Agent mode: the mouse and the keyboard belong to the assistant for the

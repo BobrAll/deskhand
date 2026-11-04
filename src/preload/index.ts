@@ -77,26 +77,19 @@ const api: SmartCursorApi = {
       ipcRenderer.invoke(CH.settings.testKey, provider, key, baseUrl),
     runningApps: () => ipcRenderer.invoke(CH.settings.runningApps),
     pickApp: () => ipcRenderer.invoke(CH.settings.pickApp),
-    validateHotkey: (accelerator: string) =>
-      ipcRenderer.invoke(CH.settings.validateHotkey, accelerator),
     open: () => ipcRenderer.send(CH.settings.open),
     close: () => ipcRenderer.send(CH.settings.close),
     hold: (busy: boolean) => ipcRenderer.send(CH.settings.hold, busy)
   },
   onboarding: {
     complete: () => ipcRenderer.invoke(CH.onboarding.complete),
-    openSettings: () => ipcRenderer.send(CH.onboarding.openSettings),
-    close: () => ipcRenderer.send(CH.onboarding.close)
+    openSettings: () => ipcRenderer.send(CH.onboarding.openSettings)
   },
   permissions: {
     status: () => ipcRenderer.invoke(CH.permissions.status),
     request: () => ipcRenderer.invoke(CH.permissions.request),
     open: (kind) => ipcRenderer.send(CH.permissions.open, kind),
-    microphone: () => ipcRenderer.invoke(CH.permissions.microphone),
     requestMicrophone: () => ipcRenderer.invoke(CH.permissions.requestMicrophone)
-  },
-  quickActions: {
-    defaults: () => ipcRenderer.invoke(CH.quickActions.defaults)
   },
   voice: {
     onEvent: (handler) => subscribe<VoiceEvent>(CH.voice.event, handler),
@@ -108,8 +101,6 @@ const api: SmartCursorApi = {
     onTranscript: (handler) => subscribe<{ text: string; send: boolean }>(CH.voice.transcript, handler),
     failed: (message: string) => ipcRenderer.send(CH.voice.failed, message),
     level: (level: number) => ipcRenderer.send(CH.voice.level, level),
-    micPermission: () => ipcRenderer.invoke(CH.permissions.microphone),
-    requestMicPermission: () => ipcRenderer.invoke(CH.permissions.requestMicrophone),
     status: () => ipcRenderer.invoke(CH.voice.status),
     download: (model: string) => ipcRenderer.invoke(CH.voice.download, model),
     onDownloadProgress: (handler) => subscribe<DownloadProgress>(CH.voice.downloadProgress, handler),

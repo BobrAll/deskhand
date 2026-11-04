@@ -7,9 +7,9 @@
  */
 
 import { execFile } from 'node:child_process'
-import { app, dialog, ipcMain, shell } from 'electron'
+import { app, dialog, ipcMain } from 'electron'
 import { CH } from '@shared/ipc'
-import { DEFAULT_QUICK_ACTIONS, PROVIDERS } from '@shared/defaults'
+import { PROVIDERS } from '@shared/defaults'
 import type {
   AppSettings,
   ContextFlags,
@@ -22,12 +22,10 @@ import type { OverlayController } from './overlay'
 import type { VoiceController } from './voice'
 import type { GestureController } from './gesture'
 import type { CursorHud } from './hud'
-import { canRegister } from './hotkey'
 import { testApiKey } from './llm/testKey'
 import { helperRunningApps, type RunningApp } from './native/helper'
 import {
   openPermissionPane,
-  readMicrophonePermission,
   readPermissions,
   requestMicrophonePermission,
   requestPermissions
@@ -191,14 +189,6 @@ export function registerIpc(deps: IpcDeps): void {
   ipcMain.handle(CH.settings.runningApps, async (): Promise<RunningApp[]> => helperRunningApps())
   ipcMain.handle(CH.settings.pickApp, () => pickApplication())
 
-  ipcMain.handle(CH.settings.validateHotkey, (_event, accelerator: string): ActionResult => {
-    const ok = canRegister(String(accelerator ?? ''))
-    return {
-      ok,
-      message: ok ? undefined : 'Комбинация занята другим приложением или недопустима.'
-    }
-  })
-
   ipcMain.on(CH.settings.open, () => openSettingsWindow())
   ipcMain.on(CH.settings.close, () => closeSettingsWindowWhenSettled())
   // The renderer says "edits are still being written" before it asks to close and
@@ -209,7 +199,6 @@ export function registerIpc(deps: IpcDeps): void {
   // ---- permissions -------------------------------------------------------
   ipcMain.handle(CH.permissions.status, () => readPermissions())
   ipcMain.handle(CH.permissions.request, () => requestPermissions())
-  ipcMain.handle(CH.permissions.microphone, () => readMicrophonePermission())
   ipcMain.handle(CH.permissions.requestMicrophone, () => requestMicrophonePermission())
   ipcMain.on(
     CH.permissions.open,
@@ -227,7 +216,6 @@ export function registerIpc(deps: IpcDeps): void {
     closeOnboardingWindow()
     openSettingsWindow()
   })
-  ipcMain.on(CH.onboarding.close, () => closeOnboardingWindow())
 
   // ---- voice (push-to-talk) ----------------------------------------------
   ipcMain.handle(CH.voice.status, async () => {
@@ -308,14 +296,6 @@ export function registerIpc(deps: IpcDeps): void {
   )
   ipcMain.handle(CH.agent.stop, () => {
     deps.overlay.stopAgent()
-  })
-
-  // ---- static data -------------------------------------------------------
-  ipcMain.handle(CH.quickActions.defaults, () => DEFAULT_QUICK_ACTIONS)
-
-  // Anything that wants to leave the app goes through the default browser.
-  ipcMain.handle('shell:open-external', (_event, url: string) => {
-    if (typeof url === 'string' && /^https?:\/\//.test(url)) void shell.openExternal(url)
   })
 
   app.on('second-instance', () => {

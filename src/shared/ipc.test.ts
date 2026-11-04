@@ -44,7 +44,7 @@ describe('CH: the channel set is a wire protocol', () => {
     // it is how the two ends agree on who owns the handler.
     for (const [path, channel] of channels) {
       const [namespace, key] = path.split('.')
-      // Both halves are kebab-cased: `quickActions.defaults` is `quick-actions:defaults`.
+      // Both halves are kebab-cased: `voice.downloadProgress` is `voice:download-progress`.
       const kebab = (part: string): string =>
         part.replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`)
       expect(channel, path).toBe(`${kebab(namespace)}:${kebab(key)}`)
@@ -59,7 +59,6 @@ describe('CH: the channel set is a wire protocol', () => {
       'overlay',
       'permissions',
       'pointer',
-      'quickActions',
       'settings',
       'voice'
     ])

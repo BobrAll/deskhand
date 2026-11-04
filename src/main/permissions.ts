@@ -49,18 +49,6 @@ export async function readPermissions(): Promise<PermissionState> {
 }
 
 /**
- * Microphone access, asked for separately from the other two: a user who only
- * wants typed questions must not be shown a microphone prompt on first launch.
- */
-export async function readMicrophonePermission(): Promise<boolean> {
-  try {
-    return systemPreferences.getMediaAccessStatus('microphone') === 'granted'
-  } catch {
-    return false
-  }
-}
-
-/**
  * Asks for the microphone. `askForMediaAccess` is the only call that shows the
  * system prompt; it resolves with the answer, so the caller can react at once.
  */

@@ -120,7 +120,6 @@ describe('preload: the exposed bridge', () => {
       'overlay',
       'permissions',
       'pointer',
-      'quickActions',
       'settings',
       'voice'
     ])
