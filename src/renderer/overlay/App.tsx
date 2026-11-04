@@ -23,6 +23,7 @@ import type {
   StreamEvent
 } from '@shared/types'
 import { looksLikeAction } from '@shared/intent'
+import { BUBBLE_NARROW_WIDTH, BUBBLE_VOICE_WIDTH, BUBBLE_WIDTH } from '@shared/metrics'
 import { useVoice } from './useVoice'
 
 interface Failure {
@@ -35,9 +36,10 @@ function newRequestId(): string {
 }
 
 /**
- * Card widths, in the same points the main process uses. Duplicated here on
- * purpose: the renderer is the one that knows how much content there is to show,
- * and the numbers are what `windows.ts` clamps the window to.
+ * Card widths, in the same points the main process clamps the window to. They are
+ * not written out here: `@shared/metrics` is the single source, because a copy in
+ * this file is exactly how the card ends up clipped or jumping — nothing throws,
+ * it just looks wrong.
  *
  * The folded, empty card is a small pill — roughly three times as wide as the one
  * line it is tall, which is what makes it read as a foothold on the screen rather
@@ -47,17 +49,11 @@ function newRequestId(): string {
  * the first keystroke is loud at exactly the moment a person is still deciding
  * whether they have anything to say.
  */
-const NARROW_WIDTH = 112
+const NARROW_WIDTH = BUBBLE_NARROW_WIDTH
 /** While a voice turn runs the card is nothing but the bars, so it shrinks to them. */
-/**
- * 80, not the 44 the bars actually occupy: macOS composites a transparent window
- * smaller than 80 points as an opaque white rectangle (see `OVERLAY_VOICE_WIDTH`
- * in `windows.ts`). The extra width is empty and invisible — the bars stay centred
- * on the same spot next to the pointer.
- */
-const VOICE_WIDTH = 80
+const VOICE_WIDTH = BUBBLE_VOICE_WIDTH
 /** The widest the card gets, whether it is a question or an answer inside it. */
-const FULL_WIDTH = 360
+const FULL_WIDTH = BUBBLE_WIDTH
 
 /**
  * Everything on the line that is not the question itself, in points.

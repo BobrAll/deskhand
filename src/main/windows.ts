@@ -6,6 +6,12 @@
 
 import { join } from 'node:path'
 import { app, BrowserWindow, screen } from 'electron'
+import {
+  BUBBLE_MIN_WIDTH,
+  BUBBLE_NARROW_WIDTH,
+  BUBBLE_VOICE_WIDTH,
+  BUBBLE_WIDTH
+} from '@shared/metrics'
 import type { OverlayHost } from './overlay'
 import { denyExternalLinks } from './denyExternalLinks'
 import { loadPage } from './pageLoad'
@@ -14,44 +20,10 @@ import { loadPage } from './pageLoad'
  * The overlay is a small bubble next to the cursor, not a window: it appears as a
  * one-line field, and grows downwards (or upwards, when the pointer is near the
  * bottom of the display) only as an answer is streamed into it.
- */
-/**
- * Width of the bubble once there is something to read (an answer, the unfolded
- * context strip). Folded — which is how it opens — it is `OVERLAY_NARROW_WIDTH`,
- * a small pill about three times as wide as the single line it is tall; it widens
- * to `OVERLAY_WIDTH` only when content actually needs the room.
- */
-const OVERLAY_WIDTH = 360
-const OVERLAY_NARROW_WIDTH = 112
-/**
- * The floor for the width. A voice turn shows nothing but a few bars, and the
- * window shrinks to fit them so the animation sits right next to the pointer
- * instead of in the middle of an invisible 112 pt strip.
- */
-const OVERLAY_MIN_WIDTH = 44
-
-/**
- * Width of the voice surface — the bars, and nothing else.
  *
- * 80 is not a design number, it is a macOS floor: a *transparent* window smaller
- * than 80 points on both sides is composited as an opaque white rectangle, no
- * matter what `transparent`, `backgroundColor`, `hasShadow` or `vibrancy` say. The
- * bars only need 44, but at 44×33 the window showed up as a white card behind
- * them — that was the "фон" that could not be styled away from CSS, because it was
- * never the page: it was the window. With one side at 80 the window is genuinely
- * transparent and the extra space is invisible.
- *
- * The other half of that "фон" is the native window shadow, which `applyWindowChrome`
- * removes for the duration of the turn: AppKit draws it around the window's
- * rectangle, so an otherwise empty voice window still cast a soft grey card over
- * the document behind it.
- */
-const OVERLAY_VOICE_WIDTH = 80
-/**
- * The window is exactly as tall as the folded bubble: one 17px text line plus
- * 6px of padding and the 1px edge on each side (31px). Anything taller leaves a
- * strip of bare vibrancy under the card, which reads as the panel being bigger —
- * and more transparent — than it is.
+ * Its three widths live in `@shared/metrics` because the renderer needs the very
+ * same numbers to decide where a line wraps. Height and the placement gap are
+ * main's business only, so they stay here.
  */
 const OVERLAY_MIN_HEIGHT = 31
 const OVERLAY_MAX_HEIGHT = 520
@@ -114,7 +86,7 @@ function applyWindowChrome(): void {
 
 function createOverlayWindow(): BrowserWindow {
   const win = new BrowserWindow({
-    width: OVERLAY_NARROW_WIDTH,
+    width: BUBBLE_NARROW_WIDTH,
     height: OVERLAY_MIN_HEIGHT,
     show: false,
     frame: false,
@@ -424,10 +396,10 @@ function presentOverlay(height: number, width: number, activate: boolean): void 
   // default narrow width, which would leave the invisible window 32 points wider
   // than the few pixels it paints. That extra strip is invisible but still
   // belongs to the window, so it sits between the pointer and whatever is under
-  // it. The renderer asks for `OVERLAY_VOICE_WIDTH` throughout the turn; this is
+  // it. The renderer asks for `BUBBLE_VOICE_WIDTH` throughout the turn; this is
   // the same number applied at the moment the window is actually shown.
   const safeWidth = Math.round(
-    clamp(voice ? OVERLAY_VOICE_WIDTH : width, OVERLAY_MIN_WIDTH, OVERLAY_WIDTH)
+    clamp(voice ? BUBBLE_VOICE_WIDTH : width, BUBBLE_MIN_WIDTH, BUBBLE_WIDTH)
   )
 
   if (!overlayWindow) {
@@ -466,19 +438,19 @@ export const overlayHost: OverlayHost = {
     overlayWindow = createOverlayWindow()
   },
 
-  show(height: number, width = OVERLAY_NARROW_WIDTH): void {
+  show(height: number, width = BUBBLE_NARROW_WIDTH): void {
     presentOverlay(height, width, true)
   },
 
-  showInactive(height: number, width = OVERLAY_NARROW_WIDTH): void {
+  showInactive(height: number, width = BUBBLE_NARROW_WIDTH): void {
     presentOverlay(height, width, false)
   },
 
-  resize(height: number, width = OVERLAY_WIDTH): void {
+  resize(height: number, width = BUBBLE_WIDTH): void {
     const win = overlayWindow
     if (!win || win.isDestroyed()) return
     const safeHeight = Math.round(clamp(height, OVERLAY_MIN_HEIGHT, OVERLAY_MAX_HEIGHT))
-    const safeWidth = Math.round(clamp(width, OVERLAY_MIN_WIDTH, OVERLAY_WIDTH))
+    const safeWidth = Math.round(clamp(width, BUBBLE_MIN_WIDTH, BUBBLE_WIDTH))
     const bounds = win.getBounds()
     if (bounds.height === safeHeight && bounds.width === safeWidth) return
     resizeAtAnchor(win, safeHeight, safeWidth)
