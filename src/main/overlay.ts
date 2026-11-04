@@ -24,12 +24,10 @@ import type {
   SendRequest,
   StreamEvent
 } from '@shared/types'
-import { isDrawable } from './annotations'
 import { createAgentController } from './agent'
 import { beginAgentTurn, endAgentTurn, updateAgentCursor } from './agent/cursor'
 import { normalizePlan } from './agent/plan'
 import { describeScreen } from './agent/outline'
-import { ResponseStream } from './response'
 import { collectContext } from './context/collect'
 import { captureScreenshot } from './context/screenshot'
 import { getProvider, resolveModel } from './llm'
@@ -38,6 +36,7 @@ import { copyText, pasteAnswer } from './paste'
 import { hideAnnotations, showAnnotations } from './pointer'
 import { buildContinue, buildRefine, buildRequest, buildVerify, MAX_REFINE_TOKENS } from './prompt'
 import { readVerdict } from './agent/verdict'
+import { consumeTurnStream } from './turnStream'
 import { helperActivate, helperFront } from './native/helper'
 import { getApiKey } from './settings/secrets'
 import { getSettings, patchSettings } from './settings/store'
@@ -765,12 +764,6 @@ export function createOverlayController(host: OverlayHost) {
     const { messages, requestId, maxTokens, signal, canDraw, area, apiKey, holdText } = options
     const settings = getSettings()
 
-    // The stream is filtered even when the tools were not offered: a raw
-    // `@point circle …` or `@click 0.4 0.5` printing into the card or into a
-    // pasted answer would be worse than no tool at all, and a model that ignores
-    // its instructions is exactly the case a parser has to survive.
-    const parser = new ResponseStream()
-
     /**
      * Paints newly parsed shapes. Called as the stream arrives so the explanation
      * and the drawing grow together instead of the arrow appearing only after the
@@ -788,44 +781,31 @@ export function createOverlayController(host: OverlayHost) {
       painting = painting.then(() => showAnnotations(area, next)).catch(() => undefined)
     }
 
-    /**
-     * The prose produced by this round.
-     *
-     * Returned even when it was shown immediately, so the caller can treat a
-     * held round and a streamed one uniformly.
-     */
-    let text = ''
-
     const append = (delta: string): void => {
       if (!delta || !session) return
-      text += delta
       if (holdText) return
       session.answer += delta
       const event: StreamEvent = { type: 'chunk', requestId, delta }
       emit(CH.overlay.stream, event)
     }
 
-    for await (const chunk of getProvider(settings.provider).stream(messages, apiKey, {
-      model: resolveModel(settings) ?? '',
-      temperature: settings.temperature,
-      maxTokens,
-      baseUrl: resolveBaseUrl(settings.provider, settings.baseUrls[settings.provider]),
-      signal
-    })) {
-      if (signal.aborted || !session) return { steps: [], text }
-      const parsed = parser.push(chunk.delta)
-      paint(parsed.annotations.filter(isDrawable))
-      append(parsed.text)
-    }
-    if (signal.aborted || !session) return { steps: [], text }
-
-    // Whatever the parser was still holding back: a trailing partial line, or
-    // text that never became a marker.
-    const tail = parser.finish()
-    paint(tail.annotations.filter(isDrawable))
-    append(tail.text)
-
-    return { steps: parser.plan(), text }
+    // Everything that is not about this window — parsing, filtering, the tail —
+    // lives in `consumeTurnStream`, so it can be driven by a fake provider.
+    return consumeTurnStream({
+      provider: getProvider(settings.provider),
+      messages,
+      apiKey,
+      streamOptions: {
+        model: resolveModel(settings) ?? '',
+        temperature: settings.temperature,
+        maxTokens,
+        baseUrl: resolveBaseUrl(settings.provider, settings.baseUrls[settings.provider]),
+        signal
+      },
+      isAlive: () => !signal.aborted && Boolean(session),
+      onShapes: paint,
+      onText: append
+    })
   }
 
   /**
