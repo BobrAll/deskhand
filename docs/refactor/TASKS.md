@@ -129,8 +129,9 @@ typecheck/test/build → коммит → PROGRESS. После крупных г
 ### Волна 6 — рискованное (КТ6 после R21)
 - [x] R19 Разнос `windows.ts`: `windows/index.ts` (карточка) + `windows/settings.ts` (настройки/онбординг) + `base.ts`. Высокий риск.
       → 83c8fcc + a749c46; 6 тестов жизненного цикла, 54 файла / 1145 тестов. КТ5: ручной прогон ожидается.
-- [ ] R20 Остаток `send`: агентные раунды (overlay/index.ts:1038-1218) → `overlay/rounds.ts`. Только после R11/R12, риск высокий.
-- [ ] R21 ESLint 9 + `typescript-eslint` 8 + `.editorconfig` + скрипт `lint` (ждёт «ок»). Prettier — после фазы 5 отдельным `style:`.
+- [x] R20 Остаток `send`: агентные раунды (overlay/index.ts:1038-1218) → `overlay/rounds.ts`. Только после R11/R12, риск высокий.
+      → 6ea3a8a; цикл перенесён дословно, 14 тестов; 55 файлов / 1159 тестов.
+- [ ] R21 ESLint 9 + `typescript-eslint` 8 + `.editorconfig` + скрипт `lint` («ок» Александра получено 2026-11-05). Prettier — после фазы 5 отдельным `style:`.
 
 ## Фаза 5 — приёмка
 - [ ] F1 Сравнить out/ и extraResources с baseline, снапшоты без диффов; 05-report.md (метрики до/после, что удалено/объединено/
