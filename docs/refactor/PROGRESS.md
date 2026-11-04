@@ -68,6 +68,16 @@ jscpd 1.42 % (242 строки, 20 клонов), knip: 2 unused files / 35 expo
 A1 крупные модули, A2 мусор (включая три сущности выше и корневой `index.js`), A3 дубли, A4 остальное.
 В A2 уже разрешено удалить 6 неиспользуемых методов моста и канал `shell:open-external` (решение T01).
 
+## Прогон MANUAL_SMOKE (Александр, 2026-11-04)
+Основные моменты прошли. Два дефекта записаны в BUGS.md, оба — только по коду, без починки (правило 2):
+- **R5** — рисунок не исчезает по Escape: отложенный `showAnnotations` из цепочки `painting` срабатывает
+  после `hideAnnotations()`, потому что `close()` обнуляет `session.annotations`, но не `session`
+  (`overlay.ts:637-645` против `:775-782`).
+- **R6** — бары голосового ввода не всегда видны: три подтверждённых пути (`openInternal` прячет окно для
+  исключённого приложения уже после `setVoice(true)`; рендерер возвращает `null` до `voice.ready`;
+  `setVoice` не показывает окно). Жду уточнения, какой из трёх главный.
+Остальные 10 разделов MANUAL_SMOKE ещё не прогонялись.
+
 ## Blocked
 ## Open questions
 - РЕШЕНО (Александр, сессия T01): 6 неиспользуемых методов моста (`settings.validateHotkey`, `onboarding.close`, `quickActions.defaults`, `permissions.microphone`, `voice.micPermission`, `voice.requestMicPermission`) и канал `shell:open-external` разрешено удалить в A2. Удалять с grep-доказательствами по правилу 7, отдельными коммитами.
