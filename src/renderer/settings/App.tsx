@@ -15,6 +15,14 @@ import type { AppSettings, KeyStatus, PermissionState, ProviderId, QuickAction }
 import { DEFAULT_SYSTEM_PROMPT, PROVIDERS, normalizeBaseUrl, providerInfo } from '@shared/defaults'
 import type { AppPickResult, RunningAppInfo, SettingsBundle } from '@shared/api'
 import { HotkeyField, prettyHotkey } from './HotkeyField'
+import {
+  MAX_TOKENS_MAX,
+  MAX_TOKENS_MIN,
+  hasUnsaved,
+  holdReasonFor,
+  invalidBaseUrlProviders,
+  writableSettings
+} from './applyGate'
 import { AgentTab } from './AgentTab'
 import { VoiceTab } from './VoiceTab'
 
@@ -44,38 +52,6 @@ interface Banner {
  * settings themselves refuse (an invalid base URL, an empty prompt field).
  */
 type ApplyState = 'idle' | 'pending' | 'saving' | 'saved' | 'held' | 'error'
-
-/**
- * Values the settings window cannot store as they are, and what it says instead.
- *
- * These are not "invalid input" warnings in the usual sense — they are the cases
- * where the normaliser on the other side would silently replace what is on screen
- * (an empty prompt becomes the default one, a half-typed token count is clamped,
- * a quick action without a prompt is dropped). Writing those through would fight
- * the user's keyboard, so the write waits until the field is finished.
- */
-const HOLD_REASON = {
-  baseUrl: 'Проверьте адрес API — изменения не применены.',
-  maxTokens: 'Максимум токенов: от 64 до 8192.',
-  prompt: 'Пустой системный промпт оставлен прежним.',
-  quickAction: 'У быстрого действия не хватает названия или промпта.',
-  hotkey: 'Горячая клавиша не задана.'
-} as const
-
-function holdReasonFor(draft: AppSettings, invalidBaseUrls: ProviderId[]): string | null {
-  if (invalidBaseUrls.length > 0) return HOLD_REASON.baseUrl
-  // Out of range, not merely odd: a cleared number field reads as 0 while the
-  // user is retyping it, and clamping that would rewrite the field under them.
-  if (!Number.isFinite(draft.maxTokens) || draft.maxTokens < 64 || draft.maxTokens > 8192) {
-    return HOLD_REASON.maxTokens
-  }
-  if (!draft.systemPrompt.trim()) return HOLD_REASON.prompt
-  if (!draft.hotkey.trim()) return HOLD_REASON.hotkey
-  if (draft.quickActions.some((action) => !action.label.trim() || !action.prompt.trim())) {
-    return HOLD_REASON.quickAction
-  }
-  return null
-}
 
 export function App() {
   const [bundle, setBundle] = useState<SettingsBundle | null>(null)
@@ -123,14 +99,10 @@ export function App() {
     setDraft((prev) => (prev ? { ...prev, ...changes } : prev))
   }, [])
 
-  const invalidBaseUrls = useMemo(() => {
-    if (!draft) return [] as ProviderId[]
-    return PROVIDERS.filter(
-      (provider) =>
-        draft.baseUrls[provider.id].trim() !== '' &&
-        normalizeBaseUrl(draft.baseUrls[provider.id]) === ''
-    ).map((provider) => provider.id)
-  }, [draft])
+  const invalidBaseUrls = useMemo(
+    () => (draft ? invalidBaseUrlProviders(draft) : []),
+    [draft]
+  )
 
   const holdReason = useMemo(
     () => (draft ? holdReasonFor(draft, invalidBaseUrls) : null),
@@ -260,45 +232,19 @@ export function App() {
 
   /** Whether the draft holds anything that is not on disk yet. */
   const unsaved = useCallback(
-    (value: AppSettings): boolean =>
-      !bundle ||
-      (JSON.stringify(value) !== JSON.stringify(bundle.settings) &&
-        JSON.stringify(value) !== writtenRef.current),
+    (value: AppSettings): boolean => hasUnsaved(value, bundle, writtenRef.current),
     [bundle]
   )
 
   /**
    * The draft as it can actually be written, for the explicit paths (⌘S, closing).
    *
-   * Two kinds of values cannot go through as they stand, and they are handled
-   * differently on purpose:
-   *
-   * - a quick action row that was just added and is still empty is simply not a
-   *   quick action yet; the store drops it anyway, so dropping it here lets the
-   *   rest of the write proceed;
-   * - a field that is mid-edit (a half-typed token count, an address that is not
-   *   a URL yet) is *reverted to what is on disk* instead. Writing it would make
-   *   the store replace it silently — 0 becomes 64, junk becomes "" — and the
-   *   window would then show a value that is not the one being used.
+   * The rules are in `applyGate.ts`, next to the ones that decide when a write is
+   * held at all: the two used to be copies of each other's arithmetic, and a
+   * disagreement between them is a quiet write loop rather than a visible error.
    */
   const writable = useCallback(
-    (value: AppSettings): AppSettings => {
-      const next: AppSettings = {
-        ...value,
-        quickActions: value.quickActions.filter(
-          (action) => action.label.trim() && action.prompt.trim()
-        )
-      }
-      if (!bundle) return next
-      const onDisk = bundle.settings
-      if (invalidBaseUrls.length > 0) next.baseUrls = onDisk.baseUrls
-      if (!Number.isFinite(next.maxTokens) || next.maxTokens < 64 || next.maxTokens > 8192) {
-        next.maxTokens = onDisk.maxTokens
-      }
-      if (!next.systemPrompt.trim()) next.systemPrompt = onDisk.systemPrompt
-      if (!next.hotkey.trim()) next.hotkey = onDisk.hotkey
-      return next
-    },
+    (value: AppSettings): AppSettings => writableSettings(value, bundle, invalidBaseUrls),
     [bundle, invalidBaseUrls]
   )
 
@@ -556,9 +502,9 @@ export function App() {
                 <label>Максимум токенов</label>
                 <input
                   type="number"
-                  min={64}
-                  max={8192}
-                  step={64}
+                  min={MAX_TOKENS_MIN}
+                  max={MAX_TOKENS_MAX}
+                  step={MAX_TOKENS_MIN}
                   value={draft.maxTokens}
                   onChange={(event) => patch({ maxTokens: Number(event.target.value) })}
                 />
