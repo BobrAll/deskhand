@@ -68,14 +68,54 @@
       5 вопросов — в PROGRESS «Open questions».
 
 ## Фаза 3 — план
-- [ ] P1 04-refactor-plan.md: целевая структура и правила зависимостей, решения (проблема/варианты/выбор/цена), упорядоченные шаги
+- [x] P1 04-refactor-plan.md: целевая структура и правила зависимостей, решения (проблема/варианты/выбор/цена), упорядоченные шаги
       (цель, файлы, страхующие тесты, критерий, риск, откат), порядок: механическое → дедупликация → вынос из крупных → git mv →
       рискованное в конце; контрольные точки; честные метрики; список «нужно подтверждение». Каждый шаг плана оформи
       ОТДЕЛЬНОЙ задачей R01, R02… в TASKS.md (одна сессия каждая).
 - [ ] P2 [STOP] Жди утверждения плана. Без него код не трогать.
 
-## Фаза 4 — выполнение: задачи R01… появятся после P1. Каждая: тесты есть и зелёные → минимальное изменение → typecheck/test/build →
-коммит → PROGRESS. После крупных групп — [STOP] на мой MANUAL_SMOKE.
+## Фаза 4 — выполнение: R01…R21 (подробности — 04-refactor-plan.md §3). Каждая: тесты есть и зелёные → минимальное изменение →
+typecheck/test/build → коммит → PROGRESS. После крупных групп — [STOP] на мой MANUAL_SMOKE (план §4).
+
+### Волна 1 — механическое (КТ1 после R05)
+- [ ] R01 Гигиена `main/`: `PROVIDER_IDS` из `PROVIDERS` + снять `void PROVIDERS` (ipc.ts:42,298), `Number.isFinite` в `clamp`
+      (windows.ts:70), `let settingsBusy` выше пользователя, снять синоним `closeSettingsWindowWhenSettled` (+ ipc.ts:203),
+      пробелы в index.ts:87. Поведение не меняется.
+- [ ] R02 Контракт `hotkeyError`: поле в `SettingsBundle` (shared/api.ts), убрать приведение в settings/App.tsx:178.
+- [ ] R03 `main/pageLoad.ts`: три копии «dev ? loadURL : loadFile» (windows.ts:64, pointer.ts:34, cursor.ts:83) → одна функция.
+- [ ] R04 `main/denyExternalLinks.ts`: четыре копии `setWindowOpenHandler` → одна, флаг `/i` остаётся параметром (без унификации).
+- [ ] R05 Внутрифайловые дубли: `imagePart()` вместо трёх regex (overlay.ts:960,1181,1360) и `resolveArea()` вместо второго
+      блока `bounds → area` (screenshot.ts:234-244). Два коммита.
+
+### Волна 2 — дедупликация данных и окон (КТ2 после R09)
+- [ ] R06 `shared/keycodes.ts`: ТОЛЬКО данные. `KEY_CODES` 64 и отдельная `VOICE_KEY_CODES` 62 (без `esc`/`forwarddelete` —
+      иначе они станут валидными хоткеями), `FUNCTION_CODES` 20 на всех. `MODIFIER_FLAGS` не сливать. Парсеры не трогать.
+- [ ] R07 `shared/metrics.ts`: ширины 360/112/80 — один источник для windows.ts и overlay/App.tsx; страж-тест на возврат литерала.
+- [ ] R08 `main/layerWindow.ts`: окна-слои pointer+cursor (20 из 23 строк совпадают); `acceptFirstMouse` — параметр.
+- [ ] R09 `main/native/tapListener.ts`: общий слушатель CGEventTap для voice/gesture; различия (launch/args/тексты/stop) сохранить
+      дословно, тесты `listen.test.ts` ×2 не менять.
+
+### Волна 3 — вынос из крупных, main (КТ3 после R12)
+- [ ] R10 `main/bubble.ts`: геометрия пузыря (clamp/roomAround/placeAnchor/xFor/yFor/positionOverlay/resizeAtAnchor,
+      windows.ts:204-357) чистыми функциями + тест без Electron.
+- [ ] R11 `main/overlay/request.ts`: сборка запроса (overlay.ts:825-1036, 212 строк) с двумя колбэками вместо await;
+      доказательство — `prompt.test.ts` зелёный без правки снапшотов.
+- [ ] R12 `main/overlay/verify.ts`: `verify()` (overlay.ts:1286-1444, 159 строк), вход 11 полей, выход 3 значений. Риск высокий.
+
+### Волна 4 — вынос из крупных, renderer (КТ4 после R17; только чистые модули, jsdom нет)
+- [ ] R13 `overlay/metrics.ts` + `overlay/viewFlags.ts`: константы размеров и `deriveView()` — чистые выражения.
+- [ ] R14 `overlay/keyPolicy.ts`: политика клавиш (Escape ×3, ⌘⏎, ⌘C, Enter). ОБА обработчика Enter сохранить.
+- [ ] R15 `overlay/streamRouting.ts`: маршрутизация чанков по requestId; refs остаются в App.
+- [ ] R16 `settings/applyGate.ts`: `holdReasonFor`/`unsaved`/`writable` + одна пара границ вместо трёх копий 64…8192.
+- [ ] R17 `settings/{ApplyStatus,PermissionRow,QuickActionsEditor}.tsx`: перенос один-в-один, пропсы не меняются.
+
+### Волна 5 — структура (КТ5 после R19)
+- [ ] R18 `git mv main/overlay.ts → main/overlay/index.ts` + вынос `OverlayHost` в `overlay/host.ts`. Два коммита (правило 5).
+
+### Волна 6 — рискованное (КТ6 после R21)
+- [ ] R19 Разнос `windows.ts`: `windows/index.ts` (карточка) + `windows/settings.ts` (настройки/онбординг) + `base.ts`. Высокий риск.
+- [ ] R20 Остаток `send`: агентные раунды (overlay/index.ts:1038-1218) → `overlay/rounds.ts`. Только после R11/R12, риск высокий.
+- [ ] R21 ESLint 9 + `typescript-eslint` 8 + `.editorconfig` + скрипт `lint` (ждёт «ок»). Prettier — после фазы 5 отдельным `style:`.
 
 ## Фаза 5 — приёмка
 - [ ] F1 Сравнить out/ и extraResources с baseline, снапшоты без диффов; 05-report.md (метрики до/после, что удалено/объединено/
