@@ -23,7 +23,19 @@ import type {
   StreamEvent
 } from '@shared/types'
 import { looksLikeAction } from '@shared/intent'
-import { BUBBLE_NARROW_WIDTH, BUBBLE_VOICE_WIDTH, BUBBLE_WIDTH } from '@shared/metrics'
+import {
+  CARET_SLACK,
+  CHROME_WIDTH,
+  FIELD_FONT,
+  FULL_WIDTH,
+  MAX_FIELD_HEIGHT,
+  NARROW_WIDTH,
+  REFINE_HINT,
+  REFINE_LABEL,
+  STOP_CHROME,
+  VOICE_WIDTH,
+  clamp
+} from './metrics'
 import { useVoice } from './useVoice'
 
 interface Failure {
@@ -33,69 +45,6 @@ interface Failure {
 
 function newRequestId(): string {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
-}
-
-/**
- * Card widths, in the same points the main process clamps the window to. They are
- * not written out here: `@shared/metrics` is the single source, because a copy in
- * this file is exactly how the card ends up clipped or jumping — nothing throws,
- * it just looks wrong.
- *
- * The folded, empty card is a small pill — roughly three times as wide as the one
- * line it is tall, which is what makes it read as a foothold on the screen rather
- * than a panel. It does not jump to a fixed width when typing starts: it grows by
- * the width of each glyph as it is typed, and only wraps onto a second line once
- * the question no longer fits in `FULL_WIDTH`. A panel that doubles in size on
- * the first keystroke is loud at exactly the moment a person is still deciding
- * whether they have anything to say.
- */
-const NARROW_WIDTH = BUBBLE_NARROW_WIDTH
-/** While a voice turn runs the card is nothing but the bars, so it shrinks to them. */
-const VOICE_WIDTH = BUBBLE_VOICE_WIDTH
-/** The widest the card gets, whether it is a question or an answer inside it. */
-const FULL_WIDTH = BUBBLE_WIDTH
-
-/**
- * Everything on the line that is not the question itself, in points.
- *
- * The bubble's `padding: 6px 8px` and its 1px edge are 18; the bar spends 6 on the
- * presence dot, 6 + 6 on the two gaps and 16 on the chevron — 52 points of chrome
- * before the field gets a single point of its own.
- */
-const CHROME_WIDTH = 8 * 2 + 2 + 6 + 6 + 6 + 16
-/**
- * The stop button, which exists only while an answer streams: its own 18 points
- * and one more gap. Without it the last letters of a spoken phrase would be
- * clipped for as long as the request is in flight.
- */
-const STOP_CHROME = 18 + 6
-/**
- * Room for the caret, and for the sub-pixel widths a measured run can lose when
- * the window rounds to whole points. Without it the last letter would sit on the
- * chevron and a word would wrap a keystroke early.
- */
-const CARET_SLACK = 4
-
-/**
- * How tall the field may grow before it scrolls.
- *
- * The same number as `max-height` in `overlay.css`, which is what actually clips
- * the element: a larger cap here would just be a height the CSS then refuses.
- */
-const MAX_FIELD_HEIGHT = 84
-
-/**
- * The field's font, until the live element can be asked for its own.
- *
- * Mirrors `textarea.prompt` in `overlay.css`; the mounted element replaces it
- * through `fieldRef`, so this only covers a measurement taken before the first
- * paint — and the two are the same value.
- */
-const FIELD_FONT =
-  "13px -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', Arial, sans-serif"
-
-function clamp(value: number, min: number, max: number): number {
-  return Math.min(Math.max(value, min), max)
 }
 
 /**
@@ -123,16 +72,6 @@ function measureLine(text: string, font: string): number {
 
 /** One measuring context for the whole window: creating one is not free. */
 let ruler: CanvasRenderingContext2D | null = null
-
-const REFINE_LABEL: Record<RefineDirection, string> = {
-  shorter: 'Короче',
-  longer: 'Длиннее'
-}
-
-const REFINE_HINT: Record<RefineDirection, string> = {
-  shorter: 'Сократить ответ, сохранив суть',
-  longer: 'Развернуть ответ подробнее'
-}
 
 /**
  * The context tag re-captures its image live, so the `src` changes every couple
