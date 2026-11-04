@@ -147,3 +147,215 @@ permissions 5, onboarding 3, quickActions 1, agent 5, voice 13. Плюс оди�
 | «(а) overlay.css повторяет ~24 переменные палитры из base.css 1:1» (стр. 55) | `overlay.css` объявляет **6** кастом-свойств (3 имени × 2 темы: `--panel`, `--panel-edge`, `--panel-drawing`); в `base.css` этих имён нет, значения расходятся (`--bg: rgba(28,29,34,.94)` vs `--panel: rgba(21,23,29,.94)`) | не подтверждено: ни «24», ни «1:1» |
 | «(в) IPC-подписки в 5 точках без общего хука» (стр. 55) | 14 подписок в **6** файлах (см. §3) | расхождение: точек 6, а не 5 |
 | «overlay.ts 1598 / App.tsx 1365 / settings/App.tsx 934 / overlay.css 764 / windows.ts 747» (стр. 15–16) | `wc -l` совпал по всем пяти | подтверждено |
+
+## 5. Карта `src/main/windows.ts` (747 строк, T04)
+
+### 5.1 Границы секций
+
+| Строки | Что | Ответственность |
+|---|---|---|
+| 1–9 | шапка + импорты | `node:path`, `electron` (`app`, `BrowserWindow`, `screen`, `shell`), **только тип** `OverlayHost` из `./overlay` |
+| 11–60 | геометрия | `OVERLAY_WIDTH` 360, `OVERLAY_NARROW_WIDTH` 112, `OVERLAY_MIN_WIDTH` 44, `OVERLAY_VOICE_WIDTH` 80, `OVERLAY_MIN_HEIGHT` 31, `OVERLAY_MAX_HEIGHT` 520, `GAP` 10, `MARGIN` 8 |
+| 62–72 | загрузка страниц | `preload` (путь), `load(win, page)` (dev: `ELECTRON_RENDERER_URL`, prod: `../renderer/<page>/index.html`), `clamp` |
+| 74–113 | состояние overlay + хром | флаги `overlayWindow`/`overlayVisible`/`overlayReady`/`drawing`/`voice`; `applyWindowChrome()` — единственное место, где `vibrancy`/`hasShadow` выводятся из флагов |
+| 115–203 | создание окна | `createOverlayWindow()`: опции, permission-хендлеры (`media` только здесь), `closed` (сброс состояния), `setWindowOpenHandler`, `ready-to-show` → `pendingShow` |
+| 204–297 | размещение | `BubbleAnchor` (point/area/x/above/right), `roomAround`, `placeAnchor` (вниз-вправо, флип у краёв), `xFor`, `yFor`, `positionOverlay` |
+| 299–357 | изменение размера | `resizeAtAnchor()`: пересчёт от запомненного якоря, ветка `dragged` (пользователь перетащил) vs anchored |
+| 359–454 | показ | `pendingShow`, `performShow()` (размер уже видимой карточки не перебивается), `presentOverlay()` (clamp + создание + гейт `overlayReady`) |
+| 456–589 | порт | `overlayHost: OverlayHost` — 9 методов, см. §5.2 |
+| 591–597 | флаг | `passthrough` |
+| 599–622 | окна-спутники | `settingsWindow`, `onboardingWindow`, `baseOptions()` (980×760-база, `hiddenInset`, `#0f1115`, webPreferences) |
+| 624–681 | settings | `openSettingsWindow()`: singleton, грейс-период на `close` (см. §5.3) |
+| 683–705 | onboarding | `openOnboardingWindow()`: singleton, `resizable:false` |
+| 707–713 | закрытие | `closeOnboardingWindow`, `closeSettingsWindow` |
+| 715–724 | закрытие с ожиданием | `closeSettingsWindowWhenSettled()` — **тонкая обёртка** над `closeSettingsWindow()` |
+| 726–731 | флаг занятости | `markSettingsBusy`, `let settingsBusy` |
+| 733–747 | реактивация | `showActiveWindow()`: overlay → settings → onboarding, первое видимое |
+
+### 5.2 `OverlayHost` — единственный канал «overlay.ts → окно»
+
+Реализация в `windows.ts:456–589`; интерфейс объявлен в `overlay.ts:46`. Зависимость **только типовая**
+(`import type`), поэтому цикла модулей нет.
+
+| Метод | Строки | Дефолты | Что делает |
+|---|---|---|---|
+| `prewarm()` | 467 | — | создаёт окно, не показывает (idempotent) |
+| `show(h, w?)` | 472 | `w = 112` | `presentOverlay(..., activate=true)` |
+| `showInactive(h, w?)` | 476 | `w = 112` | `presentOverlay(..., activate=false)` — для push-to-talk |
+| `resize(h, w?)` | 480 | `w = 360` | clamp → `resizeAtAnchor`, ранний выход при совпадении bounds |
+| `setDrawing(on)` | 503 | — | флаг → `applyWindowChrome()` |
+| `setVoice(on)` | 515 | — | флаг → `applyWindowChrome()` |
+| `setPassthrough(on)` | 534 | — | `setIgnoreMouseEvents(on,{forward:true})` + `setAlwaysOnTop(on,'floating')` + `blur()` при включении |
+| `hide()` | 559 | — | сбрасывает `passthrough`, `alwaysOnTop`, `overlayVisible`, `pendingShow`, `anchor` |
+| `window()` | 586 | — | `BrowserWindow \| null` (не уничтоженный) |
+
+### 5.3 Разделяемое состояние (модульные `let`)
+
+| Переменная | Строка | Пишут | Читают | Смысл |
+|---|---|---|---|---|
+| `overlayWindow` | 74 | 172, 439, 469 | везде | единственный экземпляр |
+| `overlayVisible` | 75 | 387, 575 | 381, 386 | «на экране» |
+| `overlayReady` | 85 | 173, 196 | 448 | «первая отрисовка была» — отдельно от видимости |
+| `drawing` | 87 | 177, 505 | 111, 144 | тонкая карточка во время рисования |
+| `voice` | 89 | 178, 517 | 112, 140, 144, 433 | голосовой турн: бары без нативного хрома |
+| `anchor` | 232 | 290, 582 | 313, 317 | якорь размещения на время одного показа |
+| `pendingShow` | 366 | 440, 449, 579, 197 | 197 | показ, ждущий первой отрисовки (последний выигрывает) |
+| `passthrough` | 597 | 538, 563 | 400, 537, 562 | карточка прозрачна для мыши (идёт план агента) |
+| `settingsWindow` / `onboardingWindow` | 599–600 | 636, 672, 691, 701 | 625, 684, 708, 712, 740 | singleton-окна |
+| `settingsBusy` | 731 | 728, 673 | 653, 663 | незаписанные правки: закрытие ждёт |
+
+**Грейс-период закрытия настроек** (652–670): `close`-хук; при `settingsBusy` — `preventDefault()`,
+опрос каждые 80 мс до `deadline = Date.now() + 1200`, затем `win.close()`. Покрывает ⌘W и красный
+светофор, не только кнопку «Закрыть».
+
+### 5.4 Ответственности (кандидаты на разделение, без решения)
+
+1. **Жизненный цикл overlay** (создание/prewarm/hide/destroy) — 74–203, 456–470, 559–588.
+2. **Геометрия и якорь** (размещение у курсора, флип у краёв, детект перетаскивания) — 204–357, 480–488.
+3. **Нативный хром как состояние** (drawing/voice/passthrough → vibrancy/shadow/alwaysOnTop/ignoreMouse) — 91–113, 503–557.
+4. **Порт `OverlayHost`** — 456–589 (тонкий, без логики, кроме clamp).
+5. **Окна-спутники** (settings/onboarding: singleton + грейс-период) — 599–731.
+6. **Реактивация из tray** — 733–747.
+
+Связаны состоянием: (1) и (3) делят флаги `drawing`/`voice`/`passthrough`; (2) держит `anchor`, который
+сбрасывает (1) в `hide()`. Резать (1)–(3) можно только вместе с этими флагами.
+
+## 6. Карта `src/renderer/overlay/App.tsx` (1365 строк, T04)
+
+### 6.1 Границы секций
+
+| Строки | Что |
+|---|---|
+| 1–13 | шапка: карточка, клавиши (Enter / ⌘⏎ / Esc / ⌘C) |
+| 15–35 | импорты, `Failure`, `newRequestId()` |
+| 37–103 | ширины и метрики: `NARROW_WIDTH` 112, `VOICE_WIDTH` 80, `FULL_WIDTH` 360, `CHROME_WIDTH`, `STOP_CHROME`, `CARET_SLACK`, `MAX_FIELD_HEIGHT` 84, `FIELD_FONT`, `clamp` |
+| 105–129 | `measureLine()` + **модульный** `ruler` (единственное модульное состояние в renderer) |
+| 131–139 | `REFINE_LABEL`, `REFINE_HINT` |
+| 141–180 | `LiveThumb` — единственный дочерний компонент (прелоад нового data URL, чтобы миниатюра не мигала) |
+| 182–306 | состояние `App()`: 13 `useState` + 18 `useRef` + зеркалирование в refs (301–305) |
+| 307–371 | сессии: `resumePendingSend`, `reset` (новая сессия), `applyState` (та же сессия → не сбрасывать) |
+| 373–411 | `onStream` — маршрутизация чанков по `requestId` |
+| 413–468 | **подписки IPC** (6: `getState` + `onState`/`onPreparing`/`onContextUpdate`/`onStream`/`onAnnotations`/`onAgent`) + снятие |
+| 470–477 | `typing` → `overlay:typing` |
+| 479–501 | `useVoice()`; при `phase==='listening'` текущий запрос помечается игнорируемым и отменяется |
+| 503–571 | производные: `listening`, `amp`, `hasAnswer`, `textWidth`, `wantsWide`, `chromeWidth`, `composedWidth`, `wrapped` |
+| 573–596 | `widthRef`, `heldWidthRef`, `cardWidth` (голос → wide → busy(hold) → composed) |
+| 598–639 | `ResizeObserver` → `overlay:resize`; повторный `report` на `focus` окна |
+| 641–660 | `autosize()` поля ввода (кап 84) |
+| 662–671 | скролл ответа вниз; авторазворот при `failure`/`setupNotice` |
+| 673–729 | `send` (+ присвоение `sendRef.current` на 738) |
+| 731–768 | `refine` |
+| 770–785 | `toggleFlag`, `clearPointer` |
+| 787–816 | `setAgentEnabled` |
+| 818–843 | подписка `voice:transcript` (7-я) |
+| 845–855 | `paste`, `copy` |
+| 857–930 | глобальный `keydown`: политика Escape (`checking`/`arming`/`acting`), ⌘⏎, ⌘C, Enter |
+| 932–934 | гейт `!voice.ready` → `null` |
+| 936–958 | ветка `listening` — только бары (`data-voice`) |
+| 960–1031 | `composer` (textarea) + ветка «сессии ещё нет» (с `reserve` под шеврон) |
+| 1033–1063 | вывод из `state`: `showMeta`, `canPaste`, `agentOff`/`agentBlocked`/`agentNotice`, `actionAsk`, `hint`, `alert` |
+| 1065–1364 | разметка: `bar` (stop, toggle) · ошибка голоса · `drawer` (meta+suggestions) · blocked/setupNotice/hint · предложение включить агента · панель агента · `failure`+«Повторить» · `answer` · `foot` (вставка / короче-длиннее-копировать) · `notice` |
+
+### 6.2 Разделяемое внутреннее состояние
+
+Всё в одной замыкающей области — границы между ответственностями проходят **через неё**.
+
+| Ячейка | Строка | Роль |
+|---|---|---|
+| `stateRef` | 226 | императивное чтение сессии из `send`/`refine`/`toggleFlag` (вне рендера) |
+| `promptRef` | 234 | текст поля для колбэков вне рендера |
+| `sessionIdRef` | 312 | «новая сессия» vs «переотправка той же» — решает `reset`/`applyState` |
+| `requestIdRef` / `ignoredRequestRef` | 239/246 | маршрутизация чанков; брошенный запрос не дописывает карточку |
+| `replaceOnChunkRef` | 289 | refine: старый ответ держится до первого нового чанка |
+| `heldWidthRef` / `widthRef` | 584/574 | непрерывность ширины через `send`; последняя отданная в main ширина |
+| `pendingAutoSendRef` | 257 | транскрипт пришёл раньше сессии |
+| `spokenPromptRef` | 299 | произнесённая фраза живёт в поле до первого чанка |
+| `busyRef`/`modeRef`/`agentRef` | 237/238/236 | зеркала состояния для клавиатурного хендлера без переподписки |
+| `rootNode`/`rootRef` | 286/287 | корень как **state**: при смене бары↔карточка React монтирует новый узел |
+| `fontRef`/`fieldRef` | 269/270 | шрифт из живого элемента для `measureLine` |
+
+### 6.3 Ответственности
+
+A. **IPC/сессии** — 413–468, 307–371. B. **Стриминг ответа** — 373–411, 662–665.
+C. **Отправка/refine** — 673–768. D. **Геометрия окна** — 573–660 (измерение, ширины, ResizeObserver).
+E. **Голос** — 479–501, 818–843, 936–958. F. **Агент** — 456–458, 787–816, 1241–1297.
+G. **Клавиатура** — 857–930. H. **Разметка/подсказки** — 960–1364.
+
+`App()` — один компонент на ~1150 строк; ни одна из групп не изолирована, все читают `stateRef`,
+`requestIdRef` и `busy`. Разделение (A)+(B)+(C) невозможно без выноса этих трёх ячеек.
+
+## 7. Карта `src/renderer/settings/App.tsx` (934 строки, T04)
+
+### 7.1 Границы секций
+
+| Строки | Что |
+|---|---|
+| 1–11 | шапка: 6 разделов, «кнопки Сохранить нет» |
+| 13–19 | импорты (`@shared/types`, `@shared/defaults`, `@shared/api`, `HotkeyField`, `AgentTab`, `VoiceTab`) |
+| 21–30 | `Tab` (6 значений) + `TABS` (Модель/Поведение/Голос/Агент/Быстрые действия/Приватность) |
+| 32–35 | `Banner` |
+| 37–63 | `ApplyState` (`idle`/`pending`/`saving`/`saved`/`held`/`error`) + `HOLD_REASON` (5 текстов) |
+| 65–78 | `holdReasonFor(draft, invalidBaseUrls)` — **чистая функция**, тестируема без DOM |
+| 80–91 | состояние: `bundle`, `draft`, `tab`, `banner`, `applyState`, `keyInput`, `testing`, `apps`, `hotkeyError`, `loadError` |
+| 93–112 | начальная загрузка: `settings.load()` (с `catch` → `loadError`) + `runningApps()` |
+| 114–120 | `providerKeys` (useMemo по `bundle.keys`) |
+| 122–138 | `patch`, `invalidBaseUrls`, `holdReason` |
+| 140–213 | `writtenRef`, `failedRef`, **`flush(snapshot)`** — одна запись снапшота; обработка `hotkeyError` |
+| 215–247 | авто-применение: дебаунс **450 мс**, ветки `idle`/`held`/`error`/`pending` |
+| 249–259 | `settings.hold(applyState === 'pending' \|\| 'saving')` → `windows.ts: settingsBusy` |
+| 261–268 | `unsaved(value)` |
+| 270–303 | `writable(value)` — санитайз перед явной записью (пустые quickActions отбрасываются, поля в середине правки откатываются к тому, что на диске) |
+| 305–314 | `closeWindow` |
+| 316–335 | ⌘S = «записать сейчас, мимо дебаунса» |
+| 337–368 | `saveKey` (testKey → setKey), `removeKey` |
+| 370–377 | `addExcluded` |
+| 379–403 | гейты: `loadError` → экран ошибки; нет `draft`/`bundle` → «Загрузка…»; `info`, `status`, `baseUrlError` |
+| 405–822 | разметка: `sidebar` (навигация + бейджи хоткеев) и 6 вкладок |
+| 433–589 | provider: провайдер, модель, base URL, ключ, температура/maxTokens, системный промпт |
+| 591–664 | behavior: `HotkeyField`, 3 чекбокса, `screenshotMaxSide`/`screenshotQuality` |
+| 666–675 | voice → `VoiceTab` |
+| 677–698 | agent → `AgentTab` (вкл/выкл идёт **через `agent:set-enabled`**, мимо черновика) |
+| 700–709 | actions → `QuickActionsEditor` |
+| 711–809 | privacy: 3 `PermissionRow` + список исключений + предупреждение о Keychain |
+| 811–819 | footer: `banner` или `ApplyStatus` + «Закрыть» |
+| 825–850 | `ApplyStatus` — единственная замена кнопки «Сохранить» |
+| 852–877 | `PermissionRow` |
+| 879–934 | `QuickActionsEditor` |
+
+### 7.2 Разделяемое состояние и инварианты
+
+| Ячейка | Строка | Роль |
+|---|---|---|
+| `bundle` | 81 | **то, что на диске**; левая часть сравнения авто-применения |
+| `draft` | 82 | **то, что на экране**; правая часть сравнения |
+| `writtenRef` | 150 | последний записанный снапшот, verbatim — иначе нормализация стора даёт бесконечную перезапись каждые 450 мс |
+| `failedRef` | 160 | снапшот, который уже упал — не повторять по таймеру |
+| `applyState` | 85 | `pending`/`saving` → `settings:hold(true)` → `settingsBusy` → грейс-период закрытия |
+| `invalidBaseUrls` | 126 | блокирует запись base URL (ошибка вместо молчаливой замены) |
+
+**Сквозная цепочка записи** (её нельзя разрывать при рефакторинге):
+`patch` → `draft` → эффект 222 → 450 мс → `flush` → `settings:save` → `bundle` + `writtenRef`
+→ `applyState` → `settings:hold` → `markSettingsBusy` (`windows.ts:727`) → `close`-хук с грейс-периодом.
+
+### 7.3 Ответственности
+
+A. **Модель черновика** — 81–138, 261–303. B. **Запись и её состояния** — 140–259, 825–850.
+C. **Ключи API** — 337–368, 510–541. D. **Права/исключения** — 370–377, 711–809.
+E. **Разметка вкладок** — 405–822 (тонкая, состояние только читает). F. **Дочерние компоненты** — 825–934.
+
+`App()` ≈ 750 строк, но почти всё — JSX вкладок (E); логика сосредоточена в (A)+(B) и уже вынесена
+в чистые функции (`holdReasonFor`) и колбэки. Разделение по вкладкам — механическое, без смены поведения.
+
+## 8. Сквозное по трём файлам (T04)
+
+| Наблюдение | Где | Следствие |
+|---|---|---|
+| Ширины продублированы, общего источника нет | `windows.ts:22,23,47` ↔ `overlay/App.tsx:50,58,60` (112/80/360) | значения совпадают; `OVERLAY_MIN_WIDTH` 44 и `OVERLAY_MAX_HEIGHT` 520 в renderer не продублированы |
+| `app.focus({steal:true})` в try/catch — 3 копии | `windows.ts:403,640,695` | кандидат в A3 |
+| `setWindowOpenHandler` (только http(s) → `shell.openExternal`) — 2 копии в файле | `windows.ts:181,675` | плюс 3 копии вне файла (см. §1.8) |
+| `load()` + 3 копии `loadPage()` | `windows.ts:64`, `pointer.ts:34`, `hud.ts:188`, `agent/cursor.ts:84` | уже зафиксировано в §2 |
+| `let passthrough` (597) и `let settingsBusy` (731) объявлены **после** первых текстовых обращений (400, 653) | `windows.ts` | работает только потому, что читаются при вызове, а не при инициализации модуля — хрупко, но поведение верное |
+| `closeSettingsWindowWhenSettled()` — синоним `closeSettingsWindow()` | `windows.ts:711,722` | ожидание живёт в `close`-хуке окна, у функции нет своей логики |
+| `mode` в overlay читается только через `modeRef` (304) в разметке не участвует | `overlay/App.tsx:185` | не баг; при выносе отправки `mode` можно свести к ref |
+| `ruler` — единственное модульное состояние в renderer | `overlay/App.tsx:129` | влияет на тестируемость `measureLine` (нужен мок canvas) |
+| Оба `App.tsx` не имеют общего слоя с `main` кроме `@shared/*` и `window.smartCursor` | — | границы для Фазы 2 заданы: renderer ↔ main только через preload-контракт |
