@@ -8,6 +8,13 @@ import { imagePart } from './imagePart'
  * an image, and no screenshot at all.
  */
 
+/** Narrows a part to the image branch, so the assertions read on the payload. */
+function imageOf(dataUrl: string): { mimeType: string; base64: string } {
+  const part = imagePart(dataUrl)
+  if (!part || part.type !== 'image') throw new Error(`not an image part: ${dataUrl}`)
+  return part
+}
+
 describe('imagePart: what counts as an image', () => {
   it('reads a png data URL', () => {
     expect(imagePart('data:image/png;base64,iVBORw0KGgo=')).toEqual({
@@ -26,11 +33,11 @@ describe('imagePart: what counts as an image', () => {
   })
 
   it('accepts the svg+xml subtype', () => {
-    expect(imagePart('data:image/svg+xml;base64,PHN2Zz4=')?.mimeType).toBe('image/svg+xml')
+    expect(imageOf('data:image/svg+xml;base64,PHN2Zz4=').mimeType).toBe('image/svg+xml')
   })
 
   it('matches the prefix case-insensitively, as the old regex did', () => {
-    expect(imagePart('DATA:IMAGE/PNG;base64,AAAA')?.base64).toBe('AAAA')
+    expect(imageOf('DATA:IMAGE/PNG;base64,AAAA').base64).toBe('AAAA')
   })
 
   it('keeps an empty payload as an empty string, not as null', () => {

@@ -52,19 +52,20 @@ export interface CaptureTarget {
  * whole display the cursor is on. `null` only when Electron cannot answer, in
  * which case nothing is drawn rather than drawing something wrong.
  */
+function areaFromBounds(bounds: NonNullable<CaptureTarget['bounds']>): ScreenRect {
+  return {
+    x: Math.round(bounds.x),
+    y: Math.round(bounds.y),
+    width: Math.round(bounds.width),
+    height: Math.round(bounds.height)
+  }
+}
+
 function resolveArea(target: CaptureTarget): { area: ScreenRect | null; fullScreen: boolean } {
   try {
     if (target.fullDisplay) return { area: displayUnderCursor(), fullScreen: true }
     if (target.bounds) {
-      return {
-        area: {
-          x: Math.round(target.bounds.x),
-          y: Math.round(target.bounds.y),
-          width: Math.round(target.bounds.width),
-          height: Math.round(target.bounds.height)
-        },
-        fullScreen: false
-      }
+      return { area: areaFromBounds(target.bounds), fullScreen: false }
     }
     return { area: displayUnderCursor(), fullScreen: true }
   } catch {
@@ -231,15 +232,7 @@ export async function captureScreenshot(
     // last known bounds before giving up and grabbing the whole screen.
     if (!placement && target.bounds) {
       if (await captureRegion(target.bounds, file)) {
-        placement = {
-          area: {
-            x: Math.round(target.bounds.x),
-            y: Math.round(target.bounds.y),
-            width: Math.round(target.bounds.width),
-            height: Math.round(target.bounds.height)
-          },
-          fullScreen: false
-        }
+        placement = { area: areaFromBounds(target.bounds), fullScreen: false }
       }
     }
     if (!placement) {
