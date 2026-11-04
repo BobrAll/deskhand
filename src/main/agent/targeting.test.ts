@@ -1,0 +1,333 @@
+import { describe, expect, it } from 'vitest'
+
+import type { AxElementInfo, AxProbe, ScreenRect } from '@shared/types'
+import { centerOf, isTextField, normalizeText, resolveTarget, textMatchScore } from './targeting'
+
+const area: ScreenRect = { x: 0, y: 0, width: 1440, height: 900 }
+
+function element(overrides: Partial<AxElementInfo> = {}): AxElementInfo {
+  return {
+    role: 'AXButton',
+    frame: { x: 100, y: 100, width: 80, height: 30 },
+    pressable: true,
+    ...overrides
+  }
+}
+
+function probe(elements: AxElementInfo[]): AxProbe {
+  return {
+    pid: 42,
+    app: 'Safari',
+    chain: [],
+    targets: elements,
+    focused: null,
+    elapsedMs: 5
+  }
+}
+
+describe('normalizeText', () => {
+  it('lowercases and replaces ё', () => {
+    expect(normalizeText('Ёлка')).toBe('елка')
+  })
+
+  it('drops quotes and punctuation', () => {
+    expect(normalizeText('«Экспорт…»')).toBe('экспорт')
+  })
+
+  it('collapses whitespace and trims', () => {
+    expect(normalizeText('  два   слова ')).toBe('два слова')
+  })
+
+  it('returns an empty string for nullish input', () => {
+    expect(normalizeText(null)).toBe('')
+    expect(normalizeText(undefined)).toBe('')
+    expect(normalizeText('')).toBe('')
+  })
+})
+
+describe('textMatchScore', () => {
+  it('scores an exact match as 1', () => {
+    expect(textMatchScore('Экспорт', 'экспорт')).toBe(1)
+  })
+
+  it('scores 0 when either side is empty', () => {
+    expect(textMatchScore('', 'экспорт')).toBe(0)
+    expect(textMatchScore('экспорт', '')).toBe(0)
+  })
+
+  it('rewards containment above the weak floor', () => {
+    expect(textMatchScore('Экспорт', 'Экспорт в PDF')).toBeGreaterThan(0.65)
+  })
+
+  it('ignores containment of a very short fragment', () => {
+    // "ок" is inside "Окно" but is not a name worth matching.
+    expect(textMatchScore('ок', 'Окно')).toBeLessThan(0.65)
+  })
+
+  it('tolerates a small typo', () => {
+    expect(textMatchScore('Экспорт', 'Экспортт')).toBeGreaterThan(0.8)
+  })
+
+  it('scores unrelated names low', () => {
+    expect(textMatchScore('Экспорт', 'Отмена')).toBeLessThan(0.4)
+  })
+
+  it('rewards a shared word', () => {
+    expect(textMatchScore('Сохранить файл', 'Сохранить')).toBeGreaterThan(0.6)
+  })
+})
+
+describe('centerOf', () => {
+  it('returns the middle of a rectangle', () => {
+    expect(centerOf({ x: 10, y: 20, width: 100, height: 50 })).toEqual({ x: 60, y: 45 })
+  })
+})
+
+describe('isTextField', () => {
+  it('is true for an editable element', () => {
+    expect(isTextField(element({ editable: true }))).toBe(true)
+  })
+
+  it('is false for a non-editable element', () => {
+    expect(isTextField(element({ editable: false }))).toBe(false)
+  })
+
+  it('is null when there is nothing to judge', () => {
+    expect(isTextField(null)).toBeNull()
+    expect(isTextField(undefined)).toBeNull()
+    expect(isTextField({ role: '' })).toBeNull()
+  })
+})
+
+describe('resolveTarget: no candidates', () => {
+  it('falls back to the model point with low confidence', () => {
+    const result = resolveTarget({
+      rough: { x: 200, y: 200 },
+      label: 'Экспорт',
+      probe: null,
+      area
+    })
+
+    expect(result).toMatchObject({
+      point: { x: 200, y: 200 },
+      element: null,
+      source: 'model',
+      shift: 0,
+      confidence: 0.15
+    })
+  })
+
+  it('clamps the model point into the frame', () => {
+    const result = resolveTarget({
+      rough: { x: -50, y: 5000 },
+      probe: null,
+      area
+    })
+
+    // The frame is half-open: the last addressable pixel is height - 1.
+    expect(result.point).toEqual({ x: 0, y: 899 })
+  })
+})
+
+describe('resolveTarget: the point is inside a control', () => {
+  it('keeps the aim and reports the element', () => {
+    const button = element()
+    const result = resolveTarget({
+      rough: { x: 140, y: 115 },
+      label: 'Экспорт',
+      probe: probe([element({ title: 'Экспорт' })]),
+      area
+    })
+
+    expect(result.source).toBe('point')
+    expect(result.confidence).toBe(0.7)
+    expect(result.point.x).toBeGreaterThanOrEqual(button.frame!.x)
+  })
+
+  it('picks the smallest control under the point', () => {
+    const result = resolveTarget({
+      rough: { x: 140, y: 115 },
+      probe: probe([
+        element({ title: 'Строка', frame: { x: 0, y: 0, width: 1200, height: 800 } }),
+        element({ title: 'Кнопка' })
+      ]),
+      area
+    })
+
+    expect(result.element?.title).toBe('Кнопка')
+  })
+
+  it('nudges a point on the edge inside the control', () => {
+    const result = resolveTarget({
+      rough: { x: 100, y: 100 },
+      probe: probe([element({ frame: { x: 100, y: 100, width: 80, height: 30 } })]),
+      area
+    })
+
+    expect(result.point.x).toBeGreaterThan(100)
+    expect(result.point.y).toBeGreaterThan(100)
+  })
+})
+
+describe('resolveTarget: the label wins when the point is empty space', () => {
+  it('moves the click to the centre of the named control', () => {
+    const result = resolveTarget({
+      rough: { x: 500, y: 500 },
+      label: 'Экспорт',
+      probe: probe([
+        element({ title: 'Экспорт', frame: { x: 280, y: 290, width: 80, height: 30 } })
+      ]),
+      area
+    })
+
+    expect(result.source).toBe('label')
+    expect(result.point).toEqual({ x: 320, y: 305 })
+    expect(result.shift).toBeGreaterThan(0)
+  })
+
+  it('reports a conflict when the point sits inside a differently named control', () => {
+    // No element carries the label, so the only evidence is the control the
+    // point landed in — and its name contradicts the label.
+    const result = resolveTarget({
+      rough: { x: 140, y: 115 },
+      label: 'Клавиатура',
+      probe: probe([element({ title: 'Звук', frame: { x: 100, y: 100, width: 80, height: 30 } })]),
+      area
+    })
+
+    expect(result.conflict).toBe('Звук')
+    expect(result.confidence).toBe(0.2)
+  })
+
+  it('prefers a strong label match elsewhere over the control under the point', () => {
+    const result = resolveTarget({
+      rough: { x: 140, y: 115 },
+      label: 'Клавиатура',
+      probe: probe([
+        element({ title: 'Звук', frame: { x: 100, y: 100, width: 80, height: 30 } }),
+        element({ title: 'Клавиатура', frame: { x: 700, y: 400, width: 120, height: 30 } })
+      ]),
+      area
+    })
+
+    expect(result.source).toBe('label')
+    expect(result.element?.title).toBe('Клавиатура')
+  })
+
+  it('trusts containment when the contained element agrees with the label', () => {
+    const result = resolveTarget({
+      rough: { x: 140, y: 115 },
+      label: 'Экспорт',
+      probe: probe([element({ title: 'Экспорт' })]),
+      area
+    })
+
+    expect(result.conflict).toBeUndefined()
+    expect(result.source).toBe('point')
+  })
+
+  it('trusts containment when the contained element has no name', () => {
+    const result = resolveTarget({
+      rough: { x: 140, y: 115 },
+      label: 'Клавиатура',
+      probe: probe([element({ frame: { x: 100, y: 100, width: 80, height: 30 } })]),
+      area
+    })
+
+    expect(result.conflict).toBeUndefined()
+    expect(result.source).toBe('point')
+  })
+})
+
+describe('resolveTarget: snapping to a neighbour', () => {
+  it('snaps to the nearest control when the point is just outside it', () => {
+    const result = resolveTarget({
+      rough: { x: 260, y: 115 },
+      probe: probe([
+        element({ title: 'Экспорт', frame: { x: 280, y: 100, width: 80, height: 30 } })
+      ]),
+      area
+    })
+
+    expect(result.source).toBe('snap')
+    expect(result.point).toEqual({ x: 320, y: 115 })
+  })
+
+  it('refuses to snap to a neighbour with a different visible name', () => {
+    const result = resolveTarget({
+      rough: { x: 260, y: 115 },
+      label: 'Экспорт',
+      probe: probe([element({ title: 'Отмена', frame: { x: 280, y: 100, width: 80, height: 30 } })]),
+      area
+    })
+
+    expect(result.source).toBe('model')
+  })
+
+  it('ignores a control that is too far away', () => {
+    const result = resolveTarget({
+      rough: { x: 700, y: 700 },
+      probe: probe([element({ frame: { x: 100, y: 100, width: 80, height: 30 } })]),
+      area
+    })
+
+    expect(result.source).toBe('model')
+  })
+})
+
+describe('resolveTarget: elements that cannot be targets', () => {
+  it('ignores an element that is not pressable or editable', () => {
+    const result = resolveTarget({
+      rough: { x: 140, y: 115 },
+      probe: probe([
+        element({ title: 'Текст', pressable: false, role: 'AXStaticText' })
+      ]),
+      area
+    })
+
+    expect(result.source).toBe('model')
+  })
+
+  it('ignores a container that covers most of the frame', () => {
+    const result = resolveTarget({
+      rough: { x: 700, y: 400 },
+      probe: probe([
+        element({ title: 'Окно', frame: { x: 0, y: 0, width: 1400, height: 880 } })
+      ]),
+      area
+    })
+
+    expect(result.source).toBe('model')
+  })
+
+  it('ignores an element without a frame', () => {
+    const result = resolveTarget({
+      rough: { x: 140, y: 115 },
+      probe: probe([element({ title: 'Экспорт', frame: null })]),
+      area
+    })
+
+    expect(result.source).toBe('model')
+  })
+
+  it('ignores an element whose centre is outside the captured frame', () => {
+    const result = resolveTarget({
+      rough: { x: 140, y: 115 },
+      probe: probe([element({ title: 'Экспорт', frame: { x: 2000, y: 100, width: 80, height: 30 } })]),
+      area
+    })
+
+    expect(result.source).toBe('model')
+  })
+
+  it('de-duplicates identical elements', () => {
+    const duplicate = element({ title: 'Экспорт' })
+    const result = resolveTarget({
+      rough: { x: 140, y: 115 },
+      probe: probe([duplicate, { ...duplicate }]),
+      area
+    })
+
+    expect(result.source).toBe('point')
+  })
+})
