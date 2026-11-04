@@ -252,7 +252,7 @@ describe('bubble: resizing at the anchor', () => {
 })
 
 describe('bubble: the geometry left windows.ts', () => {
-  const source = readFileSync(join(__dirname, 'windows.ts'), 'utf8')
+  const source = readFileSync(join(__dirname, 'windows/index.ts'), 'utf8')
 
   it('no longer defines the placement functions itself', () => {
     for (const name of ['placeAnchor', 'roomAround', 'xFor', 'yFor']) {

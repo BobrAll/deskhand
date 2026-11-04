@@ -43,7 +43,7 @@ describe('metrics: the literals are gone from both processes', () => {
   const read = (path: string): string => readFileSync(resolve(__dirname, '..', path), 'utf8')
 
   it('does not let the main process write the widths out again', () => {
-    const source = read('main/windows.ts')
+    const source = read('main/windows/index.ts')
     expect(source).not.toMatch(/=\s*360\b/)
     expect(source).not.toMatch(/=\s*112\b/)
     expect(source).not.toMatch(/=\s*80\b/)
@@ -61,7 +61,7 @@ describe('metrics: the widths have one source', () => {
   const read = (path: string): string => readFileSync(resolve(__dirname, '..', path), 'utf8')
 
   it('is what the main process sizes the window with', () => {
-    const source = read('main/windows.ts')
+    const source = read('main/windows/index.ts')
     for (const name of ['BUBBLE_WIDTH', 'BUBBLE_NARROW_WIDTH', 'BUBBLE_VOICE_WIDTH', 'BUBBLE_MIN_WIDTH']) {
       expect(source, name).toContain(name)
     }

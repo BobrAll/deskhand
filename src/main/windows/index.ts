@@ -12,16 +12,16 @@ import {
   BUBBLE_VOICE_WIDTH,
   BUBBLE_WIDTH
 } from '@shared/metrics'
-import type { OverlayHost } from './overlay/host'
+import type { OverlayHost } from '../overlay/host'
 import {
   boundsFor,
   clamp,
   placeAnchor,
   resizeAnchor,
   type BubbleAnchor
-} from './bubble'
-import { denyExternalLinks } from './denyExternalLinks'
-import { loadPage } from './pageLoad'
+} from '../bubble'
+import { denyExternalLinks } from '../denyExternalLinks'
+import { loadPage } from '../pageLoad'
 
 /**
  * The overlay is a small bubble next to the cursor, not a window: it appears as a
