@@ -84,8 +84,9 @@ typecheck/test/build → коммит → PROGRESS. После крупных г
 - [x] R02 Контракт `hotkeyError`: поле в `SettingsBundle` (shared/api.ts), убрать приведение в settings/App.tsx:178. → fb0d190
 - [x] R03 `main/pageLoad.ts`: три копии «dev ? loadURL : loadFile» (windows.ts:64, pointer.ts:34, cursor.ts:83) → одна функция. → 6bf9dab
 - [x] R04 `main/denyExternalLinks.ts`: четыре копии `setWindowOpenHandler` → одна, флаг `/i` остаётся параметром (без унификации). → 7782649
-- [ ] R05 Внутрифайловые дубли: `imagePart()` вместо трёх regex (overlay.ts:960,1181,1360) и `resolveArea()` вместо второго
-      блока `bounds → area` (screenshot.ts:234-244). Два коммита.
+- [x] R05 Внутрифайловые дубли: `imagePart()` вместо трёх regex (overlay.ts:960,1181,1360) и `resolveArea()` вместо второго
+      блока `bounds → area` (screenshot.ts:234-244). Два коммита. → a8a6cb8 + 5c39196 (вынесен `areaFromBounds`, не
+      `resolveArea`: при `fullDisplay: true` он вернул бы область дисплея вместо `bounds`).
 
 ### Волна 2 — дедупликация данных и окон (КТ2 после R09)
 - [ ] R06 `shared/keycodes.ts`: ТОЛЬКО данные. `KEY_CODES` 64 и отдельная `VOICE_KEY_CODES` 62 (без `esc`/`forwarddelete` —

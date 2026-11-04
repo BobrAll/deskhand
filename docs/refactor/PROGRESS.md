@@ -26,9 +26,12 @@
 поведения и ждёт ответа на вопрос 2). Новый `denyExternalLinks.test.ts` — 8 тестов на фейковом окне,
 включая «`HTTPS://` не открывается в трёх окнах и открывается в окне агента»; мутация «всегда
 case-insensitive» ловится. `npm test` 40 файлов / 948 тестов, typecheck и build зелёные.
-Следующая — **R05**.
+**R05 закрыта** — два дубля внутри файлов: `main/imagePart.ts` вместо трёх копий разбора data URL
+(`overlay.ts:960,1181,1360`, 9 тестов, `grep "data:(image"` → 0) и `areaFromBounds()` в `screenshot.ts`
+вместо двух копий `bounds → area`. `npm test` 41 файл / 957 тестов, typecheck и build зелёные.
+**Волна 1 закрыта — КТ1.** Следующая — **R06** (волна 2).
 ## Last commit
-7782649 refactor(main): extract denyExternalLinks from four windows (R04)
+5c39196 refactor(screenshot): one bounds to area conversion (R05)
 ## Log (одна строка на задачу: ID — hash — итог)
 T01 — bd12743 — 56 каналов CH + `shell:open-external`: направление/payload/хендлер/потребитель; 6 окон с webPreferences и создателями; перепроверены 5 фактов CONTEXT.md.
 T04 — f416865 — карты windows.ts (секции, `OverlayHost`, 10 модульных `let`, грейс-период), overlay/App.tsx (13 state + 18 ref, 7 подписок), settings/App.tsx (черновик↔диск, дебаунс 450 мс → `settings:hold` → грейс-период); сквозные дубли — в §8.
@@ -68,6 +71,7 @@ R01 — fa8b283 — гигиена `main/` (A4.8 #2, #4, #5, #6, #7), повед
 R02 — fb0d190 — контракт `hotkeyError` (A4.8 #3): поле объявлено опциональным в `SettingsBundle` (`shared/api.ts`), присваивание в `ipc.ts:140` осталось как было, приведение `(saved as SettingsBundle & { hotkeyError?: boolean })` в `renderer/settings/App.tsx:178` заменено на `saved.hotkeyError`. Теперь `tsc` ловит переименование флага в main: раньше ветка 181–198 (сброс `writtenRef`, баннер на 2600 мс, `applyState='error'`) молча перестала бы срабатывать, и отклонённый хоткей ретраился бы каждые 450 мс бесконечно. Поле помечено опциональным, а не обязательным, потому что `settings.load` его не отдаёт — обязательное заставило бы `bundle()` в `ipc.ts` ставить `false` в ответе, который раньше поля не имел вовсе.
 R03 — 6bf9dab — `main/pageLoad.ts` (`loadPage(win, page)`), три копии сведены: `windows.ts` (локальная `load`), `pointer.ts` (локальная `loadPage`) и `agent/cursor.ts` (там `page` был зашит как `'cursor'` — теперь параметр). Тела были идентичны, различалось только имя функции и страница; `join`/`__dirname` остались нужны во всех трёх файлах для `preload`, поэтому импортов не убирал. Тестов на создание окон нет — по плану проверка на КТ1 (`MANUAL_SMOKE §12`, §1), кода поведения не менял: тот же `process.env['ELECTRON_RENDERER_URL']`, тот же `join(__dirname, '../renderer/<page>/index.html')`.
 R04 — 7782649 — `main/denyExternalLinks.ts`: четыре копии `setWindowOpenHandler` (`windows.ts` ×2, `pointer.ts`, `agent/cursor.ts`) → `denyExternalLinks(win, { caseless })`. Расхождение, которое было в дереве, не спрятано, а названо: `caseless: true` передаёт только `agent/cursor.ts` (там был `/i`), три остальных окна сохранили регистрозависимый regex — унификация это смена поведения (план §7, вопрос 2). Новый тест `denyExternalLinks.test.ts` (8 кейсов, фейковое окно + мок `shell`): http/https открываются, `file:`/`javascript:`/`about:`/`ftp:` — только `deny`, `HTTPS://` открывается лишь при `caseless`, `httpsx://` не считается http. Мутация «всегда CASELESS» → 1 красный. `shell` из трёх модулей убран, из `electron` импортируется только в новом файле.
+R05 — a8a6cb8 + 5c39196 — два внутрифайловых дубля. (1) `main/imagePart.ts`: три дословные копии разбора data URL в `overlay.ts` (`:960` основной запрос, `:1181` продолжение `@look`, `:1360` проверка) → `imagePart(dataUrl)`; 9 тестов (png/jpeg/svg+xml, регистр префикса, пустой payload, `data:` без base64, не-image, null/undefined). (2) `screenshot.ts`: два блока `bounds → area` (`resolveArea` и фолбэк после неудачного захвата окна) → `areaFromBounds()`. Здесь пришлось отступить от плана: план предлагал заменить второй блок на `resolveArea({ bounds: target.bounds })`, но это **не** эквивалентно — при `fullDisplay: true` (а оверлей передаёт его всегда) `resolveArea` вернёт область всего дисплея, тогда как `captureRegion` снял только `bounds`; стрелка встала бы не туда. Поэтому вынесена конвертация, а не решение. Тестов на `screenshot.ts` нет (`02-test-plan §4.1`), проверка — `MANUAL_SMOKE §3` на КТ1.
 ## T35 — контрольная точка №1 (сводка для тебя)
 
 **Где мы.** Фаза 1 (тесты) закрыта: T11–T34. Поведение не менялось ни на строку — за всю фазу
