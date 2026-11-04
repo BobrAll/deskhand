@@ -1,0 +1,764 @@
+/**
+ * The cursor bubble.
+ *
+ * A small rounded field that appears next to the pointer: one line for the
+ * question and the answer printed right under it. Everything else — context tags,
+ * suggestions, the answer's secondary commands — is folded behind the chevron in
+ * `.bar`. Sized in the "compact" register on purpose: this is a control surface
+ * floating over someone else's app, not a window.
+ */
+
+html,
+body,
+#root {
+  background: transparent;
+  height: auto;
+  overflow: hidden;
+}
+
+/* The card is nearly opaque on purpose: at 60% the text was competing with
+   whatever happened to be behind it, and a control surface has to read the same
+   over a white document and a dark editor. The vibrancy blur is still underneath,
+   but it is now a hint of depth instead of the thing that makes the panel legible. */
+:root {
+  --panel: rgba(21, 23, 29, 0.94);
+  --panel-edge: rgba(255, 255, 255, 0.10);
+  /*
+   * The same surface while the assistant is drawing on the screen (`data-drawing`
+   * on `.bubble`). At 40% the panel is unmistakably a pane of tinted glass: what
+   * the arrow is pointing at stays readable through it, which is the whole point
+   * — an opaque card parked on the target would hide the thing it explains.
+   */
+  --panel-drawing: rgba(21, 23, 29, 0.40);
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --panel: rgba(249, 249, 251, 0.96);
+    --panel-edge: rgba(0, 0, 0, 0.10);
+    --panel-drawing: rgba(249, 249, 251, 0.42);
+  }
+}
+
+.bubble {
+  /* No margin: the window is exactly this card. That is what keeps the native
+     shadow and the vibrancy blur on the rounded shape instead of a rectangle
+     around it (see the comment in `windows.ts`). The radius matches the window's
+     own corner radius so the blur never peeks out at the four corners. */
+  margin: 0;
+  padding: 6px 8px;
+  background-color: var(--panel);
+  border: 1px solid var(--panel-edge);
+  border-radius: 9px;
+  box-shadow:
+    inset 0 1px 0 var(--glass-sheen),
+    0 1px 2px rgba(0, 0, 0, 0.18);
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  animation: appear 100ms ease-out;
+  /* The two densities cross-fade instead of snapping: drawings arrive while the
+     answer is still streaming, and a hard flip would read as a glitch rather
+     than as the card stepping out of the way. */
+  transition:
+    background-color 180ms ease-out,
+    border-color 180ms ease-out,
+    box-shadow 180ms ease-out;
+}
+
+/**
+ * While the assistant is painting on the screen the card becomes a much thinner
+ * sheet of glass. The arrow exists to point at something *behind* the card, and
+ * an opaque panel parked on that very spot is what hides it. At 40% the desktop
+ * shows through, so the target stays visible; the main process also drops the
+ * window's vibrancy for the same stretch (`setDrawing` in `windows.ts`), because
+ * a native blur would smear exactly what the arrow is pointing at.
+ */
+.bubble[data-drawing] {
+  background-color: var(--panel-drawing);
+  border-color: color-mix(in srgb, var(--panel-edge) 55%, transparent);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.10);
+}
+
+/* While an answer is being produced the whole field gets a faint accent edge:
+   the pulse on the dot is the only other signal that anything is happening, and
+   it is 6px wide. */
+.bubble[data-busy] {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--panel-edge));
+}
+
+@keyframes appear {
+  from {
+    opacity: 0;
+    transform: translateY(-3px) scale(0.99);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* ------------------------------------------------------------------ the line */
+
+.bar {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+/**
+ * Holds the chevron's place while there is no chevron.
+ *
+ * The card is on screen for a few hundred milliseconds before its session is
+ * collected, and it renders without the chevron then because there is nothing to
+ * unfold. The field is measured against a width that already includes a chevron,
+ * so the space has to be claimed by *something* — otherwise the text sits 22
+ * points further right and shifts left the instant the real chevron appears.
+ */
+.bar > .reserve {
+  flex: none;
+  width: 16px;
+  height: 16px;
+}
+
+/**
+ * The presence mark: a dot that becomes the "thinking" pulse. It sits on the
+ * text baseline instead of in a separate chrome row, so the bubble reads as one
+ * line whether or not anything is happening.
+ */
+.spark {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  margin-top: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.spark[data-live='true'] {
+  animation: pulse 1.05s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  50% {
+    opacity: 0.3;
+    transform: scale(0.82);
+  }
+}
+
+/* The field is the bubble: no box of its own, no focus ring — the caret is the
+   cursor, and a second border inside this rectangle would only add noise. */
+textarea.prompt {
+  flex: 1;
+  min-width: 0;
+  height: 17px;
+  max-height: 84px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  box-shadow: none;
+  font-size: 13px;
+  line-height: 17px;
+  resize: none;
+  overflow-y: auto;
+  caret-color: var(--accent);
+  /**
+   * One line until the card has nothing left to give.
+   *
+   * The window is resized a frame after the keystroke that widens it, so a soft
+   * wrap landing inside that gap would add a second row and drop it again — a
+   * flicker of the bubble's height on every letter. Keeping the field on a single
+   * line and letting it overflow sideways for that one frame keeps the growth
+   * monotonic; `data-wrap` turns wrapping back on once `FULL_WIDTH` is reached and
+   * there is nowhere left to grow.
+   */
+  white-space: pre;
+  overflow-x: hidden;
+}
+
+textarea.prompt[data-wrap] {
+  white-space: pre-wrap;
+}
+
+textarea.prompt:focus {
+  border: none;
+  box-shadow: none;
+}
+
+textarea.prompt::placeholder {
+  color: var(--text-faint);
+}
+
+/**
+ * The one piece of chrome the bubble starts with. The field plus a 16px chevron:
+ * everything else in the panel (context tags, suggestions, the action strip of an
+ * answer) hides behind it, so opening the bubble costs a single line of screen.
+ */
+button.toggle {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  margin-top: 1px;
+  padding: 0;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  border-color: transparent;
+  color: var(--text-faint);
+  transition: color 90ms ease-out, background 90ms ease-out;
+}
+
+button.toggle svg {
+  width: 9px;
+  height: 6px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  transition: transform 120ms ease-out;
+}
+
+button.toggle:hover:not(:disabled) {
+  background: var(--surface);
+  border-color: transparent;
+  color: var(--text);
+}
+
+/* Open: the chevron points up. Folded but with something to read (a warning, a
+   failure): it keeps the accent, so the one-line bubble still advertises it. */
+button.toggle[data-open],
+button.toggle[data-alert] {
+  color: var(--accent);
+}
+
+button.toggle[data-open] svg {
+  transform: rotate(180deg);
+}
+
+/* While an answer streams the chevron gets company: a long answer that is
+   already wrong should not have to be waited out. */
+button.stop {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+}
+
+button.stop > span {
+  width: 7px;
+  height: 7px;
+  border-radius: 1.5px;
+  background: var(--text-dim);
+}
+
+button.stop:hover:not(:disabled) {
+  background: var(--surface);
+  border: none;
+}
+
+button.stop:hover:not(:disabled) > span {
+  background: var(--danger);
+}
+
+/* Everything under the field is indented to the text column, so the answer
+   lands exactly under the question. */
+.meta,
+.suggestions,
+.line,
+.answer,
+.foot {
+  margin-left: 12px;
+}
+
+/* The folded-away half of the bubble: whatever the chevron opens. */
+.drawer {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  animation: unfold 120ms ease-out;
+}
+
+@keyframes unfold {
+  from {
+    opacity: 0;
+    transform: translateY(-2px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* ------------------------------------------------------------ context strip */
+
+.meta {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  min-height: 16px;
+  font-size: 10.5px;
+  /* Small type over a light card needs more than `--text-faint`: the strip is
+     clickable, so it has to stay legible, not just quiet. */
+  color: color-mix(in srgb, var(--text) 62%, transparent);
+}
+
+.meta .app {
+  max-width: 110px;
+  margin-right: 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Tags are 11px on purpose: this row answers "what does it see?", it is not a
+   toolbar. Hover is the only thing that reveals they are clickable. */
+button.tag {
+  padding: 1px 5px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: transparent;
+  font-size: 10.5px;
+  line-height: 14px;
+  color: color-mix(in srgb, var(--text) 62%, transparent);
+}
+
+button.tag:hover:not(:disabled) {
+  background: var(--surface);
+  border-color: var(--border);
+  color: var(--text-dim);
+}
+
+button.tag[data-on='true'] {
+  background: var(--accent-soft);
+  border-color: color-mix(in srgb, var(--accent) 38%, transparent);
+  color: var(--text);
+}
+
+button.tag:disabled {
+  opacity: 0.4;
+}
+
+button.tag.clear {
+  color: var(--warning);
+}
+
+.suggestions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  margin-top: -2px;
+}
+
+.thumb {
+  height: 17px;
+  width: auto;
+  max-width: 74px;
+  object-fit: cover;
+  border-radius: 4px;
+  border: 1px solid var(--border-strong);
+}
+
+/* Hidden preload target for the next live frame (see `LiveThumb`). */
+.thumb.probe {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* --------------------------------------------------------------- status rows */
+
+.line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11.5px;
+  line-height: 1.35;
+  color: var(--text-dim);
+}
+
+.line > span {
+  flex: 1;
+  min-width: 0;
+}
+
+.line[data-tone='warn'] {
+  color: var(--warning);
+}
+
+.line[data-tone='err'] {
+  color: var(--danger);
+}
+
+/* ------------------------------------------------------------------ агент
+ *
+ * The row that says "I am driving right now". It is the only part of the card
+ * that describes something happening *outside* the window, so it is written to be
+ * read at a glance from the corner of an eye: one dot that moves, one short
+ * phrase, one counter, one way out.
+ *
+ * The steps list is deliberately plain and small. It is not a log — a log would
+ * invite reading it while the mouse is moving — it is a schedule you can glance at
+ * to see whether the plan is still sane.
+ */
+
+.agent {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-left: 12px;
+  margin-top: 6px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  /* Tinted rather than outlined: the card already has an edge, and a second
+     full-strength border would read as a nested panel. */
+  background: var(--accent-soft);
+}
+
+.agent[data-phase='error'],
+.agent[data-phase='aborted'] {
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+  border-color: color-mix(in srgb, var(--danger) 30%, transparent);
+}
+
+.agent[data-phase='done'] {
+  background: color-mix(in srgb, var(--border) 40%, transparent);
+}
+
+.agent-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11.5px;
+  line-height: 1.3;
+  color: var(--text);
+}
+
+.agent-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-count {
+  font-variant-numeric: tabular-nums;
+  color: var(--text-dim);
+  font-size: 10.5px;
+}
+
+/*
+ * The dot is the "something is happening" signal, and it only pulses while
+ * something *is*: a finished or failed run keeps it still, so the card stops
+ * asking for attention the moment the run does.
+ */
+.agent-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  flex: none;
+}
+
+.agent[data-phase='arming'] .agent-dot,
+.agent[data-phase='acting'] .agent-dot,
+.agent[data-phase='checking'] .agent-dot {
+  animation: agent-pulse 1.1s ease-in-out infinite;
+}
+
+.agent[data-phase='error'] .agent-dot,
+.agent[data-phase='aborted'] .agent-dot {
+  background: var(--danger);
+}
+
+.agent[data-phase='done'] .agent-dot {
+  background: var(--text-dim);
+}
+
+@keyframes agent-pulse {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.45;
+    transform: scale(0.8);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .agent[data-phase='arming'] .agent-dot,
+  .agent[data-phase='acting'] .agent-dot,
+  .agent[data-phase='checking'] .agent-dot {
+    animation: none;
+  }
+}
+
+.agent-hint {
+  font-size: 10.5px;
+  color: var(--text-dim);
+  white-space: nowrap;
+  flex: none;
+}
+
+.agent-skip {
+  font-size: 10.5px;
+  line-height: 1.35;
+  color: var(--warning);
+}
+
+.agent-plan {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 10.5px;
+  line-height: 1.35;
+  color: var(--text-dim);
+}
+
+.agent-plan li {
+  padding-left: 11px;
+  position: relative;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* A step that already ran is struck through: the plan is a record of what was
+   asked, and what was asked *and done* should not look like what is still ahead. */
+.agent-plan li[data-state='done'] {
+  text-decoration: line-through;
+  opacity: 0.55;
+}
+
+.agent-plan li[data-state='now'] {
+  color: var(--accent);
+}
+
+.agent-plan li::before {
+  content: '';
+  position: absolute;
+  left: 2px;
+  top: 0.52em;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.5;
+}
+
+.agent-plan li[data-state='now']::before {
+  opacity: 1;
+}
+
+/* ------------------------------------------------------------------ the answer */
+
+.answer {
+  font-size: 12.5px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  padding: 5px 0 1px;
+  border-top: 1px solid var(--border);
+  max-height: 268px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  user-select: text;
+}
+
+/* A 9px scrollbar would read as browser chrome inside a 420px bubble. */
+.answer::-webkit-scrollbar {
+  width: 5px;
+}
+
+.answer::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 999px;
+}
+
+.caret {
+  display: inline-block;
+  width: 5px;
+  height: 12px;
+  margin-left: 2px;
+  vertical-align: text-bottom;
+  background: var(--accent);
+  border-radius: 1px;
+  animation: blink 1s step-end infinite;
+}
+
+@keyframes blink {
+  50% {
+    opacity: 0;
+  }
+}
+
+/* -------------------------------------------------------------- action strip */
+
+.foot {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+}
+
+.spacer {
+  flex: 1;
+}
+
+.divider {
+  width: 1px;
+  height: 10px;
+  margin: 0 5px;
+  background: var(--border);
+}
+
+button.link {
+  padding: 1px 5px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  font-size: 11px;
+  line-height: 15px;
+  color: var(--text-dim);
+}
+
+button.link:hover:not(:disabled) {
+  background: var(--surface);
+  border: none;
+  color: var(--text);
+}
+
+button.link.primary {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+button.link.primary:hover:not(:disabled) {
+  background: var(--accent-soft);
+}
+
+/* ------------------------------------------------------- the listening card */
+
+/**
+ * While the microphone is open the card *is* the indicator: the field is replaced
+ * by five bars in the same glass, at the same place, at the same size. Nothing
+ * else appears on screen — no second window, no halo at the cursor.
+ *
+ * The bounce is a CSS animation on the compositor; the level only opens the whole
+ * cluster through one custom property with a short transition, because the meter
+ * arrives at ~10 Hz and would otherwise read as a stutter rather than a voice.
+ */
+.voice {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  /* Exactly the height of the field it replaces, so the card does not jump when
+     the turn starts or ends. */
+  height: 19px;
+  transform: scaleY(var(--amp, 0.8));
+  transform-origin: center;
+  transition: transform 120ms linear;
+}
+
+.voice i {
+  display: block;
+  width: 2px;
+  height: 11px;
+  border-radius: 1px;
+  background: var(--accent);
+  transform: scaleY(0.35);
+  transform-origin: center;
+  animation: voice-bar 760ms cubic-bezier(0.45, 0.05, 0.55, 0.95) infinite;
+}
+
+/* Uneven on purpose: an even stagger reads as a metronome. */
+.voice i:nth-child(2) {
+  animation-delay: 90ms;
+}
+.voice i:nth-child(3) {
+  animation-delay: 180ms;
+}
+.voice i:nth-child(4) {
+  animation-delay: 60ms;
+}
+.voice i:nth-child(5) {
+  animation-delay: 150ms;
+}
+
+/* Recognising: the microphone is closed, so a bounce would be a lie — one slow
+   wave travels left to right and the bars drop the accent. */
+.voice[data-phase='transcribing'] i {
+  background: var(--text-dim);
+  animation-duration: 1400ms;
+}
+.voice[data-phase='transcribing'] i:nth-child(2) {
+  animation-delay: 120ms;
+}
+.voice[data-phase='transcribing'] i:nth-child(3) {
+  animation-delay: 240ms;
+}
+.voice[data-phase='transcribing'] i:nth-child(4) {
+  animation-delay: 360ms;
+}
+.voice[data-phase='transcribing'] i:nth-child(5) {
+  animation-delay: 480ms;
+}
+
+@keyframes voice-bar {
+  0%,
+  100% {
+    transform: scaleY(0.3);
+  }
+  50% {
+    transform: scaleY(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .voice {
+    transform: none;
+    transition-duration: 1ms;
+  }
+  .voice i {
+    animation: none;
+    transform: scaleY(0.55);
+  }
+}
+
+/* A voice turn is not a panel: the glass, the edge, the shadow and the padding all
+   go, and the bars are the whole thing — small, next to the pointer, where the
+   field used to be. */
+.bubble[data-voice] {
+  padding: 0;
+  background-color: transparent;
+  border-color: transparent;
+  box-shadow: none;
+}
+
+.bubble[data-voice] .voice {
+  /* Fills the window's minimum height, so the bars sit dead centre and nothing is
+     clipped by the resize. */
+  height: 31px;
+  /* Left-aligned, not centred: the window is wider than the bars for a native
+     reason (see OVERLAY_VOICE_WIDTH), so centring would push them a third of the
+     way across the window and away from the pointer. */
+  justify-content: flex-start;
+  padding-left: 8px;
+}

@@ -1,0 +1,139 @@
+/**
+ * The drawing layer's styles.
+ *
+ * Everything here is animation that runs on the compositor: `stroke-dashoffset`
+ * for the "marker draws itself" effect and `opacity` for the captions. No JS
+ * timers drive the motion, so the layer stays cheap even though it covers a
+ * whole display.
+ */
+
+html,
+body,
+#root {
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  overflow: hidden;
+  width: 100%;
+  height: 100%;
+  /* The layer must never intercept a click; the main process enforces this too. */
+  pointer-events: none;
+  user-select: none;
+  cursor: default;
+}
+
+.pointer-layer {
+  display: block;
+  overflow: visible;
+}
+
+.pointer-shape {
+  /* Ink colour: the app's blue accent, with a white halo in `pointer-stroke`
+     so it reads on both light and dark content. See `docs/style.md`. */
+  --ink: #5b78ff;
+  /* Set per shape by the renderer so several shapes arrive in sequence. */
+  --delay: 0ms;
+  opacity: 0;
+  animation: shape-in 1ms linear var(--delay) forwards;
+}
+
+.pointer-stroke {
+  fill: none;
+  stroke: var(--ink);
+  stroke-width: 3.5;
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+  filter: drop-shadow(0 0 1px rgba(255, 255, 255, 0.9)) drop-shadow(0 1px 3px rgba(0, 0, 0, 0.42));
+  animation: draw 620ms cubic-bezier(0.33, 0.9, 0.4, 1) var(--delay) forwards;
+}
+
+.pointer-head {
+  /* SVG scales from the view-box origin by default, which would fling the head
+     in from the top-left corner; `fill-box` makes it grow in place. */
+  transform-box: fill-box;
+  transform-origin: center;
+  fill: none;
+  stroke: var(--ink);
+  stroke-width: 3.5;
+  stroke-linecap: round;
+  filter: drop-shadow(0 0 1px rgba(255, 255, 255, 0.9)) drop-shadow(0 1px 3px rgba(0, 0, 0, 0.42));
+  opacity: 0;
+  /* Lands once the shaft has almost finished drawing. */
+  animation: pop 180ms ease-out calc(var(--delay) + 460ms) forwards;
+}
+
+.pointer-label {
+  transform-box: fill-box;
+  transform-origin: center;
+  opacity: 0;
+  /* After its shape: the caption belongs to the gesture, not before it. */
+  animation: pop 200ms ease-out calc(var(--delay) + 620ms) forwards;
+}
+
+.pointer-label-bg {
+  fill: rgba(20, 21, 26, 0.92);
+  stroke: var(--ink);
+  stroke-width: 1.25;
+  filter: drop-shadow(0 4px 14px rgba(0, 0, 0, 0.4));
+}
+
+.pointer-label-text {
+  fill: #f6f6f8;
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', sans-serif;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+@keyframes shape-in {
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes draw {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+@keyframes pop {
+  0% {
+    opacity: 0;
+    transform: scale(0.82);
+  }
+  /* A slight overshoot so the caption/head "lands" instead of easing flat. */
+  60% {
+    opacity: 1;
+    transform: scale(1.04);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+/* Fade-out when the answer is dismissed. */
+#root.leaving .pointer-layer {
+  animation: layer-out 200ms ease-in forwards;
+}
+
+@keyframes layer-out {
+  to {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pointer-stroke {
+    animation: none;
+    stroke-dashoffset: 0;
+  }
+  .pointer-shape,
+  .pointer-head,
+  .pointer-label {
+    animation: none;
+    opacity: 1;
+    transform: none;
+  }
+}

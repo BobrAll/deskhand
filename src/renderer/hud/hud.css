@@ -1,0 +1,209 @@
+/**
+ * The listening chip.
+ *
+ * The window is a transparent layer placed around the pointer, so everything here
+ * is positioned in layer coordinates by `hud.ts` and only the *appearance* is
+ * fixed here.
+ *
+ * The whole indicator is one small glass capsule with four bars in it — no halo,
+ * no orb, no text. It floats over arbitrary content next to the caret the user is
+ * already looking at, and anything more elaborate competes with the thing being
+ * dictated into. The surface deliberately mirrors the assistant card (`--panel` in
+ * `overlay.css`: same near-black tint, same 1px edge, same inset sheen), so the
+ * chip reads as the same object as the panel rather than as its own widget.
+ *
+ * It keeps its own dark palette instead of following the app's
+ * `prefers-color-scheme` tokens: it floats over arbitrary content, and a chip that
+ * turned near-white in light mode would disappear on a white document — the one
+ * place it must stay legible is over someone else's page. The accent is the
+ * app's blue, the same one the drawing layer's ink uses, so "the assistant is
+ * present at the cursor" reads the same whether it is drawing, listening or
+ * acting. See `docs/style.md`.
+ */
+
+html,
+body,
+#root {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  background: transparent;
+  overflow: hidden;
+  /* The chip is a picture, not a control. The main process enforces this too. */
+  pointer-events: none;
+  user-select: none;
+  cursor: default;
+  -webkit-app-region: no-drag;
+}
+
+:root {
+  /* Same accent as `--ink` in the drawing layer: presence at the cursor. */
+  --hud-accent: #7b95ff;
+  --hud-dim: rgba(244, 245, 247, 0.5);
+  /* The card's `--panel`, softened: this is 22 pt of glass over someone's text,
+     not a surface anything has to be read on. There is no `backdrop-filter` here —
+     in a transparent window it samples an empty backdrop and blurs nothing; real
+     frosting would need the native vibrancy view, and a blurred rectangle around a
+     37 pt capsule would be more chrome, not less. The glass is therefore drawn:
+     a translucent tint, a light top sheen and a hairline edge. */
+  --hud-surface: rgba(26, 27, 33, 0.8);
+  --hud-sheen: rgba(255, 255, 255, 0.13);
+  --hud-edge: rgba(255, 255, 255, 0.14);
+  --hud-shadow: 0 3px 10px rgba(0, 0, 0, 0.26), 0 1px 2px rgba(0, 0, 0, 0.18);
+  --hud-radius: 7px;
+}
+
+/* ---------------------------------------------------------------- the chip */
+
+.pill {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 22px;
+  padding: 0 8px;
+  border-radius: var(--hud-radius);
+  border: 1px solid var(--hud-edge);
+  /* Glass, drawn instead of refracted: the tint, then a sheen that fades out
+     two-thirds of the way down, the way a light above the screen would catch a
+     real pane. One gradient plus the inset hairline is enough; anything more
+     starts to look like a button. */
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.075), rgba(255, 255, 255, 0) 65%),
+    var(--hud-surface);
+  box-shadow: inset 0 1px 0 var(--hud-sheen), var(--hud-shadow);
+  opacity: 0;
+  will-change: transform, opacity;
+}
+
+#root[data-visible='true'] .pill {
+  animation: hud-in 150ms cubic-bezier(0.2, 0.9, 0.3, 1) forwards;
+}
+
+#root[data-visible='false'] .pill {
+  animation: hud-out 160ms ease-in forwards;
+}
+
+@keyframes hud-in {
+  from {
+    opacity: 0;
+    transform: scale(0.88);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes hud-out {
+  from {
+    opacity: 1;
+    transform: scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: scale(0.92);
+  }
+}
+
+/* ------------------------------------------------------------- the bars */
+
+/**
+ * The cluster. The audio level arrives at ~10 Hz and only scales the whole group,
+ * so the motion itself stays on the compositor: the per-bar bounce is a CSS
+ * animation, and the level rides on top of it as a single transitioned transform.
+ * That is also why there is no `requestAnimationFrame` loop in `hud.ts` — a
+ * transparent window that repaints at 60 fps is a battery bug that surfaces days
+ * later as "the laptop gets warm while I talk".
+ */
+.wave {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  height: 9px;
+  transform: scaleY(var(--amp, 0.8));
+  transform-origin: center;
+  transition: transform 120ms linear;
+  will-change: transform;
+}
+
+.wave i {
+  display: block;
+  width: 2px;
+  height: 9px;
+  border-radius: 1px;
+  background: var(--hud-accent);
+  transform: scaleY(0.35);
+  transform-origin: center;
+}
+
+/* "Слушаю": a staggered bounce, which is all the feedback a push-to-talk press
+   needs — the chip appearing is the state change, the bars are the heartbeat.
+   The delays are uneven on purpose: an even stagger reads as a metronome. */
+#root[data-visible='true'][data-phase='listening'] .wave i {
+  animation: hud-bar 760ms cubic-bezier(0.45, 0.05, 0.55, 0.95) infinite;
+}
+
+#root[data-visible='true'][data-phase='listening'] .wave i:nth-child(2) {
+  animation-delay: 120ms;
+}
+#root[data-visible='true'][data-phase='listening'] .wave i:nth-child(3) {
+  animation-delay: 60ms;
+}
+#root[data-visible='true'][data-phase='listening'] .wave i:nth-child(4) {
+  animation-delay: 180ms;
+}
+
+/* "Распознаю": the microphone is closed, so a bounce would be a lie — the bars
+   settle into one slow wave travelling left to right and lose the accent. These
+   rules come last so they win the tie against the ones above. */
+#root[data-phase='transcribing'] .wave i {
+  background: var(--hud-dim);
+  animation: hud-bar 1400ms ease-in-out infinite;
+}
+
+#root[data-phase='transcribing'] .wave i:nth-child(2) {
+  animation-delay: 120ms;
+}
+#root[data-phase='transcribing'] .wave i:nth-child(3) {
+  animation-delay: 240ms;
+}
+#root[data-phase='transcribing'] .wave i:nth-child(4) {
+  animation-delay: 360ms;
+}
+
+@keyframes hud-bar {
+  0%,
+  100% {
+    transform: scaleY(0.3);
+  }
+  50% {
+    transform: scaleY(1);
+  }
+}
+
+/* Anyone who asked the system to reduce motion gets a still chip: the state is
+   still readable from the capsule's presence and the bars' colour. */
+@media (prefers-reduced-motion: reduce) {
+  .wave,
+  #root[data-visible='true'][data-phase='listening'] .wave i,
+  #root[data-phase='transcribing'] .wave i {
+    animation: none;
+    transition-duration: 1ms;
+    transform: none;
+  }
+
+  .wave i,
+  #root[data-phase='transcribing'] .wave i {
+    animation: none;
+    transform: scaleY(0.55);
+  }
+
+  #root[data-visible='true'] .pill,
+  #root[data-visible='false'] .pill {
+    animation-duration: 1ms;
+  }
+}

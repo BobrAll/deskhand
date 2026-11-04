@@ -1,0 +1,194 @@
+/**
+ * The `@point` protocol: how the model asks to draw on the screen.
+ *
+ * Text answers are streamed straight to the card, and a model that streams JSON
+ * cannot produce valid JSON until the very last byte. A line-based protocol can
+ * instead be consumed incrementally: every complete line is either ordinary
+ * answer text or a drawing instruction, and a half-received line simply waits
+ * for its newline. That is why the model is asked for
+ *
+ *     @point arrow 0.50 0.80 0.82 0.11 «Сюда»
+ *
+ * and not for a JSON blob.
+ *
+ * Grammar (tolerant on purpose — models drift):
+ *
+ *     @point <kind> <x1> <y1> <x2> <y2> [label...]
+ *
+ * `kind` is one of circle | box | arrow | underline; the label is whatever
+ * follows and may be wrapped in «», "", '' or ().
+ *
+ * This module has no Electron or Node dependencies so it can be tested directly.
+ */
+
+import type { Annotation, AnnotationKind, Point01 } from '@shared/types'
+
+const KINDS: AnnotationKind[] = ['circle', 'box', 'arrow', 'underline']
+
+/** A shape that is bigger than this in one axis is treated as a misunderstanding. */
+const MIN_SIDE = 0.004
+
+const MAX_LABEL = 90
+
+export interface ParsedLine {
+  /** The line to show in the answer, with any protocol syntax removed. */
+  text: string
+  /** Shapes the line asked for (usually none). */
+  annotations: Annotation[]
+}
+
+function clamp01(value: number): number {
+  if (!Number.isFinite(value)) return 0
+  return Math.min(1, Math.max(0, value))
+}
+
+function cleanLabel(raw: string): string | undefined {
+  const label = raw
+    .trim()
+    // Models like to wrap the caption: «…», "…", '…', (…) — strip one layer.
+    .replace(/^[«"'(\[]+/, '')
+    .replace(/[»"')\]]+$/, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+  if (!label) return undefined
+  return label.length > MAX_LABEL ? `${label.slice(0, MAX_LABEL - 1)}…` : label
+}
+
+/**
+ * Parses one line. Returns `null` when the line is not protocol syntax at all,
+ * and an empty `annotations` list when it looked like protocol syntax but could
+ * not be used (garbage coordinates) — the caller then drops the line instead of
+ * printing `@point …` into the answer.
+ */
+export function parseAnnotationLine(line: string): ParsedLine | null {
+  const trimmed = line.trim()
+  if (!/^@(point|draw|arrow|circle|box|underline)\b/i.test(trimmed)) return null
+
+  // Everything after the leading marker, split on whitespace and commas so both
+  // "@point arrow 0.5 0.8 0.8 0.1" and "@point arrow, 0.5, 0.8, 0.8, 0.1" work.
+  const rest = trimmed.replace(/^@[A-Za-z]+\s*/, '')
+  const tokens = rest.split(/[\s,;]+/).filter(Boolean)
+
+  let kind: AnnotationKind = 'circle'
+  let index = 0
+  const first = tokens[0]?.toLowerCase()
+  if (first && (KINDS as string[]).includes(first)) {
+    kind = first as AnnotationKind
+    index = 1
+  }
+
+  const numbers: number[] = []
+  while (index < tokens.length && numbers.length < 4) {
+    const token = tokens[index]
+    const value = Number.parseFloat(token.replace(',', '.'))
+    if (!Number.isFinite(value)) break
+    numbers.push(value)
+    index += 1
+  }
+
+  const label = cleanLabel(tokens.slice(index).join(' '))
+
+  if (numbers.length < 2) {
+    // A marker we recognised but cannot use: swallow it, draw nothing.
+    return { text: '', annotations: [] }
+  }
+
+  // Two numbers describe a circle centre plus a default radius; four describe a
+  // full start→end pair. Coordinates may be given as percentages by accident.
+  const scaled = numbers.map((value) => (Math.abs(value) > 1.5 ? value / 100 : value))
+  const x1 = clamp01(scaled[0])
+  const y1 = clamp01(scaled[1])
+  const x2 = scaled.length >= 4 ? clamp01(scaled[2]) : clamp01(x1 + 0.03)
+  const y2 = scaled.length >= 4 ? clamp01(scaled[3]) : clamp01(y1 + 0.03)
+
+  const from: Point01 = { x: x1, y: y1 }
+  const to: Point01 = { x: x2, y: y2 }
+
+  const degenerate = Math.abs(to.x - from.x) < MIN_SIDE && Math.abs(to.y - from.y) < MIN_SIDE
+  // A single point is fine for a circle (a default radius is added later); for
+  // everything else a zero-length shape means the model had no idea.
+  if (degenerate && kind !== 'circle') return { text: '', annotations: [] }
+
+  return { text: '', annotations: [{ kind, from, to, label }] }
+}
+
+/**
+ * Streaming filter: splits the incoming deltas into answer text and annotations.
+ *
+ * The only state is the tail of a line that has not been finished yet. Feeding a
+ * chunk that ends mid-line therefore produces the safe text immediately and
+ * holds the rest back, so `@po` never leaks into the answer.
+ */
+export class AnnotationStream {
+  private pending = ''
+  private shapes: Annotation[] = []
+
+  /** Removes protocol syntax from a delta; returns the text to show. */
+  push(delta: string): { text: string; annotations: Annotation[] } {
+    this.pending += delta
+    const annotations: Annotation[] = []
+    let text = ''
+
+    let newline = this.pending.indexOf('\n')
+    while (newline !== -1) {
+      const line = this.pending.slice(0, newline)
+      this.pending = this.pending.slice(newline + 1)
+      const parsed = parseAnnotationLine(line)
+      if (parsed) {
+        annotations.push(...parsed.annotations)
+        if (parsed.text) text += `${parsed.text}\n`
+      } else {
+        text += `${line}\n`
+      }
+      newline = this.pending.indexOf('\n')
+    }
+
+    // A protocol line that is still being typed must not be flushed as text. The
+    // check is cheap and only looks at the start of the tail.
+    if (this.pending.trimStart().startsWith('@')) {
+      this.shapes.push(...annotations)
+      return { text, annotations }
+    }
+
+    text += this.pending
+    this.pending = ''
+    this.shapes.push(...annotations)
+    return { text, annotations }
+  }
+
+  /** Flushes whatever is left when the stream ends. */
+  finish(): { text: string; annotations: Annotation[] } {
+    const tail = this.pending
+    this.pending = ''
+    if (!tail) return { text: '', annotations: [] }
+    const parsed = parseAnnotationLine(tail)
+    if (parsed) return { text: parsed.text, annotations: parsed.annotations }
+    return { text: tail, annotations: [] }
+  }
+
+  /** Everything drawn for the current request, in arrival order. */
+  collected(): Annotation[] {
+    return this.shapes
+  }
+}
+
+/**
+ * Drops annotations that cannot be drawn sensibly.
+ *
+ * Models are unreliable with coordinates: a shape covering a third of the screen
+ * is almost always a hallucination, and one that is completely outside the image
+ * is never useful. Better to show no drawing than a confident wrong one.
+ */
+export function isDrawable(annotation: Annotation): boolean {
+  const { from, to, kind } = annotation
+  const inside = [from, to].every(
+    (point) => point.x >= 0 && point.x <= 1 && point.y >= 0 && point.y <= 1
+  )
+  if (!inside) return false
+  const width = Math.abs(to.x - from.x)
+  const height = Math.abs(to.y - from.y)
+  if (kind === 'circle') return width + height > MIN_SIDE
+  if (kind === 'underline' || kind === 'arrow') return width + height > MIN_SIDE
+  // Boxes: reject ones that swallow most of the screen.
+  return width > MIN_SIDE && height > MIN_SIDE && width < 0.95 && height < 0.95
+}

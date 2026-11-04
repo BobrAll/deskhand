@@ -1,0 +1,478 @@
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body.window {
+  background: var(--bg-solid);
+}
+
+.pending {
+  padding: 40px;
+  color: var(--text-dim);
+  font-size: 13px;
+}
+
+.shell {
+  display: grid;
+  grid-template-columns: 208px 1fr;
+  height: 100vh;
+  overflow: hidden;
+}
+
+.sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 46px 12px 14px;
+  border-right: 1px solid var(--border);
+  background: var(--surface);
+  -webkit-app-region: drag;
+}
+
+.sidebar .brand {
+  padding: 0 10px 14px;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.sidebar .nav {
+  -webkit-app-region: no-drag;
+  text-align: left;
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text-dim);
+  padding: 7px 10px;
+  border-radius: 8px;
+}
+
+.sidebar .nav:hover {
+  background: var(--surface-strong);
+  color: var(--text);
+}
+
+.sidebar .nav.active {
+  background: var(--accent-soft);
+  border-color: rgba(123, 149, 255, 0.32);
+  color: var(--text);
+  font-weight: 600;
+}
+
+.sidebar-foot {
+  margin-top: auto;
+  padding: 10px;
+  border-top: 1px solid var(--border);
+}
+
+.hotkey-badge {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+}
+
+.content {
+  display: flex;
+  flex-direction: column;
+  padding: 44px 26px 16px;
+  overflow-y: auto;
+  min-width: 0;
+}
+
+.content section {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  max-width: 640px;
+}
+
+h2 {
+  margin: 0;
+  font-size: 19px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.field > label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.row-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.segmented {
+  display: flex;
+  gap: 4px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 3px;
+}
+
+.segmented button {
+  flex: 1;
+  background: transparent;
+  border: none;
+  border-radius: 7px;
+  padding: 7px 8px;
+  color: var(--text-dim);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.segmented button.active {
+  background: var(--surface-strong);
+  color: var(--text);
+  font-weight: 600;
+}
+
+.badge {
+  font-size: 10px;
+  padding: 1px 5px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.key-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.key-row > input,
+.key-row > select {
+  flex: 1;
+}
+
+/* A hint that explains the button beside it takes the room the button leaves,
+   instead of pushing the button to the window edge. */
+.key-row > .hint {
+  flex: 1;
+}
+
+.check {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 13px;
+  color: var(--text);
+}
+
+.check input {
+  width: auto;
+}
+
+.hotkey-field {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.hotkey-field button {
+  min-width: 118px;
+  font-size: 14px;
+  letter-spacing: 0.08em;
+  padding: 8px 14px;
+}
+
+.hotkey-field button.recording {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.permissions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.permission {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 12px 14px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.permission-title {
+  font-size: 13.5px;
+  font-weight: 600;
+}
+
+.permission-actions {
+  display: flex;
+  gap: 7px;
+  flex-shrink: 0;
+}
+
+.excluded-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 190px;
+  overflow-y: auto;
+}
+
+.excluded-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 5px 9px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+}
+
+.mono {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.quick-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.quick-action {
+  display: grid;
+  grid-template-columns: 1fr 108px auto;
+  grid-template-areas:
+    'label mode del'
+    'prompt prompt prompt';
+  gap: 6px;
+  padding: 9px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.qa-label {
+  grid-area: label;
+}
+
+.qa-mode {
+  grid-area: mode;
+}
+
+.qa-prompt {
+  grid-area: prompt;
+}
+
+.quick-action > button.ghost {
+  grid-area: del;
+}
+
+.notice {
+  padding: 9px 11px;
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  font-size: 12.5px;
+}
+
+.notice.err {
+  color: var(--danger);
+}
+
+.footer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: auto;
+  padding-top: 18px;
+  position: sticky;
+  bottom: 0;
+  background: linear-gradient(to top, var(--bg-solid) 62%, transparent);
+}
+
+.spacer {
+  flex: 1;
+}
+
+.banner {
+  font-size: 12.5px;
+}
+
+.banner.ok {
+  color: var(--success);
+}
+
+.banner.err {
+  color: var(--danger);
+}
+
+a {
+  color: var(--accent);
+}
+/* ---- voice: model list ------------------------------------------------- */
+
+.models {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.model-row {
+  position: relative;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: transparent;
+  overflow: hidden;
+}
+
+.model-row[data-active='true'] {
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+  background: var(--accent-soft);
+}
+
+.model-pick {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  background: none;
+  border: none;
+  padding: 0;
+  text-align: left;
+  cursor: pointer;
+  color: inherit;
+  font: inherit;
+}
+
+.model-name {
+  font-size: 13px;
+  font-weight: 550;
+}
+
+.model-meta {
+  font-size: 11.5px;
+  color: var(--text-dim);
+}
+
+.model-state {
+  font-size: 11.5px;
+  color: var(--text-dim);
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 3px 9px;
+  cursor: pointer;
+  font-variant-numeric: tabular-nums;
+}
+
+.model-state.ok {
+  border-color: transparent;
+  color: var(--success);
+  cursor: default;
+}
+
+/* The bar sits on the bottom edge of the row: progress without a layout shift. */
+.model-bar {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 2px;
+  background: color-mix(in srgb, var(--accent) 20%, transparent);
+}
+
+.model-bar i {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  transition: width 180ms linear;
+}
+
+.spacer-row {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.mono {
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, monospace);
+  font-size: 11px;
+  word-break: break-all;
+}
+
+.field .hint.err {
+  color: var(--danger);
+}
+
+/* ------------------------------------------------------------------ агент
+ *
+ * The readiness line is the only thing in this window that reports a state the
+ * user cannot change from here: the Accessibility grant lives in System
+ * Settings. So it is drawn as a status band rather than a field — a warning
+ * surface with a dot, and a shortcut to the pane that fixes it.
+ */
+
+.agent-ready {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 11px;
+  border-radius: 8px;
+  border: 1px solid color-mix(in srgb, var(--warning) 34%, transparent);
+  background: color-mix(in srgb, var(--warning) 10%, transparent);
+  font-size: 12.5px;
+  line-height: 1.4;
+  color: var(--text);
+}
+
+.agent-ready[data-ok] {
+  border-color: color-mix(in srgb, var(--accent) 34%, transparent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+.agent-ready > span:nth-child(2) {
+  flex: 1;
+  min-width: 0;
+}
+
+.agent-ready-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex: none;
+  background: var(--warning);
+}
+
+.agent-ready[data-ok] .agent-ready-dot {
+  background: var(--accent);
+}

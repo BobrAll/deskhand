@@ -1,0 +1,78 @@
+# ---------- OS / Editor ----------
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+Thumbs.db
+*.swp
+*~
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json.example
+
+# ---------- Dependencies ----------
+node_modules/
+.pnp.*
+.pnp.js
+.yarn/cache
+.yarn/install-state.gz
+
+# ---------- Build output ----------
+out/
+dist/
+build/tmp/
+# Собранный бандл в корне (реальный entry — ./out/main/index.js)
+/index.js
+*.tsbuildinfo
+electron.vite.config.ts.timestamp-*
+
+# ---------- Packaging / releases ----------
+release/
+dist_electron/
+*.dmg
+*.zip
+*.blockmap
+*.pkg
+*.app
+!build/icon.icns
+!build/*.png
+
+# ---------- Compiled native binaries ----------
+# Собираются из исходников: src/main/native/helper.m, scripts/build-helper.mjs
+resources/smartcursor-helper
+resources/whisper-cli
+resources/*.dylib
+resources/*.so
+*.o
+*.a
+*.dSYM/
+
+# ---------- Local caches / sandboxes ----------
+.cache/
+.npm-cache/
+.electron-cache/
+.swift-cache/
+.tmp-userdata/
+.scratch/
+*.log
+logs/
+coverage/
+.nyc_output/
+
+# ---------- Local secrets / env ----------
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.mobileprovision
+secrets.json
+
+# ---------- Runtime data ----------
+*.sqlite
+*.sqlite3
+*.db
+UserData/

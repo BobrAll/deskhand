@@ -1,0 +1,230 @@
+/**
+ * The cursor ring.
+ *
+ * A display-sized transparent layer whose only content is one ring at the
+ * pointer and one caption next to it. White and blue, like every other surface
+ * in the app: a white ring with the app's blue accent, white text on dark glass.
+ * The same blue is used by the drawing layer's ink and the listening chip, so
+ * "the assistant is present at the cursor" looks like the same object whether it
+ * draws, hears or acts. The palette and the rules behind it live in
+ * `docs/style.md`; a new cursor layer must not invent an accent of its own.
+ *
+ * The caption keeps its own dark palette instead of following the app's light
+ * and dark tokens: it floats over arbitrary content, and near-white glass would
+ * vanish on a white document — exactly where the assistant is most likely to be
+ * working. The surface copies the listening chip's drawn glass (tint, top sheen,
+ * hairline edge), not a `backdrop-filter`, which samples nothing in a transparent
+ * window.
+ */
+
+html,
+body,
+#root {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  background: transparent;
+  overflow: hidden;
+  /* The layer is a picture, not a control. The main process enforces this too. */
+  pointer-events: none;
+  user-select: none;
+  cursor: default;
+  -webkit-app-region: no-drag;
+}
+
+:root {
+  /* The same blue as `--accent` in `base.css` / the overlay's accent. */
+  --cursor-accent: #5b78ff;
+  --cursor-accent-soft: rgba(123, 149, 255, 0.22);
+  --cursor-text: #f4f5f7;
+  --cursor-surface: rgba(26, 27, 33, 0.86);
+  --cursor-edge: rgba(255, 255, 255, 0.15);
+  --cursor-shadow: 0 4px 14px rgba(0, 0, 0, 0.32), 0 1px 3px rgba(0, 0, 0, 0.24);
+  /* Set from `cursor.ts` on every frame; the default keeps the first paint sane. */
+  --x: 0px;
+  --y: 0px;
+}
+
+/* ---------------------------------------------------------------- the ring */
+
+/**
+ * The ring is centred on the pointer's hotspot. 38 points is wide enough to
+ * enclose a cursor arrow without covering the control underneath: the user still
+ * has to see what is being clicked.
+ *
+ * The ring is white with a blue inner and outer hairline, so it is legible on
+ * both a white document and a dark editor without introducing a second hue: the
+ * white carries it on dark content, the blue edge carries it on white content,
+ * and the dark outer shadow separates it from both.
+ */
+.ring {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 38px;
+  height: 38px;
+  margin: -19px 0 0 -19px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.96);
+  box-shadow:
+    0 0 0 1.5px var(--cursor-accent),
+    0 0 0 2.5px rgba(0, 0, 0, 0.22),
+    inset 0 0 0 1px var(--cursor-accent),
+    0 2px 10px rgba(0, 0, 0, 0.26);
+  translate: var(--x) var(--y);
+  opacity: 0;
+  scale: 0.86;
+  transition:
+    opacity 110ms ease,
+    scale 150ms cubic-bezier(0.2, 0.9, 0.3, 1.2),
+    translate 16ms linear;
+  will-change: translate, scale, opacity;
+}
+
+#root[data-visible='true'] .ring {
+  opacity: 1;
+  scale: 1;
+}
+
+/* A running step breathes instead of sitting dead still: the ring is the only
+   sign that the assistant is still working and not waiting for the user. */
+#root[data-visible='true'][data-phase='acting'] .ring {
+  animation: ring-breathe 1500ms ease-in-out infinite;
+}
+
+/* Between two plans the ring stays put but calms down: the assistant is looking
+   at the screen again, so the mark must not go out (that reads as "finished") and
+   must not pulse like a click either. Slower breathing says "still here, nothing
+   to press right now". */
+#root[data-visible='true'][data-phase='waiting'] .ring {
+  animation: ring-breathe 2400ms ease-in-out infinite;
+}
+
+@keyframes ring-breathe {
+  0%,
+  100% {
+    scale: 1;
+  }
+  50% {
+    scale: 1.06;
+  }
+}
+
+/* --------------------------------------------------------------- the ripple */
+
+/**
+ * One expanding ring per action, started from `cursor.ts` when the step's pulse
+ * counter changes. It is a sibling of the ring rather than a pseudo-element so
+ * the breathing animation on `.ring` cannot reset it.
+ */
+.ring-pulse {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 38px;
+  height: 38px;
+  margin: -19px 0 0 -19px;
+  border-radius: 50%;
+  border: 2px solid var(--cursor-accent);
+  translate: var(--x) var(--y);
+  opacity: 0;
+  will-change: translate, scale, opacity;
+}
+
+.ring-pulse.pulse {
+  animation: click-ripple 560ms cubic-bezier(0.2, 0.7, 0.3, 1) 1;
+}
+
+@keyframes click-ripple {
+  0% {
+    opacity: 0.7;
+    scale: 0.9;
+  }
+  70% {
+    opacity: 0.16;
+  }
+  100% {
+    opacity: 0;
+    scale: 1.8;
+  }
+}
+
+/* ---------------------------------------------------------------- the caption */
+
+.tag {
+  position: absolute;
+  left: 0;
+  top: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 340px;
+  padding: 5px 10px 5px 7px;
+  border-radius: 9px;
+  border: 1px solid var(--cursor-edge);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.075), rgba(255, 255, 255, 0) 62%),
+    var(--cursor-surface);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12), var(--cursor-shadow);
+  color: var(--cursor-text);
+  font: 12px/1.25 var(--font, -apple-system, BlinkMacSystemFont, 'SF Pro Text', sans-serif);
+  white-space: nowrap;
+  opacity: 0;
+  scale: 0.96;
+  transition:
+    opacity 120ms ease,
+    scale 150ms cubic-bezier(0.2, 0.9, 0.3, 1.1),
+    translate 16ms linear;
+  will-change: translate, opacity, scale;
+}
+
+#root[data-visible='true'] .tag {
+  opacity: 1;
+  scale: 1;
+}
+
+.tag-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 5px;
+  background: var(--cursor-accent-soft);
+  color: #dbe3ff;
+  font-size: 11px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.tag-count[hidden] {
+  display: none;
+}
+
+.tag-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Anyone who asked the system to reduce motion gets a still ring and a still
+   caption: the step is still readable from the text and the badge. */
+@media (prefers-reduced-motion: reduce) {
+  #root[data-visible='true'][data-phase='acting'] .ring,
+  #root[data-visible='true'][data-phase='waiting'] .ring,
+  .ring-pulse.pulse {
+    animation: none;
+  }
+
+  .ring,
+  .tag,
+  .ring-pulse {
+    transition-duration: 1ms;
+  }
+
+  .ring-pulse.pulse {
+    opacity: 0.35;
+  }
+}
