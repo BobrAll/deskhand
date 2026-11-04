@@ -89,8 +89,8 @@ typecheck/test/build → коммит → PROGRESS. После крупных г
       `resolveArea`: при `fullDisplay: true` он вернул бы область дисплея вместо `bounds`).
 
 ### Волна 2 — дедупликация данных и окон (КТ2 после R09)
-- [ ] R06 `shared/keycodes.ts`: ТОЛЬКО данные. `KEY_CODES` 64 и отдельная `VOICE_KEY_CODES` 62 (без `esc`/`forwarddelete` —
-      иначе они станут валидными хоткеями), `FUNCTION_CODES` 20 на всех. `MODIFIER_FLAGS` не сливать. Парсеры не трогать.
+- [x] R06 `shared/keycodes.ts`: ТОЛЬКО данные. `KEY_CODES` 64 и отдельная `VOICE_KEY_CODES` 62 (без `esc`/`forwarddelete` —
+      иначе они станут валидными хоткеями), `FUNCTION_CODES` 20 на всех. `MODIFIER_FLAGS` не сливать. Парсеры не трогать. → 3a83524 (фактические размеры — 64 и 62, не 64/62 из аудита: сверено скриптом)
 - [ ] R07 `shared/metrics.ts`: ширины 360/112/80 — один источник для windows.ts и overlay/App.tsx; страж-тест на возврат литерала.
 - [ ] R08 `main/layerWindow.ts`: окна-слои pointer+cursor (20 из 23 строк совпадают); `acceptFirstMouse` — параметр.
 - [ ] R09 `main/native/tapListener.ts`: общий слушатель CGEventTap для voice/gesture; различия (launch/args/тексты/stop) сохранить
