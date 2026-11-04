@@ -18,7 +18,16 @@ const env = vi.hoisted(() => ({
   hidden: 0,
   destroyed: 0,
   created: 0,
+  dismiss: null as (() => void) | null,
+  stopWatcher: vi.fn(),
   calls: [] as string[]
+}))
+
+vi.mock('./native/helper', () => ({
+  watchForAbort: (_options: unknown, callback: () => void) => {
+    env.dismiss = callback
+    return { stop: env.stopWatcher }
+  }
 }))
 
 vi.mock('electron', () => {
@@ -96,6 +105,8 @@ function lastPayload(): import('@shared/types').PointerPayload {
 }
 
 beforeEach(() => {
+  env.dismiss = null
+  env.stopWatcher.mockClear()
   env.sent = []
   env.bounds = []
   env.shown = 0
@@ -222,6 +233,19 @@ describe('pointer: the layer', () => {
 })
 
 describe('pointer: hiding', () => {
+  it('clears drawings and notifies the session on user interaction', async () => {
+    const { showAnnotations, isPointerVisible } = await loadPointer()
+    const onDismiss = vi.fn()
+    await showAnnotations(AREA, [shape('arrow', [0.1, 0.1], [0.2, 0.2])], onDismiss)
+
+    env.dismiss?.()
+
+    expect(isPointerVisible()).toBe(false)
+    expect(lastPayload()).toMatchObject({ visible: false, shapes: [] })
+    expect(onDismiss).toHaveBeenCalledOnce()
+    expect(env.stopWatcher).toHaveBeenCalledOnce()
+  })
+
   it('hides on an empty list without creating a window', async () => {
     const { showAnnotations, isPointerVisible } = await loadPointer()
     await showAnnotations(AREA, [])

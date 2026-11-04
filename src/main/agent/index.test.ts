@@ -659,6 +659,27 @@ describe('execute: stopping a run', () => {
 })
 
 describe('execute: bringing the target app to the front', () => {
+  it('refreshes focus and targeting when an action switches apps inside one plan', async () => {
+    state.helper.front = { bundleId: 'com.apple.Safari', pid: 42 }
+    state.helper.probe = probe([])
+    const host = makeHost()
+    const emit = host.emit
+    host.emit = (event) => {
+      emit(event)
+      if (event.phase === 'acting' && event.label === 'Launch') {
+        state.helper.front = { bundleId: 'com.apple.Keynote', pid: 777 }
+      }
+    }
+    const agent = createAgentController(host)
+    await agent.execute({ steps: [
+      step({ kind: 'key', combo: 'enter' }, 'Launch'),
+      step({ kind: 'type', text: 'Title' }),
+      step({ kind: 'move', at: { x: 0.5, y: 0.5 } })
+    ], area } as never)
+    expect(state.calls.find((call) => call.name === 'focused')?.args[0]).toBe(777)
+    expect(state.calls.filter((call) => call.name === 'probe').at(-1)?.args[0]).toBe(777)
+  })
+
   it('activates the target when the card itself is frontmost', async () => {
     state.helper.front = null
     const host = makeHost()

@@ -9,6 +9,7 @@ import { describe, expect, it } from 'vitest'
 import type { AgentPlanStep, AppSettings, ScreenshotInfo } from '@shared/types'
 import { MAX_CHECKS, VERIFY_SETTLE_MS, shouldVerify, verifyResult, type VerifyDeps } from './verify'
 import { buildVerify } from '../prompt'
+import { ProgressGuard } from '../agent/progress'
 
 const AREA = { x: 0, y: 0, width: 1440, height: 900 }
 const PNG =
@@ -175,6 +176,14 @@ describe('verifyResult: a confirmed claim', () => {
 })
 
 describe('verifyResult: an unconfirmed claim', () => {
+  it('does not replay a plan already attempted during the main task', async () => {
+    const progress = new ProgressGuard()
+    progress.allow([clickStep()], SHOT)
+    const { deps, executed } = harness({ progress,
+      streamRound: async () => ({ steps: [clickStep()], text: 'Снова' }) })
+    expect((await verifyResult(deps)).outcome).toBe('unconfirmed')
+    expect(executed).toHaveLength(0)
+  })
   it('reports the evidence instead of a status word', async () => {
     const { deps } = harness({
       streamRound: async () => ({ steps: [], text: 'настройки не открылись' })
@@ -260,6 +269,11 @@ describe('verifyResult: an unconfirmed claim', () => {
 })
 
 describe('verifyResult: a check that never ran', () => {
+  it('does not claim verification from a corrupt image', async () => {
+    const { deps, rounds } = harness({ capture: async () => ({ ...SHOT, dataUrl: 'broken' }) })
+    expect((await verifyResult(deps)).outcome).toBe('not-run')
+    expect(rounds).toHaveLength(0)
+  })
   it('is not a verdict when the screen could not be photographed', async () => {
     const { deps, events, rounds } = harness({ capture: async () => null })
 

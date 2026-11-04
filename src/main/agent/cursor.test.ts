@@ -450,6 +450,34 @@ describe('updateAgentCursor: hiding', () => {
   })
 })
 
+describe('cursor completion', () => {
+  it('keeps the success animation visible after turn cleanup, then hides it', async () => {
+    const token = cursor.beginAgentTurn()
+    cursor.updateAgentCursor(event({ phase: 'done', completed: true }))
+    // Cleanup can run before the cursor window has finished loading.
+    cursor.endAgentTurn(token)
+    await settle()
+    expect(win().sent.at(-1)).toMatchObject({ visible: true, phase: 'success' })
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(win().hidden).toBe(0)
+    await vi.advanceTimersByTimeAsync(300)
+    expect(win().hidden).toBe(1)
+  })
+
+  it('does not let an old completion timer hide the next task', async () => {
+    const token = cursor.beginAgentTurn()
+    cursor.updateAgentCursor(event({ phase: 'done', completed: true }))
+    await settle()
+    cursor.endAgentTurn(token)
+    cursor.beginAgentTurn()
+    cursor.updateAgentCursor(event({ phase: 'acting', label: 'Следующая задача' }))
+    await settle()
+    await vi.advanceTimersByTimeAsync(1400)
+    expect(win().sent.at(-1)).toMatchObject({ visible: true, phase: 'acting' })
+    expect(win().hidden).toBe(0)
+  })
+})
+
 describe('destroyAgentCursor', () => {
   it('destroys the window and stops every timer', async () => {
     cursor.beginAgentTurn()

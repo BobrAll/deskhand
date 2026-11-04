@@ -29,6 +29,7 @@ import type {
 import type { AgentRunResult } from '../agent'
 import { normalizePlan } from '../agent/plan'
 import { readVerdict } from '../agent/verdict'
+import { ProgressGuard, REPEATED_PLAN } from '../agent/progress'
 import { imagePart } from '../imagePart'
 import type { ChatMessage, ContentPart } from '../llm/provider'
 import { buildVerify } from '../prompt'
@@ -91,6 +92,7 @@ export interface VerifyDeps {
   maxTokens: number
   /** What the plan did, in order; the correction's steps are appended to it. */
   performedLines: string[]
+  progress?: ProgressGuard
   signal: AbortSignal
   /** False once the turn is gone (the session was closed or superseded). */
   isAlive: () => boolean
@@ -147,6 +149,7 @@ export async function verifyResult(deps: VerifyDeps): Promise<VerifyResult> {
   const gone = (): boolean => deps.signal.aborted || !deps.isAlive()
 
   let evidence = ''
+  const progress = deps.progress ?? new ProgressGuard()
 
   /**
    * Ends the check when the turn was cancelled under it.
@@ -192,7 +195,7 @@ export async function verifyResult(deps: VerifyDeps): Promise<VerifyResult> {
     if (gone()) return bail()
     const shot = await deps.capture()
     if (gone()) return bail()
-    if (!shot) {
+    if (!shot || !shot.area) {
       deps.publishAgent({
         phase: 'error',
         step: 0,
@@ -216,7 +219,12 @@ export async function verifyResult(deps: VerifyDeps): Promise<VerifyResult> {
 
     const parts: ContentPart[] = []
     const image = imagePart(shot.dataUrl)
-    if (image) parts.push(image)
+    if (!image) {
+      deps.publishAgent({ phase: 'error', step: 0, total: 0, label: '', plan: [],
+        message: 'Не удалось прочитать снимок — результат не проверен.' })
+      return notRun()
+    }
+    parts.push(image)
     parts.push({ type: 'text', text: checkRequest.userText })
 
     // A new local name on purpose: the caller's `round` holds the plan's answer
@@ -261,6 +269,11 @@ export async function verifyResult(deps: VerifyDeps): Promise<VerifyResult> {
     // Not done, and the answer explains what is on screen instead of claiming
     // otherwise. Those words are the reply the user gets.
     if (answer.kind === 'unconfirmed') break
+
+    if (!progress.allow(answer.actions, shot)) {
+      evidence = REPEATED_PLAN
+      break
+    }
 
     const fix = await deps.execute({
       requestId: deps.requestId,

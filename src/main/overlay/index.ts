@@ -14,6 +14,7 @@ import type {
   AgentAvailability,
   AgentEvent,
   Annotation,
+  AxElementInfo,
   ContextFlags,
   ContextSnapshot,
   AgentPlanStep,
@@ -34,8 +35,10 @@ import { ProviderError, type ChatMessage } from '../llm/provider'
 import { copyText, pasteAnswer } from '../paste'
 import { hideAnnotations, showAnnotations } from '../pointer'
 import { buildTurnRequest } from './request'
-import { shouldVerify, verifyResult } from './verify'
+import { shouldVerify, verifyResult, VERIFY_SETTLE_MS } from './verify'
 import { runAgentRounds } from './rounds'
+import { emptyAnswerFallback } from './emptyAnswer'
+import { groundAnnotation } from '../annotationGrounding'
 import type { OverlayHost } from './host'
 import { consumeTurnStream } from '../turnStream'
 import { helperActivate, helperFront } from '../native/helper'
@@ -511,7 +514,10 @@ export function createOverlayController(host: OverlayHost) {
     const settings = getSettings()
     const { snapshot, flags } = await collectContext({
       excludedApps: settings.excludedApps,
-      captureScreenshot: settings.captureScreenshotByDefault
+      captureScreenshot: settings.captureScreenshotByDefault,
+      onInputReady: () => {
+        if (startedIn === generation) host.show(INITIAL_HEIGHT)
+      }
     })
 
     // The turn ended while the context was being collected: showing the card now
@@ -712,6 +718,7 @@ export function createOverlayController(host: OverlayHost) {
     holdText: boolean
     /** Reveal a spoken answer as soon as its first text arrives. */
     revealText?: boolean
+    drawingTargets?: AxElementInfo[]
   }): Promise<{ steps: AgentPlanStep[]; text: string }> {
     const { messages, requestId, maxTokens, signal, canDraw, area, apiKey, holdText } = options
     const settings = getSettings()
@@ -724,13 +731,21 @@ export function createOverlayController(host: OverlayHost) {
      * Serialised through `painting`: two overlapping window updates would race,
      * and the loser could erase a shape the winner had already shown.
      */
+    let dismissed = false
     let painting: Promise<void> = Promise.resolve()
     const paint = (shapes: Annotation[]): void => {
-      if (shapes.length === 0 || !canDraw || !area || !session) return
+      if (dismissed || shapes.length === 0 || !canDraw || !area || !session) return
+      shapes = shapes.map((shape) => groundAnnotation(shape, options.drawingTargets ?? [], area))
       const next = [...session.annotations, ...shapes]
       session.annotations = next
       emitAnnotations()
-      painting = painting.then(() => showAnnotations(area, next)).catch(() => undefined)
+      painting = painting.then(() => {
+        if (dismissed) return
+        return showAnnotations(area, next, () => {
+          dismissed = true
+          clearPointer()
+        })
+      }).catch(() => undefined)
     }
 
     const append = (delta: string): void => {
@@ -824,6 +839,7 @@ export function createOverlayController(host: OverlayHost) {
 
     const visionSupported = modelSupportsVision(settings.provider, model)
 
+    let drawingTargets: AxElementInfo[] = []
     const turn = await buildTurnRequest({
       request,
       session,
@@ -831,7 +847,9 @@ export function createOverlayController(host: OverlayHost) {
       visionSupported,
       availability: agent.availability(),
       ensureFreshScreenshot: () => ensureFreshScreenshot(session as Session),
-      describeScreen,
+      describeScreen: (pid, bounds, area) => describeScreen(pid, bounds, area, (targets) => {
+        drawingTargets = targets
+      }),
       aborted: () => abort.signal.aborted || !session
     })
     if (turn.abandoned) return
@@ -874,6 +892,7 @@ export function createOverlayController(host: OverlayHost) {
         area,
         apiKey,
         holdText: holdFirstRound,
+        drawingTargets,
         revealText: request.voice
       })
       if (abort.signal.aborted || !session) return
@@ -883,7 +902,16 @@ export function createOverlayController(host: OverlayHost) {
         get session() { return session },
         abort, request, settings, area, canAct, canDraw, apiKey, maxTokens,
         round, held, agent, publishAgent, streamRound,
-        ensureFreshScreenshot: (current) => ensureFreshScreenshot(current as Session)
+        capture: async (current) => {
+          await delay(VERIFY_SETTLE_MS)
+          if (abort.signal.aborted || session !== current) return null
+          return captureFor(current as Session)
+        },
+        describeScreen: async (currentArea) => {
+          const front = await helperFront()
+          if (!front || front.pid === process.pid) return null
+          return describeScreen(front.pid, front.bounds, currentArea)
+        }
       })
       if (!rounds || abort.signal.aborted || !session) return
       held = rounds.held
@@ -936,6 +964,7 @@ export function createOverlayController(host: OverlayHost) {
           apiKey,
           maxTokens,
           performedLines,
+          progress: rounds.progress,
           signal: abort.signal,
           isAlive: () => Boolean(session),
           publishAgent,
@@ -951,7 +980,7 @@ export function createOverlayController(host: OverlayHost) {
           // Verified: the plan did what it claimed. The card says so in the agent
           // row and stays free of prose, exactly like every other action turn —
           // the evidence sentence was for us, not for the user.
-          publishAgent({ phase: 'done', step: 0, total: 0, label: 'Готово', plan: [] })
+          publishAgent({ phase: 'done', completed: true, step: 0, total: 0, label: 'Готово', plan: [] })
         } else if (check.outcome === 'unconfirmed') {
           // Looked, and the request is not fulfilled. The row must not claim
           // success, and the model's own words — what it actually sees — are the
@@ -980,7 +1009,10 @@ export function createOverlayController(host: OverlayHost) {
       // of prose — only the agent row remains. Clearing here also covers a turn
       // whose text was already streamed before the plan became visible.
       if (suppressed) session.answer = ''
-      else showHeldAnswer(request.requestId, held)
+      else {
+        showHeldAnswer(request.requestId, held)
+        showHeldAnswer(request.requestId, emptyAnswerFallback(session.answer, session.annotations.length))
+      }
 
       // The turn joins the conversation only once it has actually produced
       // something. A failed request, a cancelled one or an action that ran with no

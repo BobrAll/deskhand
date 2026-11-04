@@ -88,7 +88,7 @@ export interface AgentSettings {
   startDelayMs: number
   /** Pause between two actions; macOS needs a beat to deliver each event. */
   stepDelayMs: number
-  /** How many "look at the screen again and continue" rounds one request may take. */
+  /** Maximum plan rounds, including the initial plan; final verification is separate. */
   maxSteps: number
   /** Let the assistant type text into the focused field. */
   allowTyping: boolean
@@ -145,6 +145,8 @@ export interface AgentAvailability {
 /** One step of a plan, as it is shown in the card while it runs. */
 export interface AgentEvent {
   phase: AgentPhase
+  /** The whole task succeeded, rather than just one intermediate plan. */
+  completed?: boolean
   /** 1-based index of the action being performed; 0 while arming. */
   step: number
   total: number
@@ -185,7 +187,7 @@ export interface AgentCursorFrame {
    * is between two plans (the screen is being read again) and the ring stays on
    * the pointer with no step to count.
    */
-  phase: 'arming' | 'acting' | 'waiting'
+  phase: 'arming' | 'acting' | 'waiting' | 'success'
   /** What is happening, in the user's language ("Клик: «Экспорт»"). */
   label: string
   /** 1-based index of the running step; 0 while arming. */

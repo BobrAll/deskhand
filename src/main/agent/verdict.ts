@@ -40,12 +40,14 @@ export interface Verdict {
  *   the turn ends unconfirmed rather than on the model's reassurance.
  */
 export function readVerdict(plan: NormalizedPlan, options: { canFix: boolean }): Verdict {
+  // Never execute the tail of a chain after its prerequisite was rejected.
+  if (plan.rejected.length > 0) return { kind: 'unconfirmed', actions: [] }
   const actions = plan.steps.filter((step) => step.action.kind !== 'done')
 
   if (actions.length === 0) {
     // Nothing to press. `@done` among the words is the claim that they describe a
     // finished job; prose without it is the model answering "смотрю — и не вижу".
-    return { kind: plan.finished ? 'confirmed' : 'unconfirmed', actions: [] }
+    return { kind: plan.finished && plan.rejected.length === 0 ? 'confirmed' : 'unconfirmed', actions: [] }
   }
 
   // Actions with no budget left to judge them: unconfirmed, not a plan.

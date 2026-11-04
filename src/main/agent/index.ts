@@ -72,6 +72,8 @@ export interface AgentRunResult {
   finished: boolean
   /** Set when the run stopped early (an abort, a missing permission). */
   message?: string
+  /** No input was delivered to the wrong target; a fresh plan may recover. */
+  recoverable?: boolean
   /** What actually happened, for the continuation prompt. */
   performed: PerformedStep[]
 }
@@ -177,6 +179,13 @@ export function createAgentController(host: AgentHost) {
    * the model never saw.
    */
   let working: { bundleId: string; pid: number } | null = null
+
+  async function refreshWorking(): Promise<void> {
+    const front = await helperFront()
+    if (!front || front.pid === process.pid) return
+    if (front.pid !== working?.pid) forgetProbe()
+    working = { bundleId: front.bundleId, pid: front.pid }
+  }
 
   /**
    * How old a cached tree may be and still be used for a click.
@@ -452,6 +461,9 @@ export function createAgentController(host: AgentHost) {
           return { finished: true, performed }
         }
 
+        await refreshWorking()
+        if (token !== run || aborted.reason) break
+
         // A permission check per step is cheap (one `front` call) and is what
         // makes the failure message honest instead of "клик не сработал".
         // Cheap, and it is what makes a failure message honest instead of
@@ -469,7 +481,7 @@ export function createAgentController(host: AgentHost) {
           const blocked = await typingBlocked()
           if (blocked) {
             publish({ phase: 'error', step: index + 1, total, label: step.label, message: blocked })
-            return { finished: false, message: blocked, performed }
+            return { finished: false, message: blocked, recoverable: true, performed }
           }
         }
 
@@ -488,7 +500,7 @@ export function createAgentController(host: AgentHost) {
         if (aimed?.target.conflict) {
           const message = `Под точкой «${aimed.target.conflict}», а не «${step.label}» — не нажимаю.`
           publish({ phase: 'error', step: index + 1, total, label: step.label, message })
-          return { finished: false, message, performed }
+          return { finished: false, message, recoverable: true, performed }
         }
 
         // A resolution that found nothing on the screen is a guess, and the card
@@ -520,6 +532,7 @@ export function createAgentController(host: AgentHost) {
           const delayMs = settings.agent.stepDelayMs
           const settle = Math.min(220, Math.round(delayMs * 0.55))
           if (settle > 0) await delay(settle)
+          await refreshWorking()
           const next = plan[index + 1]
           const nextRough = next ? roughPoint(next.action, request.area) : null
           if (nextRough) void probeAt(nextRough)

@@ -28,6 +28,7 @@ import { createLayerWindow } from '../layerWindow'
 
 /** How long the renderer's fade-out runs before the window is actually hidden. */
 const EXIT_MS = 160
+const SUCCESS_MS = 1100
 
 /** How long to wait for the page before painting anyway. */
 const LOAD_TIMEOUT_MS = 1500
@@ -79,6 +80,12 @@ let held: number | null = null
 let turn = 0
 /** Stage a `done` into `waiting` after a beat; cancelled by the next step. */
 let waitTimer: NodeJS.Timeout | null = null
+let successTimer: NodeJS.Timeout | null = null
+
+function cancelSuccess(): void {
+  if (successTimer) clearTimeout(successTimer)
+  successTimer = null
+}
 
 function createWindow(): BrowserWindow {
   return createLayerWindow({
@@ -177,6 +184,7 @@ function send(target: BrowserWindow, next: AgentCursorFrame): void {
  * run's start delay, so the ring still appears while "приготовился" is on screen.
  */
 async function paint(): Promise<void> {
+  cancelSuccess()
   // A new frame is a new statement: the pending "Смотрю на экран…" describes the
   // pause before this step and would be a lie the moment it arrives.
   cancelWait()
@@ -205,6 +213,12 @@ async function paint(): Promise<void> {
     target.showInactive()
   }
   startFollow()
+  if (shown.phase === 'success') {
+    successTimer = setTimeout(() => {
+      successTimer = null
+      if (token === paintToken) hide(true)
+    }, SUCCESS_MS)
+  }
 }
 
 function startFollow(): void {
@@ -283,6 +297,8 @@ function cancelWait(): void {
 }
 
 function hide(force = false): void {
+  if (!force && frame?.phase === 'success') return
+  cancelSuccess()
   // A turn that is still running keeps the ring: the plan it just finished is a
   // pause, not the end (see `held`). Only `endAgentTurn` — or a stop, an error or
   // a close, which pass `force` — is allowed to take it away.
@@ -339,6 +355,20 @@ function hide(force = false): void {
  * after the run is over.
  */
 export function updateAgentCursor(event: AgentEvent): void {
+  if (event.phase === 'done' && event.completed) {
+    frame = {
+      visible: true,
+      anchor: frame?.anchor ?? { x: 0, y: 0 },
+      side: frame?.side ?? 'above',
+      phase: 'success',
+      label: 'Готово',
+      step: 0,
+      total: 0,
+      pulse
+    }
+    void paint()
+    return
+  }
   // The check between the last action and «Готово» is a real pause with nothing
   // moving, but the turn is not over: the ring stays on the pointer and says
   // what is going on. Letting it fall through to `hide` would read as "готово"
@@ -424,11 +454,12 @@ export function endAgentTurn(token: number): void {
   // A newer turn already owns the ring: this release is stale.
   if (held !== token) return
   held = null
-  hide(true)
+  if (frame?.phase !== 'success') hide(true)
 }
 
 /** Releases the window; called on quit so the layer cannot outlive the app. */
 export function destroyAgentCursor(): void {
+  cancelSuccess()
   stopFollow()
   cancelWait()
   if (hideTimer) {

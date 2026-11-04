@@ -12,7 +12,7 @@
  * answer when nothing is selected.
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { CSSProperties } from 'react'
 import type {
   AgentEvent,
@@ -27,7 +27,6 @@ import {
   CHROME_WIDTH,
   FIELD_FONT,
   FULL_WIDTH,
-  MAX_FIELD_HEIGHT,
   NARROW_WIDTH,
   REFINE_HINT,
   REFINE_LABEL,
@@ -207,6 +206,7 @@ export function App() {
   const fieldRef = useCallback((node: HTMLTextAreaElement | null) => {
     inputRef.current = node
     if (!node) return
+    node.focus()
     const style = window.getComputedStyle(node)
     fontRef.current =
       style.font || `${style.fontStyle} ${style.fontWeight} ${style.fontSize} ${style.fontFamily}`
@@ -288,7 +288,7 @@ export function App() {
       requestIdRef.current = null
       replaceOnChunkRef.current = false
       setAgent(null)
-      window.setTimeout(() => inputRef.current?.focus(), 30)
+      inputRef.current?.focus()
       resumePendingSend()
     },
     [resumePendingSend]
@@ -500,105 +500,53 @@ export function App() {
     FULL_WIDTH
   )
 
-  /**
-   * Whether the question has grown past the room the card can give it.
-   *
-   * While there is still room the field must not soft-wrap: the window is resized
-   * a frame after the keystroke that widened it, and a wrap landing inside that gap
-   * would add a second row and drop it again — a one-frame height flicker on every
-   * letter. A field that only scrolls to the right until the card is as wide as it
-   * goes, and wraps after that, keeps both the height and the width monotonic.
-   */
-  const wrapped = textWidth + chromeWidth + CARET_SLACK > FULL_WIDTH
+  // An empty composer always returns to the pill, including while waiting for
+  // an answer. No width from an earlier question survives deletion or a session.
+  const cardWidth = listening ? VOICE_WIDTH : wantsWide ? FULL_WIDTH : composedWidth
 
-  /** The width of the card as it was last laid out, reported to the main process. */
-  const widthRef = useRef(NARROW_WIDTH)
+  // Keep a single line throughout the sideways motion. Wrapping before there is
+  // room would briefly add rows that disappear as the window catches up.
+  const wrapped =
+    textWidth + chromeWidth + CARET_SLACK > FULL_WIDTH && cardWidth === FULL_WIDTH
 
-  /**
-   * The width the card was last asked for, kept across a send.
-   *
-   * Sending empties the field, so the measured width drops to the resting pill for
-   * the round-trip and then opens again with the first chunk of the answer. Holding
-   * the width the question was typed at is what keeps the card from twitching in
-   * the middle of every question.
-   */
-  const heldWidthRef = useRef(NARROW_WIDTH)
-  if (!busy && prompt) heldWidthRef.current = composedWidth
-
-  const cardWidth = listening
-    ? VOICE_WIDTH
-    : wantsWide
-      ? FULL_WIDTH
-      : // Kept while the answer is on its way, so the card neither collapses
-        // after Enter nor jumps wider before there is anything to read.
-        busy
-        ? Math.max(heldWidthRef.current, composedWidth)
-        : composedWidth
-  widthRef.current = cardWidth
-
-  // The window is sized by the main process; report the laid-out size instead of
-  // guessing it here. `rootRef` sits on the bubble itself, so its margins — the
-  // room the shadow draws into — have to be added back: the window has to be the
-  // card *plus* that room, or the shadow (and the last row of an answer) would be
-  // cut off by the edge of the window.
+  // Measure layout, not the entrance transform. getBoundingClientRect includes
+  // the appear animation's scale, which used to feed false heights back to macOS.
   const reportRef = useRef<() => void>(() => {})
-  useEffect(() => {
+  useLayoutEffect(() => {
     const node = rootNode
     if (!node) return
+    let lastWidth = 0
+    let lastHeight = 0
     const report = (): void => {
-      const style = window.getComputedStyle(node)
-      const height =
-        node.getBoundingClientRect().height +
-        (Number.parseFloat(style.marginTop) || 0) +
-        (Number.parseFloat(style.marginBottom) || 0)
-      window.smartCursor.overlay.resize(Math.ceil(height), widthRef.current)
+      const width = node.offsetWidth
+      const height = node.offsetHeight
+      if (width === lastWidth && height === lastHeight) return
+      lastWidth = width
+      lastHeight = height
+      window.smartCursor.overlay.resize(height, width)
+    }
+    const onFocus = (): void => {
+      lastWidth = lastHeight = 0
+      report()
+      inputRef.current?.focus()
     }
     reportRef.current = report
     const observer = new ResizeObserver(report)
     observer.observe(node)
     report()
-    // The main process places the window with a guess before this renderer has
-    // laid anything out, and it takes the keyboard a moment later — after the
-    // context is collected, with whatever width it assumed. Reporting again when
-    // the card is focused is what makes the window agree with the card in the one
-    // case the observer cannot see: the DOM never changed size, but the window it
-    // is being drawn into did.
-    window.addEventListener('focus', report)
+    window.addEventListener('focus', onFocus)
     return () => {
+      reportRef.current = () => {}
       observer.disconnect()
-      window.removeEventListener('focus', report)
+      window.removeEventListener('focus', onFocus)
     }
-    // The renderer draws nothing at all until `voice.ready`, so the first run of
-    // this effect can see no node; it has to re-attach when one appears — and again
-    // when the root itself is swapped (bars -> card).
   }, [rootNode])
 
-  // Width is not a function of the content box (the card is as wide as the window
-  // the main process gave it), so a state change has to ask for it explicitly.
-  useEffect(() => {
+  // Chromium sizes the field from its content. Report the final layout before
+  // paint without temporarily collapsing the focused textarea to measure it.
+  useLayoutEffect(() => {
     reportRef.current()
-  }, [cardWidth])
-
-  /**
-   * One line while the question fits, more when it does not — capped, so a pasted
-   * paragraph cannot turn the bubble into a window.
-   *
-   * Measured to the exact line height, with nothing added. Two spare points used to
-   * be there "for the caret", and they were the one jump left in the card: the empty
-   * field is 17 tall inside a 31 pt window, so the first keystroke grew the card by
-   * those two points and then never moved again. The cap matches `max-height` in
-   * `overlay.css`, which is what actually stops the field growing.
-   */
-  const autosize = useCallback(() => {
-    const el = inputRef.current
-    if (!el) return
-    el.style.height = 'auto'
-    el.style.height = `${Math.min(el.scrollHeight, MAX_FIELD_HEIGHT)}px`
-  }, [])
-
-  useEffect(() => {
-    autosize()
-  }, [prompt, cardWidth, autosize])
+  }, [prompt, cardWidth, wrapped, rootNode])
 
   useEffect(() => {
     const node = answerRef.current
@@ -886,7 +834,7 @@ export function App() {
    */
   if (listening) {
     return (
-      <div ref={rootRef} className="bubble" data-voice>
+      <div ref={rootRef} className="bubble" style={{ width: cardWidth }} data-voice>
         <div
           className="voice"
           data-phase={voice.phase}
@@ -974,7 +922,7 @@ export function App() {
     // before the session exists is a no-op rather than an error: `send` returns
     // without touching the text, and the same Enter works a moment later.
     return (
-      <div ref={rootRef} className="bubble">
+      <div ref={rootRef} className="bubble" style={{ width: cardWidth }}>
         <div className="bar">
           {composer}
           {/*
@@ -1026,6 +974,7 @@ export function App() {
     <div
       ref={rootRef}
       className="bubble"
+      style={{ width: cardWidth }}
       data-busy={busy || undefined}
       data-drawing={(drawn > 0 && !typing) || undefined}
     >
@@ -1198,7 +1147,14 @@ export function App() {
       {agent && (
         <div className="agent" data-phase={agent.phase}>
           <div className="agent-head">
-            <span className="agent-dot" aria-hidden />
+            {agent.phase === 'done' && agent.completed ? (
+              <svg className="agent-check" viewBox="0 0 20 20" aria-hidden="true">
+                <circle className="agent-check-disc" cx="10" cy="10" r="9" />
+                <path className="agent-check-stroke" d="m5.5 10 3 3 6-6" pathLength="1" />
+              </svg>
+            ) : (
+              <span className="agent-dot" aria-hidden />
+            )}
             <span className="agent-label">
               {agent.phase === 'arming'
                 ? 'Нажму через мгновение — Escape отменит'

@@ -213,7 +213,7 @@ describe('formatOutline: order, dedup and the cap', () => {
 describe('formatOutline: the header the model reads', () => {
   it('keeps the instruction block and the quoting rule verbatim', () => {
     const outline = formatOutline(probe([element()]), null, area) as string
-    const header = outline.split('\n').slice(0, 7)
+    const header = outline.split('\n').slice(0, 9)
 
     expect(header).toEqual([
       '[Элементы активного окна]',
@@ -222,6 +222,8 @@ describe('formatOutline: the header the model reads', () => {
       '  @click X Y left «Название»',
       'Это точнее, чем мерить по картинке: имя важнее координат, по нему клик',
       'ставится в центр элемента.',
+      'Для рисунка используй @point circle X Y «Название» с тем же точным названием:',
+      'приложение привяжет обводку к границам однозначно названного элемента.',
       ''
     ])
   })

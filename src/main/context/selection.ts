@@ -14,7 +14,7 @@ import { delay, truncate } from '../util'
 
 export const MAX_SELECTION_CHARS = 24_000
 
-export function readSelection(): Promise<SelectionInfo | null> {
+export function readSelection(onCopySent?: () => void): Promise<SelectionInfo | null> {
   return withClipboard(async () => {
     const snapshot = snapshotClipboard()
 
@@ -23,6 +23,7 @@ export function readSelection(): Promise<SelectionInfo | null> {
     clipboard.clear()
 
     const sent = await helperSendKey('copy')
+    onCopySent?.()
     if (!sent) {
       restoreClipboard(snapshot)
       return null

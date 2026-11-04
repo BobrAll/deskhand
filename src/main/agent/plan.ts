@@ -72,15 +72,6 @@ export function normalizePlan(
   let wantsLook = false
 
   for (const [index, step] of raw.entries()) {
-    if (steps.length >= MAX_PLAN_STEPS) {
-      rejected.push({
-        step: index + 1,
-        label: step.label,
-        reason: `Больше ${MAX_PLAN_STEPS} действий за раз — остальное не выполняю.`
-      })
-      continue
-    }
-
     const action = step.action
 
     if (action.kind === 'look') {
@@ -98,6 +89,17 @@ export function normalizePlan(
       steps.push(step)
       // `@done` ends the plan: anything written after it was a model mistake.
       break
+    }
+
+    // Control markers do not spend the action budget: six actions followed by
+    // @look must still request an observation, not reject the entire chain.
+    if (steps.length >= MAX_PLAN_STEPS) {
+      rejected.push({
+        step: index + 1,
+        label: step.label,
+        reason: `Больше ${MAX_PLAN_STEPS} действий за раз — остальное не выполняю.`
+      })
+      continue
     }
 
     if (action.kind === 'type') {

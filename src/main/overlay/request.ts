@@ -53,7 +53,7 @@ export interface BuildTurnRequestInput {
   availability: { ready: boolean; reason: string | null }
   /** Takes a fresh screenshot when the current one is too old. */
   ensureFreshScreenshot: () => Promise<unknown>
-  /** Reads the pressable names from the Accessibility API. Best effort. */
+  /** Reads names and coordinates for drawing and acting. Best effort. */
   describeScreen: (
     pid: number | null,
     bounds: ScreenRect | null,
@@ -150,7 +150,7 @@ export async function buildTurnRequest(input: BuildTurnRequestInput): Promise<Tu
    * neighbouring one. With the names in the prompt the point stops being a
    * guess. Best effort — an app that answers nothing just yields no list.
    */
-  const outline = canAct
+  const outline = canDraw
     ? await input
         .describeScreen(
           session.target?.pid ?? null,

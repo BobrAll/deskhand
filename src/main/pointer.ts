@@ -22,8 +22,10 @@ import type { BrowserWindow } from 'electron'
 import { CH } from '@shared/ipc'
 import type { Annotation, PointerPayload, PointerShape, ScreenRect } from '@shared/types'
 import { createLayerWindow } from './layerWindow'
+import { watchForAbort, type AbortWatcher } from './native/helper'
 
 let pointerWindow: BrowserWindow | null = null
+let interactionWatcher: AbortWatcher | null = null
 let visible = false
 let revision = 0
 let ready: Promise<void> | null = null
@@ -36,6 +38,8 @@ function createWindow(): BrowserWindow {
     page: 'pointer',
     acceptFirstMouse: true,
     onClosed: () => {
+      interactionWatcher?.stop()
+      interactionWatcher = null
       pointerWindow = null
       visible = false
       placedOn = null
@@ -137,7 +141,7 @@ function toShapes(annotations: Annotation[], width: number, height: number): Poi
 }
 
 /** Draws `annotations` over the screen and makes the layer visible. */
-export async function showAnnotations(area: ScreenRect, annotations: Annotation[]): Promise<void> {
+export async function showAnnotations(area: ScreenRect, annotations: Annotation[], onDismiss?: () => void): Promise<void> {
   if (annotations.length === 0) {
     hideAnnotations()
     return
@@ -162,10 +166,16 @@ export async function showAnnotations(area: ScreenRect, annotations: Annotation[
     visible = true
     // showInactive: keep the user's app frontmost — this is the whole point.
     win.showInactive()
+    interactionWatcher = watchForAbort({ watchMouse: false, interaction: true }, () => {
+      hideAnnotations()
+      onDismiss?.()
+    })
   }
 }
 
 export function hideAnnotations(): void {
+  interactionWatcher?.stop()
+  interactionWatcher = null
   visible = false
   const win = pointerWindow
   if (!win || win.isDestroyed()) return
@@ -188,6 +198,8 @@ export function isPointerVisible(): boolean {
 }
 
 export function destroyPointer(): void {
+  interactionWatcher?.stop()
+  interactionWatcher = null
   visible = false
   placedOn = null
   ready = null

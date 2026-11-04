@@ -63,15 +63,19 @@ static NSDictionary *focusedWindowInfo(pid_t pid) {
 static NSString *focusedWindowTitle(void) {
   if (!AXIsProcessTrusted()) return nil;
   AXUIElementRef system = AXUIElementCreateSystemWide();
+  // Opening the input must not wait for an unresponsive application.
+  AXUIElementSetMessagingTimeout(system, 0.05f);
   AXUIElementRef app = NULL;
   NSString *title = nil;
   if (AXUIElementCopyAttributeValue(system, kAXFocusedApplicationAttribute, (CFTypeRef *)&app) ==
           kAXErrorSuccess &&
       app) {
+    AXUIElementSetMessagingTimeout(app, 0.05f);
     AXUIElementRef window = NULL;
     if (AXUIElementCopyAttributeValue(app, kAXFocusedWindowAttribute, (CFTypeRef *)&window) ==
             kAXErrorSuccess &&
         window) {
+      AXUIElementSetMessagingTimeout(window, 0.05f);
       CFTypeRef value = NULL;
       if (AXUIElementCopyAttributeValue(window, kAXTitleAttribute, &value) == kAXErrorSuccess &&
           value) {
@@ -370,6 +374,7 @@ static int agentRequireAccessibility(void) {
 typedef struct {
   CGPoint origin;
   BOOL moved;
+  BOOL interaction;
   CFMachPortRef tap;
 } WatchState;
 
@@ -389,6 +394,11 @@ static CGEventRef watchCallback(CGEventTapProxy proxy, CGEventType type, CGEvent
   // at the source, so "движение мыши" can mean the person without the plan
   // cancelling itself on its own first step.
   if (isAgentEvent(event)) return event;
+
+  if (state->interaction) {
+    emit(@{@"event" : @"interaction"});
+    return event;
+  }
 
   if (type == kCGEventKeyDown) {
     int64_t code = CGEventGetIntegerValueField(event, kCGKeyboardEventKeycode);
@@ -414,11 +424,15 @@ static CGEventRef watchCallback(CGEventTapProxy proxy, CGEventType type, CGEvent
   return event;
 }
 
-static int commandWatch(BOOL watchMouse) {
+static int commandWatch(BOOL watchMouse, BOOL interaction) {
   if (agentRequireAccessibility()) return 0;
 
-  WatchState state = {.origin = CGEventGetLocation(CGEventCreate(NULL)), .moved = NO, .tap = NULL};
+  WatchState state = {.origin = CGEventGetLocation(CGEventCreate(NULL)), .moved = NO, .interaction = interaction, .tap = NULL};
   CGEventMask mask = CGEventMaskBit(kCGEventKeyDown);
+  if (interaction) {
+    mask |= CGEventMaskBit(kCGEventLeftMouseDown) | CGEventMaskBit(kCGEventRightMouseDown) |
+            CGEventMaskBit(kCGEventOtherMouseDown) | CGEventMaskBit(kCGEventScrollWheel);
+  }
   if (watchMouse) {
     mask |= CGEventMaskBit(kCGEventMouseMoved) | CGEventMaskBit(kCGEventLeftMouseDragged) |
             CGEventMaskBit(kCGEventRightMouseDragged);
@@ -1345,7 +1359,7 @@ int main(int argc, const char *argv[]) {
     if (strcmp(command, "watch") == 0) {
       // watch [mouse]
       BOOL watchMouse = argc > 2 && strcmp(argv[2], "mouse") == 0;
-      return commandWatch(watchMouse);
+      return commandWatch(watchMouse, argc > 2 && strcmp(argv[2], "interaction") == 0);
     }
     if (strcmp(command, "ping") == 0) {
       emit(@{@"ok" : @YES, @"version" : @"1"});

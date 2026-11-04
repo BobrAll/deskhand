@@ -258,10 +258,9 @@ export const DEFAULT_AGENT: AgentSettings = {
   enabled: false,
   startDelayMs: 900,
   stepDelayMs: 420,
-  // Three rounds is "do it, look at the result, fix it once". More than that
-  // turns a single question into an autonomous agent, which is a different
-  // product decision than "он нажал за меня кнопку".
-  maxSteps: 3,
+  // Multi-stage requests need room to navigate, search, open and observe.
+  // This remains bounded, and Escape/mouse interruption applies throughout.
+  maxSteps: 8,
   allowTyping: true,
   allowShortcuts: true,
   abortOnMouseMove: true,

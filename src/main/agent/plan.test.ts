@@ -207,8 +207,14 @@ describe('normalizePlan: @done and @look', () => {
 
     const plan = normalize(raw)
 
-    expect(plan.finished).toBe(false)
-    expect(plan.rejected).toHaveLength(1)
+    expect(plan.finished).toBe(true)
+    expect(plan.rejected).toHaveLength(0)
+  })
+
+  it('keeps @look after all six allowed actions', () => {
+    const plan = normalize([...Array.from({ length: 6 }, () => click(0.1, 0.1)), look()])
+    expect(plan.wantsLook).toBe(true)
+    expect(plan.rejected).toHaveLength(0)
   })
 })
 
@@ -232,6 +238,17 @@ describe('readVerdict', () => {
   const confirmed = normalize([done()])
   const unconfirmed = normalize([])
   const fix = normalize([click(0.3, 0.4)])
+
+  it('never confirms or executes a tail after a rejected prerequisite', () => {
+    const plan = normalize([
+      step('Печать', { kind: 'type', text: 'cats' }),
+      step('Поиск', { kind: 'key', combo: 'enter' }), done()
+    ], { allowTyping: false })
+    expect(readVerdict(plan, { canFix: true }).kind).toBe('unconfirmed')
+    expect(readVerdict(normalize([
+      step('Печать', { kind: 'type', text: 'cats' }), done()
+    ], { allowTyping: false }), { canFix: false }).kind).toBe('unconfirmed')
+  })
 
   it('confirms when the model says @done and proposes nothing', () => {
     expect(readVerdict(confirmed, { canFix: true })).toEqual({ kind: 'confirmed', actions: [] })

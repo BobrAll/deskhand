@@ -23,11 +23,11 @@ function harness(steps = [click, look]) {
   settings.agent.maxSteps = 3
   settings.systemPrompt = '  System  '
   let session: RoundSession | null = { rounds: 0, snapshot: { screenshot: SHOT } }
-  const execute = vi.fn(async (): Promise<AgentRunResult> => ({
+  const execute = vi.fn<RoundsDeps['agent']['execute']>(async (): Promise<AgentRunResult> => ({
     finished: false, performed: [{ label: 'Open', ok: true }]
   }))
   const streamRound = vi.fn<RoundsDeps['streamRound']>(async () => ({ steps: [], text: 'Result' }))
-  const capture = vi.fn(async () => SHOT)
+  const capture = vi.fn<RoundsDeps['capture']>(async () => SHOT)
   const publish = vi.fn()
   const deps: RoundsDeps = {
     get session() { return session },
@@ -36,7 +36,7 @@ function harness(steps = [click, look]) {
     settings, area: AREA, canAct: true, canDraw: true, apiKey: 'test-key', maxTokens: 1024,
     round: { steps, text: 'Narration' }, held: 'Narration',
     agent: { execute, availability: () => ({ enabled: true, ready: false, reason: 'No permission' }) },
-    publishAgent: publish, ensureFreshScreenshot: capture, streamRound
+    publishAgent: publish, capture, streamRound
   }
   return { deps, execute, streamRound, capture, publish, close: () => { session = null } }
 }
@@ -49,23 +49,25 @@ describe('agent rounds', () => {
     expect(h.capture).not.toHaveBeenCalled()
   })
 
-  it('stops after a first-round @done with no continuation', async () => {
+  it('observes again when @done came with unobserved actions', async () => {
     const h = harness([click, done])
     h.execute.mockResolvedValue({ finished: true, performed: [{ label: 'Open', ok: true }] })
-    expect(await runAgentRounds(h.deps)).toMatchObject({ claimedDone: true, suppressed: true, held: '' })
-    expect(h.capture).not.toHaveBeenCalled()
+    expect(await runAgentRounds(h.deps)).toMatchObject({ claimedDone: false, suppressed: true })
+    expect(h.capture).toHaveBeenCalledOnce()
   })
 
-  it('stops after an action that did not ask to look again', async () => {
+  it('observes after actions even if the model omitted @look', async () => {
     const h = harness([click])
     expect(await runAgentRounds(h.deps)).toMatchObject({ performedLines: ['Open'] })
     expect(h.execute).toHaveBeenCalledOnce()
-    expect(h.capture).not.toHaveBeenCalled()
+    expect(h.capture).toHaveBeenCalledOnce()
   })
 
   it('stops at the round budget and retains every performed step', async () => {
     const h = harness()
     h.streamRound.mockResolvedValue({ steps: [click, look], text: 'Next' })
+    let frame = 0
+    h.capture.mockImplementation(async () => ({ ...SHOT, dataUrl: `data:image/png;base64,frame${++frame}` }))
     expect(await runAgentRounds(h.deps)).toMatchObject({ performedLines: ['Open', 'Open', 'Open'], held: '', suppressed: true })
     expect(h.execute).toHaveBeenCalledTimes(3)
     expect(h.streamRound).toHaveBeenCalledTimes(2)
@@ -147,5 +149,145 @@ describe('agent rounds', () => {
     expect(await runAgentRounds(h.deps)).toMatchObject({ held: 'NarrationResult', suppressed: false })
     expect(h.execute).not.toHaveBeenCalled()
     expect(h.capture).toHaveBeenCalledOnce()
+  })
+
+  it('keeps every stage of the task in the next prompt and permits the last budgeted action', async () => {
+    const h = harness()
+    const search = { ...click, label: 'Search cats', action: { kind: 'type' as const, text: 'cats' } }
+    const play = { ...click, label: 'Play', action: { ...click.action, label: 'Play' } }
+    h.deps.request.prompt = 'Открой YouTube, найди видео с котами и запусти'
+    h.streamRound.mockResolvedValueOnce({ steps: [search], text: '' })
+      .mockResolvedValueOnce({ steps: [play], text: '' })
+    h.execute.mockImplementation(async (request) => ({
+      finished: false, performed: request.steps.map((step) => ({ label: step.label, ok: true }))
+    }))
+    await runAgentRounds(h.deps)
+    expect(h.execute).toHaveBeenCalledTimes(3)
+    const finalRequest = h.streamRound.mock.calls[1][0]
+    const messages = JSON.stringify(finalRequest.messages)
+    expect(messages).toContain('• Open')
+    expect(messages).toContain('• Search cats')
+    expect(messages).toContain(h.deps.request.prompt)
+    expect(messages).toContain('@click')
+    expect(messages).not.toContain('лимит шагов исчерпан')
+  })
+
+  it.each([
+    ['Открой YouTube, найди видео с котами и запусти', ['YouTube', 'Результаты поиска', 'Видео', 'Пауза']],
+    ['Открой презентацию на рабочем столе', ['Рабочий стол', 'Презентация.pptx', 'Слайды']]
+  ])('continues through intermediate claimed successes: %s', async (prompt, stages) => {
+    const action = (label: string): AgentPlanStep => ({
+      label, action: { kind: 'click', at: { x: 0.5, y: 0.5 }, button: 'double', label }
+    })
+    const h = harness([action(stages[0]), done])
+    h.deps.settings.agent.maxSteps = 8
+    h.deps.request.prompt = prompt
+    for (const stage of stages.slice(1)) {
+      h.streamRound.mockResolvedValueOnce({ steps: [action(stage), done], text: 'Готово' })
+    }
+    h.streamRound.mockResolvedValueOnce({ steps: [done], text: 'Результат виден' })
+    h.execute.mockImplementation(async (request) => ({
+      finished: true,
+      performed: request.steps.filter((step) => step.action.kind !== 'done')
+        .map((step) => ({ label: step.label, ok: true }))
+    }))
+    const result = await runAgentRounds(h.deps)
+    expect(result?.performedLines).toEqual(stages)
+    expect(result?.claimedDone).toBe(true)
+    expect(h.capture).toHaveBeenCalledTimes(stages.length)
+  })
+
+  it('uses the returned fresh frame and its area, even when the session still holds the old one', async () => {
+    const h = harness()
+    const freshArea = { x: 1440, y: -200, width: 1920, height: 1080 }
+    h.capture.mockResolvedValue({ ...SHOT, area: freshArea, dataUrl: 'data:image/png;base64,new' })
+    h.streamRound.mockResolvedValueOnce({ steps: [click], text: '' })
+    await runAgentRounds(h.deps)
+    expect(h.execute.mock.calls[1][0].area).toEqual(freshArea)
+    expect(JSON.stringify(h.streamRound.mock.calls[0][0].messages)).toContain('"base64":"new"')
+  })
+
+  it.each([null, { ...SHOT, area: null }, { ...SHOT, dataUrl: 'broken' }])(
+    'stops instead of reusing an old screenshot when capture is unusable', async (shot) => {
+      const h = harness()
+      h.capture.mockResolvedValue(shot)
+      expect(await runAgentRounds(h.deps)).toMatchObject({ interrupted: true })
+      expect(h.streamRound).not.toHaveBeenCalled()
+      expect(h.execute).toHaveBeenCalledOnce()
+    }
+  )
+
+  it('blocks a repeated plan, asks for a different approach and runs that approach', async () => {
+    const h = harness()
+    h.deps.settings.agent.maxSteps = 4
+    const alternative: AgentPlanStep = { action: { kind: 'key', combo: 'enter' }, label: 'Enter' }
+    h.streamRound.mockResolvedValueOnce({ steps: [click], text: '' })
+      .mockResolvedValueOnce({ steps: [alternative], text: '' })
+      .mockResolvedValueOnce({ steps: [done], text: '' })
+    h.execute.mockImplementation(async (request) => ({
+      finished: request.steps[0].action.kind === 'done',
+      performed: request.steps[0].action.kind === 'done' ? [] : [{ label: request.steps[0].label, ok: true }]
+    }))
+    const result = await runAgentRounds(h.deps)
+    expect(result?.performedLines).toEqual(['Open', 'Enter'])
+    expect(result?.claimedDone).toBe(true)
+    expect(h.execute).toHaveBeenCalledTimes(3)
+    expect(JSON.stringify(h.streamRound.mock.calls[1][0].messages)).toContain('Повтор не выполнен')
+  })
+
+  it('stops persistent repetition without clicking again', async () => {
+    const h = harness()
+    h.streamRound.mockResolvedValue({ steps: [click], text: '' })
+    expect(await runAgentRounds(h.deps)).toMatchObject({ interrupted: true, claimedDone: false })
+    expect(h.execute).toHaveBeenCalledOnce()
+    expect(h.publish).toHaveBeenLastCalledWith(expect.objectContaining({ phase: 'error' }))
+  })
+
+  it('replans a known target failure with the failure and current AX names', async () => {
+    const h = harness()
+    h.execute.mockResolvedValueOnce({ finished: false, performed: [],
+      message: 'Поле не в фокусе', recoverable: true })
+    h.deps.describeScreen = vi.fn(async () => '0.4 0.2 поле «Search»')
+    await runAgentRounds(h.deps)
+    expect(h.capture).toHaveBeenCalledOnce()
+    const messages = JSON.stringify(h.streamRound.mock.calls[0][0].messages)
+    expect(messages).toContain('Поле не в фокусе')
+    expect(messages).toContain('поле «Search»')
+    expect(h.streamRound.mock.calls[0][0].canDraw).toBe(false)
+  })
+
+  it('does not execute a dependent Enter when typing was rejected', async () => {
+    const h = harness([
+      { action: { kind: 'type', text: 'cats' }, label: 'Search' },
+      { action: { kind: 'key', combo: 'enter' }, label: 'Submit' }, done
+    ])
+    h.deps.settings.agent.allowTyping = false
+    expect(await runAgentRounds(h.deps)).toMatchObject({ interrupted: true, claimedDone: false })
+    expect(h.execute).not.toHaveBeenCalled()
+  })
+
+  it('reports exhausted budget when verification is disabled', async () => {
+    const h = harness()
+    h.deps.settings.agent.maxSteps = 1
+    h.deps.settings.agent.verifyResult = false
+    expect(await runAgentRounds(h.deps)).toMatchObject({ interrupted: true, claimedDone: false })
+    expect(h.publish).toHaveBeenLastCalledWith(expect.objectContaining({ phase: 'error', message: expect.stringContaining('Лимит') }))
+  })
+
+  it('does not leave a checking indicator hanging after a text-only stop without verification', async () => {
+    const h = harness()
+    h.deps.settings.agent.verifyResult = false
+    h.streamRound.mockResolvedValue({ steps: [], text: 'Нужно выбрать одну из двух презентаций.' })
+    expect(await runAgentRounds(h.deps)).toMatchObject({ interrupted: true })
+    expect(h.publish).toHaveBeenLastCalledWith(expect.objectContaining({
+      phase: 'error', message: 'Нужно выбрать одну из двух презентаций.'
+    }))
+  })
+
+  it('does not announce unobserved success even when final verification is disabled', async () => {
+    const h = harness([click, done])
+    h.deps.settings.agent.verifyResult = false
+    await runAgentRounds(h.deps)
+    expect(h.execute.mock.calls[0][0].verify).toBe(true)
   })
 })

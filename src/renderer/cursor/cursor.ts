@@ -14,8 +14,8 @@
 
 import type { AgentCursorFrame } from '@shared/types'
 
-/** Must match `CAPTION_GAP` in `src/main/agent/cursor.ts`. */
-const CAPTION_GAP = 26
+/** Same clearance as the chat bubble (`BUBBLE_GAP`). */
+const CAPTION_GAP = 10
 
 /** Keep the caption this far from the layer's edge. */
 const MARGIN = 8
@@ -48,7 +48,17 @@ export function createCursor(root: HTMLElement): CursorHighlight {
   count.className = 'tag-count'
   const label = document.createElement('span')
   label.className = 'tag-label'
-  tag.append(count, label)
+  const check = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
+  check.classList.add('completion-check')
+  check.setAttribute('viewBox', '0 0 24 24')
+  check.setAttribute('aria-hidden', 'true')
+  const checkPath = document.createElementNS('http://www.w3.org/2000/svg', 'path')
+  checkPath.setAttribute('d', 'm5 12 4.5 4.5L19 7')
+  checkPath.setAttribute('pathLength', '1')
+  const checkOutline = checkPath.cloneNode(true) as SVGPathElement
+  checkOutline.classList.add('completion-check-outline')
+  check.append(checkOutline, checkPath)
+  tag.append(check, count, label)
 
   root.append(ripple, ring, tag)
 
@@ -81,11 +91,17 @@ export function createCursor(root: HTMLElement): CursorHighlight {
    * the pointer is near an edge the caption slides inwards rather than being cut
    * off — a caption half off the display explains nothing.
    */
-  function placeTag(anchor: { x: number; y: number }, side: 'above' | 'below'): void {
+  function placeTag(anchor: { x: number; y: number }): void {
     const width = tagWidth || FALLBACK_WIDTH
     const height = tagHeight || FALLBACK_HEIGHT
-    const left = clamp(anchor.x - width / 2, MARGIN, Math.max(MARGIN, root.clientWidth - width - MARGIN))
-    const wanted = side === 'above' ? anchor.y - CAPTION_GAP - height : anchor.y + CAPTION_GAP
+    // Like chat: down and right, flipping only when the display edge requires it.
+    const right = anchor.x + CAPTION_GAP
+    const below = anchor.y + CAPTION_GAP
+    const wantedLeft = right + width <= root.clientWidth - MARGIN
+      ? right : anchor.x - CAPTION_GAP - width
+    const left = clamp(wantedLeft, MARGIN, Math.max(MARGIN, root.clientWidth - width - MARGIN))
+    const wanted = below + height <= root.clientHeight - MARGIN
+      ? below : anchor.y - CAPTION_GAP - height
     const top = clamp(wanted, MARGIN, Math.max(MARGIN, root.clientHeight - height - MARGIN))
     tag.style.translate = `${Math.round(left)}px ${Math.round(top)}px`
   }
@@ -99,6 +115,7 @@ export function createCursor(root: HTMLElement): CursorHighlight {
 
     root.style.setProperty('--x', `${Math.round(frame.anchor.x)}px`)
     root.style.setProperty('--y', `${Math.round(frame.anchor.y)}px`)
+    const phaseChanged = root.dataset.phase !== frame.phase
     root.dataset.phase = frame.phase
     root.dataset.visible = 'true'
 
@@ -124,8 +141,8 @@ export function createCursor(root: HTMLElement): CursorHighlight {
 
     // The caption needs its final size before it can be centred on the pointer,
     // but that size has to be re-read only when the content or the display did.
-    if (labelChanged || stepChanged || tagWidth === 0) measureTag()
-    placeTag(frame.anchor, frame.side)
+    if (phaseChanged || labelChanged || stepChanged || tagWidth === 0) measureTag()
+    placeTag(frame.anchor)
 
     // Replaying the ripple is what marks *this* action instead of the previous
     // one: toggling the class is not enough, the animation has to restart.

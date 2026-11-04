@@ -154,7 +154,7 @@ export function AgentTab({ agent, onChange, onEnabledChange }: AgentTabProps) {
       </div>
 
       <div className="field">
-        <label>Сколько раз смотреть на экран заново · {agent.maxSteps}</label>
+        <label>Лимит этапов задачи · {agent.maxSteps}</label>
         <input
           type="range"
           min={1}
@@ -164,8 +164,8 @@ export function AgentTab({ agent, onChange, onEnabledChange }: AgentTabProps) {
           onChange={(event) => onChange({ maxSteps: Number(event.target.value) })}
         />
         <div className="hint">
-          После каждого плана ассистент может взглянуть на результат и продолжить. Один —
-          «сделал и остановился», больше — длинный сценарий, который сложнее остановить.
+          После действий ассистент проверяет экран и продолжает к цели. Для поиска и
+          открытия файлов или видео нужно несколько этапов. Escape останавливает задачу.
         </div>
       </div>
 

@@ -170,12 +170,16 @@ function createOverlayWindow(): BrowserWindow {
     pendingShow = null
     if (pending) performShow(pending.height, pending.width, pending.activate)
   })
+  win.on('will-move', () => { resizeBounds = null })
   loadPage(win, 'overlay')
   return win
 }
 
 /** The anchor of the card currently on screen, if any. */
 let anchor: BubbleAnchor | null = null
+// Native animation may still be between frames when the next letter arrives.
+// Placement must use the last destination, not mistake that frame for a drag.
+let resizeBounds: Electron.Rectangle | null = null
 
 /** The work area of the display a point falls on. */
 function workAreaAt(point: { x: number; y: number }): Electron.Rectangle {
@@ -185,7 +189,8 @@ function workAreaAt(point: { x: number; y: number }): Electron.Rectangle {
 function positionOverlay(win: BrowserWindow, height: number, width: number): void {
   const point = screen.getCursorScreenPoint()
   anchor = placeAnchor(point, workAreaAt(point), height, width)
-  win.setBounds(boundsFor(anchor, height, width))
+  resizeBounds = boundsFor(anchor, height, width)
+  win.setBounds(resizeBounds)
 }
 
 /**
@@ -197,8 +202,9 @@ function resizeAtAnchor(win: BrowserWindow, height: number, width: number): void
     positionOverlay(win, height, width)
     return
   }
-  anchor = resizeAnchor(anchor, win.getBounds(), height, width, workAreaAt)
-  win.setBounds(boundsFor(anchor, height, width))
+  anchor = resizeAnchor(anchor, resizeBounds ?? win.getBounds(), height, width, workAreaAt)
+  resizeBounds = boundsFor(anchor, height, width)
+  win.setBounds(resizeBounds, !voice && overlayVisible)
 }
 
 /**
@@ -334,7 +340,7 @@ export const overlayHost: OverlayHost = {
     if (!win || win.isDestroyed()) return
     const safeHeight = Math.round(clamp(height, OVERLAY_MIN_HEIGHT, OVERLAY_MAX_HEIGHT))
     const safeWidth = Math.round(clamp(width, BUBBLE_MIN_WIDTH, BUBBLE_WIDTH))
-    const bounds = win.getBounds()
+    const bounds = resizeBounds ?? win.getBounds()
     if (bounds.height === safeHeight && bounds.width === safeWidth) return
     resizeAtAnchor(win, safeHeight, safeWidth)
   },
@@ -433,6 +439,7 @@ export const overlayHost: OverlayHost = {
     // The next press asks for a fresh anchor: the pointer has almost certainly
     // moved since this bubble appeared.
     anchor = null
+    resizeBounds = null
     if (overlayWindow && !overlayWindow.isDestroyed()) overlayWindow.hide()
   },
 

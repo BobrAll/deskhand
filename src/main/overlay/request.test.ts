@@ -295,7 +295,7 @@ describe('buildTurnRequest: the two awaits', () => {
     expect(turn.messages).toEqual([])
   })
 
-  it('asks for the outline only when acting is possible', async () => {
+  it('asks for the outline for drawing even when acting is unavailable', async () => {
     const describe = vi.fn(async () => 'кнопка «ОК»')
     const acting = await buildTurnRequest(
       input({
@@ -311,7 +311,7 @@ describe('buildTurnRequest: the two awaits', () => {
       })
     )
 
-    expect(describe).toHaveBeenCalledTimes(1)
+    expect(describe).toHaveBeenCalledTimes(2)
     expect(describe).toHaveBeenCalledWith(42, AREA, AREA)
     expect(acting.canAct).toBe(true)
   })

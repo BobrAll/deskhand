@@ -330,12 +330,12 @@ export interface AbortWatcher {
 }
 
 export function watchForAbort(
-  options: { watchMouse: boolean },
+  options: { watchMouse: boolean; interaction?: boolean },
   onAbort: (reason: 'escape' | 'mousemove') => void
 ): AbortWatcher | null {
   const binary = resolveHelperPath()
   if (!binary) return null
-  const child = spawn(binary, ['watch', options.watchMouse ? 'mouse' : 'key'], {
+  const child = spawn(binary, ['watch', options.interaction ? 'interaction' : options.watchMouse ? 'mouse' : 'key'], {
     stdio: ['ignore', 'pipe', 'ignore']
   })
   const lines = createInterface({ input: child.stdout })
@@ -346,7 +346,7 @@ export function watchForAbort(
     } catch {
       return
     }
-    if (payload?.event === 'escape') onAbort('escape')
+    if (payload?.event === 'interaction' || payload?.event === 'escape') onAbort('escape')
     else if (payload?.event === 'mousemove') onAbort('mousemove')
   })
   child.on('error', () => undefined)

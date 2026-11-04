@@ -14,6 +14,7 @@ import { getActiveApp, isExcluded } from './activeApp'
 import { readSelection } from './selection'
 
 export interface CollectOptions {
+  onInputReady?: () => void
   excludedApps: string[]
   /** Whether the user wants a screenshot when nothing is selected. */
   captureScreenshot: boolean
@@ -36,7 +37,7 @@ export async function collectContext(options: CollectOptions): Promise<CollectRe
   const excluded = isExcluded(activeApp, options.excludedApps)
   if (excluded) warnings.push('Приложение входит в список исключений — контекст не собирается.')
 
-  const selection = activeApp && !excluded ? await readSelection().catch(() => null) : null
+  const selection = activeApp && !excluded ? await readSelection(options.onInputReady).catch(() => null) : null
   const wantScreenshot = Boolean(activeApp) && !excluded && options.captureScreenshot
 
   // ТЗ §5.2: есть выделение -> по умолчанию только текст; нет выделения -> скриншот.

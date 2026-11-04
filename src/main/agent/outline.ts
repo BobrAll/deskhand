@@ -117,6 +117,8 @@ export function formatOutline(
     '  @click X Y left «Название»',
     'Это точнее, чем мерить по картинке: имя важнее координат, по нему клик',
     'ставится в центр элемента.',
+    'Для рисунка используй @point circle X Y «Название» с тем же точным названием:',
+    'приложение привяжет обводку к границам однозначно названного элемента.',
     '',
     ...kept.map((row) => row.line),
     ...(rows.length > kept.length ? [`  …и ещё ${rows.length - kept.length}`] : [])
@@ -130,9 +132,16 @@ export function formatOutline(
 export async function describeScreen(
   pid: number | null,
   bounds: ScreenRect | null,
-  area: ScreenRect
+  area: ScreenRect,
+  onTargets?: (targets: AxElementInfo[]) => void
 ): Promise<string | null> {
   const probe = await helperProbe(pid, null)
   if (!probe || probe.targets.length === 0) return null
+  onTargets?.(probe.targets.filter((element) => {
+    const rect = element.frame
+    return Boolean(rect && rect.width >= 2 && rect.height >= 2 &&
+      inside(rect, area) && inside(rect, bounds ?? area) &&
+      (element.pressable || element.editable))
+  }))
   return formatOutline(probe, bounds, area)
 }
