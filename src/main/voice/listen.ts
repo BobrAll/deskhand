@@ -6,11 +6,15 @@
  * a typed callback and keeps the process alive: macOS can disable a tap after a
  * timeout, and the key combination can change in the settings window, so the
  * child is started, restarted and stopped from here — nowhere else.
+ *
+ * The process half (spawn, JSON lines, restarts, backoff) lives in
+ * `native/tapListener.ts` and is shared with `gesture/listen.ts`. Everything
+ * below is what only the keyboard tap does: the accelerator table, the argument
+ * list, the «Универсальный доступ» texts and forgetting the accelerator on stop.
  */
 
-import { spawn, type ChildProcess } from 'node:child_process'
-import { createInterface } from 'node:readline'
 import { FUNCTION_CODES, VOICE_KEY_CODES as KEY_CODES } from '@shared/keycodes'
+import { TapListener } from '../native/tapListener'
 
 export type TapEvent = 'press' | 'release' | 'cancel' | 'ready' | 'reenabled'
 
@@ -74,30 +78,42 @@ export function parseAccelerator(accelerator: string): ParsedAccelerator | null 
   return { keyCode, flags }
 }
 
-interface HelperLine {
-  ok?: boolean
-  event?: TapEvent
-  error?: string
-}
-
-export class VoiceKeyListener {
-  private child: ChildProcess | null = null
+export class VoiceKeyListener extends TapListener<TapEvent> {
   private current: string | null = null
-  private stopped = true
-  private restartTimer: NodeJS.Timeout | null = null
-  private failures = 0
-  /** Set when the tap could not start; surfaced in the settings window. */
-  lastError: string | null = null
+  /** The combination the running child was started with. */
+  private parsed: ParsedAccelerator | null = null
 
-  constructor(private readonly options: VoiceKeyListenerOptions) {}
-
-  /** True while the helper process is up. */
-  get listening(): boolean {
-    return this.child !== null && !this.child.killed
+  constructor(private readonly options: VoiceKeyListenerOptions) {
+    super(options.binary, options.onEvent, options.onError)
   }
 
   get accelerator(): string | null {
     return this.current
+  }
+
+  protected readonly tag = 'voice'
+  protected readonly spawnFailure = 'Не удалось запустить слушатель.'
+
+  protected args(): string[] {
+    const parsed = this.parsed
+    if (!parsed) return []
+    const args = ['voice', String(parsed.keyCode), String(parsed.flags)]
+    if (this.options.swallow !== false) args.push('swallow')
+    return args
+  }
+
+  protected describeError(code: string): string {
+    return describeTapError(code)
+  }
+
+  protected onSpawnThrown(message: string): void {
+    this.options.onError(message)
+  }
+
+  protected onExitWithoutReady(): void {
+    // The permission is missing; retrying that in a loop would only fill the log.
+    this.lastError = 'Слушатель клавиатуры не запустился — проверьте «Универсальный доступ».'
+    this.options.onError(this.lastError)
   }
 
   /**
@@ -110,105 +126,16 @@ export class VoiceKeyListener {
     if (this.listening && this.current === accelerator) return null
 
     this.stop()
-    this.stopped = false
     this.current = accelerator
-    this.failures = 0
-    this.launch(parsed)
+    this.parsed = parsed
+    this.startTap()
     return null
   }
 
-  private launch(parsed: ParsedAccelerator): void {
-    const args = ['voice', String(parsed.keyCode), String(parsed.flags)]
-    if (this.options.swallow !== false) args.push('swallow')
-
-    let child: ChildProcess
-    try {
-      child = spawn(this.options.binary, args, { stdio: ['ignore', 'pipe', 'pipe'] })
-    } catch (error) {
-      this.options.onError(error instanceof Error ? error.message : 'Не удалось запустить слушатель.')
-      return
-    }
-    this.child = child
-
-    const reader = createInterface({ input: child.stdout! })
-    let reportedReady = false
-
-    reader.on('line', (line) => {
-      const text = line.trim()
-      if (!text) return
-      let payload: HelperLine
-      try {
-        payload = JSON.parse(text) as HelperLine
-      } catch {
-        return
-      }
-      if (payload.error) {
-        this.lastError = describeTapError(payload.error)
-        this.options.onError(this.lastError)
-        return
-      }
-      if (payload.event === 'ready') {
-        reportedReady = true
-        this.failures = 0
-        this.lastError = null
-      }
-      if (payload.event) this.options.onEvent(payload.event)
-    })
-
-    child.stderr?.on('data', (chunk: Buffer) => {
-      const text = chunk.toString().trim()
-      if (text) console.warn('[voice] listener:', text.split('\n')[0])
-    })
-
-    child.on('exit', (code) => {
-      reader.close()
-      if (this.child === child) this.child = null
-      if (this.stopped) return
-      // A start that never reported `ready` means the permission is missing;
-      // retrying that in a loop would only fill the log.
-      if (!reportedReady) {
-        this.lastError = 'Слушатель клавиатуры не запустился — проверьте «Универсальный доступ».'
-        this.options.onError(this.lastError)
-        return
-      }
-      console.warn(`[voice] listener exited with ${code}; restarting`)
-      this.scheduleRestart(parsed)
-    })
-
-    child.on('error', (error) => {
-      if (this.child === child) this.child = null
-      if (this.stopped) return
-      this.lastError = error.message
-      this.options.onError(error.message)
-      this.scheduleRestart(parsed)
-    })
-  }
-
-  private scheduleRestart(parsed: ParsedAccelerator): void {
-    if (this.stopped || this.restartTimer) return
-    this.failures += 1
-    if (this.failures > 6) return
-    // 1s, 2s, 4s… capped at 30s: long enough not to spin, short enough that a
-    // permission granted mid-session revives the hotkey without a restart.
-    const delayMs = Math.min(30_000, 1000 * 2 ** (this.failures - 1))
-    this.restartTimer = setTimeout(() => {
-      this.restartTimer = null
-      if (!this.stopped) this.launch(parsed)
-    }, delayMs)
-  }
-
-  /** Stops the tap. The helper blocks in a run loop, so it has to be signalled. */
-  stop(): void {
-    this.stopped = true
-    if (this.restartTimer) {
-      clearTimeout(this.restartTimer)
-      this.restartTimer = null
-    }
+  /** Stops the tap and forgets the accelerator; the helper is signalled. */
+  override stop(): void {
+    super.stop()
     this.current = null
-    if (this.child) {
-      this.child.kill('SIGTERM')
-      this.child = null
-    }
   }
 }
 
