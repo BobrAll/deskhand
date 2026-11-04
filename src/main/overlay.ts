@@ -149,8 +149,6 @@ const HISTORY_TURNS = 2
  */
 const MAX_HISTORY_ANSWER_CHARS = 1_500
 
-
-
 export function createOverlayController(host: OverlayHost) {
   let session: Session | null = null
   /** Whether the user is writing in the card right now (see `syncDrawing`). */
