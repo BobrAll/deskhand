@@ -36,6 +36,8 @@ export interface VoiceHost {
   open(): Promise<void>
   /** True while the card is on screen, so a transcript can land in it. */
   isOpen(): boolean
+  /** Reveals the bars without activating the card or collecting context again. */
+  showIndicator(): void
   /** Puts recognised text into an open card, sending it when `send` is true. */
   deliver(text: string, send: boolean): void
   /** Closes the card — dictation needs the user's own app in front. */
@@ -277,6 +279,9 @@ export function createVoiceController(host: VoiceHost) {
           finishIdle({})
         })
       }
+      // Do this after open has chosen between a fresh and an existing session:
+      // making the old window visible first would resurrect a closed session.
+      host.showIndicator()
       return
     }
 

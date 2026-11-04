@@ -225,15 +225,22 @@ function performShow(height: number, width: number, activate: boolean): void {
    */
   const current = overlayVisible ? win.getBounds() : null
   positionOverlay(win, current?.height ?? height, current?.width ?? width)
+  // An inactive show is also used to reveal voice bars and a completed answer.
+  // A logically visible window may be behind another app, or the app itself may
+  // have been hidden while returning focus. Raise it without taking the keyboard.
+  if (!activate) {
+    if (app.isHidden()) app.show()
+    overlayVisible = true
+    win.showInactive()
+    return
+  }
   // Already on screen (a second press while the card is open): only the focus
   // question is left, and re-showing a visible window makes macOS re-run its
   // order-front animation for no reason.
-  if (!overlayVisible) {
+  if (!overlayVisible || !win.isVisible()) {
     overlayVisible = true
-    if (activate) win.show()
-    else win.showInactive()
+    win.show()
   }
-  if (!activate) return
   // The card is not a HUD. Shown as an ordinary focused window it is already in
   // front of the app it is about, and it goes behind another app's window the way
   // any window does — that is the behaviour the panel had before it started
@@ -358,9 +365,10 @@ export const overlayHost: OverlayHost = {
    * `applyWindowChrome`. The bar animation itself is unchanged.
    */
   setVoice(active: boolean): void {
-    if (voice === active) return
-    voice = active
-    applyWindowChrome()
+    if (voice !== active) {
+      voice = active
+      applyWindowChrome()
+    }
   },
 
   /**

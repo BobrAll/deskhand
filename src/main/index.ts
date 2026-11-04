@@ -37,6 +37,7 @@ const voice = createVoiceController({
   prewarm: () => overlayHost.prewarm(),
   open: () => overlay.open(),
   isOpen: () => overlay.isOpen(),
+  showIndicator: () => overlay.showVoiceIndicator(),
   deliver: (text, send) => overlay.deliver(text, send),
   hide: () => overlay.close(),
   emit: (channel, payload) => overlay.emit(channel, payload),

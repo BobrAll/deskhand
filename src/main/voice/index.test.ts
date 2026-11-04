@@ -99,6 +99,7 @@ function makeHost() {
     prewarmed: 0,
     target: () => host.targetValue,
     isOpen: () => host.openResult,
+    showIndicator: () => {},
     prewarm: () => {
       host.prewarmed += 1
     },
@@ -738,5 +739,33 @@ describe('createVoiceController: settings and lifecycle', () => {
     vi.advanceTimersByTime(60_000)
 
     expect(host.emitted).toHaveLength(emitted)
+  })
+})
+
+describe('voice indicator presentation', () => {
+  it('chooses a fresh session before revealing the old window', () => {
+    const host = makeHost()
+    const calls: string[] = []
+    host.isOpen = () => { calls.push('isOpen'); return false }
+    host.open = async () => { calls.push('open') }
+    host.showIndicator = () => { calls.push('indicator') }
+    const voice = createVoiceController(host)
+    voice.press()
+    expect(calls).toEqual(['isOpen', 'open', 'indicator'])
+    voice.cancel()
+  })
+
+  it('reveals each press even when a card or previous recognition is already open', () => {
+    const host = makeHost()
+    const indicator = vi.fn()
+    host.showIndicator = indicator
+    const voice = createVoiceController(host)
+    voice.press()
+    state.now += 400
+    voice.release()
+    voice.press()
+    expect(indicator).toHaveBeenCalledTimes(2)
+    expect(host.opened).toBe(0)
+    voice.cancel()
   })
 })

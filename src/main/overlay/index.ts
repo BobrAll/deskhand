@@ -710,6 +710,8 @@ export function createOverlayController(host: OverlayHost) {
      * flush the held text for an answer, drop it for an action.
      */
     holdText: boolean
+    /** Reveal a spoken answer as soon as its first text arrives. */
+    revealText?: boolean
   }): Promise<{ steps: AgentPlanStep[]; text: string }> {
     const { messages, requestId, maxTokens, signal, canDraw, area, apiKey, holdText } = options
     const settings = getSettings()
@@ -734,9 +736,13 @@ export function createOverlayController(host: OverlayHost) {
     const append = (delta: string): void => {
       if (!delta || !session) return
       if (holdText) return
+      const hadAnswer = session.answer.trim().length > 0
       session.answer += delta
       const event: StreamEvent = { type: 'chunk', requestId, delta }
       emit(CH.overlay.stream, event)
+      if (options.revealText && !hadAnswer && session.answer.trim()) {
+        host.showInactive(INITIAL_HEIGHT)
+      }
     }
 
     // Everything that is not about this window — parsing, filtering, the tail —
@@ -781,6 +787,7 @@ export function createOverlayController(host: OverlayHost) {
     const fail = (message: string, retryable: boolean): void => {
       const event: StreamEvent = { type: 'error', requestId: request.requestId, message, retryable }
       emit(CH.overlay.stream, event)
+      if (request.voice) host.showInactive(INITIAL_HEIGHT)
     }
 
     if (!model) {
@@ -811,6 +818,9 @@ export function createOverlayController(host: OverlayHost) {
     session.abort = abort
     session.requestId = request.requestId
     session.answer = ''
+    // The microphone owns the bars; after recognition, only an actual answer
+    // earns a panel. Keep the renderer alive for streaming and agent events.
+    if (request.voice) host.hide()
 
     const visionSupported = modelSupportsVision(settings.provider, model)
 
@@ -863,7 +873,8 @@ export function createOverlayController(host: OverlayHost) {
         canDraw,
         area,
         apiKey,
-        holdText: holdFirstRound
+        holdText: holdFirstRound,
+        revealText: request.voice
       })
       if (abort.signal.aborted || !session) return
       if (holdFirstRound) held += round.text
@@ -985,6 +996,10 @@ export function createOverlayController(host: OverlayHost) {
         annotations: session.annotations.length
       }
       emit(CH.overlay.stream, done)
+      if (request.voice) {
+        if (session.answer.trim()) host.showInactive(INITIAL_HEIGHT)
+        else host.hide()
+      }
     } catch (error) {
       if (abort.signal.aborted) return
       if (error instanceof ProviderError) {
@@ -1081,6 +1096,7 @@ export function createOverlayController(host: OverlayHost) {
     clearPointer,
     setTyping,
     setVoice: (active: boolean) => host.setVoice(active),
+    showVoiceIndicator: () => host.showInactive(INITIAL_HEIGHT),
     resize,
     send,
     cancel,
