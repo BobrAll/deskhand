@@ -128,33 +128,54 @@ Renderer JS суммарно 347 838 Б, CSS — 49 578 Б. `client-*.js` — 62
 
 ## 5. knip
 
-**Без конфига (`npx knip@5`) результат непригоден**: 70 «unused files» — это все файлы `src/`, включая
-`src/main/index.ts`, плюс `electron.vite.config.ts`. Knip не знает entry points: их задают `electron.vite.config.ts`
-(main/preload) и шесть `src/renderer/*/index.html`, а конфиг knip не парсит. Плюс 5 ложных «unused devDependencies»
-(`react`, `react-dom`, `@types/react`, `@types/react-dom`, `@vitejs/plugin-react`) — они используются в `.tsx`.
-Файл `knip.json` в репозиторий не добавлял (в задаче его нет) — **вопрос к тебе**, нужен ли он как постоянный инструмент.
+Версия 5.88.1. Запуск: `npm_config_cache=/tmp/npm-cache npx --yes knip@5` (exit code 1 — есть находки, это норма).
 
-**С временным конфигом** (entry: `electron.vite.config.ts`, `src/main/index.ts`, `src/preload/index.ts`,
-6 × `src/renderer/*/index.html` + `main.ts*`, `scripts/*.mjs`; project: `src/**/*.{ts,tsx,css}`):
+**Без конфига результат непригоден**: 70 «unused files» — это все файлы `src/`, включая `src/main/index.ts`,
+плюс `electron.vite.config.ts`. Knip не выводит entry points из `electron.vite.config.ts` и шести
+`src/renderer/*/index.html`. Плюс 5 ложных «unused devDependencies» (`react`, `react-dom`, `@types/react`,
+`@types/react-dom`, `@vitejs/plugin-react`) — они используются в `.tsx`.
 
-- **unused files — 2**: `src/preload/index.d.ts`, `src/renderer/env.d.ts`. Оба — декларации типов,
-  на них ссылается `tsconfig`; удалять нельзя (исключение для knip).
-- **unused exports — 19** (снимок для A2; требует ручной проверки по правилу 7):
-  `agent/geometry.ts:toFramePoint`, `agent/outline.ts:formatOutline`, `agent/plan.ts:MAX_PLAN_STEPS`,
-  `agent/plan.ts:MAX_TYPE_CHARS`, `agent/targeting.ts:centerOf`, `agent/targeting.ts:normalizeText`,
-  `agent/targeting.ts:textMatchScore`, `annotations.ts:AnnotationStream`, `context/screenshot.ts:dataUrlToFile`,
-  `context/selection.ts:MAX_SELECTION_CHARS`, `hotkey.ts:currentHotkey`, `native/helper.ts:helperCursor`,
-  `permissions.ts:openMicrophonePane`, `pointer.ts:isPointerVisible`, `prompt.ts:MAX_SELECTION_CHARS`,
-  `prompt.ts:MAX_ANSWER_CHARS`, `settings/store.ts:settingsWereRecovered`, `util.ts:errorMessage`,
-  `voice/listen.ts:parseAccelerator`, `voice/whisper.ts:{modelsDir,resolveBinary,installedModels,resolveModel,isDownloading}`,
-  `windows.ts:{OVERLAY_WIDTH,OVERLAY_NARROW_WIDTH,OVERLAY_VOICE_WIDTH,OVERLAY_MIN_HEIGHT,OVERLAY_MAX_HEIGHT,closeSettingsWindow}`,
-  `renderer/settings/HotkeyField.tsx:toAccelerator`, `shared/defaults.ts:{DEFAULT_EXCLUDED_APPS,DEFAULT_VOICE,DEFAULT_GESTURES,DEFAULT_AGENT}`.
-- **unused exported types — 29**: в основном `*Options`/`*Host` для внедрения зависимостей; для тестов T11–T32
-  они понадобятся — не трогать до появления тестов.
-- unlisted / unresolved dependencies — **0**.
+Поэтому добавлен **`knip.json`** в корень (отдельный коммит; согласовано с тобой):
+
+- `entry`: `electron.vite.config.ts`, `src/main/index.ts`, `src/preload/index.ts`,
+  6 × `src/renderer/{overlay,pointer,cursor,hud,settings,onboarding}/index.html` и `main.ts*`, `scripts/*.mjs`;
+- `project`: `src/**/*.{ts,tsx,css}`, `scripts/*.mjs`.
+
+С этим конфигом `npx knip` воспроизводит цифры ниже одной командой.
+
+| Категория | Кол-во |
+| --- | ---: |
+| unused files | **2** |
+| unused exports | **35** |
+| unused exported types | **42** |
+| unlisted / unresolved dependencies | **0** |
+
+**unused files — 2**: `src/preload/index.d.ts`, `src/renderer/env.d.ts`. Оба — декларации типов, на них ссылается
+`tsconfig`; удалять нельзя (исключение для knip).
+
+**unused exports — 35** (снимок для A2; требует ручной проверки по правилу 7):
+
+`agent/geometry.ts:toFramePoint`, `agent/outline.ts:formatOutline`, `agent/plan.ts:MAX_PLAN_STEPS`,
+`agent/plan.ts:MAX_TYPE_CHARS`, `agent/targeting.ts:centerOf`, `agent/targeting.ts:normalizeText`,
+`agent/targeting.ts:textMatchScore`, `annotations.ts:AnnotationStream`, `context/screenshot.ts:dataUrlToFile`,
+`context/selection.ts:MAX_SELECTION_CHARS`, `hotkey.ts:currentHotkey`, `native/helper.ts:helperCursor`,
+`permissions.ts:openMicrophonePane`, `pointer.ts:isPointerVisible`, `prompt.ts:MAX_SELECTION_CHARS`,
+`prompt.ts:MAX_ANSWER_CHARS`, `settings/store.ts:settingsWereRecovered`, `util.ts:errorMessage`,
+`voice/listen.ts:parseAccelerator`, `voice/whisper.ts:{modelsDir,resolveBinary,installedModels,resolveModel,isDownloading}`,
+`windows.ts:{OVERLAY_WIDTH,OVERLAY_NARROW_WIDTH,OVERLAY_VOICE_WIDTH,OVERLAY_MIN_HEIGHT,OVERLAY_MAX_HEIGHT,closeSettingsWindow}`,
+`renderer/settings/HotkeyField.tsx:toAccelerator`,
+`shared/defaults.ts:{DEFAULT_EXCLUDED_APPS,DEFAULT_VOICE,DEFAULT_GESTURES,DEFAULT_AGENT}`.
+
+**unused exported types — 42**: почти исключительно `*Options`/`*Host`/`*Result` интерфейсы для внедрения
+зависимостей (`AgentHost`, `IpcDeps`, `VoiceHost`, `GestureHost`, `CollectOptions`, `RequestInput`, …).
+Для тестов T11–T32 они понадобятся — **не трогать до появления тестов**.
 
 Пересечения с PROGRESS подтверждают прежние заметки: `helperCursor` (T02) и `closeSettingsWindow` (T04) уже
 отмечены как кандидаты в A2; экспортируемые `OVERLAY_*` из `windows.ts` подтверждают дублирование ширин (T04).
+
+**Методическая поправка**: первый прогон с временным конфигом дал «19 exports / 29 types» — это число
+**строк отчёта** (`--reporter compact` склеивает несколько символов в строку), а не число символов.
+Корректные цифры — 35 и 42 (посчитаны по `symbols`-репортеру). В PROGRESS для T10 указаны верные значения.
 
 ## 6. Прочее состояние дерева
 
@@ -173,5 +194,5 @@ npm run typecheck
 npm run build            # предварительно очистить out/
 find src -type f \( -name '*.ts' -o -name '*.tsx' -o -name '*.css' -o -name '*.html' \) -exec wc -l {} +
 npm_config_cache=/tmp/npm-cache npx --yes jscpd@4 src
-npm_config_cache=/tmp/npm-cache npx --yes knip@5        # без конфига — шум, см. §5
+npm_config_cache=/tmp/npm-cache npx --yes knip@5        # использует knip.json из корня
 ```
