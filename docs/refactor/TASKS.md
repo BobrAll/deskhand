@@ -127,7 +127,8 @@ typecheck/test/build → коммит → PROGRESS. После крупных г
       каталог резолвится как модуль) + 3523a7d (`host.ts`; `windows.ts` импортирует тип из него, а не из контроллера)
 
 ### Волна 6 — рискованное (КТ6 после R21)
-- [ ] R19 Разнос `windows.ts`: `windows/index.ts` (карточка) + `windows/settings.ts` (настройки/онбординг) + `base.ts`. Высокий риск.
+- [x] R19 Разнос `windows.ts`: `windows/index.ts` (карточка) + `windows/settings.ts` (настройки/онбординг) + `base.ts`. Высокий риск.
+      → 83c8fcc + a749c46; 6 тестов жизненного цикла, 54 файла / 1145 тестов. КТ5: ручной прогон ожидается.
 - [ ] R20 Остаток `send`: агентные раунды (overlay/index.ts:1038-1218) → `overlay/rounds.ts`. Только после R11/R12, риск высокий.
 - [ ] R21 ESLint 9 + `typescript-eslint` 8 + `.editorconfig` + скрипт `lint` (ждёт «ок»). Prettier — после фазы 5 отдельным `style:`.
 
