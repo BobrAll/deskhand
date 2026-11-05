@@ -502,3 +502,20 @@ describe('destroyAgentCursor', () => {
     expect(() => cursor.destroyAgentCursor()).not.toThrow()
   })
 })
+
+describe('early request feedback', () => {
+  it('shows a waiting ring before any plan exists and removes it on cancellation', async () => {
+    const token = cursor.beginAgentTurn('Задача принята · готовлю действия…')
+    await settle()
+    expect(win().sent.at(-1)).toMatchObject({ visible: true, phase: 'waiting', total: 0 })
+    cursor.endAgentTurn(token)
+    await settle()
+    expect(win().sent.at(-1)?.visible).toBe(false)
+  })
+  it('does not resurrect a request cancelled while the layer was loading', async () => {
+    const token = cursor.beginAgentTurn('Задача принята')
+    cursor.endAgentTurn(token)
+    await settle()
+    expect(win().shown).toBe(0)
+  })
+})

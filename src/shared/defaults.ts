@@ -210,6 +210,8 @@ export const DEFAULT_VOICE: VoiceSettings = {
   language: 'ru',
   action: 'command',
   autoSend: true,
+  dialogue: false,
+  agentFeedback: true,
   minDurationMs: 300,
   maxDurationMs: 120_000
 }
@@ -255,6 +257,7 @@ export const WHISPER_LANGUAGES: Array<{ id: string; label: string }> = [
  * can read it is a plan nobody can interrupt.
  */
 export const DEFAULT_AGENT: AgentSettings = {
+  rememberedApprovals: [],
   enabled: false,
   startDelayMs: 900,
   stepDelayMs: 420,
@@ -347,6 +350,8 @@ function sanitizeVoice(input: unknown): VoiceSettings {
     model,
     language,
     action: raw.action === 'dictate' ? 'dictate' : 'command',
+    dialogue: raw.dialogue === true,
+    agentFeedback: raw.agentFeedback !== false,
     autoSend: typeof raw.autoSend === 'boolean' ? raw.autoSend : DEFAULT_VOICE.autoSend,
     minDurationMs: Math.round(clamp(raw.minDurationMs, 0, 5_000, DEFAULT_VOICE.minDurationMs)),
     maxDurationMs: Math.round(
@@ -360,6 +365,9 @@ function sanitizeAgent(input: unknown): AgentSettings {
   const flag = (value: unknown, fallback: boolean): boolean =>
     typeof value === 'boolean' ? value : fallback
   return {
+    rememberedApprovals: Array.isArray(raw.rememberedApprovals)
+      ? [...new Set(raw.rememberedApprovals.filter(value => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value)))].slice(-256)
+      : [],
     enabled: flag(raw.enabled, DEFAULT_AGENT.enabled),
     // The floor is 0 rather than a "sane" minimum: a user who wants no pause is
     // allowed to have none, but the slider cannot go below it by accident.

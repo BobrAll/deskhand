@@ -437,7 +437,7 @@ export function hideAgentCursor(): void {
  * `endAgentTurn` the ring only ever parks, so a turn that runs several plans
  * shows one continuous ring instead of one per plan.
  */
-export function beginAgentTurn(): number {
+export function beginAgentTurn(label?: string): number {
   turn += 1
   // A new request supersedes whatever the previous turn left on screen: a ring
   // parked on a step the user has already moved past would sit there for the
@@ -446,6 +446,11 @@ export function beginAgentTurn(): number {
   // fires when two turns overlap.
   if (frame) hide(true)
   held = turn
+  if (label) {
+    frame = { visible: true, anchor: { x: 0, y: 0 }, side: 'above',
+      phase: 'waiting', label, step: 0, total: 0, pulse: 0 }
+    void paint()
+  }
   return held
 }
 

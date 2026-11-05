@@ -95,6 +95,7 @@ export const CH = {
     cursor: 'agent:cursor',
     /** overlay -> main: stop whatever is happening right now (Escape, «Стоп»). */
     stop: 'agent:stop',
+    clearApprovals: 'agent:clear-approvals',
     /**
      * overlay -> main: may the assistant press and type right now, and if not,
      * which of the three reasons applies. Pulled by the settings tab and by the

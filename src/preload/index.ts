@@ -57,7 +57,8 @@ const api: SmartCursorApi = {
     availability: () => ipcRenderer.invoke(CH.agent.availability) as Promise<AgentAvailability>,
     setEnabled: (enabled: boolean) =>
       ipcRenderer.invoke(CH.agent.setEnabled, enabled) as Promise<AgentAvailability>,
-    stop: () => ipcRenderer.invoke(CH.agent.stop)
+    stop: () => ipcRenderer.invoke(CH.agent.stop),
+    clearApprovals: () => ipcRenderer.invoke(CH.agent.clearApprovals)
   },
   agentCursor: {
     onState: (handler) => subscribe<AgentCursorFrame>(CH.agent.cursor, handler)

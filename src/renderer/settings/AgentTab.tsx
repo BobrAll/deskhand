@@ -37,6 +37,7 @@ function seconds(ms: number): string {
 }
 
 export function AgentTab({ agent, onChange, onEnabledChange }: AgentTabProps) {
+  const [approvalStatus, setApprovalStatus] = useState('')
   const [availability, setAvailability] = useState<AgentAvailability | null>(null)
 
   const refresh = useCallback(() => {
@@ -65,6 +66,15 @@ export function AgentTab({ agent, onChange, onEnabledChange }: AgentTabProps) {
   return (
     <section>
       <h2>Агент</h2>
+      <div className="field">
+        <button type="button" onClick={() => {
+          void window.smartCursor.agent.clearApprovals().then(
+            () => setApprovalStatus('Разрешения сброшены.'),
+            () => setApprovalStatus('Не удалось сбросить разрешения.')
+          )
+        }}>Сбросить постоянные разрешения</button>
+        <div className="hint" role="status">{approvalStatus || 'Удаляет выбор «Разрешить всегда» для всех действий агента.'}</div>
+      </div>
       <p className="hint">
         Ассистент сможет сам нажимать кнопки и печатать текст — не только рассказывать, где
         они. Он делает это только когда вы прямо просите что-то сделать: «нажми сохранить»,
@@ -120,6 +130,16 @@ export function AgentTab({ agent, onChange, onEnabledChange }: AgentTabProps) {
           </div>
         </div>
       )}
+
+      <div className="field">
+        <label>Подтверждение действий</label>
+        <div className="hint">
+          Обычные клики, навигация и ввод текста выполняются самостоятельно.
+          Подтверждение нужно для распознанных критических действий: оплаты, подписки,
+          отправки и публикации, удаления, изменения доступа или защиты аккаунта.
+          Отмена останавливает план. Пароли и секреты вводятся вручную.
+        </div>
+      </div>
 
       <div className="field">
         <label>Пауза перед первым действием · {seconds(agent.startDelayMs)}</label>

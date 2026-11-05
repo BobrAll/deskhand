@@ -23,6 +23,8 @@ import type {
   StreamEvent
 } from '@shared/types'
 import {
+  ANSWER_CHROME,
+  ACTIONS_CHROME,
   CARET_SLACK,
   CHROME_WIDTH,
   FIELD_FONT,
@@ -34,6 +36,9 @@ import {
   VOICE_WIDTH,
   clamp
 } from './metrics'
+import { useSpeech } from './useSpeech'
+import { useWaiting } from './useWaiting'
+import { waitingStage } from './waiting'
 import { useVoice } from './useVoice'
 import { deriveView } from './viewFlags'
 import { keyPolicy, type KeyAction } from './keyPolicy'
@@ -116,6 +121,9 @@ function LiveThumb({ src }: { src: string }) {
 }
 
 export function App() {
+  const speech = useSpeech()
+  const speechRef = useRef(speech)
+  speechRef.current = speech
   const [state, setState] = useState<OverlayState | null>(null)
   const [prompt, setPrompt] = useState('')
   const [mode, setMode] = useState<ResponseMode>('insert')
@@ -272,6 +280,7 @@ export function App() {
        * that sentence at the exact moment it became sendable.
        */
       const typedWhileEmpty = stateRef.current === null && promptRef.current.length > 0
+      speechRef.current.stop()
       sessionIdRef.current = next.sessionId
       // Imperative readers (`send`) must see the new session immediately: a queued
       // transcript can be sent before React has re-rendered.
@@ -332,6 +341,7 @@ export function App() {
     }
 
     if (action.kind === 'append') {
+      void speechRef.current.append(event.requestId, action.text)
       setAnswer((prev) => prev + action.text)
       return
     }
@@ -341,12 +351,16 @@ export function App() {
       return
     }
 
+    const speechCurrent = requestIdRef.current === event.requestId
     requestIdRef.current = null
     replaceOnChunkRef.current = false
     setBusy(false)
     if (action.kind === 'done') {
+      const result = agentRef.current
+      if (speechCurrent) void speechRef.current.finish(event.requestId, action.text || (result?.completed ? 'Готово.' : result?.message ?? ''), result?.phase === 'error' || result?.completed === false)
       setAnswer(action.text)
     } else {
+      if (speechCurrent) void speechRef.current.finish(event.requestId, action.message, true)
       setFailure({ message: action.message, retryable: action.retryable })
     }
   }, [])
@@ -395,7 +409,8 @@ export function App() {
       setDrawn(event.count)
     })
     const offAgent = window.smartCursor.agent.onEvent((event) => {
-      setAgent(event.phase === 'idle' ? null : event)
+      agentRef.current = event.phase === 'idle' ? null : event
+      setAgent(agentRef.current)
     })
 
     return () => {
@@ -431,6 +446,7 @@ export function App() {
    */
   useEffect(() => {
     if (voice.phase !== 'listening') return
+    speechRef.current.stop()
     const id = requestIdRef.current
     if (!id) return
     ignoredRequestRef.current = id
@@ -468,13 +484,13 @@ export function App() {
    */
   const textWidth = prompt ? measureLine(prompt, fontRef.current) : 0
 
-  /**
-   * How wide the card wants to be: a folded bubble is a one-line field, and 360
-   * points of it would be mostly empty surface. Anything that puts content under
-   * the field — an answer, the unfolded drawer, a failure, an agent run — earns
-   * the full width.
-   */
-  const wantsWide = expanded || hasAnswer || Boolean(failure) || Boolean(agent)
+  // Drawers and status details need the full panel; an answer earns only the
+  // space its text and action row actually occupy.
+  const waiting = useWaiting(requestIdRef.current, busy && !failure && !listening)
+  const waitStage = waitingStage(waiting.elapsed)
+  const showWaiting = waitStage !== 'quiet' && ((!hasAnswer && !agent) ||
+    (Boolean(agent) && (waitStage === 'tip' || waitStage === 'long')))
+  const wantsWide = expanded || Boolean(failure) || Boolean(agent) || showWaiting
 
   /**
    * Everything on the line that is not the question, in points.
@@ -500,9 +516,18 @@ export function App() {
     FULL_WIDTH
   )
 
-  // An empty composer always returns to the pill, including while waiting for
-  // an answer. No width from an earlier question survives deletion or a session.
-  const cardWidth = listening ? VOICE_WIDTH : wantsWide ? FULL_WIDTH : composedWidth
+  // Recompute from current content so a shorter answer shrinks the card again.
+  const answerWidth = hasAnswer
+    ? Math.ceil(measureLine(answer, fontRef.current)) + ANSWER_CHROME + CARET_SLACK
+    : 0
+  const actionsWidth = hasAnswer
+    ? Math.ceil(measureLine(
+        speech.speaking ? 'Остановить озвучку Вставить' : 'Прослушать Вставить',
+        FIELD_FONT.replace('13px', '11px')
+      )) + ACTIONS_CHROME
+    : 0
+  const contentWidth = clamp(Math.max(composedWidth, answerWidth, actionsWidth), NARROW_WIDTH, FULL_WIDTH)
+  const cardWidth = listening ? VOICE_WIDTH : wantsWide ? FULL_WIDTH : contentWidth
 
   // Keep a single line throughout the sideways motion. Wrapping before there is
   // room would briefly add rows that disappear as the window catches up.
@@ -575,6 +600,7 @@ export function App() {
     const usedMode = sendMode ?? modeRef.current
     const requestId = newRequestId()
     requestIdRef.current = requestId
+    speechRef.current.begin(requestId, value, voice)
     setBusy(true)
     setAnswer('')
     setFailure(null)
@@ -601,11 +627,8 @@ export function App() {
     // confirmation of what was heard, so it stays until the answer starts arriving
     // (`onStream` clears it then). The user did not type it, so they have not
     // already seen it.
-    if (voice) spokenPromptRef.current = true
-    else {
-      spokenPromptRef.current = false
-      setPrompt('')
-    }
+    spokenPromptRef.current = voice
+    setPrompt(voice ? value : '')
     setLast({ prompt: value, mode: usedMode, refine: null, base: '', voice })
     window.smartCursor.overlay.send({
       requestId,
@@ -633,6 +656,7 @@ export function App() {
       if (!current || !baseAnswer || busyRef.current) return
       const requestId = newRequestId()
       requestIdRef.current = requestId
+      speechRef.current.stop()
       replaceOnChunkRef.current = !base
       setBusy(true)
       setFailure(null)
@@ -754,6 +778,7 @@ export function App() {
    */
   const perform = useCallback(
     (action: Exclude<KeyAction, null>) => {
+      if (action === 'close' || action === 'cancel' || action === 'stopAgent') speechRef.current.stop()
       if (action === 'close') {
         window.smartCursor.overlay.close()
         return
@@ -862,6 +887,7 @@ export function App() {
    * context is background work; the card just looks like itself from frame one.
    */
   const blocked = state?.context.excluded ?? false
+  const showingTranscript = busy && last?.voice && Boolean(prompt)
 
   /**
    * The one line the bubble is: the presence dot and the field.
@@ -882,6 +908,7 @@ export function App() {
         data-wrap={wrapped || undefined}
         value={prompt}
         disabled={blocked}
+        readOnly={showingTranscript}
         onChange={(event) => {
           setPrompt(event.target.value)
           setTyping(true)
@@ -978,6 +1005,7 @@ export function App() {
       data-busy={busy || undefined}
       data-drawing={(drawn > 0 && !typing) || undefined}
     >
+      {showingTranscript && <div className="line">Распознано</div>}
       <div className="bar">
         {composer}
         {busy && (
@@ -988,6 +1016,8 @@ export function App() {
               const id = requestIdRef.current
               // The main process stops writing as soon as it is aborted and emits
               // nothing more, so the "busy" state has to be cleared here.
+              speechRef.current.stop()
+              ignoredRequestRef.current = id
               requestIdRef.current = null
               setBusy(false)
               if (id) window.smartCursor.overlay.cancel(id)
@@ -1209,22 +1239,36 @@ export function App() {
         </div>
       )}
 
-      {failure && (
-        <div className="line" data-tone="err">
-          <span>{failure.message}</span>
-          {failure.retryable && last && (
-            <button
-              className="tag"
-              onClick={() =>
-                last.refine
-                  ? refine(last.refine, last.base)
-                  : send(last.prompt, last.mode, last.voice)
-              }
-            >
-              Повторить
-            </button>
-          )}
+      {showWaiting && (
+        <div className="waiting" role="status" aria-live="polite">
+          {!agent && !hasAnswer && <div className="waiting-label">Готовлю ответ…</div>}
+          {waitStage === 'long' ? (
+            <div>Ответ занимает больше времени. Esc — остановить.</div>
+          ) : waitStage === 'tip' ? (
+            <div><span className="waiting-caption">На заметку</span>{waiting.tip}</div>
+          ) : null}
         </div>
+      )}
+
+      {failure && (
+        <>
+          {last?.voice && <div className="line transcript">Распознано: {last.prompt}</div>}
+          <div className="line" data-tone="err">
+            <span>{failure.message}</span>
+            {failure.retryable && last && (
+              <button
+                className="tag"
+                onClick={() =>
+                  last.refine
+                    ? refine(last.refine, last.base)
+                    : send(last.prompt, last.mode, last.voice)
+                }
+              >
+                Повторить
+              </button>
+            )}
+          </div>
+        </>
       )}
 
       {/*
@@ -1238,16 +1282,25 @@ export function App() {
         </div>
       )}
 
-      {/* One action survives the fold: pasting the answer somewhere is what the
-          bubble exists for. Rewrites and copying live behind the chevron. */}
-      {hasAnswer && canPaste && (
-        <div className="foot">
-          <span className="spacer" />
-          <button className="link primary" title="Вставить (⌘⏎)" onClick={() => void paste()}>
-            {selection ? 'Заменить' : 'Вставить'}
-          </button>
+      {/* Keep the everyday actions on one row; rewrites live in the drawer. */}
+      {hasAnswer && (!busy || speech.speaking || canPaste) && (
+        <div className="foot answer-actions">
+          {(!busy || speech.speaking) && (
+            <button className="link" onClick={() => speech.speaking ? speech.stop() : speech.speak(answer)}>
+              {speech.speaking ? 'Остановить озвучку' : 'Прослушать'}
+            </button>
+          )}
+          {canPaste && (
+            <>
+              <span className="spacer" />
+              <button className="link primary" title="Вставить (⌘⏎)" onClick={() => void paste()}>
+                {selection ? 'Заменить' : 'Вставить'}
+              </button>
+            </>
+          )}
         </div>
       )}
+      {speech.error && <div className="line" role="status">{speech.error}</div>}
 
       {hasAnswer && expanded && (
         <div className="foot">

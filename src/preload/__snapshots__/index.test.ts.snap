@@ -3,6 +3,7 @@
 exports[`preload: the exposed bridge > matches the snapshot of the method set 1`] = `
 [
   "agent.availability",
+  "agent.clearApprovals",
   "agent.onEvent",
   "agent.setEnabled",
   "agent.stop",

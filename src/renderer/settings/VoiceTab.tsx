@@ -90,6 +90,24 @@ export function VoiceTab({ voice, gestures, onChange, onGestureChange }: VoiceTa
   return (
     <section>
       <h2>Голос</h2>
+      <div className="field">
+        <label>
+          <input type="checkbox" checked={voice.agentFeedback}
+            onChange={(event) => onChange({ agentFeedback: event.target.checked })} />
+          Короткие реплики агента
+        </label>
+        <p className="hint">Подтверждать долгую обработку команды системным голосом, в том числе для текстовых команд.
+          Не чаще раза в 45 секунд. Для озвучки нужен русский голос macOS.</p>
+      </div>
+      <div className="field">
+        <label>
+          <input type="checkbox" checked={voice.dialogue}
+            onChange={(event) => onChange({ dialogue: event.target.checked })} />
+          Голосовой диалог
+        </label>
+        <p className="hint">Коротко озвучивать ответы на голосовые вопросы системным голосом.
+          Диктовка и подготовленный текст остаются без звука. По умолчанию озвучка — по кнопке «Прослушать».</p>
+      </div>
       <p className="hint">
         Удерживайте клавишу или три пальца на трекпаде, говорите, отпустите. Распознавание идёт
         на этом Mac через whisper.cpp — звук никуда не отправляется.
@@ -182,7 +200,7 @@ export function VoiceTab({ voice, gestures, onChange, onGestureChange }: VoiceTa
               checked={voice.autoSend}
               onChange={(event) => onChange({ autoSend: event.target.checked })}
             />{' '}
-            Отправлять сразу, не дожидаясь Enter
+            Отправлять автоматически, не дожидаясь Enter
           </label>
         </div>
       )}

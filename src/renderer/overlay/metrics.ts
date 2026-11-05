@@ -33,6 +33,12 @@ export const VOICE_WIDTH = BUBBLE_VOICE_WIDTH
 /** The widest the card gets, whether it is a question or an answer inside it. */
 export const FULL_WIDTH = BUBBLE_WIDTH
 
+/** Outer padding, border and the answer's text-column indent. */
+export const ANSWER_CHROME = 8 * 2 + 2 + 12
+
+/** Two buttons' horizontal padding and a small gap between their labels. */
+export const ACTIONS_CHROME = ANSWER_CHROME + 5 * 4 + 8
+
 /**
  * Everything on the line that is not the question itself, in points.
  *

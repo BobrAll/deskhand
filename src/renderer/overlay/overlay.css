@@ -400,6 +400,13 @@ button.tag.clear {
   color: var(--danger);
 }
 
+.transcript {
+  display: block;
+  max-height: 84px;
+  overflow-y: auto;
+  overflow-wrap: anywhere;
+}
+
 /* ------------------------------------------------------------------ агент
  *
  * The row that says "I am driving right now". It is the only part of the card
@@ -653,6 +660,15 @@ button.tag.clear {
   gap: 1px;
 }
 
+.answer-actions {
+  gap: 4px;
+}
+
+.answer-actions > button {
+  flex: none;
+  white-space: nowrap;
+}
+
 .spacer {
   flex: 1;
 }
@@ -801,3 +817,16 @@ button.link.primary:hover:not(:disabled) {
   justify-content: flex-start;
   padding-left: 8px;
 }
+
+/* Quiet, local reading material; never an animated carousel over the workspace. */
+.waiting {
+  margin: 4px 0 2px 12px;
+  padding: 7px 9px;
+  border-left: 2px solid var(--panel-edge);
+  color: var(--text-dim);
+  font-size: 11px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.waiting-label { font-weight: 500; }
+.waiting-caption { display: block; font-weight: 600; margin-bottom: 3px; }

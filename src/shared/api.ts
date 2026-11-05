@@ -163,6 +163,7 @@ export interface SmartCursorApi {
     setEnabled(enabled: boolean): Promise<AgentAvailability>
     /** Stops the run in flight. Resolves once nothing is moving the cursor. */
     stop(): Promise<void>
+    clearApprovals(): Promise<void>
   }
   /**
    * Push-to-talk. The main process owns the keyboard and the whisper process; the

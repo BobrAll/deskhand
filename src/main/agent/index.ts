@@ -26,7 +26,7 @@
  * bubble.
  */
 
-import { screen, systemPreferences } from 'electron'
+import { dialog, screen, systemPreferences, type BrowserWindow } from 'electron'
 import type {
   AgentAction,
   AgentAvailability,
@@ -51,14 +51,17 @@ import {
   watchForAbort,
   type AbortWatcher
 } from '../native/helper'
-import { getSettings } from '../settings/store'
+import { getSettings, patchSettings } from '../settings/store'
 import { delay, waitFor } from '../util'
 import { hideAgentCursor } from './cursor'
 import { toScreenPoint as toScreen, type ScreenPoint } from './geometry'
 import { describeShortcut, parseShortcut } from './keys'
 import { isTextField, resolveTarget, type TargetResolution } from './targeting'
+import { approvalKey, assessAction } from './safety'
 
 export interface AgentHost {
+  /** Parent required for a cancellable, asynchronous macOS confirmation sheet. */
+  confirmationWindow?(): BrowserWindow | null
   /** Makes the card ignore the mouse (and stop being frontmost) while a plan runs. */
   setPassthrough(active: boolean): void
   /** Reports progress to the card. */
@@ -100,6 +103,8 @@ export function createAgentController(host: AgentHost) {
   /** Bumped by `stop()`; a running plan compares it and gives up. */
   let run = 0
   let running = false
+  let confirming = false
+  let approval: AbortController | null = null
   let last: AgentEvent = EMPTY
 
   /**
@@ -335,10 +340,14 @@ export function createAgentController(host: AgentHost) {
     request: AgentRunRequest & { skipped?: string[] }
   ): Promise<AgentRunResult> {
     const settings = getSettings()
+    // Freeze the proposed inputs while a human reviews them.
+    request = structuredClone(request)
     const plan = request.steps
     const labels = plan.map((step) => step.label)
     const total = plan.length
     const performed: PerformedStep[] = []
+
+    if (running) return { finished: false, message: 'Агент уже выполняет действие.', performed }
 
     if (!settings.agent.enabled) {
       const message = 'Агентный режим выключен в настройках.'
@@ -391,8 +400,10 @@ export function createAgentController(host: AgentHost) {
     working = front && front.pid !== process.pid ? { bundleId: front.bundleId, pid: front.pid } : opened
 
     watcher = watchForAbort({ watchMouse: settings.agent.abortOnMouseMove }, (reason) => {
+      if (confirming && reason === 'mousemove') return
       if (aborted.reason) return
       aborted.reason = reason
+      approval?.abort()
     })
 
     publish({
@@ -431,6 +442,7 @@ export function createAgentController(host: AgentHost) {
 
     const deadline = setTimeout(() => {
       if (!aborted.reason) aborted.reason = 'escape'
+      approval?.abort()
     }, RUN_TIMEOUT_MS)
 
     try {
@@ -503,11 +515,79 @@ export function createAgentController(host: AgentHost) {
           return { finished: false, message, recoverable: true, performed }
         }
 
+        const focus = step.action.kind === 'type' || step.action.kind === 'key'
+          ? await helperFocused(working?.pid ?? null) : null
+        if (token !== run || aborted.reason) break
+        const element = aimed?.target.element ?? focus
+        const safety = assessAction(step, element, working?.bundleId)
+        const approvalId = safety.kind === 'confirm' ? approvalKey(step, element, working?.bundleId) : null
+        const remembered = approvalId && getSettings().agent.rememberedApprovals.includes(approvalId)
+        let rememberApproval = false
+        let safetyMessage: string | null = safety.kind === 'deny' ? safety.reason : null
+        if (safety.kind === 'confirm' && !remembered) {
+          const approvedTarget = working ? { ...working } : null
+          confirming = true
+          let accepted = false
+          try {
+            const parent = host.confirmationWindow?.()
+            if (!parent || parent.isDestroyed()) throw new Error('Confirmation window unavailable')
+            approval = new AbortController()
+            host.setPassthrough(false)
+            const answer = await dialog.showMessageBox(parent, {
+              signal: approval.signal,
+              type: 'warning',
+              title: 'Подтверждение действия агента',
+              message: 'Разрешить действие?',
+              detail: `Приложение: ${approvedTarget?.bundleId || 'неизвестно'}\n${safety.detail}`,
+              buttons: approvalId ? ['Отменить', 'Разрешить один раз', 'Разрешить всегда'] : ['Отменить', 'Разрешить один раз'],
+              defaultId: 0,
+              cancelId: 0,
+              noLink: true
+            })
+            rememberApproval = Boolean(approvalId && answer.response === 2)
+            accepted = answer.response === 1 || rememberApproval
+          } catch {
+            // A missing dialog must never silently grant permission.
+          } finally {
+            confirming = false
+            approval = null
+            if (token === run && !aborted.reason) host.setPassthrough(true)
+          }
+          if (token !== run || aborted.reason) break
+          if (!accepted) safetyMessage = 'Действие отменено. Агент остановлен.'
+          else if (!approvedTarget) safetyMessage = 'Неизвестно целевое приложение. Действие отменено.'
+          else {
+            // Dialog focus must not become the destination of approved input.
+            await helperActivate(approvedTarget)
+            const front = await helperFront()
+            forgetProbe()
+            const freshAim = await aim(step.action, request.area)
+            const freshFocus = step.action.kind === 'type' || step.action.kind === 'key'
+              ? await helperFocused(approvedTarget.pid) : null
+            if (front?.pid !== approvedTarget.pid ||
+                JSON.stringify(freshAim) !== JSON.stringify(aimed) ||
+                JSON.stringify(freshFocus) !== JSON.stringify(focus)) {
+              safetyMessage = 'Цель изменилась во время подтверждения. Действие отменено; нужен новый план.'
+            }
+          }
+        }
+        if (token !== run || aborted.reason) break
+        const latestGuard = !getSettings().agent.enabled ? 'Агентный режим выключен.' : guardStep(step)
+        if (safetyMessage || latestGuard) {
+          const message = safetyMessage ?? latestGuard!
+          publish({ phase: 'error', step: index + 1, total, label: step.label, message })
+          return { finished: false, message, performed }
+        }
+
         // A resolution that found nothing on the screen is a guess, and the card
         // says so: "Клик" and "Клик · на глаз" are different promises, and the
         // second one is the case where a missing action is nobody's mystery.
         const label = aimed && aimed.target.source === 'model' ? `${step.label} · на глаз` : step.label
         publish({ phase: 'acting', step: index + 1, total, label, plan: labels })
+        if (rememberApproval && approvalId) {
+          const agent = getSettings().agent
+          patchSettings({ agent: { ...agent, rememberedApprovals: [...agent.rememberedApprovals, approvalId] } })
+        }
         const ok = await perform(step.action, request.area, aimed?.point ?? null)
         performed.push({ label: step.label, ok })
         // Whatever happened, the screen is not the same place: a menu opened, a
@@ -585,11 +665,12 @@ export function createAgentController(host: AgentHost) {
   /** Stops the run in flight. Safe to call when nothing is running. */
   function stop(): void {
     run += 1
+    approval?.abort()
     watcher?.stop()
     watcher = null
     if (running) publish({ phase: 'aborted', label: '', message: 'Остановлено.' })
     host.setPassthrough(false)
-    running = false
+    // execute() owns the lock until its pending confirmation/helper has settled.
   }
 
   /**

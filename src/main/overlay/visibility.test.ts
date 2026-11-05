@@ -2,6 +2,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { BrowserWindow } from 'electron'
 import { DEFAULT_SETTINGS } from '@shared/defaults'
 import type { AppSettings, SendRequest } from '@shared/types'
+import { beginAgentTurn, endAgentTurn } from '../agent/cursor'
+import { buildTurnRequest } from './request'
+import { delay } from '../util'
 import type { OverlayHost } from './host'
 
 const state = vi.hoisted(() => ({
@@ -29,9 +32,9 @@ vi.mock('../context/collect', () => ({
 vi.mock('../llm', () => ({ resolveModel: () => 'gpt-4o', getProvider: vi.fn() }))
 vi.mock('../util', () => ({ delay: vi.fn() }))
 vi.mock('./request', () => ({
-  buildTurnRequest: async () => ({
+  buildTurnRequest: vi.fn(async () => ({
     messages: [], maxTokens: 1024, area: null, canDraw: false, canAct: false, holdFirstRound: !state.stream
-  })
+  }))
 }))
 vi.mock('../turnStream', () => ({ consumeTurnStream: async (options: { onText: (text: string) => void }) => {
   if (state.fail) throw new Error('Request failed')
@@ -78,6 +81,29 @@ async function harness() {
 }
 
 describe('voice result visibility', () => {
+  it.each([false, true])('keeps the transcript visible before sending (superseded: %s)', async (superseded) => {
+    const h = await harness()
+    let finishPreview!: () => void
+    vi.mocked(delay).mockReturnValueOnce(new Promise<void>((resolve) => {
+      finishPreview = resolve
+    }))
+    const sending = h.controller.send(h.request)
+
+    expect(delay).toHaveBeenLastCalledWith(2_000)
+    expect(h.visible()).toBe(true)
+    expect(h.send).not.toHaveBeenCalledWith('overlay:stream', expect.anything())
+    if (superseded) h.controller.setVoice(true)
+    finishPreview()
+    await sending
+
+    if (superseded) {
+      expect(h.host.hide).not.toHaveBeenCalled()
+      expect(h.send).not.toHaveBeenCalledWith('overlay:stream', expect.anything())
+    } else {
+      expect(h.send).toHaveBeenCalledWith('overlay:stream', expect.objectContaining({ type: 'done' }))
+    }
+  })
+
   it('reveals an actual text answer even if the window became hidden', async () => {
     const h = await harness()
     h.host.hide()
@@ -108,11 +134,15 @@ describe('voice result visibility', () => {
     expect(h.send).toHaveBeenCalledWith('overlay:stream', expect.objectContaining({ type: 'error' }))
   })
 
-  it.each(['', '  \n '])('hides the panel when the result has no text (%j)', async (text) => {
+  it.each(['', '  \n '])('shows an explanation when the result has no text (%j)', async (text) => {
     const h = await harness()
     state.text = text
     await h.controller.send(h.request)
-    expect(h.visible()).toBe(false)
+    expect(h.visible()).toBe(true)
+    expect(h.send).toHaveBeenCalledWith('overlay:stream', expect.objectContaining({
+      type: 'done',
+      text: expect.stringContaining('Не удалось выполнить запрос')
+    }))
   })
 
   it('keeps action narration suppressed and hides the empty result panel', async () => {
@@ -138,5 +168,21 @@ describe('voice result visibility', () => {
     await h.controller.send({ ...h.request, voice: false })
     expect(h.visible()).toBe(true)
     expect(h.host.hide).not.toHaveBeenCalled()
+  })
+})
+
+
+describe('feedback before request preparation', () => {
+  it('claims the ring before a slow context read and releases it on preparation failure', async () => {
+    const h = await harness()
+    vi.mocked(beginAgentTurn).mockClear().mockReturnValueOnce(42)
+    vi.mocked(endAgentTurn).mockClear()
+    vi.mocked(buildTurnRequest).mockImplementationOnce(async () => {
+      expect(beginAgentTurn).toHaveBeenCalledWith('Задача принята · готовлю действия…')
+      throw new Error('Context unavailable')
+    })
+    await h.controller.send({ ...h.request, voice: false, prompt: 'Открой новую вкладку' })
+    expect(endAgentTurn).toHaveBeenCalledWith(42)
+    expect(h.send).toHaveBeenCalledWith('overlay:stream', expect.objectContaining({ type: 'error', message: 'Context unavailable' }))
   })
 })

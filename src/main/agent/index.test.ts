@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type { AgentEvent, AgentPlanStep, AxProbe, ScreenRect } from '@shared/types'
+import type { AgentEvent, AgentPlanStep, AppSettings, AxProbe, ScreenRect } from '@shared/types'
 
 const state = vi.hoisted(() => ({
   settings: {
@@ -12,11 +12,13 @@ const state = vi.hoisted(() => ({
       allowTyping: true,
       allowShortcuts: true,
       abortOnMouseMove: true,
-      verifyResult: false
+      verifyResult: false,
+      rememberedApprovals: []
     }
   },
   binary: '/bin/helper' as string | null,
   trusted: true,
+  confirm: vi.fn(async () => ({ response: 1 })),
   helper: {
     activate: true,
     front: null as null | { bundleId: string; pid: number },
@@ -37,6 +39,7 @@ const state = vi.hoisted(() => ({
 }))
 
 vi.mock('electron', () => ({
+  dialog: { showMessageBox: state.confirm },
   screen: { getCursorScreenPoint: () => state.cursorPoint },
   systemPreferences: { isTrustedAccessibilityClient: () => state.trusted }
 }))
@@ -93,7 +96,10 @@ vi.mock('../native/helper', () => ({
   }
 }))
 
-vi.mock('../settings/store', () => ({ getSettings: () => state.settings }))
+vi.mock('../settings/store', () => ({
+  getSettings: () => state.settings,
+  patchSettings: (patch: Partial<AppSettings>) => Object.assign(state.settings, patch)
+}))
 
 vi.mock('../util', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../util')>()
@@ -124,6 +130,7 @@ function step(action: AgentPlanStep['action'], label = 'шаг'): AgentPlanStep 
 
 function makeHost() {
   const host = {
+    confirmationWindow: () => ({ isDestroyed: () => false }) as never,
     events: [] as AgentEvent[],
     passthrough: [] as boolean[],
     targetValue: { bundleId: 'com.apple.Safari', pid: 42 } as { bundleId: string; pid: number } | null,
@@ -149,6 +156,7 @@ function ran(name: string): number {
 }
 
 beforeEach(() => {
+  state.confirm.mockReset().mockResolvedValue({ response: 1 })
   state.settings = {
     agent: {
       enabled: true,
@@ -158,7 +166,8 @@ beforeEach(() => {
       allowTyping: true,
       allowShortcuts: true,
       abortOnMouseMove: true,
-      verifyResult: false
+      verifyResult: false,
+      rememberedApprovals: []
     }
   }
   state.binary = '/bin/helper'
@@ -676,7 +685,7 @@ describe('execute: bringing the target app to the front', () => {
       step({ kind: 'type', text: 'Title' }),
       step({ kind: 'move', at: { x: 0.5, y: 0.5 } })
     ], area } as never)
-    expect(state.calls.find((call) => call.name === 'focused')?.args[0]).toBe(777)
+    expect(state.calls.filter((call) => call.name === 'focused').at(-1)?.args[0]).toBe(777)
     expect(state.calls.filter((call) => call.name === 'probe').at(-1)?.args[0]).toBe(777)
   })
 
@@ -742,5 +751,104 @@ describe('pointer and describe', () => {
     const agent = createAgentController(makeHost())
 
     expect(agent.last()).toEqual({ phase: 'idle', step: 0, total: 0, label: '', plan: [] })
+  })
+})
+
+describe('execute: one-action approval', () => {
+  const click = () => step({ kind: 'click', at: { x: 0.5, y: 0.5 }, button: 'left', label: 'Оплатить' })
+
+  it('runs navigation and typing without a confirmation dialog', async () => {
+    await createAgentController(makeHost()).execute({ requestId: 'ordinary', prompt: 'test', finished: false, area,
+      steps: [step({ kind: 'click', at: { x: 0.5, y: 0.5 }, button: 'left' }),
+        step({ kind: 'type', text: 'поисковый запрос' }), step({ kind: 'key', combo: 'enter' })] })
+    expect(ran('click')).toBe(1)
+    expect(ran('type')).toBe(1)
+    expect(ran('key')).toBe(1)
+    expect(state.confirm).not.toHaveBeenCalled()
+  })
+
+  it('cancels the entire plan without delivering input', async () => {
+    state.confirm.mockResolvedValue({ response: 0 })
+    const result = await createAgentController(makeHost()).execute({ requestId: 'safety-test', prompt: 'test', finished: false, steps: [click(), click()], area })
+    expect(result.finished).toBe(false)
+    expect(result.recoverable).not.toBe(true)
+    expect(ran('click')).toBe(0)
+    expect(state.confirm).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not reuse approval for the next step', async () => {
+    state.confirm.mockResolvedValueOnce({ response: 1 }).mockResolvedValueOnce({ response: 0 })
+    await createAgentController(makeHost()).execute({ requestId: 'safety-test', prompt: 'test', finished: false, steps: [click(), click()], area })
+    expect(ran('click')).toBe(1)
+    expect(state.confirm).toHaveBeenCalledTimes(2)
+  })
+
+  it('remembers an explicit permanent approval across runs, only for the same action', async () => {
+    const request = { requestId: 'remembered', prompt: 'test', finished: false, area, steps: [click()] }
+    state.confirm.mockResolvedValueOnce({ response: 2 }).mockResolvedValue({ response: 0 })
+    await createAgentController(makeHost()).execute(request)
+    expect(state.confirm).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      buttons: ['Отменить', 'Разрешить один раз', 'Разрешить всегда']
+    }))
+    await createAgentController(makeHost()).execute(request)
+    expect(state.confirm).toHaveBeenCalledOnce()
+    expect(ran('click')).toBe(2)
+
+    await createAgentController(makeHost()).execute({ ...request,
+      steps: [step({ kind: 'click', at: { x: 0.5, y: 0.5 }, button: 'left', label: 'Удалить' })] })
+    expect(state.confirm).toHaveBeenCalledTimes(2)
+    expect(ran('click')).toBe(2)
+
+    state.settings.agent.rememberedApprovals = []
+    await createAgentController(makeHost()).execute(request)
+    expect(state.confirm).toHaveBeenCalledTimes(3)
+    expect(ran('click')).toBe(2)
+  })
+
+  it('fails closed when the dialog fails', async () => {
+    state.confirm.mockRejectedValue(new Error('dialog unavailable'))
+    await createAgentController(makeHost()).execute({ requestId: 'safety-test', prompt: 'test', finished: false, steps: [click()], area })
+    expect(ran('click')).toBe(0)
+  })
+
+  it('does not execute a late approval after stop or allow a concurrent run', async () => {
+    const agent = createAgentController(makeHost())
+    state.confirm.mockImplementationOnce(async () => {
+      agent.stop()
+      const other = await agent.execute({ requestId: 'safety-test', prompt: 'test', finished: false, steps: [click()], area })
+      expect(other.message).toContain('уже выполняет')
+      return { response: 1 }
+    })
+    await agent.execute({ requestId: 'safety-test', prompt: 'test', finished: false, steps: [click()], area })
+    expect(ran('click')).toBe(0)
+    expect(agent.isRunning()).toBe(false)
+  })
+
+  it('rejects a changed target after approval', async () => {
+    state.confirm.mockImplementationOnce(async () => {
+      state.helper.probe = probe([{ role: 'AXButton', title: 'Оплатить',
+        frame: { x: 450, y: 450, width: 100, height: 100 }, pressable: true }])
+      return { response: 2 }
+    })
+    const result = await createAgentController(makeHost()).execute({ requestId: 'safety-test', prompt: 'test', finished: false, steps: [click()], area })
+    expect(ran('click')).toBe(0)
+    expect(state.settings.agent.rememberedApprovals).toEqual([])
+    expect(result.message).toContain('Цель изменилась')
+  })
+
+  it('honours disabling the agent while approval is pending', async () => {
+    state.confirm.mockImplementationOnce(async () => {
+      state.settings.agent.enabled = false
+      return { response: 1 }
+    })
+    await createAgentController(makeHost()).execute({ requestId: 'safety-test', prompt: 'test', finished: false, steps: [click()], area })
+    expect(ran('click')).toBe(0)
+  })
+
+  it('blocks a secure field without offering approval', async () => {
+    state.helper.focused = { role: 'AXTextField', subrole: 'AXSecureTextField' }
+    await createAgentController(makeHost()).execute({ requestId: 'safety-test', prompt: 'test', finished: false, steps: [step({ kind: 'type', text: 'secret' })], area })
+    expect(ran('type')).toBe(0)
+    expect(state.confirm).not.toHaveBeenCalled()
   })
 })

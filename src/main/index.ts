@@ -43,7 +43,7 @@ const voice = createVoiceController({
   emit: (channel, payload) => overlay.emit(channel, payload),
   // The indicator is the card itself now (see `App.tsx`): the field is replaced
   // by the bars while a turn runs, so nothing is drawn at the cursor any more.
-  setVoice: (active) => overlayHost.setVoice(active),
+  setVoice: (active) => overlay.setVoice(active),
   target: () => overlay.target()
 })
 

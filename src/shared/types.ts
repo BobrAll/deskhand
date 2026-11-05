@@ -38,6 +38,10 @@ export interface VoiceSettings {
   action: VoiceAction
   /** `command` only: send the recognised wording at once instead of filling the field. */
   autoSend: boolean
+  /** Opt-in spoken replies to voice commands. */
+  dialogue: boolean
+  /** Short local acknowledgement while an agent command is pending. */
+  agentFeedback: boolean
   /** A shorter press is treated as an accidental tap and thrown away. */
   minDurationMs: number
   /** Hard cap so a stuck key cannot record forever. */
@@ -82,6 +86,8 @@ export interface GestureSettings {
  * still works before anything happens at all.
  */
 export interface AgentSettings {
+  /** Fingerprints of actions explicitly approved in the native dialog. */
+  rememberedApprovals: string[]
   /** Master switch. Off unless the user turned it on in the settings. */
   enabled: boolean
   /** Pause between the plan arriving and the first action, so Escape can win. */

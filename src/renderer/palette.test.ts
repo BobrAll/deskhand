@@ -152,17 +152,24 @@ describe('palette: per-window colours', () => {
     expect(light['--panel-drawing']).toBe('rgba(249, 249, 251, 0.42)')
   })
 
-  it('keeps the cursor chrome identical in both appearances', () => {
-    // The ring is glass over someone else's content rather than a surface to read
-    // on, so it is deliberately not theme-dependent (see the comments in the sheet).
-    for (const window of ['cursor']) {
-      const dark = resolveWindow(window, 'dark')
-      const light = resolveWindow(window, 'light')
-      const own = Object.keys(dark).filter((name) => /^--cursor-/.test(name))
-      expect(own.length, window).toBeGreaterThan(3)
-      for (const name of own) {
-        expect(light[name], `${window} ${name}`).toBe(dark[name])
-      }
+  it('keeps the cursor ring colours fixed and matches the caption to the overlay', () => {
+    const dark = resolveWindow('cursor', 'dark')
+    const light = resolveWindow('cursor', 'light')
+    const captionTokens = {
+      '--cursor-panel': '--panel',
+      '--cursor-panel-edge': '--panel-edge'
+    }
+    for (const [cursorToken, overlayToken] of Object.entries(captionTokens)) {
+      expect(dark[cursorToken], cursorToken).toBe(resolveWindow('overlay', 'dark')[overlayToken])
+      expect(light[cursorToken], cursorToken).toBe(resolveWindow('overlay', 'light')[overlayToken])
+    }
+
+    const fixedTokens = Object.keys(dark).filter(
+      (name) => name.startsWith('--cursor-') && !Object.hasOwn(captionTokens, name)
+    )
+    expect(fixedTokens.length).toBeGreaterThan(3)
+    for (const name of fixedTokens) {
+      expect(light[name], name).toBe(dark[name])
     }
   })
 

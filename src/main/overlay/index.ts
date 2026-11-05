@@ -7,6 +7,7 @@
 
 import { randomUUID } from 'node:crypto'
 import { app, BrowserWindow } from 'electron'
+import { looksLikeAction } from '@shared/intent'
 import { CH } from '@shared/ipc'
 import { modelSupportsVision, providerInfo, resolveBaseUrl } from '@shared/defaults'
 import type {
@@ -91,6 +92,9 @@ interface Session {
  */
 const INITIAL_HEIGHT = 31
 
+/** Time to read an automatically sent transcript in the card. */
+const VOICE_PREVIEW_MS = 2_000
+
 /** How often the open overlay re-captures the screen behind it. */
 const LIVE_REFRESH_MS = 2000
 
@@ -142,6 +146,12 @@ export function createOverlayController(host: OverlayHost) {
    * session (or into no session at all), so `deliver` waits for this to settle.
    */
   let opening: Promise<void> | null = null
+  let voicePreview: AbortController | null = null
+
+  function setVoice(active: boolean): void {
+    if (active) voicePreview?.abort()
+    host.setVoice(active)
+  }
 
   /**
    * The mouse-and-keyboard runner.
@@ -152,6 +162,7 @@ export function createOverlayController(host: OverlayHost) {
    * same object that started it.
    */
   const agent = createAgentController({
+    confirmationWindow: () => host.window(),
     setPassthrough: (active) => host.setPassthrough(active),
     emit: (event: AgentEvent) => publishAgent(event),
     target: () => {
@@ -833,46 +844,55 @@ export function createOverlayController(host: OverlayHost) {
     session.abort = abort
     session.requestId = request.requestId
     session.answer = ''
-    // The microphone owns the bars; after recognition, only an actual answer
-    // earns a panel. Keep the renderer alive for streaming and agent events.
-    if (request.voice) host.hide()
-
-    const visionSupported = modelSupportsVision(settings.provider, model)
-
-    let drawingTargets: AxElementInfo[] = []
-    const turn = await buildTurnRequest({
-      request,
-      session,
-      settings,
-      visionSupported,
-      availability: agent.availability(),
-      ensureFreshScreenshot: () => ensureFreshScreenshot(session as Session),
-      describeScreen: (pid, bounds, area) => describeScreen(pid, bounds, area, (targets) => {
-        drawingTargets = targets
-      }),
-      aborted: () => abort.signal.aborted || !session
-    })
-    if (turn.abandoned) return
-
-    const { messages, maxTokens, area, canDraw, canAct, holdFirstRound } = turn
-
-    // The drawings belong to the answer currently on screen: a new question
-    // replaces that answer, so old arrows must not stay behind as if they
-    // explained the new one. A rewrite ("короче") keeps them — it is the same
-    // answer in other words.
-    if (!refine) {
-      session.annotations = []
-      hideAnnotations()
-      emitAnnotations()
-    }
-
-    // The ring at the pointer belongs to the whole turn, not to one plan: a turn
-    // can look at the screen again and keep going, and the mark must not blink
-    // between two plans. Claimed before the first plan runs, released in `finally`
-    // when the turn is over — that release is the only place it goes out.
-    const ringTurn = beginAgentTurn()
-
+    // Claim before screenshot/AX/model work, including cancellation during preview.
+    const ringTurn = beginAgentTurn(!refine && agent.availability().ready && looksLikeAction(request.prompt)
+      ? 'Задача принята · готовлю действия…' : undefined)
     try {
+      if (request.voice) {
+        // Keep the transcript visible before the card gets out of the way of the
+        // answer or the agent. Escape and a new recording can cancel this wait.
+        if (host.window()?.isVisible()) {
+          const previewSession = session
+          voicePreview = abort
+          await delay(VOICE_PREVIEW_MS)
+          if (voicePreview === abort) voicePreview = null
+          if (abort.signal.aborted || session !== previewSession) {
+            if (previewSession.abort === abort) previewSession.abort = null
+            return
+          }
+        }
+        host.hide()
+      }
+
+      const visionSupported = modelSupportsVision(settings.provider, model)
+
+      let drawingTargets: AxElementInfo[] = []
+      const turn = await buildTurnRequest({
+        request,
+        session,
+        settings,
+        visionSupported,
+        availability: agent.availability(),
+        ensureFreshScreenshot: () => ensureFreshScreenshot(session as Session),
+        describeScreen: (pid, bounds, area) => describeScreen(pid, bounds, area, (targets) => {
+          drawingTargets = targets
+        }),
+        aborted: () => abort.signal.aborted || !session
+      })
+      if (turn.abandoned) return
+
+      const { messages, maxTokens, area, canDraw, canAct, holdFirstRound } = turn
+
+      // The drawings belong to the answer currently on screen: a new question
+      // replaces that answer, so old arrows must not stay behind as if they
+      // explained the new one. A rewrite ("короче") keeps them — it is the same
+      // answer in other words.
+      if (!refine) {
+        session.annotations = []
+        hideAnnotations()
+        emitAnnotations()
+      }
+
       /**
        * Prose withheld from the card while this round might turn into an action.
        *
@@ -1029,7 +1049,7 @@ export function createOverlayController(host: OverlayHost) {
       }
       emit(CH.overlay.stream, done)
       if (request.voice) {
-        if (session.answer.trim()) host.showInactive(INITIAL_HEIGHT)
+        if (session.answer.trim() || getSettings().voice.dialogue) host.showInactive(INITIAL_HEIGHT)
         else host.hide()
       }
     } catch (error) {
@@ -1127,7 +1147,7 @@ export function createOverlayController(host: OverlayHost) {
     setFlags,
     clearPointer,
     setTyping,
-    setVoice: (active: boolean) => host.setVoice(active),
+    setVoice,
     showVoiceIndicator: () => host.showInactive(INITIAL_HEIGHT),
     resize,
     send,

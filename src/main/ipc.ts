@@ -129,6 +129,8 @@ export function registerIpc(deps: IpcDeps): void {
   ipcMain.handle(CH.settings.save, async (_event, incoming: unknown) => {
     const previous = getSettings()
     const patch = sanitizeSettings(incoming)
+    // Only the native dialog can add approvals. Settings drafts can be stale.
+    if (patch.agent) patch.agent = { ...patch.agent, rememberedApprovals: previous.agent.rememberedApprovals }
     const next = patchSettings(patch)
 
     if (next.hotkey !== previous.hotkey) {
@@ -287,6 +289,9 @@ export function registerIpc(deps: IpcDeps): void {
   ipcMain.handle(CH.agent.setEnabled, (_event, enabled: boolean) =>
     deps.overlay.setAgentEnabled(Boolean(enabled))
   )
+  ipcMain.handle(CH.agent.clearApprovals, () => {
+    patchSettings({ agent: { ...getSettings().agent, rememberedApprovals: [] } })
+  })
   ipcMain.handle(CH.agent.stop, () => {
     deps.overlay.stopAgent()
   })
