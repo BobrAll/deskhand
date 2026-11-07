@@ -52,7 +52,8 @@ describe('normalizeLabel', () => {
 describe('semanticFor', () => {
   it('turns a labelled click into a press on that name', () => {
     expect(semanticFor(click('Экспорт'))).toEqual({
-      query: { text: 'Экспорт' },
+      name: 'Экспорт',
+      role: undefined,
       action: { kind: 'press' },
       label: 'Нажатие: «Экспорт»'
     })
@@ -82,7 +83,7 @@ describe('semanticFor', () => {
     const previous = click('Поиск')
     const request = semanticFor(step({ kind: 'type', text: 'погода' }), { previous })
     expect(request).toEqual({
-      query: { text: 'Поиск' },
+      name: 'Поиск',
       action: { kind: 'typeText', text: 'погода' },
       label: 'Ввод в «Поиск»'
     })

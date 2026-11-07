@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
-import { CU_CODE, CuRpcError, CuUnavailable, cuAct, cuHealth, cuResolve, resetCuHealthCache } from './computerUse'
+import { CU_CODE, CuRpcError, CuUnavailable, cuAct, cuActByLabel, cuHealth, cuResolve, resetCuHealthCache } from './computerUse'
 
 /**
  * The client is exercised against a real Unix socket and a real server, because
@@ -199,5 +199,165 @@ describe('transport', () => {
       .catch((value) => value)
     expect(error).toBeInstanceOf(CuUnavailable)
     expect(received).toHaveLength(0)
+  })
+})
+
+describe('cuActByLabel', () => {
+  /**
+   * The protocol's `text` field is a case-insensitive substring match over title,
+   * aria-label and value joined together, so an ordinary label like «Назад»
+   * matches the toolbar button *and* every mention of it in the page — eight
+   * candidates in a real window, which the resolver refuses as ambiguous.
+   *
+   * These tests pin the order in which the shapes are tried, because the order is
+   * the fix: exact fields first, the substring match last.
+   */
+  function answering(answer: (query: Record<string, unknown>) => string): void {
+    reply = (request) => {
+      const query = request.params.query as Record<string, unknown>
+      return answer(query)
+    }
+  }
+
+  function refusal(): string {
+    return JSON.stringify({
+      jsonrpc: '2.0', id: 1,
+      error: { code: CU_CODE.resolveFailed, message: 'ambiguous', data: { candidates: ['a', 'b'] } }
+    })
+  }
+
+  function performed(target: string): string {
+    return JSON.stringify({
+      jsonrpc: '2.0', id: 1,
+      result: {
+        outcome: 'verified', verified: true, actionId: 'a1', target,
+        strategy: 'ariaLabel', confidence: 0.9, attempts: 1, durationMs: 40,
+        dispatcher: 'AXSemantic', notifications: [], cursorMoved: false,
+        frontmostChanged: false, notes: []
+      }
+    })
+  }
+
+  it('asks by exact title before the substring match', async () => {
+    await startServer()
+    const asked: string[] = []
+    answering((query) => {
+      asked.push(Object.keys(query).join('+'))
+      return performed('AXButton:Назад')
+    })
+
+    await cuActByLabel(42, 'Назад', { kind: 'press' })
+
+    expect(asked).toEqual(['title'])
+  })
+
+  it('moves on to the next exact field when the first matches nothing', async () => {
+    await startServer()
+    const asked: string[] = []
+    answering((query) => {
+      asked.push(Object.keys(query).join('+'))
+      return query.title ? refusal() : performed('AXButton:Назад')
+    })
+
+    const result = await cuActByLabel(42, 'Назад', { kind: 'press' })
+
+    expect(asked).toEqual(['title', 'ariaLabel'])
+    expect(result.outcome).toBe('verified')
+  })
+
+  it('retries a refused *result*, not only a refused call', async () => {
+    // The service answers "nothing matched" as a successful call carrying
+    // `outcome: refused`, not as a JSON-RPC error. Treating only errors as
+    // retryable made the cascade stop at the first shape and every label with an
+    // empty `title` fall back to a click.
+    await startServer()
+    const asked: string[] = []
+    answering((query) => {
+      asked.push(Object.keys(query).join('+'))
+      if (query.title) {
+        return JSON.stringify({
+          jsonrpc: '2.0', id: 1,
+          result: {
+            outcome: 'refused', verified: false, actionId: 'a0', target: 'none',
+            strategy: 'none', confidence: 0, attempts: 0, durationMs: 5,
+            dispatcher: 'AXSemantic', notifications: [], cursorMoved: false,
+            frontmostChanged: false, notes: ['no element matched title=Назад']
+          }
+        })
+      }
+      return performed('AXButton:Назад')
+    })
+
+    const result = await cuActByLabel(42, 'Назад', { kind: 'press' })
+
+    expect(asked).toEqual(['title', 'ariaLabel'])
+    expect(result.outcome).toBe('verified')
+  })
+
+  it('narrows the substring match by role when the probe saw one', async () => {
+    await startServer()
+    const asked: Record<string, unknown>[] = []
+    answering((query) => {
+      asked.push(query)
+      return query.text ? performed('AXButton:Назад') : refusal()
+    })
+
+    await cuActByLabel(42, 'Назад', { kind: 'press' }, { role: 'AXButton' })
+
+    const loose = asked.find((query) => 'text' in query)
+    expect(loose).toEqual({ text: 'Назад', role: 'AXButton' })
+  })
+
+  it('stops at the first shape that reached an element, even if it failed there', async () => {
+    // `failed` means the control was found and does not take this action. Trying
+    // another shape would aim at a different element with the same name, which is
+    // how "нажми «Вперёд»" turns into pressing something else entirely.
+    await startServer()
+    const asked: string[] = []
+    answering((query) => {
+      asked.push(Object.keys(query).join('+'))
+      return JSON.stringify({
+        jsonrpc: '2.0', id: 1,
+        result: {
+          outcome: 'failed', verified: false, actionId: 'a1', target: 'AXButton:Назад',
+          strategy: 'ariaLabel', confidence: 0.9, attempts: 1, durationMs: 30,
+          dispatcher: 'AXSemantic', notifications: [], cursorMoved: false,
+          frontmostChanged: false, notes: ['action call: unsupported']
+        }
+      })
+    })
+
+    const result = await cuActByLabel(42, 'Назад', { kind: 'press' })
+
+    expect(asked).toEqual(['title'])
+    expect(result.outcome).toBe('failed')
+  })
+
+  it('does not retry a transport failure, which may already have been delivered', async () => {
+    // The same rule as a timeout: a connection that dies after the request was
+    // written leaves the action in an unknown state, and re-asking would be a
+    // second attempt at something that may have already happened.
+    let asked = 0
+    await startServer((socket) => {
+      socket.on('data', () => {
+        asked += 1
+        socket.end()
+      })
+    })
+
+    const error = await cuActByLabel(42, 'Назад', { kind: 'press' }).catch((value) => value)
+
+    expect(error).toBeInstanceOf(CuUnavailable)
+    expect(asked).toBe(1)
+  })
+
+  it('reports the last refusal when every shape declines', async () => {
+    await startServer()
+    answering(() => refusal())
+
+    const error = await cuActByLabel(42, 'Назад', { kind: 'press' }).catch((value) => value)
+
+    expect(error).toBeInstanceOf(CuRpcError)
+    expect((error as CuRpcError).code).toBe(CU_CODE.resolveFailed)
   })
 })

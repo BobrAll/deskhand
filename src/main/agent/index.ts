@@ -61,7 +61,7 @@ import { hideAgentCursor } from './cursor'
 import { toScreenPoint as toScreen, type ScreenPoint } from './geometry'
 import { describeShortcut, parseShortcut } from './keys'
 import { isTextField, resolveMarkedTarget, resolveTarget, type TargetResolution } from './targeting'
-import { CuRpcError, cuAct, cuHealth } from './computerUse'
+import { CuRpcError, cuActByLabel, cuHealth } from './computerUse'
 import { readError, readResult, semanticFor } from './semantic'
 import { timed, trace, traceEnd } from './trace'
 import { sameObservedWindow } from './observation'
@@ -350,7 +350,9 @@ export function createAgentController(host: AgentHost) {
       kind: step.action.kind, action: request.action.kind, step: 0
     })
     try {
-      const result = await cuAct(pid, request.query, request.action, { signal })
+      const result = await cuActByLabel(pid, request.name, request.action, {
+        signal, role: request.role
+      })
       const verdict = readResult(result)
       trace('agent.semanticResult', {
         outcome: result.outcome,
@@ -369,7 +371,12 @@ export function createAgentController(host: AgentHost) {
       if (verdict.kind === 'done') {
         return { performed: true, ok: true, label: request.label }
       }
-      return { performed: true, ok: false, label: request.label }
+      // A refusal — not found, or ambiguous — performed nothing at all. Reporting
+      // it as performed would end the step here and lose the click entirely,
+      // which is the opposite of the point: the pixel the model gave is still the
+      // best evidence available, so the caller runs the visual path.
+      trace('agent.semanticFallback', { reason: verdict.reason })
+      return null
     } catch (error) {
       const verdict = readError(error)
       trace('agent.semanticError', {
@@ -385,7 +392,7 @@ export function createAgentController(host: AgentHost) {
       // Retrying it as a click would be a second click, so it is reported as a
       // failure the caller can verify on a fresh screen instead.
       if (verdict.uncertain) return { performed: true, ok: false, label: request.label }
-      return { performed: false, ok: false, label: request.label }
+      return null
     } finally {
       end()
     }

@@ -356,3 +356,63 @@ export async function cuAct(
     { timeoutMs: 20_000, signal: options.signal }
   )
 }
+
+/**
+ * Act on a control named by its label, trying the exact fields before the loose one.
+ *
+ * The protocol's `text` field is a case-insensitive *substring* match on title,
+ * aria-label and value joined together. For a label like «Назад» that matches the
+ * toolbar button and every piece of text mentioning it — on a real window, eight
+ * candidates — so the resolver refuses as ambiguous and the step falls back to a
+ * click. `title` and `ariaLabel` are equality matches at 0.90 and 0.95, and they
+ * pick the button out of the same window on the first try.
+ *
+ * The order is by identity strength, and the loose field is tried last so a
+ * control the strict fields cannot express — one whose name lives only in a
+ * joined haystack — still gets its chance.
+ */
+export async function cuActByLabel(
+  pid: number,
+  label: string,
+  action: CuActionKind,
+  options: RequestOptions & { window?: string; attempts?: number; role?: string } = {}
+): Promise<CuActionResult> {
+  const queries: CuQuery[] = [
+    { title: label },
+    { ariaLabel: label },
+    { value: label },
+    // The role is a filter rather than a score in the resolver, so it turns the
+    // substring match from "every mention" into "every mention inside a button".
+    ...(options.role ? [{ text: label, role: options.role }] : []),
+    { text: label }
+  ]
+
+  let refusal: unknown = null
+  for (const query of queries) {
+    try {
+      const result = await cuAct(pid, query, action, options)
+      // `refused` is the service saying it matched nothing — or that policy
+      // stopped it before dispatch — and performed nothing either way. That is
+      // the one answer worth re-asking with a different way of spelling the same
+      // name. Every other outcome means the call reached the element, so it is
+      // returned as it stands: `failed` there means the control does not take
+      // this action, and another shape would only aim at a different element.
+      if (result.outcome === 'refused') {
+        refusal = result
+        continue
+      }
+      return result
+    } catch (error) {
+      // An ambiguity or a miss is the same situation as `refused`: nothing was
+      // performed. A timeout, a transport failure or a refusal from the
+      // application itself would repeat an action that may already have happened.
+      const code = (error as { code?: unknown })?.code
+      if (code !== CU_CODE.resolveFailed) throw error
+      refusal = error
+    }
+  }
+  // Every shape declined. The caller reads this as "nothing happened" and falls
+  // back to the pixel, which is the whole point of asking in the first place.
+  if (refusal instanceof Error) throw refusal
+  return refusal as CuActionResult
+}

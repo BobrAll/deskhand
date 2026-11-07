@@ -28,11 +28,21 @@
  */
 
 import type { AgentPlanStep } from '@shared/types'
-import type { CuActionKind, CuActionResult, CuQuery } from './computerUse'
+import type { CuActionKind, CuActionResult } from './computerUse'
 
 export interface SemanticStep {
-  query: CuQuery
+  /**
+   * The name to resolve, not a finished query.
+   *
+   * Which protocol field expresses that name is the client's problem, not this
+   * module's: `title` and `ariaLabel` are exact matches, `text` is a substring
+   * match that goes ambiguous on ordinary labels like «Назад». Keeping the name
+   * here lets the client try them in order of strength.
+   */
+  name: string
   action: CuActionKind
+  /** The role the probe saw under the point, used to narrow the loose match. */
+  role?: string
   /** One line for the card, so the run reads the same whatever path it took. */
   label: string
 }
@@ -88,17 +98,21 @@ function isField(element: SemanticContext['element']): boolean {
  */
 export function semanticFor(step: AgentPlanStep, context: SemanticContext = {}): SemanticStep | null {
   const { action } = step
+  // The role the probe saw under the point is only a hint for narrowing a loose
+  // match. It is carried, never required: the model's point is the part that
+  // drifts, so a role read from the wrong element must not veto the right one.
+  const role = typeof context.element?.role === 'string' ? context.element.role : undefined
 
   if (action.kind === 'click') {
-    const text = normalizeLabel(action.label)
-    if (!text) return null
+    const name = normalizeLabel(action.label)
+    if (!name) return null
     // A double click is a distinct gesture — open a file, select a word — and a
     // semantic press has no equivalent. It stays on the visual path.
     if (action.button === 'double') return null
     if (isField(context.element)) {
-      return { query: { text }, action: { kind: 'focus' }, label: `Фокус: «${text}»` }
+      return { name, role, action: { kind: 'focus' }, label: `Фокус: «${name}»` }
     }
-    return { query: { text }, action: { kind: 'press' }, label: `Нажатие: «${text}»` }
+    return { name, role, action: { kind: 'press' }, label: `Нажатие: «${name}»` }
   }
 
   if (action.kind === 'type') {
@@ -108,7 +122,7 @@ export function semanticFor(step: AgentPlanStep, context: SemanticContext = {}):
     const field = normalizeLabel(previous.action.label)
     if (!field) return null
     return {
-      query: { text: field },
+      name: field,
       action: { kind: 'typeText', text: action.text },
       label: `Ввод в «${field}»`
     }

@@ -141,8 +141,8 @@ vi.mock('./computerUse', async (importOriginal) => {
   return {
     ...actual,
     cuHealth: async () => state.semantic.health,
-    cuAct: async (pid: number, query: unknown, action: unknown) => {
-      state.calls.push({ name: 'semantic-act', args: [pid, query, action] })
+    cuActByLabel: async (pid: number, name: string, action: unknown, options: { role?: string } = {}) => {
+      state.calls.push({ name: 'semantic-act', args: [pid, name, action, options.role ?? null] })
       const answer = state.semantic.act
       if (answer instanceof Error) throw answer
       return answer
@@ -1048,7 +1048,7 @@ describe('semantic backend', () => {
     })
 
     const semantic = state.calls.find((call) => call.name === 'semantic-act')
-    expect(semantic?.args).toEqual([42, { text: 'Save' }, { kind: 'press' }])
+    expect(semantic?.args).toEqual([42, 'Save', { kind: 'press' }, null])
     // The point of the backend: no click reached the pointer.
     expect(ran('click')).toBe(0)
     expect(result.performed).toEqual([{ label: 'Клик: «Save»', ok: true }])
@@ -1058,6 +1058,26 @@ describe('semantic backend', () => {
     enable()
     // A refusal carries structure; the runner treats it as "nothing happened".
     state.semantic.act = Object.assign(new Error('notFound'), { code: -32003 })
+    const result = await createAgentController(makeHost()).execute({
+      requestId: 'sem', prompt: 'Нажми Сохранить', finished: false, area,
+      steps: [step({ kind: 'click', at: { x: 0.5, y: 0.5 }, button: 'left', label: 'Save' }, 'Клик: «Save»')]
+    })
+
+    expect(ran('semantic-act')).toBe(1)
+    expect(ran('click')).toBe(1)
+    expect(result.performed[0]?.ok).toBe(true)
+  })
+
+  it('falls back to the pixel when the service answers refused, not only when it throws', async () => {
+    enable()
+    // `refused` arrives as a *successful* call carrying a failed outcome, not as
+    // a JSON-RPC error. Handling only throws left this case reporting the step as
+    // performed, so the click never happened and the user saw an error for an
+    // action that was perfectly performable — the bug this test exists for.
+    state.semantic.act = verified({
+      outcome: 'refused', verified: false, attempts: 0, confidence: 0,
+      target: 'none', notes: ['ambiguous: 8 elements matched']
+    })
     const result = await createAgentController(makeHost()).execute({
       requestId: 'sem', prompt: 'Нажми Сохранить', finished: false, area,
       steps: [step({ kind: 'click', at: { x: 0.5, y: 0.5 }, button: 'left', label: 'Save' }, 'Клик: «Save»')]
@@ -1135,7 +1155,7 @@ describe('semantic backend', () => {
     })
 
     const typing = state.calls.filter((call) => call.name === 'semantic-act')[1]
-    expect(typing?.args).toEqual([42, { text: 'Поиск' }, { kind: 'typeText', text: 'погода' }])
+    expect(typing?.args).toEqual([42, 'Поиск', { kind: 'typeText', text: 'погода' }, null])
     // The keyboard never went through the helper, so the focus guard — which
     // exists to catch a click that landed next to the field — does not apply.
     expect(ran('type')).toBe(0)
