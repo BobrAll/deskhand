@@ -181,8 +181,19 @@ static BOOL agentTargetMatches(void) {
   if (!agentCanPost()) return NO;
   if (!agentExpectedPid) return YES;
   NSDictionary *focused = focusedWindowInfo(agentExpectedPid);
-  NSNumber *actual = focused[(id)kCGWindowNumber];
-  if (agentExpectedWindow > 0 ? actual.longValue != agentExpectedWindow : focused != nil) return NO;
+  // Only compare the window number when one was actually named.
+  //
+  // This used to read `: focused != nil`, which rejected the action whenever the
+  // application *had* a focused window — the exact opposite of a match. The
+  // caller passes 0 when it could not determine the number, and that is the
+  // normal case for any app whose window the CGWindowList cannot single out
+  // (Chrome among them, where the on-screen list holds several windows with the
+  // same bounds). So every addressed click and keystroke into such an app was
+  // refused as `target-changed` before a single event was posted.
+  if (agentExpectedWindow > 0) {
+    NSNumber *actual = focused[(id)kCGWindowNumber];
+    if (!actual || actual.longValue != agentExpectedWindow) return NO;
+  }
   if (agentHasExpectedBounds) {
     NSDictionary *bounds = focused[(id)kCGWindowBounds];
     CGRect rect;

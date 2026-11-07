@@ -303,11 +303,48 @@ export function createOverlayController(host: OverlayHost) {
   const observedApps = new WeakMap<ScreenshotInfo, RawFrontApp>()
   const overlayShots = new WeakSet<ScreenshotInfo>()
 
-  async function windowStillMatches(observed: RawFrontApp, underOverlay: boolean): Promise<boolean> {
+  /**
+   * Is the window that was observed still the same window?
+   *
+   * The question is asked about the *observed* application, and it has to be
+   * asked that way round. Whether this app's own card happened to be frontmost
+   * when the shutter opened is irrelevant: the card is shown by the app that is
+   * taking the picture, it is never the window being acted on, and it takes
+   * focus somewhere between the capture and this check. Comparing the observed
+   * app against "whatever is frontmost now" therefore compared Chrome against
+   * the overlay and reported a window change on every single run — which is
+   * exactly the bug that made «открой телеграм» fail five times in a row.
+   *
+   * So: if the front is this app, read the background window of the observed
+   * process and compare that. If the front is the observed app, compare the
+   * front. Anything else is a genuine change and is rejected.
+   */
+  async function windowStillMatches(observed: RawFrontApp): Promise<boolean> {
     const front = await helperFront()
-    if (front?.pid !== process.pid || !underOverlay) return sameObservedWindow(observed, front)
-    const background = await helperWindow(observed.pid)
-    return sameObservedWindow(observed, background) && (await helperFront())?.pid === process.pid
+    const background = front?.pid === process.pid ? await helperWindow(observed.pid) : front
+    const same = sameObservedWindow(observed, background)
+    // Which field disagreed, without recording what was on screen: a window
+    // title is the name of the user's own document, so the trace keeps the
+    // verdict and the pids and leaves the text out.
+    const b = background?.bounds
+    const o = observed.bounds
+    trace('screen.compare', {
+      same,
+      frontPid: front?.pid ?? null,
+      observedPid: observed.pid,
+      backgroundPid: background?.pid ?? null,
+      observedHasWindowId: observed.windowId !== null,
+      backgroundHasWindowId: (background?.windowId ?? null) !== null,
+      titleMatches: (observed.windowTitle ?? null) === (background?.windowTitle ?? null),
+      boundsMatch: Boolean(o) && Boolean(b) &&
+        o!.x === b!.x && o!.y === b!.y && o!.width === b!.width && o!.height === b!.height,
+      selfPid: process.pid
+    })
+    if (!same) return false
+    // Nothing may steal focus while the tree is read: a window that came forward
+    // between the two reads is a screen that no longer matches the picture.
+    const after = await helperFront()
+    return after?.pid === process.pid || after?.pid === observed.pid
   }
 
   function captureFor(target: Session, fresh = false): Promise<ScreenshotInfo | null> {
@@ -352,10 +389,12 @@ export function createOverlayController(host: OverlayHost) {
           { maxSide: settings.screenshotMaxSide, quality: settings.screenshotQuality }
         ))
         if (shot && observed) {
-          if (await windowStillMatches(observed, underOverlay)) {
+          if (await windowStillMatches(observed)) {
             observedApps.set(shot, observed)
             if (underOverlay) overlayShots.add(shot)
           }
+          // The comparison above already recorded which field disagreed; this
+          // line records only that the shot was dropped, without the window text.
           else trace('screen.observationRejected', { reason: 'window-changed-during-capture' })
         }
         if (session === target) {
@@ -938,7 +977,6 @@ export function createOverlayController(host: OverlayHost) {
         : undefined
 
       let observedApp: RawFrontApp | undefined
-      let observedUnderOverlay = false
       let drawingTargets: AxElementInfo[] = []
       const turn = await buildTurnRequest({
         request,
@@ -951,11 +989,10 @@ export function createOverlayController(host: OverlayHost) {
         ensureFreshScreenshot: async () => {
           const shot = await ensureFreshScreenshot(turnSession, settings.agent.enabled)
           observedApp = shot ? observedApps.get(shot) : undefined
-          observedUnderOverlay = Boolean(shot && overlayShots.has(shot))
           return shot
         },
         describeScreen: async (pid, bounds, area) => {
-          if (observedApp && !(await windowStillMatches(observedApp, observedUnderOverlay))) {
+          if (observedApp && !(await windowStillMatches(observedApp))) {
             observedApp = undefined
             return null
           }
@@ -963,7 +1000,7 @@ export function createOverlayController(host: OverlayHost) {
             drawingTargets = targets
           })
           if (observedApp) {
-            if (!(await windowStillMatches(observedApp, observedUnderOverlay))) {
+            if (!(await windowStillMatches(observedApp))) {
               observedApp = undefined
               drawingTargets = []
               return null
@@ -1025,13 +1062,13 @@ export function createOverlayController(host: OverlayHost) {
 
       const describeObservedScreen = async (area: ScreenRect, onTargets?: (elements: AxElementInfo[]) => void) => {
         const front = observedApp
-        if (!front || !(await windowStillMatches(front, observedUnderOverlay))) {
+        if (!front || !(await windowStillMatches(front))) {
           observedApp = undefined
           return null
         }
         let targets: AxElementInfo[] = []
         const outline = await describeScreen(front.pid, front.bounds, area, (elements) => { targets = elements })
-        if (!(await windowStillMatches(front, observedUnderOverlay))) {
+        if (!(await windowStillMatches(front))) {
           observedApp = undefined
           return null
         }
@@ -1052,7 +1089,6 @@ export function createOverlayController(host: OverlayHost) {
           if (abort.signal.aborted || session !== current) return null
           const shot = await captureFor(current as Session, true)
           observedApp = shot ? observedApps.get(shot) : undefined
-          observedUnderOverlay = Boolean(shot && overlayShots.has(shot))
           return shot
         },
         describeScreen: describeObservedScreen
@@ -1104,8 +1140,7 @@ export function createOverlayController(host: OverlayHost) {
           capture: async () => {
             const shot = await captureFor(turnSession, true)
             observedApp = shot ? observedApps.get(shot) : undefined
-            observedUnderOverlay = Boolean(shot && overlayShots.has(shot))
-            return shot
+              return shot
           },
           describeScreen: describeObservedScreen,
           streamRound,
