@@ -19,6 +19,7 @@
     "build:helper": "node scripts/build-helper.mjs",
     "build:whisper": "node scripts/build-whisper.mjs",
     "build:transcribe": "node scripts/build-transcribe.mjs",
+    "build:cu": "node scripts/build-cu.mjs",
     "pack": "electron-vite build && electron-builder --mac --dir",
     "dist": "electron-vite build && electron-builder --mac",
     "test:gesture": "node scripts/test-gesture.mjs",
@@ -46,6 +47,10 @@
       {
         "from": "resources/whisper-cli",
         "to": "whisper-cli"
+      },
+      {
+        "from": "resources/cu-service",
+        "to": "cu-service"
       },
       {
         "from": "resources",

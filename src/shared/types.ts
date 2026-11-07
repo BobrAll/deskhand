@@ -112,6 +112,16 @@ export interface AgentSettings {
    * round is the price of the word «Готово» meaning something.
    */
   verifyResult: boolean
+  /**
+   * Prefer the semantic computer-use backend when the step names a control.
+   *
+   * On, the assistant asks the local service to activate the named control and
+   * waits for the application to confirm it; the click never goes through the
+   * pointer and the target window is never raised. Off — or with the service
+   * absent — every step falls back to the coordinate path, which is what the
+   * mode did before this existed.
+   */
+  semanticActions: boolean
 }
 
 /**

@@ -324,7 +324,12 @@ export const DEFAULT_AGENT: AgentSettings = {
   // assistant cannot back up. It costs one extra request per action turn, which
   // is the honest price — and it is a switch, so a user who counts tokens can
   // turn it off in the same place where they allowed the clicking.
-  verifyResult: true
+  verifyResult: true,
+  // On by default. The service is optional, so this cannot break a machine that
+  // does not have it: a step falls back to the coordinate path, which is what it
+  // did before the backend existed. Turning it off is for a user who wants the
+  // pointer to do the work and nothing else to run.
+  semanticActions: true
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -431,7 +436,8 @@ function sanitizeAgent(input: unknown): AgentSettings {
     allowTyping: flag(raw.allowTyping, DEFAULT_AGENT.allowTyping),
     allowShortcuts: flag(raw.allowShortcuts, DEFAULT_AGENT.allowShortcuts),
     abortOnMouseMove: flag(raw.abortOnMouseMove, DEFAULT_AGENT.abortOnMouseMove),
-    verifyResult: flag(raw.verifyResult, DEFAULT_AGENT.verifyResult)
+    verifyResult: flag(raw.verifyResult, DEFAULT_AGENT.verifyResult),
+    semanticActions: flag(raw.semanticActions, DEFAULT_AGENT.semanticActions)
   }
 }
 

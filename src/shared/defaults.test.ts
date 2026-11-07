@@ -437,6 +437,17 @@ describe('normalizeSettings: agent', () => {
     expect(result.agent.abortOnMouseMove).toBe(DEFAULT_AGENT.abortOnMouseMove)
   })
 
+  it('enables the semantic backend for a config written before it existed', () => {
+    // An existing settings file has no `semanticActions` key. Reading it must
+    // not leave the field undefined: the runner checks it before every step, and
+    // an absent value would silently disable the backend for every user who
+    // upgraded rather than installed fresh.
+    expect(normalizeSettings({ agent: { enabled: true } }).agent.semanticActions).toBe(true)
+    expect(normalizeSettings({ agent: { semanticActions: false } }).agent.semanticActions).toBe(false)
+    expect(normalizeSettings({ agent: { semanticActions: 'yes' } }).agent.semanticActions)
+      .toBe(DEFAULT_AGENT.semanticActions)
+  })
+
   it('fills a missing block from the defaults', () => {
     expect(normalizeSettings({ agent: undefined }).agent).toEqual(DEFAULT_AGENT)
   })

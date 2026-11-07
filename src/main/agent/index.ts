@@ -33,6 +33,7 @@ import type {
   AgentEvent,
   AgentPlanStep,
   AgentRunRequest,
+  AxElementInfo,
   AxProbe,
   ScreenRect
 } from '@shared/types'
@@ -60,6 +61,8 @@ import { hideAgentCursor } from './cursor'
 import { toScreenPoint as toScreen, type ScreenPoint } from './geometry'
 import { describeShortcut, parseShortcut } from './keys'
 import { isTextField, resolveMarkedTarget, resolveTarget, type TargetResolution } from './targeting'
+import { CuRpcError, cuAct, cuHealth } from './computerUse'
+import { readError, readResult, semanticFor } from './semantic'
 import { timed, trace, traceEnd } from './trace'
 import { sameObservedWindow } from './observation'
 import { MAX_TYPE_CHARS } from './plan'
@@ -307,6 +310,87 @@ export function createAgentController(host: AgentHost) {
     return `Поле ввода не в фокусе (сейчас в фокусе ${what}) — текст не введён.`
   }
 
+  /**
+   * Performs a step through the computer-use service, when the step names a
+   * control.
+   *
+   * The difference from `perform` is what the evidence is. The visual path posts
+   * an event at a point and can only say "dispatched"; this one asks the service
+   * to activate a control *by name* and to wait for the application to confirm
+   * the change, so the answer is either "the application moved" or "it did not,
+   * and here is why". Nothing is warped and nothing is raised: the user keeps
+   * their own frontmost window while the assistant works in another.
+   *
+   * It returns `null` when the step has no semantic version at all, and
+   * `{ performed: false }` when the service was tried and refused — the caller
+   * then falls back to the visual path, which is still the only way to reach a
+   * control that has no name in the Accessibility tree (a canvas, a custom
+   * drawn toolbar).
+   */
+  async function semantic(
+    step: AgentPlanStep,
+    previous: AgentPlanStep | null,
+    element: AxElementInfo | null,
+    pid: number,
+    signal: AbortSignal
+  ): Promise<{ performed: boolean; ok: boolean; label: string } | null> {
+    if (!getSettings().agent.semanticActions) return null
+    const request = semanticFor(step, { previous, element })
+    if (!request) return null
+    // A service call without a process to act on is not a refusal, it is a
+    // question with no answer: the caller falls back to the pixel.
+    if (!(pid > 0) || signal.aborted) return null
+
+    // A step that will fall back anyway should not pay for a health round trip
+    // it already knows the answer to.
+    const health = await cuHealth({ signal })
+    if (!health) return null
+
+    const end = traceEnd('agent.semantic', {
+      kind: step.action.kind, action: request.action.kind, step: 0
+    })
+    try {
+      const result = await cuAct(pid, request.query, request.action, { signal })
+      const verdict = readResult(result)
+      trace('agent.semanticResult', {
+        outcome: result.outcome,
+        verified: result.verified,
+        dispatcher: result.dispatcher,
+        attempts: result.attempts,
+        cursorMoved: result.cursorMoved,
+        frontmostChanged: result.frontmostChanged,
+        decision: verdict.kind
+      })
+      // The two invariants are the reason this backend exists; a violation is
+      // recorded rather than hidden, even though nothing can undo it here.
+      if (result.cursorMoved || result.frontmostChanged) {
+        console.warn('[agent] computer-use violated a no-side-effect invariant')
+      }
+      if (verdict.kind === 'done') {
+        return { performed: true, ok: true, label: request.label }
+      }
+      return { performed: true, ok: false, label: request.label }
+    } catch (error) {
+      const verdict = readError(error)
+      trace('agent.semanticError', {
+        reason: verdict.reason,
+        uncertain: verdict.uncertain,
+        // A refusal carries the candidates it considered; the count is the part
+        // worth keeping without recording what was on the user's screen.
+        candidates: error instanceof CuRpcError && Array.isArray((error.data as { candidates?: unknown[] })?.candidates)
+          ? (error.data as { candidates: unknown[] }).candidates.length
+          : null
+      })
+      // A timeout is the one case where the action may have happened after all.
+      // Retrying it as a click would be a second click, so it is reported as a
+      // failure the caller can verify on a fresh screen instead.
+      if (verdict.uncertain) return { performed: true, ok: false, label: request.label }
+      return { performed: false, ok: false, label: request.label }
+    } finally {
+      end()
+    }
+  }
+
   /** One action. Returns false when the step could not be performed. */
   async function perform(
     action: AgentAction,
@@ -542,7 +626,16 @@ export function createAgentController(host: AgentHost) {
         // Typing is checked against the real focus, not against the plan: if the
         // click that was supposed to land in the field landed next to it, the text
         // must not be typed into whatever is actually focused.
-        if (step.action.kind === 'type') {
+        //
+        // The semantic path is exempt, and for a reason that is the opposite of
+        // carelessness: it does not type into "whatever is focused", it focuses
+        // the named field itself and then types into that. Checking the current
+        // focus there would reject a plan precisely because it has not clicked
+        // anything yet.
+        const semanticType = getSettings().agent.semanticActions
+          ? semanticFor(step, { previous: plan[index - 1] ?? null })
+          : null
+        if (step.action.kind === 'type' && !semanticType) {
           const blocked = await typingBlocked()
           if (blocked) {
             publish({ phase: 'error', step: index + 1, total, label: step.label, message: blocked, recoverable: true })
@@ -661,22 +754,40 @@ export function createAgentController(host: AgentHost) {
           return { finished: false, message, recoverable: true, performed }
         }
 
+        // The semantic path is tried first for steps that name a control: it
+        // performs the action on that control and waits for the application to
+        // confirm it, instead of posting an event at a pixel near it. When it
+        // declines — no label, no service, a refusal — the visual path below
+        // runs exactly as before, so this is an upgrade and never a dependency.
+        const semanticResult = desktopInput
+          ? await semantic(step, plan[index - 1] ?? null, aimed?.target.element ?? null,
+              recipient?.pid ?? 0, input.signal)
+          : null
+        if (token !== run || aborted.reason) break
+
         // A resolution that found nothing on the screen is a guess, and the card
         // says so: "Клик" and "Клик · на глаз" are different promises, and the
         // second one is the case where a missing action is nobody's mystery.
-        const label = aimed && aimed.target.source === 'model' ? `${step.label} · на глаз` : step.label
+        const label = semanticResult?.performed
+          ? semanticResult.label
+          : aimed && aimed.target.source === 'model' ? `${step.label} · на глаз` : step.label
         publish({ phase: 'acting', step: index + 1, total, label, plan: labels })
         if (rememberApproval && approvalId) {
           const agent = getSettings().agent
           patchSettings({ agent: { ...agent, rememberedApprovals: [...agent.rememberedApprovals, approvalId] } })
         }
-        const ok = await timed('agent.action', () => perform(step.action, request.area!, aimed?.point ?? null, url, {
-          pid: recipient?.pid ?? 0, windowId: recipient?.windowId ?? null,
-          bounds: recipient?.bounds ?? null, signal: input.signal
-        }), {
-          step: index + 1, kind: step.action.kind
+        const ok = semanticResult?.performed
+          ? semanticResult.ok
+          : await timed('agent.action', () => perform(step.action, request.area!, aimed?.point ?? null, url, {
+              pid: recipient?.pid ?? 0, windowId: recipient?.windowId ?? null,
+              bounds: recipient?.bounds ?? null, signal: input.signal
+            }), {
+              step: index + 1, kind: step.action.kind
+            })
+        trace('agent.actionResult', {
+          step: index + 1, ok, backend: semanticResult?.performed ? 'semantic' : 'visual',
+          effect: ok ? 'dispatched' : 'unknown'
         })
-        trace('agent.actionResult', { step: index + 1, ok, effect: ok ? 'dispatched' : 'unknown' })
         performed.push({ label: step.label, ok })
         // Whatever happened, the screen is not the same place: a menu opened, a
         // field took focus, a list re-sorted. The next step must not aim at a map

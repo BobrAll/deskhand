@@ -251,6 +251,25 @@ export function AgentTab({ agent, onChange, onEnabledChange }: AgentTabProps) {
       </div>
 
       <div className="field">
+        <label>
+          <input
+            type="checkbox"
+            checked={agent.semanticActions}
+            onChange={(event) => onChange({ semanticActions: event.target.checked })}
+          />{' '}
+          Нажимать элементы по названию, а не по координатам
+        </label>
+        <div className="hint">
+          Для кнопок и полей с подписью ассистент передаёт действие локальному сервису
+          computer-use: тот находит элемент по роли и названию, нажимает его через
+          Accessibility и ждёт, пока приложение подтвердит изменение. Курсор не двигается, окно
+          не поднимается — можно продолжать печатать в своём. Если сервиса нет или элемент не
+          найден, шаг выполняется по координатам, как раньше. Выключите, чтобы вообще не
+          запускать сервис.
+        </div>
+      </div>
+
+      <div className="field">
         <div className="hint">
           Что ассистент не делает никогда: не отправляет формы, не удаляет файлы и не
           подтверждает покупки без прямой просьбы. Каждое действие видно в карточке, а

@@ -13,6 +13,7 @@ const state = vi.hoisted(() => ({
       allowShortcuts: true,
       abortOnMouseMove: true,
       verifyResult: false,
+      semanticActions: false,
       rememberedApprovals: []
     }
   },
@@ -37,7 +38,13 @@ const state = vi.hoisted(() => ({
   watcherStopped: 0,
   hideCursor: 0,
   cursorPoint: { x: 10, y: 20 },
-  typeOperation: null as null | ((signal: AbortSignal) => Promise<boolean>)
+  typeOperation: null as null | ((signal: AbortSignal) => Promise<boolean>),
+  semantic: {
+    /** What `cuHealth` answers; null means the service is not usable. */
+    health: null as null | { service: string; pid: number; trusted: boolean; screenCapture: boolean; flags: string; methods: string[] },
+    /** What `cuAct` answers, or throws. */
+    act: null as unknown
+  }
 }))
 
 vi.mock('electron', () => ({
@@ -124,6 +131,25 @@ vi.mock('./cursor', () => ({
   }
 }))
 
+/**
+ * The semantic backend is mocked at the client boundary, not inside the runner:
+ * what matters here is the *decision* — did the runner use the service's answer
+ * or fall back to a click — and that decision is made from the client's reply.
+ */
+vi.mock('./computerUse', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./computerUse')>()
+  return {
+    ...actual,
+    cuHealth: async () => state.semantic.health,
+    cuAct: async (pid: number, query: unknown, action: unknown) => {
+      state.calls.push({ name: 'semantic-act', args: [pid, query, action] })
+      const answer = state.semantic.act
+      if (answer instanceof Error) throw answer
+      return answer
+    }
+  }
+})
+
 import { createAgentController } from './index'
 
 const area: ScreenRect = { x: 0, y: 0, width: 1000, height: 1000 }
@@ -175,9 +201,13 @@ beforeEach(() => {
       allowShortcuts: true,
       abortOnMouseMove: true,
       verifyResult: false,
+      // Off by default here: the semantic backend has its own tests below, and
+      // every other case in this file is about the visual path.
+      semanticActions: false,
       rememberedApprovals: []
     }
   }
+  state.semantic = { health: null, act: null }
   state.binary = '/bin/helper'
   state.trusted = true
   state.helper = {
@@ -978,4 +1008,136 @@ it.each([true, false])('clicks a numbered target only if the live hit agrees (sa
   expect(ran('click')).toBe(same ? 1 : 0)
   if (same) expect(state.calls.find((call) => call.name === 'click')?.args).toEqual([500, 500, 'left'])
   else expect(result).toMatchObject({ recoverable: true, performed: [] })
+})
+
+/**
+ * The semantic backend: what the runner does with the service's answer.
+ *
+ * The property under test is not "it calls the service" — that is one line — but
+ * that the *evidence* decides the next move. A performed action must never be
+ * repeated as a click, and a refused one must still reach the pixel the model
+ * gave, because a control without a name in the Accessibility tree is exactly
+ * the case the visual path exists for.
+ */
+describe('semantic backend', () => {
+  const healthy = {
+    service: 'cu-service', pid: 77, trusted: true, screenCapture: true,
+    flags: 'skyLight=true hid=false ocr=false focus=true', methods: []
+  }
+
+  function verified(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+    return {
+      outcome: 'verified', verified: true, actionId: 'a1', target: 'AXButton:Save',
+      strategy: 'ariaLabel', confidence: 1, attempts: 1, durationMs: 30,
+      dispatcher: 'AXSemantic', notifications: [], cursorMoved: false,
+      frontmostChanged: false, notes: [], ...overrides
+    }
+  }
+
+  function enable(): void {
+    state.settings.agent.semanticActions = true
+    state.semantic.health = healthy
+  }
+
+  it('performs a named click on the control instead of posting a mouse event', async () => {
+    enable()
+    state.semantic.act = verified()
+    const result = await createAgentController(makeHost()).execute({
+      requestId: 'sem', prompt: 'Нажми Сохранить', finished: false, area,
+      steps: [step({ kind: 'click', at: { x: 0.5, y: 0.5 }, button: 'left', label: 'Save' }, 'Клик: «Save»')]
+    })
+
+    const semantic = state.calls.find((call) => call.name === 'semantic-act')
+    expect(semantic?.args).toEqual([42, { text: 'Save' }, { kind: 'press' }])
+    // The point of the backend: no click reached the pointer.
+    expect(ran('click')).toBe(0)
+    expect(result.performed).toEqual([{ label: 'Клик: «Save»', ok: true }])
+  })
+
+  it('falls back to the pixel when the control is not there under that name', async () => {
+    enable()
+    // A refusal carries structure; the runner treats it as "nothing happened".
+    state.semantic.act = Object.assign(new Error('notFound'), { code: -32003 })
+    const result = await createAgentController(makeHost()).execute({
+      requestId: 'sem', prompt: 'Нажми Сохранить', finished: false, area,
+      steps: [step({ kind: 'click', at: { x: 0.5, y: 0.5 }, button: 'left', label: 'Save' }, 'Клик: «Save»')]
+    })
+
+    expect(ran('semantic-act')).toBe(1)
+    expect(ran('click')).toBe(1)
+    expect(result.performed[0]?.ok).toBe(true)
+  })
+
+  it('does not repeat a performed-but-unconfirmed action as a click', async () => {
+    enable()
+    // The call succeeded and the app announced nothing. Clicking again would
+    // press the button twice — worse than failing to prove it happened.
+    state.semantic.act = verified({ outcome: 'performedUnverified', verified: false })
+    const result = await createAgentController(makeHost()).execute({
+      requestId: 'sem', prompt: 'Нажми Сохранить', finished: false, area,
+      steps: [step({ kind: 'click', at: { x: 0.5, y: 0.5 }, button: 'left', label: 'Save' }, 'Клик: «Save»')]
+    })
+
+    expect(ran('semantic-act')).toBe(1)
+    expect(ran('click')).toBe(0)
+    expect(result.performed[0]?.ok).toBe(true)
+  })
+
+  it('does not retry a timeout as a click, because it may already have been delivered', async () => {
+    enable()
+    state.semantic.act = Object.assign(new Error('timeout'), { reason: 'timeout' })
+    const result = await createAgentController(makeHost()).execute({
+      requestId: 'sem', prompt: 'Нажми Сохранить', finished: false, area,
+      steps: [step({ kind: 'click', at: { x: 0.5, y: 0.5 }, button: 'left', label: 'Save' }, 'Клик: «Save»')]
+    })
+
+    expect(ran('click')).toBe(0)
+    expect(result).toMatchObject({ finished: false })
+    expect(result.message).toContain('Save')
+  })
+
+  it('stays on the visual path when the service is not running', async () => {
+    state.settings.agent.semanticActions = true
+    state.semantic.health = null
+    const result = await createAgentController(makeHost()).execute({
+      requestId: 'sem', prompt: 'Нажми Сохранить', finished: false, area,
+      steps: [step({ kind: 'click', at: { x: 0.5, y: 0.5 }, button: 'left', label: 'Save' }, 'Клик: «Save»')]
+    })
+
+    expect(ran('semantic-act')).toBe(0)
+    expect(ran('click')).toBe(1)
+    expect(result.performed[0]?.ok).toBe(true)
+  })
+
+  it('keeps an unnamed click on the visual path even when the service is available', async () => {
+    enable()
+    await createAgentController(makeHost()).execute({
+      requestId: 'sem', prompt: 'Нажми кнопку', finished: false, area,
+      steps: [step({ kind: 'click', at: { x: 0.5, y: 0.5 }, button: 'left' }, 'Клик')]
+    })
+
+    // There is no name to resolve, and a query built from the point would be a
+    // coordinate click wearing a role.
+    expect(ran('semantic-act')).toBe(0)
+    expect(ran('click')).toBe(1)
+  })
+
+  it('types into the field the previous step named', async () => {
+    enable()
+    state.semantic.act = verified({ target: 'AXTextField:Поиск' })
+    state.helper.focused = { pid: 42, role: 'AXButton', pressable: true, title: 'Готово' }
+    await createAgentController(makeHost()).execute({
+      requestId: 'sem', prompt: 'Впиши запрос', finished: false, area,
+      steps: [
+        step({ kind: 'click', at: { x: 0.4, y: 0.2 }, button: 'left', label: 'Поиск' }, 'Клик: «Поиск»'),
+        step({ kind: 'type', text: 'погода' }, 'Печать: погода')
+      ]
+    })
+
+    const typing = state.calls.filter((call) => call.name === 'semantic-act')[1]
+    expect(typing?.args).toEqual([42, { text: 'Поиск' }, { kind: 'typeText', text: 'погода' }])
+    // The keyboard never went through the helper, so the focus guard — which
+    // exists to catch a click that landed next to the field — does not apply.
+    expect(ran('type')).toBe(0)
+  })
 })

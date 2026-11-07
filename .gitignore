@@ -45,6 +45,7 @@ resources/smartcursor-helper
 resources/whisper-cli
 resources/transcribe-cli
 resources/transcribe-licenses/
+resources/cu-service
 resources/*.dylib
 resources/*.so
 *.o
