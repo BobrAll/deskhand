@@ -19,9 +19,10 @@
  * before, so the sequence of side effects is unchanged.
  */
 
-import type { ActiveAppInfo, ContextSnapshot, ScreenRect, SendRequest } from '@shared/types'
+import type { ActiveAppInfo, ContextSnapshot, ScreenRect, SendRequest, ScreenshotInfo } from '@shared/types'
+import { allowsWebLookup } from '@shared/intent'
 import { imagePart } from '../imagePart'
-import { buildRefine, buildRequest, MAX_REFINE_TOKENS } from '../prompt'
+import { buildRefine, buildRequest, MAX_REFINE_TOKENS, withPreviousCommand } from '../prompt'
 import type { ChatMessage, ContentPart } from '../llm/provider'
 
 /** One question and the answer it got, as the model sees it. */
@@ -46,13 +47,15 @@ export interface RequestSession {
 export interface BuildTurnRequestInput {
   request: SendRequest
   session: RequestSession
+  history?: Exchange[]
+  previousCommand?: string
   settings: RequestSettings
   /** Whether the chosen provider/model can take an image at all. */
   visionSupported: boolean
   /** Whether acting is allowed at all, and why not when it is not. */
   availability: { ready: boolean; reason: string | null }
   /** Takes a fresh screenshot when the current one is too old. */
-  ensureFreshScreenshot: () => Promise<unknown>
+  ensureFreshScreenshot: () => Promise<ScreenshotInfo | null>
   /** Reads names and coordinates for drawing and acting. Best effort. */
   describeScreen: (
     pid: number | null,
@@ -68,6 +71,7 @@ export interface TurnRequest {
   maxTokens: number
   /** Whether the image goes with this request. */
   useImage: boolean
+  screenshot: ScreenshotInfo | null
   /** The rectangle every returned coordinate refers to, or `null` without an image. */
   area: ScreenRect | null
   canDraw: boolean
@@ -87,7 +91,9 @@ export interface TurnRequest {
  */
 export async function buildTurnRequest(input: BuildTurnRequestInput): Promise<TurnRequest> {
   const { request, session, settings } = input
+  const history = input.history ?? session.history
   const refine = request.refine ?? null
+  const previousCommand = refine ? undefined : input.previousCommand
   const baseAnswer = refine ? refine.baseAnswer.trim() : ''
 
   // The drawing and acting tools are offered with every request that carries an
@@ -99,13 +105,15 @@ export async function buildTurnRequest(input: BuildTurnRequestInput): Promise<Tu
   // taken when the overlay opens, which can be minutes earlier (the user reads
   // the answer, types, asks a follow-up), so a fresh capture is taken here for
   // every request that actually sends an image.
+  let shot: ScreenshotInfo | null = null
   if (wantImage && input.visionSupported) {
-    await input.ensureFreshScreenshot()
+    shot = await input.ensureFreshScreenshot()
     if (input.aborted()) {
       return {
         messages: [],
         maxTokens: settings.maxTokens,
         useImage: false,
+        screenshot: null,
         area: null,
         canDraw: false,
         canAct: false,
@@ -115,14 +123,13 @@ export async function buildTurnRequest(input: BuildTurnRequestInput): Promise<Tu
     }
   }
 
-  const useImage = Boolean(
-    wantImage && session.snapshot.screenshot && input.visionSupported
-  )
+  const image = shot ? imagePart(shot.dataUrl) : null
+  const useImage = image !== null
 
   // The rectangle the model is looking through. Captured once, before the
   // request, because it is the frame every returned coordinate refers to: a live
   // re-capture mid-stream must not shift the shapes already being painted.
-  const area = session.snapshot.screenshot?.area ?? null
+  const area = shot ? shot.area : session.snapshot.screenshot?.area ?? null
   // Drawing and acting are only honest when the model can actually see the
   // target. Without an image the coordinates would be invented, and a confident
   // arrow — or worse, a confident click — aimed at the wrong pixel is worse
@@ -167,8 +174,8 @@ export async function buildTurnRequest(input: BuildTurnRequestInput): Promise<Tu
    * done", and the model's "нажимаю…" is not a result the user asked to read.
    * Typed turns keep streaming: a typed question is read as it arrives, and a
    * quick action must not lose its stream just because acting is enabled. A
-   * typed action still ends without prose — the streamed narration is dropped
-   * when the plan turns out to be real (see `suppressed` in `overlay.ts`).
+   * typed action replaces any streamed narration with the final report once
+   * the plan has run.
    */
   const holdFirstRound = Boolean(canAct && request.voice)
 
@@ -182,7 +189,7 @@ export async function buildTurnRequest(input: BuildTurnRequestInput): Promise<Tu
     : buildRequest({
         prompt: request.prompt,
         mode: request.mode,
-        snapshot: session.snapshot,
+        snapshot: { ...session.snapshot, screenshot: shot },
         includeSelection: request.includeSelection,
         // The effective value, not the chip: an image sent with the request is
         // what the prompt has to describe.
@@ -191,16 +198,13 @@ export async function buildTurnRequest(input: BuildTurnRequestInput): Promise<Tu
         draw: canDraw,
         act: canAct,
         actReason,
-        hasHistory: session.history.length > 0,
+        hasHistory: history.length > 0 || Boolean(previousCommand),
         outline
       })
 
   const parts: ContentPart[] = []
-  if (useImage && session.snapshot.screenshot) {
-    const image = imagePart(session.snapshot.screenshot.dataUrl)
-    if (image) parts.push(image)
-  }
-  parts.push({ type: 'text', text: userText })
+  if (image) parts.push(image)
+  parts.push({ type: 'text', text: withPreviousCommand(userText, previousCommand) })
 
   // The conversation, not just the last sentence: without these turns "а
   // почему?" reaches the model as a question about nothing. They are text-only
@@ -214,7 +218,7 @@ export async function buildTurnRequest(input: BuildTurnRequestInput): Promise<Tu
   // the text the user is looking at.
   const historyMessages: ChatMessage[] = refine
     ? []
-    : session.history.flatMap((exchange): ChatMessage[] => [
+    : history.flatMap((exchange): ChatMessage[] => [
         { role: 'user', parts: [{ type: 'text', text: exchange.question }] },
         { role: 'assistant', parts: [{ type: 'text', text: exchange.answer }] }
       ])
@@ -222,7 +226,14 @@ export async function buildTurnRequest(input: BuildTurnRequestInput): Promise<Tu
   const messages: ChatMessage[] = [
     {
       role: 'system',
-      parts: [{ type: 'text', text: `${settings.systemPrompt.trim()}\n\n${modeInstruction}` }]
+      parts: [{
+        type: 'text',
+        text: [
+          settings.systemPrompt.trim(),
+          modeInstruction,
+          !refine && allowsWebLookup(request.prompt) ? WEB_LOOKUP_INSTRUCTION : ''
+        ].filter(Boolean).join('\n\n')
+      }]
     },
     ...historyMessages,
     { role: 'user', parts }
@@ -239,6 +250,7 @@ export async function buildTurnRequest(input: BuildTurnRequestInput): Promise<Tu
     messages,
     maxTokens,
     useImage,
+    screenshot: shot,
     area,
     canDraw,
     canAct,
@@ -246,3 +258,14 @@ export async function buildTurnRequest(input: BuildTurnRequestInput): Promise<Tu
     abandoned: false
   }
 }
+
+const WEB_LOOKUP_INSTRUCTION = [
+  '[Фоновый поиск в интернете]',
+  'Выбирай инструмент по тому, какой результат просит пользователь.',
+  'Для ответа, который требует найти или проверить общедоступные сведения, верни только @web.',
+  'Это относится и к просьбам «поищи» или «погугли», когда результатом должны быть сведения.',
+  'Если нужен переход на страницу или действие в конкретном интерфейсе, используй экранные инструменты.',
+  'Если сведения нужны из текущего окна, документа или личного аккаунта, используй этот контекст.',
+  'Выполняй действия только по просьбе пользователя.',
+  'Если поиск не нужен, сразу дай обычный ответ.'
+].join('\n')

@@ -101,6 +101,7 @@ const api: SmartCursorApi = {
     download: (model: string) => ipcRenderer.invoke(CH.voice.download, model),
     onDownloadProgress: (handler) => subscribe<DownloadProgress>(CH.voice.downloadProgress, handler),
     importModel: () => ipcRenderer.invoke(CH.voice.importModel),
+    deleteModel: (id) => ipcRenderer.invoke(CH.voice.deleteModel, id),
     test: () => ipcRenderer.invoke(CH.voice.test)
   }
 }

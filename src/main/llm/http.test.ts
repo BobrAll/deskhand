@@ -106,11 +106,9 @@ describe('readSse: the event stream', () => {
     expect(await collect(['id: 7\nretry: 100\ndata: kept\n\n'])).toEqual([{ data: 'kept' }])
   })
 
-  it('does not treat CRLF as a separator (KNOWN BUG: characterization)', async () => {
-    // The separator is a literal `\n\n`, so a CRLF stream arrives as one block
-    // whose data still carries the `\r`. Real providers send `\n\n`.
-    const events = await collect(['data: a\r\n\r\ndata: b\r\n\r\n'])
-    expect(events).toEqual([{ data: 'a\r\nb\r' }])
+  it('frames CRLF events even when the separator crosses chunks', async () => {
+    const events = await collect(['data: a\r', '\n\r\ndata: b\r\n\r\n'])
+    expect(events).toEqual([{ data: 'a' }, { data: 'b' }])
   })
 
   it('releases the reader lock when the consumer stops early', async () => {

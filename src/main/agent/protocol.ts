@@ -34,8 +34,6 @@
 
 import type { AgentAction, AgentClickButton, Point01 } from '@shared/types'
 
-const MAX_TYPE_CHARS = 4_000
-
 const MAX_WAIT_MS = 10_000
 
 const BUTTONS: AgentClickButton[] = ['left', 'right', 'double']
@@ -44,11 +42,6 @@ export interface ParsedAction {
   action: AgentAction
   /** One line for the card: what the user is about to see happen. */
   label: string
-}
-
-function clamp01(value: number): number {
-  if (!Number.isFinite(value)) return 0
-  return Math.min(1, Math.max(0, value))
 }
 
 function cleanLabel(raw: string): string | undefined {
@@ -67,7 +60,7 @@ function readPoint(tokens: string[]): { point: Point01; rest: string[] } | null 
   const numbers: number[] = []
   let index = 0
   while (index < tokens.length && numbers.length < 2) {
-    const value = Number.parseFloat(tokens[index].replace(',', '.'))
+    const value = Number(tokens[index].replace(',', '.'))
     if (!Number.isFinite(value)) break
     numbers.push(value)
     index += 1
@@ -75,8 +68,9 @@ function readPoint(tokens: string[]): { point: Point01; rest: string[] } | null 
   if (numbers.length < 2) return null
   // Percentages by accident ("42 31") are a common model slip.
   const scaled = numbers.map((value) => (Math.abs(value) > 1.5 ? value / 100 : value))
+  if (scaled.some((value) => value < 0 || value > 1)) return null
   return {
-    point: { x: clamp01(scaled[0]), y: clamp01(scaled[1]) },
+    point: { x: scaled[0], y: scaled[1] },
     rest: tokens.slice(index)
   }
 }
@@ -88,7 +82,7 @@ function readPoint(tokens: string[]): { point: Point01; rest: string[] } | null 
  */
 export function parseAgentLine(line: string): ParsedAction[] | null {
   const trimmed = line.trim()
-  if (!/^@(click|move|type|key|press|scroll|drag|wait|done|finish|look)\b/i.test(trimmed)) return null
+  if (!/^@(click|move|type|key|press|navigate|browser|scroll|drag|wait|done|finish|look)\b/i.test(trimmed)) return null
 
   const match = /^@([A-Za-z]+)\s*([\s\S]*)$/.exec(trimmed)
   if (!match) return null
@@ -97,7 +91,7 @@ export function parseAgentLine(line: string): ParsedAction[] | null {
 
   if (command === 'type') {
     // Verbatim: the rest of the line is the payload, quotes and commas included.
-    const text = body.trim().slice(0, MAX_TYPE_CHARS)
+    const text = body.trim()
     if (!text) return []
     return [{ action: { kind: 'type', text }, label: `Печать: ${shorten(text)}` }]
   }
@@ -106,6 +100,16 @@ export function parseAgentLine(line: string): ParsedAction[] | null {
     const combo = body.trim()
     if (!combo) return []
     return [{ action: { kind: 'key', combo }, label: `Клавиши: ${combo}` }]
+  }
+
+  if (command === 'browser') {
+    return body.trim() ? [] : [{ action: { kind: 'browser' }, label: 'Открыть браузер по умолчанию' }]
+  }
+
+  if (command === 'navigate') {
+    const url = body.trim()
+    if (!url || url.length > 2048 || /\s/.test(url)) return []
+    return [{ action: { kind: 'navigate', url }, label: 'Открыть страницу в браузере' }]
   }
 
   if (command === 'wait') {
@@ -170,17 +174,21 @@ export function parseAgentLine(line: string): ParsedAction[] | null {
   }
 
   // `click`
-  const parsed = readPoint(tokens)
-  if (!parsed) return []
-  const buttonToken = parsed.rest[0]?.toLowerCase() ?? ''
+  const marker = /^#([1-9]\d{0,2})$/.exec(tokens[0] ?? '')
+  const parsed = marker ? null : readPoint(tokens)
+  if (!marker && !parsed) return []
+  const rest = marker ? tokens.slice(1) : (parsed?.rest ?? [])
+  const buttonToken = rest[0]?.toLowerCase() ?? ''
   const button: AgentClickButton = (BUTTONS as string[]).includes(buttonToken)
     ? (buttonToken as AgentClickButton)
     : 'left'
-  const label = cleanLabel(parsed.rest.slice((BUTTONS as string[]).includes(buttonToken) ? 1 : 0).join(' '))
+  const label = cleanLabel(rest.slice((BUTTONS as string[]).includes(buttonToken) ? 1 : 0).join(' '))
   const what = button === 'right' ? 'Правый клик' : button === 'double' ? 'Двойной клик' : 'Клик'
   return [
     {
-      action: { kind: 'click', at: parsed.point, button, label },
+      action: parsed
+        ? { kind: 'click', at: parsed.point, button, label }
+        : { kind: 'click-marker', marker: Number(marker?.[1]), button, label },
       label: label ? `${what}: «${label}»` : what
     }
   ]

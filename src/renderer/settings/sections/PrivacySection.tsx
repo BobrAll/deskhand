@@ -72,6 +72,18 @@ export function PrivacySection({
       </div>
 
       <div className="field">
+        <label>
+          <input type="checkbox" checked={draft.rememberConversation}
+            onChange={(event) => patch({ rememberConversation: event.target.checked })} />
+          Помнить предыдущую команду
+        </label>
+        <p className="hint">
+          На этом Mac сохраняется последняя просьба. Она добавляется к первому запросу в новой карточке.
+          Выключение удаляет сохранённую просьбу.
+        </p>
+      </div>
+
+      <div className="field">
         <label>Исключённые приложения</label>
         <p className="hint">
           В этих приложениях Smart Cursor не читает текст и не делает скриншоты.

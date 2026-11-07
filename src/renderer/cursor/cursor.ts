@@ -1,16 +1,4 @@
-/**
- * Drawing the ring that follows the pointer during an agent run.
- *
- * The layer is display-sized and the ring is moved with the CSS `translate`
- * property, not by moving the window: the helper warps the cursor in one jump,
- * and a window move would arrive a frame late on the main thread. The animation
- * spells out the step ("Клик: «Экспорт»", "2/4") right where the user is already
- * looking, so a menu opening on its own is no longer a mystery.
- *
- * The motion is deliberately small: a static ring, one ripple per action, and a
- * breathing scale while a step runs. Anything louder at the cursor competes with
- * the app the assistant is operating, which is the thing the user has to watch.
- */
+/** Renders the screen glow and the status caption for an agent turn. */
 
 import type { AgentCursorFrame } from '@shared/types'
 
@@ -36,11 +24,9 @@ export function createCursor(root: HTMLElement): CursorHighlight {
   root.dataset.visible = 'false'
   root.dataset.phase = 'arming'
 
-  const ring = document.createElement('div')
-  ring.className = 'ring'
-
-  const ripple = document.createElement('div')
-  ripple.className = 'ring-pulse'
+  const glow = document.createElement('div')
+  glow.className = 'screen-glow'
+  glow.setAttribute('aria-hidden', 'true')
 
   const tag = document.createElement('div')
   tag.className = 'tag'
@@ -60,10 +46,8 @@ export function createCursor(root: HTMLElement): CursorHighlight {
   check.append(checkOutline, checkPath)
   tag.append(check, count, label)
 
-  root.append(ripple, ring, tag)
+  root.append(glow, tag)
 
-  /** -1 forces the first frame to play the entrance ripple. */
-  let lastPulse = -1
   let lastLabel = ''
   /** `null` forces the first frame to apply the hidden state of the badge. */
   let lastCount: string | null = null
@@ -113,8 +97,6 @@ export function createCursor(root: HTMLElement): CursorHighlight {
       return
     }
 
-    root.style.setProperty('--x', `${Math.round(frame.anchor.x)}px`)
-    root.style.setProperty('--y', `${Math.round(frame.anchor.y)}px`)
     const phaseChanged = root.dataset.phase !== frame.phase
     root.dataset.phase = frame.phase
     root.dataset.visible = 'true'
@@ -143,16 +125,6 @@ export function createCursor(root: HTMLElement): CursorHighlight {
     // but that size has to be re-read only when the content or the display did.
     if (phaseChanged || labelChanged || stepChanged || tagWidth === 0) measureTag()
     placeTag(frame.anchor)
-
-    // Replaying the ripple is what marks *this* action instead of the previous
-    // one: toggling the class is not enough, the animation has to restart.
-    if (frame.pulse !== lastPulse) {
-      lastPulse = frame.pulse
-      ripple.classList.remove('pulse')
-      // Forcing a reflow restarts the CSS animation on the next frame.
-      void ripple.offsetWidth
-      ripple.classList.add('pulse')
-    }
   }
 
   // A display change (another monitor, a resolution switch) changes the layer

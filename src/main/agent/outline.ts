@@ -20,6 +20,7 @@
 
 import type { AxElementInfo, AxProbe, ScreenRect } from '@shared/types'
 import { helperProbe } from '../native/helper'
+import { nameTexts } from './targeting'
 
 const MAX_ITEMS = 70
 const MAX_NAME = 46
@@ -50,10 +51,7 @@ const ROLE_WORD: Record<string, string> = {
 }
 
 function visibleName(element: AxElementInfo): string {
-  // `value` of an editable is what is typed in it, not its name.
-  const raw =
-    element.title ?? element.description ?? (element.editable ? '' : element.value) ?? ''
-  const text = String(raw).replace(/\s+/g, ' ').trim()
+  const text = (nameTexts(element)[0] ?? '').replace(/\s+/g, ' ').trim()
   return text.length > MAX_NAME ? `${text.slice(0, MAX_NAME - 1)}…` : text
 }
 
@@ -142,6 +140,6 @@ export async function describeScreen(
     return Boolean(rect && rect.width >= 2 && rect.height >= 2 &&
       inside(rect, area) && inside(rect, bounds ?? area) &&
       (element.pressable || element.editable))
-  }))
+  }).map((element) => ({ ...element, pid: element.pid ?? probe.pid })))
   return formatOutline(probe, bounds, area)
 }

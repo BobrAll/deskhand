@@ -68,10 +68,10 @@ vi.mock('electron', () => ({
       this.entry.bounds = bounds
     }
     setAlwaysOnTop(): void {
-      // Part of the contract: the ring sits above full-screen apps.
+      // Part of the contract: the glow sits above full-screen apps.
     }
     setVisibleOnAllWorkspaces(): void {
-      // Part of the contract: the ring follows the pointer across spaces.
+      // Part of the contract: the glow is visible across spaces.
     }
     on(event: string, handler: () => void): void {
       this.entry.loadHandlers[event] = handler
@@ -183,23 +183,14 @@ describe('updateAgentCursor: painting a step', () => {
     expect(win().sent.at(-1)?.side).toBe('below')
   })
 
-  it('counts a click pulse on every acting event', async () => {
+  it('sends the current step and total for the caption', async () => {
     cursor.updateAgentCursor(event({ phase: 'acting', step: 1, total: 2, label: 'Клик' }))
     await settle()
-    const first = win().sent.at(-1)?.pulse
+    expect(win().sent.at(-1)).toMatchObject({ step: 1, total: 2 })
 
     cursor.updateAgentCursor(event({ phase: 'acting', step: 2, total: 2, label: 'Клик' }))
     await settle()
-
-    expect(win().sent.at(-1)?.pulse).toBe((first ?? 0) + 1)
-  })
-
-  it('paints no pulse for an arming event', async () => {
-    cursor.updateAgentCursor(event({ phase: 'arming', label: 'Приготовился' }))
-    await settle()
-
-    expect(win().sent.at(-1)?.pulse).toBe(0)
-    expect(win().sent.at(-1)?.step).toBe(0)
+    expect(win().sent.at(-1)).toMatchObject({ step: 2, total: 2 })
   })
 
   it('falls back to a generic caption when the event carries none', async () => {
@@ -257,7 +248,7 @@ describe('updateAgentCursor: following the pointer', () => {
 })
 
 describe('updateAgentCursor: checking and done', () => {
-  it('relabels the ring «Проверяю результат…» while a check runs', async () => {
+  it('relabels the glow «Проверяю результат…» while a check runs', async () => {
     cursor.updateAgentCursor(event({ phase: 'acting', step: 1, total: 1, label: 'Клик' }))
     await settle()
 
@@ -271,13 +262,13 @@ describe('updateAgentCursor: checking and done', () => {
     })
   })
 
-  it('ignores a check when no ring is on screen', async () => {
+  it('ignores a check when no glow is on screen', async () => {
     cursor.updateAgentCursor(event({ phase: 'checking' }))
 
     expect(state.windows).toHaveLength(0)
   })
 
-  it('hides the ring on `done` outside a turn', async () => {
+  it('hides the glow on `done` outside a turn', async () => {
     cursor.updateAgentCursor(event({ phase: 'acting', step: 1, total: 1, label: 'Клик' }))
     await settle()
 
@@ -289,7 +280,33 @@ describe('updateAgentCursor: checking and done', () => {
 })
 
 describe('updateAgentCursor: a turn that spans several plans', () => {
-  it('parks the ring on a `done` inside a turn instead of hiding it', async () => {
+  it('keeps the frame visible through a rejected target and replanning', async () => {
+    const token = cursor.beginAgentTurn()
+    cursor.updateAgentCursor(event({ phase: 'arming' }))
+    await settle()
+    cursor.updateAgentCursor(event({ phase: 'error', recoverable: true }))
+    cursor.hideAgentCursor()
+    cursor.updateAgentCursor(event({ phase: 'checking', label: 'Проверяю экран и меняю способ' }))
+    await vi.advanceTimersByTimeAsync(8_000)
+
+    expect(win().hidden).toBe(0)
+    expect(win().sent.every((frame) => frame.visible)).toBe(true)
+    expect(win().sent.at(-1)).toMatchObject({
+      phase: 'waiting', label: 'Проверяю экран и меняю способ'
+    })
+    cursor.endAgentTurn(token)
+    await vi.advanceTimersByTimeAsync(200)
+    expect(win().hidden).toBe(1)
+  })
+
+  it('shows the frame when a turn starts by looking at the screen', async () => {
+    cursor.beginAgentTurn()
+    cursor.updateAgentCursor(event({ phase: 'checking' }))
+    await settle()
+    expect(win().sent.at(-1)).toMatchObject({ visible: true, phase: 'waiting' })
+  })
+
+  it('parks the glow on a `done` inside a turn instead of hiding it', async () => {
     const token = cursor.beginAgentTurn()
     cursor.updateAgentCursor(event({ phase: 'acting', step: 1, total: 1, label: 'Клик' }))
     await settle()
@@ -301,7 +318,7 @@ describe('updateAgentCursor: a turn that spans several plans', () => {
     expect(token).toBeGreaterThan(0)
   })
 
-  it('relaxes a parked ring into «Смотрю на экран…» after the pause', async () => {
+  it('relaxes a parked glow into «Смотрю на экран…» after the pause', async () => {
     cursor.beginAgentTurn()
     cursor.updateAgentCursor(event({ phase: 'acting', step: 1, total: 1, label: 'Клик' }))
     await settle()
@@ -312,7 +329,7 @@ describe('updateAgentCursor: a turn that spans several plans', () => {
     expect(win().sent.at(-1)).toMatchObject({ phase: 'waiting', label: 'Смотрю на экран…' })
   })
 
-  it('does not park a ring that was never shown', async () => {
+  it('does not park a glow that was never shown', async () => {
     cursor.beginAgentTurn()
 
     cursor.updateAgentCursor(event({ phase: 'done', label: 'Готово' }))
@@ -321,7 +338,7 @@ describe('updateAgentCursor: a turn that spans several plans', () => {
     expect(state.windows).toHaveLength(0)
   })
 
-  it('a new turn takes the ring from the previous one', async () => {
+  it('a new turn takes the glow from the previous one', async () => {
     const first = cursor.beginAgentTurn()
     cursor.updateAgentCursor(event({ phase: 'acting', step: 1, total: 1, label: 'Клик' }))
     await settle()
@@ -333,7 +350,7 @@ describe('updateAgentCursor: a turn that spans several plans', () => {
     expect(win().sent.at(-1)?.visible).toBe(false)
   })
 
-  it('endAgentTurn is the moment the ring goes out', async () => {
+  it('endAgentTurn is the moment the glow goes out', async () => {
     const token = cursor.beginAgentTurn()
     cursor.updateAgentCursor(event({ phase: 'acting', step: 1, total: 1, label: 'Клик' }))
     await settle()
@@ -355,7 +372,7 @@ describe('updateAgentCursor: a turn that spans several plans', () => {
     cursor.endAgentTurn(first)
     await settle()
 
-    // The newer turn still owns the ring.
+    // The newer turn still owns the glow.
     expect(win().sent.at(-1)?.visible).toBe(true)
   })
 
@@ -383,7 +400,7 @@ describe('updateAgentCursor: a turn that spans several plans', () => {
     expect(win().sent.at(-1)?.visible).toBe(true)
   })
 
-  it('hideAgentCursor hides at once when no turn holds the ring', async () => {
+  it('hideAgentCursor hides at once when no turn holds the glow', async () => {
     cursor.updateAgentCursor(event({ phase: 'acting', step: 1, total: 1, label: 'Клик' }))
     await settle()
 
@@ -504,7 +521,7 @@ describe('destroyAgentCursor', () => {
 })
 
 describe('early request feedback', () => {
-  it('shows a waiting ring before any plan exists and removes it on cancellation', async () => {
+  it('shows a waiting glow before any plan exists and removes it on cancellation', async () => {
     const token = cursor.beginAgentTurn('Задача принята · готовлю действия…')
     await settle()
     expect(win().sent.at(-1)).toMatchObject({ visible: true, phase: 'waiting', total: 0 })

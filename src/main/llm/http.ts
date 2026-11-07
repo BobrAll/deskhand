@@ -10,7 +10,7 @@ export interface SseEvent {
 }
 
 /** Parses a raw `text/event-stream` body into events. */
-export async function* readSse(body: ReadableStream<Uint8Array>): AsyncGenerator<SseEvent> {
+export async function* readSse(body: ReadableStream<Uint8Array>, allowTail = true): AsyncGenerator<SseEvent> {
   const reader = body.getReader()
   const decoder = new TextDecoder()
   let buffer = ''
@@ -19,16 +19,16 @@ export async function* readSse(body: ReadableStream<Uint8Array>): AsyncGenerator
       const { done, value } = await reader.read()
       if (done) break
       buffer += decoder.decode(value, { stream: true })
-      let boundary = buffer.indexOf('\n\n')
-      while (boundary !== -1) {
-        const raw = buffer.slice(0, boundary)
-        buffer = buffer.slice(boundary + 2)
+      let boundary = /\r?\n\r?\n/.exec(buffer)
+      while (boundary) {
+        const raw = buffer.slice(0, boundary.index)
+        buffer = buffer.slice(boundary.index + boundary[0].length)
         const parsed = parseBlock(raw)
         if (parsed) yield parsed
-        boundary = buffer.indexOf('\n\n')
+        boundary = /\r?\n\r?\n/.exec(buffer)
       }
     }
-    const tail = parseBlock(buffer)
+    const tail = allowTail ? parseBlock(buffer) : null
     if (tail) yield tail
   } finally {
     reader.releaseLock()
@@ -36,7 +36,7 @@ export async function* readSse(body: ReadableStream<Uint8Array>): AsyncGenerator
 }
 
 function parseBlock(raw: string): SseEvent | null {
-  const lines = raw.split('\n')
+  const lines = raw.split(/\r?\n/)
   let event: string | undefined
   const data: string[] = []
   for (const line of lines) {

@@ -41,6 +41,7 @@ exports[`preload: the exposed bridge > matches the snapshot of the method set 1`
   "settings.setKey",
   "settings.testKey",
   "voice.attach",
+  "voice.deleteModel",
   "voice.download",
   "voice.failed",
   "voice.importModel",

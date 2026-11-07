@@ -377,3 +377,16 @@ describe('OpenRouterProvider: the same dialect plus attribution', () => {
     expect(await drain(new OpenRouterProvider().stream(messages, 'sk-or', options()))).toEqual(['a'])
   })
 })
+
+it.each([
+  ['stop', 'data: [DONE]\n\n', 'complete'],
+  ['length', 'data: [DONE]\n\n', 'limit'],
+  ['stop', '', 'incomplete'],
+  ['stop', 'data: [DONE]', 'incomplete']
+])('checks finish_reason %s and the terminal SSE frame', async (reason, trailer, expected) => {
+  vi.stubGlobal('fetch', fetchMock)
+  respond(sse(delta('@key enter\n'), dataEvent({ choices: [{ finish_reason: reason }] }), trailer))
+  const stream = provider().stream(messages, 'key', options())
+  expect(await stream.next()).toEqual({ value: { delta: '@key enter\n' }, done: false })
+  expect(await stream.next()).toEqual({ value: expected, done: true })
+})

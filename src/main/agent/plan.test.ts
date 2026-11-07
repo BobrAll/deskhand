@@ -24,12 +24,12 @@ const normalize = (raw: AgentPlanStep[], overrides: Partial<AgentSettings> = {})
   normalizePlan(raw, { settings: { ...settings, ...overrides }, area })
 
 describe('normalizePlan: limits', () => {
-  it('keeps up to six steps and rejects the rest', () => {
+  it('rejects the entire batch above six actions', () => {
     const raw = Array.from({ length: 8 }, (_, index) => click(0.1, 0.1, `к${index}`))
 
     const plan = normalize(raw)
 
-    expect(plan.steps).toHaveLength(MAX_PLAN_STEPS)
+    expect(plan.steps).toHaveLength(0)
     expect(plan.rejected).toHaveLength(2)
     expect(plan.rejected[0].reason).toContain(String(MAX_PLAN_STEPS))
   })
@@ -40,10 +40,12 @@ describe('normalizePlan: limits', () => {
     expect(normalize(raw).rejected[0].step).toBe(7)
   })
 
-  it('truncates typed text at 600 characters', () => {
-    const plan = normalize([step('Печать', { kind: 'type', text: 'я'.repeat(2000) })])
+  it('rejects oversized text before subsequent submission', () => {
+    const plan = normalize([step('Печать', { kind: 'type', text: 'я🙂'.repeat(250) }),
+      step('Submit', { kind: 'key', combo: 'enter' })])
 
-    expect(plan.steps[0].action).toEqual({ kind: 'type', text: 'я'.repeat(MAX_TYPE_CHARS) })
+    expect(plan.rejected[0]?.reason).toContain('600')
+    expect(plan.steps).toHaveLength(0)
   })
 
   it('keeps the documented 600-character ceiling', () => {

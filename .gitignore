@@ -43,6 +43,8 @@ dist_electron/
 # Собираются из исходников: src/main/native/helper.m, scripts/build-helper.mjs
 resources/smartcursor-helper
 resources/whisper-cli
+resources/transcribe-cli
+resources/transcribe-licenses/
 resources/*.dylib
 resources/*.so
 *.o

@@ -60,11 +60,14 @@ describe('automatic speech lifecycle', () => {
     await speech.finish('one', 'Готово.')
     expect(speak.mock.calls[0][0].text).toBe('Готово.')
   })
-  it('does not read typed replies automatically', async () => {
+  it.each(['Где настройки?', 'Прочитай вслух'])('keeps typed requests silent until manual playback (%s)', async (prompt) => {
     const speech = useSpeech()
-    speech.begin('one', 'Где настройки?', false)
+    speech.begin('one', prompt, false)
+    await speech.append('one', 'Справа сверху.')
     await speech.finish('one', 'Справа сверху.')
     expect(speak).not.toHaveBeenCalled()
+    speech.speak('Справа сверху.')
+    expect(speak).toHaveBeenCalledOnce()
   })
   it('new recording cancels pending speech', async () => {
     const speech = useSpeech()
@@ -141,14 +144,13 @@ describe('waiting acknowledgement', () => {
 })
 
 describe('agent feedback independent of dialogue', () => {
-  it('acknowledges a typed action with dialogue off', async () => {
+  it.each([false, true])('acknowledges an action only when spoken with dialogue off (voice=%s)', async (voice) => {
     window.smartCursor.settings.load = vi.fn().mockResolvedValue({ settings: { voice: { dialogue: false, agentFeedback: true } } })
     const speech = useSpeech()
-    speech.begin('one', 'Открой новую вкладку', false)
+    speech.begin('one', 'Открой новую вкладку', voice)
     await vi.advanceTimersByTimeAsync(1500)
-    expect(speak.mock.calls[0][0].text).toBe('Сейчас посмотрю.')
     await speech.finish('one', 'Готово.')
-    expect(speak).toHaveBeenCalledOnce()
+    expect(speak.mock.calls.map(call => call[0].text)).toEqual(voice ? ['Сейчас посмотрю.'] : [])
   })
   it('respects the separate feedback switch', async () => {
     window.smartCursor.settings.load = vi.fn().mockResolvedValue({ settings: { voice: { dialogue: true, agentFeedback: false } } })
@@ -160,7 +162,7 @@ describe('agent feedback independent of dialogue', () => {
   it('waits for local voices to become available', async () => {
     const voices = vi.spyOn(window.speechSynthesis, 'getVoices').mockReturnValue([])
     const speech = useSpeech()
-    speech.begin('one', 'Открой новую вкладку', false)
+    speech.begin('one', 'Открой новую вкладку', true)
     await vi.advanceTimersByTimeAsync(1500)
     expect(speak).not.toHaveBeenCalled()
     voices.mockReturnValue([{ localService: true, lang: 'ru-RU' } as SpeechSynthesisVoice])

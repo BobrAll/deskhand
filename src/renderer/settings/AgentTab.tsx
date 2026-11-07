@@ -184,8 +184,8 @@ export function AgentTab({ agent, onChange, onEnabledChange }: AgentTabProps) {
           onChange={(event) => onChange({ maxSteps: Number(event.target.value) })}
         />
         <div className="hint">
-          После действий ассистент проверяет экран и продолжает к цели. Для поиска и
-          открытия файлов или видео нужно несколько этапов. Escape останавливает задачу.
+          После действий ассистент проверяет экран и продолжает к цели. Попытки восстановиться
+          после ошибки имеют отдельный лимит. Escape останавливает задачу.
         </div>
       </div>
 

@@ -14,7 +14,7 @@ const MESSAGE_FIELD = /сообщени|письмо|комментари|\b(?:m
 export function assessAction(step: AgentPlanStep, element: AxElementInfo | null, bundleId?: string): SafetyDecision {
   const action = step.action
   if (['move', 'scroll', 'wait', 'done', 'look'].includes(action.kind)) return { kind: 'allow' }
-  const context = [step.label, 'label' in action ? action.label : '', element?.title, element?.description]
+  const context = [step.label, 'label' in action ? action.label : '', element?.title, element?.description, element?.help]
     .filter(Boolean).join(' ').normalize('NFKC')
   if (action.kind === 'type' && (element?.subrole === 'AXSecureTextField' ||
       /api[- ]?key|api[- ]?ключ|парол|password|seed phrase|секретн\S* ключ/i.test(context))) {
@@ -42,7 +42,7 @@ export function assessAction(step: AgentPlanStep, element: AxElementInfo | null,
 
   let operation: string
   switch (action.kind) {
-    case 'click': operation = `Нажать: ${element?.title || element?.description || action.label || step.label}`; break
+    case 'click': operation = `Нажать: ${element?.title || element?.description || element?.help || action.label || step.label}`; break
     case 'key': operation = `Нажать клавиши: ${action.combo} (${element?.title || step.label})`; break
     case 'drag': operation = `Перетащить: ${step.label}`; break
     default: return { kind: 'deny', reason: 'Неизвестное действие запрещено.' }

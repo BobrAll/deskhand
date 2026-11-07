@@ -117,6 +117,7 @@ vi.mock('./native/helper', () => ({
 vi.mock('./voice/whisper', () => ({
   downloadModel: async () => undefined,
   importModel: async () => 'tiny',
+  deleteModel: async () => undefined,
   voiceStatus: async () => ({ ready: true, model: 'tiny', detail: null })
 }))
 

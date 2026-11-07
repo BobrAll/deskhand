@@ -84,14 +84,7 @@ export const CH = {
   agent: {
     /** main -> renderer: the run changed phase, or moved to the next step. */
     event: 'agent:event',
-    /**
-     * main -> cursor layer: where the pointer is and what the plan is doing.
-     *
-     * Sent at the pointer's own rate (~60 Hz) while a plan runs, because the
-     * ring has to stay on a cursor that the helper moves by warping it. The card
-     * cannot do this job: it can sit behind another window, and it is not where
-     * the user is looking.
-     */
+    /** main -> agent display layer: what the plan is doing and where to place the caption. */
     cursor: 'agent:cursor',
     /** overlay -> main: stop whatever is happening right now (Escape, «Стоп»). */
     stop: 'agent:stop',
@@ -145,6 +138,7 @@ export const CH = {
     download: 'voice:download',
     downloadProgress: 'voice:download-progress',
     importModel: 'voice:import-model',
+    deleteModel: 'voice:delete-model',
     test: 'voice:test'
   }
 } as const

@@ -30,7 +30,7 @@ export interface VoiceSettings {
   enabled: boolean
   /** Accelerator held down to talk, e.g. "Alt+Shift+Space". */
   hotkey: string
-  /** Id from `WHISPER_MODELS`; the file itself lives in the models directory. */
+  /** Id from `VOICE_MODELS`; the file itself lives in the models directory. */
   model: string
   /** Whisper language code, or `auto` to let the model detect it. */
   language: string
@@ -90,7 +90,7 @@ export interface AgentSettings {
   rememberedApprovals: string[]
   /** Master switch. Off unless the user turned it on in the settings. */
   enabled: boolean
-  /** Pause between the plan arriving and the first action, so Escape can win. */
+  /** Pause before the first action of a request, so Escape can win. */
   startDelayMs: number
   /** Pause between two actions; macOS needs a beat to deliver each event. */
   stepDelayMs: number
@@ -153,6 +153,8 @@ export interface AgentEvent {
   phase: AgentPhase
   /** The whole task succeeded, rather than just one intermediate plan. */
   completed?: boolean
+  /** The turn can recover from this error by observing the screen again. */
+  recoverable?: boolean
   /** 1-based index of the action being performed; 0 while arming. */
   step: number
   total: number
@@ -172,15 +174,7 @@ export interface AgentEvent {
   message?: string
 }
 
-/**
- * One frame of the ring that follows the pointer while a plan runs.
- *
- * The card can be behind another window or pushed aside, and the one place the
- * user is already looking is the pointer — which is also the thing moving on its
- * own. Mirroring the running step there is what turns "something happened" into
- * "it clicked Экспорт". Deliberately smaller than `AgentEvent`: the layer draws
- * a ring and one line, so it gets a ring and one line.
- */
+/** State of the agent’s screen glow and its caption at the pointer. */
 export interface AgentCursorFrame {
   /** `false` plays the fade-out; the window is hidden right after it. */
   visible: boolean
@@ -190,8 +184,7 @@ export interface AgentCursorFrame {
   side: 'above' | 'below'
   /**
    * `arming` = about to start, `acting` = a step is running, `waiting` = the turn
-   * is between two plans (the screen is being read again) and the ring stays on
-   * the pointer with no step to count.
+   * is preparing actions or reading the screen, with no running step to count.
    */
   phase: 'arming' | 'acting' | 'waiting' | 'success'
   /** What is happening, in the user's language ("Клик: «Экспорт»"). */
@@ -199,8 +192,6 @@ export interface AgentCursorFrame {
   /** 1-based index of the running step; 0 while arming. */
   step: number
   total: number
-  /** Bumped for every step, so the click ripple replays. */
-  pulse: number
 }
 
 /** Lifecycle of one push-to-talk turn, mirrored into the overlay. */
@@ -228,7 +219,7 @@ export interface VoiceStatus {
   binaryPath: string | null
   /** Where models are downloaded to. */
   modelsDir: string
-  /** Ids of the models already on disk. */
+  /** Catalog IDs and imported model filenames stored in the app’s models directory. */
   installed: string[]
   /** Set when the keyboard listener could not be started. */
   listenerError: string | null
@@ -257,6 +248,8 @@ export interface AppSettings {
   provider: ProviderId
   /** Per-provider model id. Empty string means "use provider default". */
   models: Record<ProviderId, string>
+  /** Per-provider model override for background web search. */
+  searchModels: Record<ProviderId, string>
   /**
    * Per-provider API base URL override (no trailing slash, no endpoint path).
    * Empty string means "use the provider default" — see `ProviderInfo.defaultBaseUrl`.
@@ -273,6 +266,7 @@ export interface AppSettings {
   quickActions: QuickAction[]
   /** Bundle identifiers where Smart Cursor does nothing at all. */
   excludedApps: string[]
+  rememberConversation: boolean
   launchAtLogin: boolean
   onboardingCompleted: boolean
   /** Push-to-talk voice input (local whisper). */
@@ -362,12 +356,17 @@ export type AgentAction =
       button: AgentClickButton
       /** What the model thinks it is clicking — shown in the card, never typed. */
       label?: string
+      /** Local observation behind a numbered mark, checked again before input. */
+      observedTarget?: AxElementInfo
     }
+  | { kind: 'click-marker'; marker: number; button: AgentClickButton; label?: string }
   | { kind: 'move'; at: Point01; label?: string }
   /** `text` is typed as-is into whatever field has focus. */
   | { kind: 'type'; text: string }
   /** A shortcut such as `cmd+s` or `enter`, parsed by `keys.ts`. */
   | { kind: 'key'; combo: string }
+  | { kind: 'navigate'; url: string }
+  | { kind: 'browser' }
   | { kind: 'scroll'; dx: number; dy: number }
   | { kind: 'drag'; from: Point01; to: Point01; label?: string }
   | { kind: 'wait'; ms: number }
@@ -411,6 +410,8 @@ export interface AxElementInfo {
   value?: string
   /** Accessibility label, which is how an icon-only button names itself. */
   description?: string
+  /** Tooltip or help exposed by Accessibility. */
+  help?: string
   /** Localised role name ("кнопка", "поле ввода") — for humans, not matching. */
   roleDescription?: string
   frame?: ScreenRect | null
@@ -562,6 +563,13 @@ export interface AgentRunRequest {
   area: ScreenRect | null
   /** `true` when the plan ended with `@done` — nothing left to look at. */
   finished: boolean
+  /** A previous batch in this request has already had an arming pause. */
+  continuing?: boolean
+  /** Foreground process associated with the current observation, if known. */
+  observedPid?: number
+  observedWindow?: Pick<ActiveAppInfo, 'pid' | 'windowId' | 'windowTitle' | 'bounds'>
+  /** The caller requires a coherent observation before sending desktop input. */
+  requireObservation?: boolean
   /**
    * `true` when the caller is going to check the result on a fresh screenshot
    * before it says anything about success.

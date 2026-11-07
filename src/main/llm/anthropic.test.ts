@@ -428,3 +428,15 @@ describe('AnthropicProvider: failures', () => {
     ).rejects.toThrow('Запрос отменён.')
   })
 })
+
+it.each([
+  ['end_turn', STOP, 'complete'],
+  ['max_tokens', STOP, 'limit'],
+  ['end_turn', '', 'incomplete']
+])('checks stop_reason %s and the terminal message event', async (reason, trailer, expected) => {
+  vi.stubGlobal('fetch', fetchMock)
+  respond(sse(textDelta('@key enter\n'), event({ type: 'message_delta', delta: { stop_reason: reason } }), trailer))
+  const stream = new AnthropicProvider().stream(messages, 'key', options())
+  expect(await stream.next()).toEqual({ value: { delta: '@key enter\n' }, done: false })
+  expect(await stream.next()).toEqual({ value: expected, done: true })
+})

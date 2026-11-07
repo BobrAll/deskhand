@@ -396,6 +396,7 @@ export function App() {
         {tab === 'voice' && (
           <VoiceTab
             voice={draft.voice}
+            savedModel={bundle.settings.voice.model}
             gestures={draft.gestures}
             onChange={(changes) => patch({ voice: { ...draft.voice, ...changes } })}
             onGestureChange={(changes) =>

@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 /**
  * The overlay session: everything between "hotkey pressed" and "overlay hidden".
  *
@@ -7,7 +8,7 @@
 
 import { randomUUID } from 'node:crypto'
 import { app, BrowserWindow } from 'electron'
-import { looksLikeAction } from '@shared/intent'
+import { allowsWebLookup, looksLikeAction } from '@shared/intent'
 import { CH } from '@shared/ipc'
 import { modelSupportsVision, providerInfo, resolveBaseUrl } from '@shared/defaults'
 import type {
@@ -28,24 +29,34 @@ import type {
 } from '@shared/types'
 import { createAgentController } from '../agent'
 import { beginAgentTurn, endAgentTurn, updateAgentCursor } from '../agent/cursor'
+import { bindMarkedClicks, markClickTargets } from '../agent/clickMarks'
 import { describeScreen } from '../agent/outline'
 import { collectContext } from '../context/collect'
+import { isExcluded } from '../context/activeApp'
 import { captureScreenshot } from '../context/screenshot'
 import { getProvider, resolveModel } from '../llm'
 import { ProviderError, type ChatMessage } from '../llm/provider'
+import { searchWeb } from '../llm/webSearch'
 import { copyText, pasteAnswer } from '../paste'
 import { hideAnnotations, showAnnotations } from '../pointer'
-import { buildTurnRequest } from './request'
+import { buildTurnRequest, type Exchange } from './request'
+import { readPreviousCommand, saveCommand } from './history'
+import { timed, trace, traceTurn } from '../agent/trace'
 import { shouldVerify, verifyResult, VERIFY_SETTLE_MS } from './verify'
 import { runAgentRounds } from './rounds'
 import { emptyAnswerFallback } from './emptyAnswer'
 import { groundAnnotation } from '../annotationGrounding'
 import type { OverlayHost } from './host'
 import { consumeTurnStream } from '../turnStream'
-import { helperActivate, helperFront } from '../native/helper'
+import { sameObservedWindow } from '../agent/observation'
+import { helperActivate, helperFront, helperWindow, type RawFrontApp } from '../native/helper'
 import { getApiKey } from '../settings/secrets'
 import { getSettings, patchSettings } from '../settings/store'
 import { delay } from '../util'
+
+interface CardExchange extends Exchange {
+  bundleId: string | null
+}
 
 interface Session {
   id: string
@@ -65,11 +76,11 @@ interface Session {
    * question — without it the model only ever sees the last sentence and has no
    * idea what "это" refers to.
    *
-   * Capped at `HISTORY_TURNS` exchanges and trimmed when it is sent, because a
+   * Capped at `CARD_HISTORY_TURNS` exchanges and trimmed before storage, because a
    * session can stay open for a while and an unbounded history would quietly
    * grow every request until it hit the context limit.
    */
-  history: Exchange[]
+  history: CardExchange[]
   /**
    * Live preview while the overlay is open: the picture is re-taken on a timer
    * so both the thumbnail and the image sent with a request show the window as
@@ -99,23 +110,9 @@ const VOICE_PREVIEW_MS = 2_000
 const LIVE_REFRESH_MS = 2000
 
 /**
- * One question and the answer it got.
- *
- * `answer` is what the user actually read — the streamed text after the marker
- * lines were stripped — so a follow-up can refer to it the way the person does.
+ * The history of the current card.
  */
-interface Exchange {
-  question: string
-  answer: string
-}
-
-/**
- * How many exchanges are kept. Two is the number the owner asked for, and it is
- * also the honest one: "а почему?" refers to the previous answer, and one step
- * further back is what "а до этого?" means. A longer window mostly multiplies the
- * prompt size, since each turn already carries a fresh screenshot.
- */
-const HISTORY_TURNS = 2
+const CARD_HISTORY_TURNS = 2
 
 /**
  * Ceiling for one remembered answer. A long answer is still referenced by its
@@ -123,6 +120,10 @@ const HISTORY_TURNS = 2
  * history from costing more than the question itself.
  */
 const MAX_HISTORY_ANSWER_CHARS = 1_500
+const MAX_HISTORY_QUESTION_CHARS = 1_500
+
+const STOP_AGENT = Symbol('stop-agent')
+const TURN_DEADLINE_MS = 120_000
 
 export function createOverlayController(host: OverlayHost) {
   let session: Session | null = null
@@ -172,16 +173,9 @@ export function createOverlayController(host: OverlayHost) {
     }
   })
 
-  /**
-   * One funnel for agent state: the card and the ring at the cursor are two
-   * halves of the same message.
-   *
-   * The card can be behind the window the plan is operating, so the step is also
-   * mirrored onto the pointer — the one place the user is already looking while
-   * the assistant moves it. Both sinks get every event from here, which keeps the
-   * ring from disagreeing with the card about what is running.
-   */
+  /** Keeps the card and the display layer in sync with the agent's state. */
   function publishAgent(event: AgentEvent): void {
+    trace('agent.phase', { phase: event.phase, step: event.step, total: event.total, completed: event.completed === true, recoverable: event.recoverable === true })
     emit(CH.agent.event, event)
     updateAgentCursor(event)
   }
@@ -306,9 +300,24 @@ export function createOverlayController(host: OverlayHost) {
    */
   let captureInFlight: { sessionId: string; promise: Promise<ScreenshotInfo | null> } | null = null
 
-  function captureFor(target: Session): Promise<ScreenshotInfo | null> {
-    if (captureInFlight && captureInFlight.sessionId === target.id) {
-      return captureInFlight.promise
+  const observedApps = new WeakMap<ScreenshotInfo, RawFrontApp>()
+  const overlayShots = new WeakSet<ScreenshotInfo>()
+
+  async function windowStillMatches(observed: RawFrontApp, underOverlay: boolean): Promise<boolean> {
+    const front = await helperFront()
+    if (front?.pid !== process.pid || !underOverlay) return sameObservedWindow(observed, front)
+    const background = await helperWindow(observed.pid)
+    return sameObservedWindow(observed, background) && (await helperFront())?.pid === process.pid
+  }
+
+  function captureFor(target: Session, fresh = false): Promise<ScreenshotInfo | null> {
+    if (captureInFlight) {
+      if (!fresh && captureInFlight.sessionId === target.id) {
+        trace('screen.captureJoined')
+        return captureInFlight.promise
+      }
+      const next = (): Promise<ScreenshotInfo | null> | null => session === target ? captureFor(target, fresh) : null
+      return captureInFlight.promise.then(next, next)
     }
 
     const run = (async (): Promise<ScreenshotInfo | null> => {
@@ -321,10 +330,19 @@ export function createOverlayController(host: OverlayHost) {
           // Give the compositor a beat to apply the new sharing state.
           await delay(45)
         }
-        const shot = await captureScreenshot(
+        const front = settings.agent.enabled ? await helperFront() : null
+        const underOverlay = front?.pid === process.pid
+        const observed = underOverlay && target.rounds === 0 && target.target
+          ? await helperWindow(target.target.pid)
+          : underOverlay ? null : front
+        if (observed && settings.excludedApps.includes(observed.bundleId)) {
+          target.snapshot.screenshot = null
+          return null
+        }
+        const shot = await timed('screen.capture', () => captureScreenshot(
           {
-            windowId: target.target?.windowId ?? null,
-            bounds: target.target?.bounds ?? null,
+            windowId: observed?.windowId ?? target.target?.windowId ?? null,
+            bounds: observed?.bounds ?? target.target?.bounds ?? null,
             // The whole display, not one window: drawing is a tool the assistant
             // reaches for on its own, and a pointer that could only aim inside one
             // window would make "нажми на иконку в доке" impossible to show. The
@@ -332,7 +350,14 @@ export function createOverlayController(host: OverlayHost) {
             fullDisplay: true
           },
           { maxSide: settings.screenshotMaxSide, quality: settings.screenshotQuality }
-        )
+        ))
+        if (shot && observed) {
+          if (await windowStillMatches(observed, underOverlay)) {
+            observedApps.set(shot, observed)
+            if (underOverlay) overlayShots.add(shot)
+          }
+          else trace('screen.observationRejected', { reason: 'window-changed-during-capture' })
+        }
         if (session === target) {
           if (shot) target.snapshot.screenshot = shot
           target.snapshot.screenshotPending = false
@@ -362,9 +387,13 @@ export function createOverlayController(host: OverlayHost) {
    */
   const MAX_SHOT_AGE_MS = 600
 
-  async function ensureFreshScreenshot(target: Session): Promise<ScreenshotInfo | null> {
+  async function ensureFreshScreenshot(target: Session, requireObserved = false): Promise<ScreenshotInfo | null> {
     const current = target.snapshot.screenshot
-    if (current && Date.now() - current.capturedAt < MAX_SHOT_AGE_MS) return current
+    if (current && Date.now() - current.capturedAt < MAX_SHOT_AGE_MS &&
+        (!requireObserved || observedApps.has(current))) {
+      trace('screen.cacheHit', { ageMs: Date.now() - current.capturedAt })
+      return current
+    }
     // Only advertise "capturing…" when there is nothing to show yet: a refresh of
     // an existing preview must not flicker the chip on every question.
     const showPending = !current
@@ -377,7 +406,7 @@ export function createOverlayController(host: OverlayHost) {
       target.snapshot.screenshotPending = false
       publishContext(target)
     }
-    return shot ?? target.snapshot.screenshot
+    return shot ?? (requireObserved ? null : target.snapshot.screenshot)
   }
 
   /** Re-captures on a timer while the card is on screen. */
@@ -485,7 +514,12 @@ export function createOverlayController(host: OverlayHost) {
           excludedApps: settings.excludedApps,
           captureScreenshot: settings.captureScreenshotByDefault
         })
-        if (startedIn === generation && session && !snapshot.excluded) {
+        if (startedIn === generation && session && snapshot.excluded) {
+          session.target = null
+          close()
+          return
+        }
+        if (startedIn === generation && session) {
           session.snapshot = snapshot
           session.target = snapshot.activeApp
           session.flags = flags
@@ -511,9 +545,13 @@ export function createOverlayController(host: OverlayHost) {
     // The previous session is dropped *first*: it is a closed card's leftovers, and
     // leaving it in place would let `getState` hand the renderer the last answer
     // while this one is still being collected — which reads as an answer to a
-    // question that has not been asked yet. Nothing else can be reading it: a
-    // running plan is stopped by `close()`, and this path is only reached when the
-    // window was hidden.
+    // question that has not been asked yet. A voice turn can still be running
+    // while its card is hidden, so stop it before replacing its session.
+    if (session?.abort) {
+      session.abort.abort()
+      agent.stop()
+    }
+    if (session) stopLive(session)
     session = null
     host.showInactive(INITIAL_HEIGHT)
     const shownEarly = true
@@ -730,8 +768,10 @@ export function createOverlayController(host: OverlayHost) {
     /** Reveal a spoken answer as soon as its first text arrives. */
     revealText?: boolean
     drawingTargets?: AxElementInfo[]
-  }): Promise<{ steps: AgentPlanStep[]; text: string }> {
+    actionTargets?: AxElementInfo[]
+  }): Promise<{ steps: AgentPlanStep[]; text: string; webLookup?: boolean }> {
     const { messages, requestId, maxTokens, signal, canDraw, area, apiKey, holdText } = options
+    const marked = area && options.actionTargets?.length ? markClickTargets(messages, area, options.actionTargets) : null
     const settings = getSettings()
 
     /**
@@ -773,9 +813,9 @@ export function createOverlayController(host: OverlayHost) {
 
     // Everything that is not about this window — parsing, filtering, the tail —
     // lives in `consumeTurnStream`, so it can be driven by a fake provider.
-    return consumeTurnStream({
+    const result = await timed('model.round', () => consumeTurnStream({
       provider: getProvider(settings.provider),
-      messages,
+      messages: marked?.messages ?? messages,
       apiKey,
       streamOptions: {
         model: resolveModel(settings) ?? '',
@@ -787,26 +827,34 @@ export function createOverlayController(host: OverlayHost) {
       isAlive: () => !signal.aborted && Boolean(session),
       onShapes: paint,
       onText: append
-    })
+    }), { provider: settings.provider, model: resolveModel(settings) ?? '', withImage: Boolean(area),
+      imageBase64Bytes: messages.reduce((size, message) => size + message.parts.reduce(
+        (total, part) => total + (part.type === 'image' ? part.base64.length : 0), 0), 0) })
+    trace('model.plan', { actions: result.steps.map((step) => step.action.kind).join(','), aborted: signal.aborted,
+      marks: marked?.marks.length ?? 0 })
+    return { ...result, steps: bindMarkedClicks(result.steps, marked?.marks ?? [], area) }
   }
 
-  /**
-   * Shows prose that was held back while the turn might have been an action.
-   *
-   * The text is sent as one chunk rather than replayed token by token: it was
-   * buffered precisely to avoid showing it too early, so a delayed "streaming"
-   * animation would only pretend the model is still writing.
-   */
-  function showHeldAnswer(requestId: string, text: string): void {
-    if (!text || !session) return
-    session.answer += text
-    const event: StreamEvent = { type: 'chunk', requestId, delta: text }
-    emit(CH.overlay.stream, event)
+  function send(request: SendRequest): Promise<void> {
+    if (!session || request.refine) return sendTurn(request)
+    const settings = getSettings()
+    const config = createHash('sha256').update(JSON.stringify([
+      settings.provider, resolveModel(settings), settings.temperature, settings.maxTokens,
+      settings.agent.enabled, settings.agent.allowTyping, settings.agent.allowShortcuts,
+      settings.agent.maxSteps, settings.agent.verifyResult, settings.agent.abortOnMouseMove,
+      settings.agent.startDelayMs, settings.agent.stepDelayMs,
+      settings.screenshotMaxSide, settings.screenshotQuality
+    ])).digest('hex').slice(0, 12)
+    return traceTurn({ voice: request.voice === true, provider: settings.provider, config }, () => sendTurn(request))
   }
 
-  async function send(request: SendRequest): Promise<void> {
+  async function sendTurn(request: SendRequest): Promise<void> {
     if (!session) return
     const settings = getSettings()
+    if (isExcluded(session.target, settings.excludedApps)) {
+      trace('turn.outcome', { outcome: 'blocked', reason: 'excluded-app' })
+      return
+    }
     const model = resolveModel(settings)
     const apiKey = getApiKey(settings.provider)
 
@@ -821,6 +869,7 @@ export function createOverlayController(host: OverlayHost) {
       return
     }
     if (!apiKey) {
+      trace('turn.outcome', { outcome: 'blocked', reason: 'missing-key' })
       fail('Не задан ключ API. Откройте настройки и добавьте ключ.', false)
       return
     }
@@ -844,44 +893,88 @@ export function createOverlayController(host: OverlayHost) {
     session.abort = abort
     session.requestId = request.requestId
     session.answer = ''
+    const visionSupported = modelSupportsVision(settings.provider, model)
+    const availability = agent.availability()
     // Claim before screenshot/AX/model work, including cancellation during preview.
-    const ringTurn = beginAgentTurn(!refine && agent.availability().ready && looksLikeAction(request.prompt)
+    const glowTurn = beginAgentTurn(!refine && availability.ready && looksLikeAction(request.prompt)
       ? 'Задача принята · готовлю действия…' : undefined)
+    const turnSession = session
+    let outcome = 'abandoned'
+    let reason = 'session-changed'
+    let deadline: ReturnType<typeof setTimeout> | undefined
     try {
       if (request.voice) {
         // Keep the transcript visible before the card gets out of the way of the
         // answer or the agent. Escape and a new recording can cancel this wait.
         if (host.window()?.isVisible()) {
-          const previewSession = session
           voicePreview = abort
-          await delay(VOICE_PREVIEW_MS)
-          if (voicePreview === abort) voicePreview = null
-          if (abort.signal.aborted || session !== previewSession) {
-            if (previewSession.abort === abort) previewSession.abort = null
-            return
+          const preview = delay(VOICE_PREVIEW_MS)
+          if (!refine && request.includeScreenshot && visionSupported) {
+            // Start the protected capture late enough that send can reuse the
+            // frame. The regular capture path still checks its age at send time.
+            void delay(VOICE_PREVIEW_MS - MAX_SHOT_AGE_MS).then(async () => {
+              if (voicePreview !== abort || abort.signal.aborted || session !== turnSession ||
+                isExcluded(turnSession.target, getSettings().excludedApps)) return
+              await captureFor(turnSession)
+            }).catch(() => undefined)
           }
+          await preview
+          if (voicePreview === abort) voicePreview = null
+          if (abort.signal.aborted || session !== turnSession) return
         }
         host.hide()
       }
 
-      const visionSupported = modelSupportsVision(settings.provider, model)
+      deadline = setTimeout(() => abort.abort('deadline'), TURN_DEADLINE_MS)
+      const bundleId = turnSession.target?.bundleId || null
+      const currentSettings = getSettings()
+      if (isExcluded(turnSession.target, currentSettings.excludedApps)) return
+      const useHistory = settings.rememberConversation && currentSettings.rememberConversation
+      const history = turnSession.history.filter(
+        (entry) => !entry.bundleId || !currentSettings.excludedApps.includes(entry.bundleId)
+      )
+      const previousCommand = useHistory && !refine && turnSession.history.length === 0
+        ? readPreviousCommand(currentSettings.excludedApps)
+        : undefined
 
+      let observedApp: RawFrontApp | undefined
+      let observedUnderOverlay = false
       let drawingTargets: AxElementInfo[] = []
       const turn = await buildTurnRequest({
         request,
-        session,
+        session: turnSession,
+        history,
+        previousCommand,
         settings,
         visionSupported,
         availability: agent.availability(),
-        ensureFreshScreenshot: () => ensureFreshScreenshot(session as Session),
-        describeScreen: (pid, bounds, area) => describeScreen(pid, bounds, area, (targets) => {
-          drawingTargets = targets
-        }),
-        aborted: () => abort.signal.aborted || !session
+        ensureFreshScreenshot: async () => {
+          const shot = await ensureFreshScreenshot(turnSession, settings.agent.enabled)
+          observedApp = shot ? observedApps.get(shot) : undefined
+          observedUnderOverlay = Boolean(shot && overlayShots.has(shot))
+          return shot
+        },
+        describeScreen: async (pid, bounds, area) => {
+          if (observedApp && !(await windowStillMatches(observedApp, observedUnderOverlay))) {
+            observedApp = undefined
+            return null
+          }
+          const outline = await describeScreen(observedApp?.pid ?? pid, observedApp?.bounds ?? bounds, area, (targets) => {
+            drawingTargets = targets
+          })
+          if (observedApp) {
+            if (!(await windowStillMatches(observedApp, observedUnderOverlay))) {
+              observedApp = undefined
+              drawingTargets = []
+              return null
+            }
+          }
+          return observedApp ? [`Активное приложение на свежем снимке: ${observedApp.name}`, outline].filter(Boolean).join('\n') : outline
+        },
+        aborted: () => abort.signal.aborted || session !== turnSession
       })
-      if (turn.abandoned) return
-
-      const { messages, maxTokens, area, canDraw, canAct, holdFirstRound } = turn
+      if (turn.abandoned || abort.signal.aborted || session !== turnSession) return
+      const historyMessages = turn.messages.slice(1, -1)
 
       // The drawings belong to the answer currently on screen: a new question
       // replaces that answer, so old arrows must not stay behind as if they
@@ -893,77 +986,95 @@ export function createOverlayController(host: OverlayHost) {
         emitAnnotations()
       }
 
-      /**
-       * Prose withheld from the card while this round might turn into an action.
-       *
-       * It is flushed only when the turn ends without a single step to perform.
-       * `suppressed` is sticky: once a plan is about to run, every word of the
-       * narration has already been superseded by the action itself.
-       */
-      let held = ''
-      let suppressed = false
-
       const round = await streamRound({
-        messages,
+        messages: turn.messages,
         requestId: request.requestId,
-        maxTokens,
+        maxTokens: turn.maxTokens,
         signal: abort.signal,
-        canDraw,
-        area,
+        canDraw: turn.canDraw,
+        area: turn.area,
         apiKey,
-        holdText: holdFirstRound,
+        holdText: turn.holdFirstRound,
         drawingTargets,
+        actionTargets: turn.canAct ? drawingTargets : undefined,
         revealText: request.voice
       })
-      if (abort.signal.aborted || !session) return
-      if (holdFirstRound) held += round.text
+      if (abort.signal.aborted || session !== turnSession) return
 
-      const rounds = await runAgentRounds({
+      const webLookup = !refine && round.webLookup && allowsWebLookup(request.prompt)
+      trace('tool.route', { backend: webLookup ? 'web-search' : round.steps.length ? 'desktop' : 'text',
+        reason: webLookup ? 'search-marker' : round.steps.length ? 'action-plan' : 'plain-response' })
+      const webAnswer = webLookup
+        ? await timed('web.search', () => searchWeb(request.prompt, settings, apiKey, abort.signal))
+        : ''
+      if (abort.signal.aborted || session !== turnSession) return
+
+      let armed = false
+      const execute: typeof agent.execute = async (plan) => {
+        const stop = (): void => agent.stop()
+        abort.signal.addEventListener('abort', stop, { once: true })
+        try {
+          const result = await agent.execute({ ...plan, continuing: armed, observedPid: observedApp?.pid,
+            observedWindow: observedApp, requireObservation: true })
+          if (result.performed.length > 0 || result.recoverable) armed = true
+          return result
+        } finally {
+          abort.signal.removeEventListener('abort', stop)
+        }
+      }
+
+      const describeObservedScreen = async (area: ScreenRect, onTargets?: (elements: AxElementInfo[]) => void) => {
+        const front = observedApp
+        if (!front || !(await windowStillMatches(front, observedUnderOverlay))) {
+          observedApp = undefined
+          return null
+        }
+        let targets: AxElementInfo[] = []
+        const outline = await describeScreen(front.pid, front.bounds, area, (elements) => { targets = elements })
+        if (!(await windowStillMatches(front, observedUnderOverlay))) {
+          observedApp = undefined
+          return null
+        }
+        onTargets?.(targets)
+        return [`Активное приложение: ${front.name}`, outline].filter(Boolean).join('\n')
+      }
+
+      // A web turn cannot execute screen actions, even if its first model round
+      // included both a search marker and a plan.
+      const rounds = !webLookup ? await timed('agent.rounds', () => runAgentRounds({
         get session() { return session },
-        abort, request, settings, area, canAct, canDraw, apiKey, maxTokens,
-        round, held, agent, publishAgent, streamRound,
+        abort, request, settings, area: turn.area, canAct: turn.canAct, canDraw: turn.canDraw,
+        apiKey, maxTokens: turn.maxTokens,
+        initialShot: turn.screenshot, round, held: turn.holdFirstRound ? round.text : '',
+        agent: { execute, availability: agent.availability }, publishAgent, streamRound, historyMessages, previousCommand,
         capture: async (current) => {
           await delay(VERIFY_SETTLE_MS)
           if (abort.signal.aborted || session !== current) return null
-          return captureFor(current as Session)
+          const shot = await captureFor(current as Session, true)
+          observedApp = shot ? observedApps.get(shot) : undefined
+          observedUnderOverlay = Boolean(shot && overlayShots.has(shot))
+          return shot
         },
-        describeScreen: async (currentArea) => {
-          const front = await helperFront()
-          if (!front || front.pid === process.pid) return null
-          return describeScreen(front.pid, front.bounds, currentArea)
-        }
-      })
-      if (!rounds || abort.signal.aborted || !session) return
-      held = rounds.held
-      suppressed = rounds.suppressed
-      const { performedLines, interrupted, claimedDone, willVerify } = rounds
-
-      // ---- verification -------------------------------------------------
-      //
-      // The word «Готово» is a promise about the screen, and up to this point
-      // every promise in this turn came from the model's opinion about a
-      // screenshot that its own clicks have since invalidated. So before the card
-      // is allowed to say it, the screen is photographed again and the model is
-      // asked one question it cannot answer from its own narration: сверь просьбу
-      // с тем, что видно. If the evidence is not there, the words become "не
-      // получилось, вот что на экране" instead of a success nobody saw.
-      //
-      // Skipped when the run was interrupted — the card already explains why the
-      // action stopped, and a verdict about a screen the user deliberately took
-      // back is noise — and when nothing actually ran, because then there is no
-      // claim to test and the answer is already the model's prose.
-      // `willVerify` is the same answer the runner was given, so the two cannot
-      // disagree: exactly the turns that withheld «Готово» are the turns that get
-      // checked, and a text-only answer is never sent to a screenshot it has no
-      // claim about.
-      if (
-        shouldVerify({
-          willVerify,
-          interrupted,
+        describeScreen: describeObservedScreen
+      })) : null
+      if ((!webLookup && !rounds) || abort.signal.aborted || session !== turnSession) return
+      let held = rounds?.held ?? webAnswer
+      let suppressed = rounds?.suppressed ?? false
+      const performedLines = rounds?.performedLines ?? []
+      const claimedDone = rounds?.claimedDone ?? false
+      let confirmed = rounds?.confirmedOnScreen ?? false
+      if (confirmed) {
+        publishAgent({ phase: 'done', completed: true, step: 0, total: 0, label: 'Готово', plan: [] })
+      } else if (
+        rounds && shouldVerify({
+          willVerify: rounds.willVerify,
+          interrupted: rounds.interrupted,
           performed: performedLines.length,
           claimedDone
         })
       ) {
+        const stepsBeforeCheck = performedLines.length
+        const finalRoundText = held
         suppressed = true
         held = ''
         // Said before the request, not after: the runner has just announced the
@@ -977,30 +1088,46 @@ export function createOverlayController(host: OverlayHost) {
           plan: []
         })
 
-        const check = await verifyResult({
+        const check = await timed('agent.verify', () => verifyResult({
           settings,
           requestId: request.requestId,
           prompt: request.prompt,
           apiKey,
-          maxTokens,
+          maxTokens: turn.maxTokens,
           performedLines,
+          historyMessages,
+          previousCommand,
           progress: rounds.progress,
           signal: abort.signal,
           isAlive: () => Boolean(session),
           publishAgent,
-          capture: () => captureFor(session as Session),
+          capture: async () => {
+            const shot = await captureFor(turnSession, true)
+            observedApp = shot ? observedApps.get(shot) : undefined
+            observedUnderOverlay = Boolean(shot && overlayShots.has(shot))
+            return shot
+          },
+          describeScreen: describeObservedScreen,
           streamRound,
-          execute: (run) => agent.execute(run),
+          execute,
           lastPhase: () => agent.last().phase,
           delay
-        })
+        }))
         if (abort.signal.aborted || !session) return
 
         if (check.outcome === 'confirmed') {
-          // Verified: the plan did what it claimed. The card says so in the agent
-          // row and stays free of prose, exactly like every other action turn —
-          // the evidence sentence was for us, not for the user.
+          confirmed = true
+          // If the check only returned a marker, the prior report is still
+          // current as long as the check did not change the screen.
+          held = check.evidence.trim() ||
+            (performedLines.length === stepsBeforeCheck ? finalRoundText : '')
+          suppressed = !held.trim()
           publishAgent({ phase: 'done', completed: true, step: 0, total: 0, label: 'Готово', plan: [] })
+        } else if (check.outcome === 'pending') {
+          held = check.evidence
+          suppressed = false
+          publishAgent({ phase: 'done', completed: false, step: 0, total: 0,
+            label: 'Результат пока не подтверждён', plan: [] })
         } else if (check.outcome === 'unconfirmed') {
           // Looked, and the request is not fulfilled. The row must not claim
           // success, and the model's own words — what it actually sees — are the
@@ -1024,22 +1151,28 @@ export function createOverlayController(host: OverlayHost) {
         // already said why, and the honest "не подтверждено" stands.
       }
 
-      // No step ever ran: the held prose is the answer, and it can be shown now.
-      // When something did run, the action is the answer and the card stays empty
-      // of prose — only the agent row remains. Clearing here also covers a turn
-      // whose text was already streamed before the plan became visible.
+      // The final report replaces any narration streamed during a typed turn.
       if (suppressed) session.answer = ''
       else {
-        showHeldAnswer(request.requestId, held)
-        showHeldAnswer(request.requestId, emptyAnswerFallback(session.answer, session.annotations.length))
+        if (held.trim() || session.rounds > 0) session.answer = held
+        session.answer = emptyAnswerFallback(session.answer, session.annotations.length) || session.answer
       }
 
-      // The turn joins the conversation only once it has actually produced
-      // something. A failed request, a cancelled one or an action that ran with no
-      // prose leaves no exchange behind — remembering "I clicked Export" as an
-      // answer would make the next "а почему?" refer to a sentence the user never
-      // saw.
-      if (!suppressed) remember(request, session.answer)
+      // Keep the previous request even when the agent showed only a status row.
+      // Record confirmation only when the result was verified on screen.
+      const rememberedAnswer = suppressed
+        ? confirmed ? 'Выполнение подтверждено по экрану.' : 'Выполнение просьбы не подтверждено.'
+        : session.answer
+      const entry = remember(session, request, rememberedAnswer, bundleId)
+      const latestSettings = getSettings()
+      if (entry && !refine && useHistory && latestSettings.rememberConversation) {
+        saveCommand(entry.question, bundleId, latestSettings.excludedApps)
+      }
+
+      outcome = confirmed ? 'screen-confirmed' : webLookup ? 'answer'
+        : rounds?.interrupted ? 'interrupted' : performedLines.length || claimedDone ? 'unconfirmed' : 'answer'
+      reason = confirmed ? 'model-screen-verdict' : webLookup ? 'search-response'
+        : rounds?.interrupted ? 'runner-stopped' : outcome === 'unconfirmed' ? 'no-evidence' : 'plain-response'
 
       const done: StreamEvent = {
         type: 'done',
@@ -1048,11 +1181,18 @@ export function createOverlayController(host: OverlayHost) {
         annotations: session.annotations.length
       }
       emit(CH.overlay.stream, done)
-      if (request.voice) {
-        if (session.answer.trim() || getSettings().voice.dialogue) host.showInactive(INITIAL_HEIGHT)
+      if (session.answer.trim()) {
+        if (request.voice || performedLines.length || claimedDone || !host.window()?.isVisible()) {
+          host.showInactive(INITIAL_HEIGHT)
+        }
+      } else if (request.voice) {
+        if (getSettings().voice.dialogue) host.showInactive(INITIAL_HEIGHT)
         else host.hide()
       }
     } catch (error) {
+      outcome = 'error'
+      reason = error instanceof ProviderError ? 'provider' : 'internal'
+      trace('turn.error', { providerError: error instanceof ProviderError, aborted: abort.signal.aborted })
       if (abort.signal.aborted) return
       if (error instanceof ProviderError) {
         fail(error.message, error.retryable)
@@ -1060,12 +1200,24 @@ export function createOverlayController(host: OverlayHost) {
       }
       fail(error instanceof Error ? error.message : 'Неизвестная ошибка запроса.', true)
     } finally {
-      if (session?.abort === abort) session.abort = null
-      // The turn is over — answered, aborted, failed or closed mid-run — and this
-      // is the one place the ring at the pointer is allowed to go out. Every path
-      // above (a `return` included) lands here, so the mark can never be left
-      // sitting on the user's cursor after the assistant stopped working.
-      endAgentTurn(ringTurn)
+      clearTimeout(deadline)
+      if (abort.signal.aborted) {
+        outcome = abort.signal.reason === 'deadline' ? 'timeout' : 'cancelled'
+        reason = outcome === 'timeout' ? 'deadline' : abort.signal.reason === STOP_AGENT ? 'agent-stop' : 'turn-abort'
+        if (session === turnSession && turnSession.abort === abort) {
+          if (outcome === 'timeout') fail('Время выполнения истекло. Результат не подтверждён.', true)
+          else if (abort.signal.reason === STOP_AGENT) {
+            if (agent.last().phase !== 'aborted') publishAgent({
+              phase: 'aborted', step: 0, total: 0, label: '', plan: [], message: 'Остановлено.'
+            })
+            emit(CH.overlay.stream, { type: 'done', requestId: request.requestId, text: '', annotations: 0 } satisfies StreamEvent)
+          }
+        }
+      }
+      trace('turn.outcome', { outcome, reason })
+      trace('turn.finished', { aborted: abort.signal.aborted, rounds: turnSession.rounds })
+      if (turnSession.abort === abort) turnSession.abort = null
+      endAgentTurn(glowTurn)
     }
   }
 
@@ -1080,30 +1232,33 @@ export function createOverlayController(host: OverlayHost) {
    * is the same answer in other words, and remembering both would have the model
    * follow up on a text that is no longer on screen.
    */
-  function remember(request: SendRequest, answer: string): void {
-    if (!session) return
+  function remember(session: Session, request: SendRequest, answer: string, bundleId: string | null): CardExchange | null {
     const question = request.prompt.trim()
     const reply = answer.trim()
-    if (!question || !reply) return
+    if (!question || !reply) return null
 
-    const entry: Exchange = {
-      question,
+    const entry: CardExchange = {
+      bundleId,
+      question: question.length > MAX_HISTORY_QUESTION_CHARS
+        ? `${question.slice(0, MAX_HISTORY_QUESTION_CHARS)}…`
+        : question,
       answer:
         reply.length > MAX_HISTORY_ANSWER_CHARS
           ? `${reply.slice(0, MAX_HISTORY_ANSWER_CHARS)}…`
           : reply
     }
     const last = session.history[session.history.length - 1]
-    if (request.refine && last) {
-      last.answer = entry.answer
+    if (request.refine && last?.question === entry.question) {
+      session.history[session.history.length - 1] = entry
     } else {
       session.history.push(entry)
     }
-    // Oldest first out: the last `HISTORY_TURNS` exchanges are what a follow-up
+    // Oldest first out: the last `CARD_HISTORY_TURNS` exchanges are what a follow-up
     // can refer to, and everything older only costs tokens.
-    if (session.history.length > HISTORY_TURNS) {
-      session.history.splice(0, session.history.length - HISTORY_TURNS)
+    if (session.history.length > CARD_HISTORY_TURNS) {
+      session.history.splice(0, session.history.length - CARD_HISTORY_TURNS)
     }
+    return entry
   }
 
   async function copy(text: string): Promise<{ ok: boolean }> {
@@ -1158,7 +1313,10 @@ export function createOverlayController(host: OverlayHost) {
     emit,
     agentAvailability: () => agent.availability(),
     setAgentEnabled,
-    stopAgent: () => agent.stop(),
+    stopAgent: () => {
+      if (session?.abort) session.abort.abort(STOP_AGENT)
+      else agent.stop()
+    },
     target: (): ActiveAppInfo | null => session?.target ?? null,
     isOpen: (): boolean => Boolean(session && host.window()?.isVisible()),
     hasSession: (): boolean => session !== null

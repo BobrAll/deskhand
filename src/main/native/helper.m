@@ -18,6 +18,7 @@
 #import <dlfcn.h>
 #import <fcntl.h>
 #import <unistd.h>
+#import <signal.h>
 
 #import "gesture.h"
 
@@ -33,65 +34,65 @@ static void emit(NSDictionary *payload) {
   fflush(stdout);
 }
 
+// Match the focused AX window to WindowServer by geometry and, when available,
+// title. An ambiguous match must not attach an unrelated CG window ID.
 static NSDictionary *focusedWindowInfo(pid_t pid) {
-  CFArrayRef list = CGWindowListCopyWindowInfo(
-      kCGWindowListOptionOnScreenOnly | kCGWindowListExcludeDesktopElements, kCGNullWindowID);
-  NSDictionary *best = nil;
-  if (list) {
-    for (CFIndex i = 0; i < CFArrayGetCount(list); i++) {
-      NSDictionary *win = (__bridge NSDictionary *)CFArrayGetValueAtIndex(list, i);
-      if ([win[(id)kCGWindowOwnerPID] intValue] != pid) continue;
-      // Layer 0 == normal application window; skip menus, panels, shadows.
-      if ([win[(id)kCGWindowLayer] intValue] != 0) continue;
-      NSDictionary *bounds = win[(id)kCGWindowBounds];
-      if ([bounds[@"Width"] doubleValue] < 80 || [bounds[@"Height"] doubleValue] < 60) continue;
-      if (best == nil) {
-        best = win;
-        continue;
-      }
-      // Prefer the largest on-screen window of the app.
-      NSDictionary *bestBounds = best[(id)kCGWindowBounds];
-      double area = [bounds[@"Width"] doubleValue] * [bounds[@"Height"] doubleValue];
-      double bestArea = [bestBounds[@"Width"] doubleValue] * [bestBounds[@"Height"] doubleValue];
-      if (area > bestArea) best = win;
-    }
-    CFRelease(list);
-  }
-  return best;
-}
-
-static NSString *focusedWindowTitle(void) {
   if (!AXIsProcessTrusted()) return nil;
-  AXUIElementRef system = AXUIElementCreateSystemWide();
-  // Opening the input must not wait for an unresponsive application.
-  AXUIElementSetMessagingTimeout(system, 0.05f);
-  AXUIElementRef app = NULL;
-  NSString *title = nil;
-  if (AXUIElementCopyAttributeValue(system, kAXFocusedApplicationAttribute, (CFTypeRef *)&app) ==
-          kAXErrorSuccess &&
-      app) {
-    AXUIElementSetMessagingTimeout(app, 0.05f);
-    AXUIElementRef window = NULL;
-    if (AXUIElementCopyAttributeValue(app, kAXFocusedWindowAttribute, (CFTypeRef *)&window) ==
-            kAXErrorSuccess &&
-        window) {
-      AXUIElementSetMessagingTimeout(window, 0.05f);
-      CFTypeRef value = NULL;
-      if (AXUIElementCopyAttributeValue(window, kAXTitleAttribute, &value) == kAXErrorSuccess &&
-          value) {
-        title = [NSString stringWithFormat:@"%@", (__bridge id)value];
-        CFRelease(value);
-      }
-      CFRelease(window);
+  AXUIElementRef app = AXUIElementCreateApplication(pid);
+  AXUIElementSetMessagingTimeout(app, 0.05f);
+  CFTypeRef window = NULL;
+  AXError status = AXUIElementCopyAttributeValue(app, kAXFocusedWindowAttribute, &window);
+  CFRelease(app);
+  if (!window) return status == kAXErrorNoValue ? nil : @{};
+  AXUIElementSetMessagingTimeout((AXUIElementRef)window, 0.05f);
+  CFTypeRef pos = NULL, size = NULL, title = NULL;
+  AXUIElementCopyAttributeValue((AXUIElementRef)window, kAXPositionAttribute, &pos);
+  AXUIElementCopyAttributeValue((AXUIElementRef)window, kAXSizeAttribute, &size);
+  AXUIElementCopyAttributeValue((AXUIElementRef)window, kAXTitleAttribute, &title);
+  CGPoint origin;
+  CGSize dimensions;
+  BOOL geometry = pos && size && CFGetTypeID(pos) == AXValueGetTypeID() &&
+      CFGetTypeID(size) == AXValueGetTypeID() &&
+      AXValueGetValue((AXValueRef)pos, kAXValueCGPointType, &origin) &&
+      AXValueGetValue((AXValueRef)size, kAXValueCGSizeType, &dimensions);
+  NSString *name = title && CFGetTypeID(title) == CFStringGetTypeID() ? [(__bridge NSString *)title copy] : nil;
+  if (pos) CFRelease(pos);
+  if (size) CFRelease(size);
+  if (title) CFRelease(title);
+  CFRelease(window);
+
+  NSMutableDictionary *result = [NSMutableDictionary dictionary];
+  if (name.length) result[(id)kCGWindowName] = name;
+  if (!geometry) return result;
+  result[(id)kCGWindowBounds] = @{@"X": @(origin.x), @"Y": @(origin.y),
+                                  @"Width": @(dimensions.width), @"Height": @(dimensions.height)};
+  NSArray *windows = CFBridgingRelease(CGWindowListCopyWindowInfo(
+      kCGWindowListOptionOnScreenOnly | kCGWindowListExcludeDesktopElements, kCGNullWindowID));
+  NSNumber *only = nil, *named = nil;
+  NSUInteger matches = 0, namedMatches = 0;
+  for (NSDictionary *win in windows) {
+    if ([win[(id)kCGWindowOwnerPID] intValue] != pid) continue;
+    CGRect rect;
+    NSDictionary *bounds = win[(id)kCGWindowBounds];
+    if (!bounds || !CGRectMakeWithDictionaryRepresentation((__bridge CFDictionaryRef)bounds, &rect)) continue;
+    if (fabs(rect.origin.x - origin.x) > 1 || fabs(rect.origin.y - origin.y) > 1 ||
+        fabs(rect.size.width - dimensions.width) > 1 || fabs(rect.size.height - dimensions.height) > 1) continue;
+    only = win[(id)kCGWindowNumber];
+    matches++;
+    NSString *cgName = win[(id)kCGWindowName];
+    if (name.length && [cgName isEqualToString:name]) {
+      named = only;
+      namedMatches++;
     }
-    CFRelease(app);
   }
-  CFRelease(system);
-  return title;
+  NSNumber *number = matches == 1 ? only : namedMatches == 1 ? named : nil;
+  if (number) result[(id)kCGWindowNumber] = number;
+  return result;
 }
 
-static int commandFront(void) {
-  NSRunningApplication *front = [[NSWorkspace sharedWorkspace] frontmostApplication];
+static int commandFront(pid_t target) {
+  NSRunningApplication *front = target > 0 ? [NSRunningApplication runningApplicationWithProcessIdentifier:target]
+                                           : [[NSWorkspace sharedWorkspace] frontmostApplication];
   if (!front) {
     emit(@{@"ok" : @NO, @"error" : @"no-frontmost-application"});
     return 0;
@@ -105,15 +106,13 @@ static int commandFront(void) {
   result[@"pid"] = @(pid);
   result[@"accessibility"] = @(AXIsProcessTrusted());
   if (win) {
-    result[@"windowId"] = win[(id)kCGWindowNumber] ?: @0;
-    result[@"bounds"] = win[(id)kCGWindowBounds] ?: @{};
+    result[@"windowId"] = win[(id)kCGWindowNumber];
+    result[@"bounds"] = win[(id)kCGWindowBounds];
     NSString *windowName = win[(id)kCGWindowName];
     if ([windowName isKindOfClass:[NSString class]] && [windowName length] > 0) {
       result[@"title"] = windowName;
     }
   }
-  NSString *axTitle = focusedWindowTitle();
-  if ([axTitle length] > 0) result[@"title"] = axTitle;
   emit(result);
   return 0;
 }
@@ -160,6 +159,38 @@ static int commandKey(const char *which) {
 // given a moment to be delivered before the next one is posted. A plan that
 // fires four events in the same microsecond is dropped or reordered by the
 // window server.
+
+static volatile sig_atomic_t agentCancelled = 0;
+static pid_t agentExpectedPid = 0;
+static long agentExpectedWindow = 0;
+static CGRect agentExpectedBounds;
+static BOOL agentHasExpectedBounds = NO;
+
+static void cancelAgentInput(int signalNumber) {
+  (void)signalNumber;
+  agentCancelled = 1;
+}
+
+static BOOL agentCanPost(void) {
+  if (agentCancelled) return NO;
+  return !agentExpectedPid ||
+      [[NSWorkspace sharedWorkspace] frontmostApplication].processIdentifier == agentExpectedPid;
+}
+
+static BOOL agentTargetMatches(void) {
+  if (!agentCanPost()) return NO;
+  if (!agentExpectedPid) return YES;
+  NSDictionary *focused = focusedWindowInfo(agentExpectedPid);
+  NSNumber *actual = focused[(id)kCGWindowNumber];
+  if (agentExpectedWindow > 0 ? actual.longValue != agentExpectedWindow : focused != nil) return NO;
+  if (agentHasExpectedBounds) {
+    NSDictionary *bounds = focused[(id)kCGWindowBounds];
+    CGRect rect;
+    if (!bounds || !CGRectMakeWithDictionaryRepresentation((__bridge CFDictionaryRef)bounds, &rect) ||
+        !CGRectEqualToRect(rect, agentExpectedBounds)) return NO;
+  }
+  return agentCanPost();
+}
 
 static void agentSleep(double ms) {
   if (ms <= 0) return;
@@ -219,45 +250,61 @@ static CGEventType agentEventTypeFor(CGMouseButton button, BOOL down) {
   return down ? kCGEventLeftMouseDown : kCGEventLeftMouseUp;
 }
 
-static void agentClick(CGFloat x, CGFloat y, CGMouseButton button, int count) {
-  // Hover first, then press: an app that highlights on hover needs the hover to
-  // have actually happened before the button goes down.
+static NSDictionary *agentClick(CGFloat x, CGFloat y, CGMouseButton button, int count) {
+  // Give the app a frame to process the pointer move before pressing.
   agentMoveTo(x, y);
-  agentSleep(90);
+  CFTimeInterval moved = [[NSProcessInfo processInfo] systemUptime];
+  double pressMs = 0;
+  agentSleep(32);
   CGPoint point = CGPointMake(x, y);
   for (int index = 0; index < count; index++) {
+    if (!agentTargetMatches()) return @{@"ok": @NO, @"error": @"interrupted"};
     CGEventRef down = CGEventCreateMouseEvent(NULL, agentEventTypeFor(button, YES), point, button);
     CGEventRef up = CGEventCreateMouseEvent(NULL, agentEventTypeFor(button, NO), point, button);
-    if (down) {
+    if (!down || !up) {
+      if (down) CFRelease(down);
+      if (up) CFRelease(up);
+      return @{@"ok": @NO, @"error": @"event-allocation"};
+    }
+    {
       CGEventSetIntegerValueField(down, kCGMouseEventClickState, index + 1);
       CGEventSetFlags(down, 0);
       agentTag(down);
+      if (index == 0) pressMs = ([[NSProcessInfo processInfo] systemUptime] - moved) * 1000;
       CGEventPost(kCGHIDEventTap, down);
       CFRelease(down);
     }
-    agentSleep(40);
-    if (up) {
+    agentSleep(20);
+    {
       CGEventSetIntegerValueField(up, kCGMouseEventClickState, index + 1);
       CGEventSetFlags(up, 0);
       agentTag(up);
       CGEventPost(kCGHIDEventTap, up);
       CFRelease(up);
     }
-    // A double click is two clicks in quick succession, not one event with a
-    // count: apps that look at clickState still need the pair.
-    agentSleep(60);
+    // Only wait if another press follows this release.
+    if (index + 1 < count) agentSleep(60);
   }
+  double releaseMs = ([[NSProcessInfo processInfo] systemUptime] - moved) * 1000;
+  return @{@"ok": @YES, @"pressMs": @(pressMs), @"releaseMs": @(releaseMs)};
 }
 
-static void agentDrag(CGFloat x1, CGFloat y1, CGFloat x2, CGFloat y2) {
+static BOOL agentDrag(CGFloat x1, CGFloat y1, CGFloat x2, CGFloat y2) {
   // Same top-left space as everything else in this section.
   CGPoint from = CGPointMake(x1, y1);
   CGPoint to = CGPointMake(x2, y2);
 
   agentMoveTo(x1, y1);
   agentSleep(90);
+  if (!agentTargetMatches()) return NO;
   CGEventRef down = CGEventCreateMouseEvent(NULL, kCGEventLeftMouseDown, from, kCGMouseButtonLeft);
-  if (down) {
+  CGEventRef up = CGEventCreateMouseEvent(NULL, kCGEventLeftMouseUp, from, kCGMouseButtonLeft);
+  if (!down || !up) {
+    if (down) CFRelease(down);
+    if (up) CFRelease(up);
+    return NO;
+  }
+  {
     CGEventSetFlags(down, 0);
     agentTag(down);
     CGEventPost(kCGHIDEventTap, down);
@@ -266,9 +313,12 @@ static void agentDrag(CGFloat x1, CGFloat y1, CGFloat x2, CGFloat y2) {
   // Intermediate moves: a single jump to the destination is treated as a
   // teleport by drag-and-drop targets that track the path (Finder, browsers).
   const int steps = 12;
-  for (int index = 1; index <= steps; index++) {
+  CGPoint last = from;
+  int index = 1;
+  for (; index <= steps && agentCanPost(); index++) {
     double t = (double)index / (double)steps;
     CGPoint point = CGPointMake(from.x + (to.x - from.x) * t, from.y + (to.y - from.y) * t);
+    last = point;
     CGEventRef drag = CGEventCreateMouseEvent(NULL, kCGEventLeftMouseDragged, point,
                                               kCGMouseButtonLeft);
     if (drag) {
@@ -279,13 +329,14 @@ static void agentDrag(CGFloat x1, CGFloat y1, CGFloat x2, CGFloat y2) {
     }
     agentSleep(18);
   }
-  CGEventRef up = CGEventCreateMouseEvent(NULL, kCGEventLeftMouseUp, to, kCGMouseButtonLeft);
-  if (up) {
+  {
+    CGEventSetLocation(up, last);
     CGEventSetFlags(up, 0);
     agentTag(up);
     CGEventPost(kCGHIDEventTap, up);
     CFRelease(up);
   }
+  return index > steps && agentCanPost();
 }
 
 static void agentScroll(double dx, double dy) {
@@ -307,40 +358,64 @@ static void agentScroll(double dx, double dy) {
  * character keeps the pace readable and lets an app that debounces input still
  * see each keystroke.
  */
-static void agentType(NSString *text) {
+static BOOL agentType(NSString *text) {
   NSUInteger length = [text length];
-  for (NSUInteger index = 0; index < length; index++) {
-    unichar buffer[1];
-    [text getCharacters:buffer range:NSMakeRange(index, 1)];
+  CFTimeInterval nextTargetCheck = 0;
+  for (NSUInteger index = 0; index < length;) {
+    if (!agentCanPost()) return NO;
+    CFTimeInterval now = NSProcessInfo.processInfo.systemUptime;
+    if (now >= nextTargetCheck) {
+      if (!agentTargetMatches()) return NO;
+      nextTargetCheck = NSProcessInfo.processInfo.systemUptime + 0.075;
+    }
+    NSRange range = [text rangeOfComposedCharacterSequenceAtIndex:index];
+    unichar buffer[20];
+    // A pathological grapheme can exceed the CGEvent payload. Split only at
+    // Unicode scalar boundaries so surrogate pairs always travel together.
+    NSUInteger count = MIN(NSMaxRange(range) - index, 20);
+    if (CFStringIsSurrogateHighCharacter([text characterAtIndex:index + count - 1])) count--;
+    [text getCharacters:buffer range:NSMakeRange(index, count)];
+    index += count;
     CGEventRef down = CGEventCreateKeyboardEvent(NULL, (CGKeyCode)0, true);
     CGEventRef up = CGEventCreateKeyboardEvent(NULL, (CGKeyCode)0, false);
+    if (!down || !up) {
+      if (down) CFRelease(down);
+      if (up) CFRelease(up);
+      return NO;
+    }
     // Modifiers are cleared explicitly. A freshly created key event inherits the
     // *current* modifier state, so a typed "a" while Command happened to be down
     // would arrive as Cmd+A — select-all instead of a letter. Typing must never
     // be at the mercy of a key the user happens to be resting a finger on.
     if (down) {
       CGEventSetFlags(down, 0);
-      CGEventKeyboardSetUnicodeString(down, 1, buffer);
+      CGEventKeyboardSetUnicodeString(down, count, buffer);
       agentTag(down);
       CGEventPost(kCGHIDEventTap, down);
       CFRelease(down);
     }
     if (up) {
       CGEventSetFlags(up, 0);
-      CGEventKeyboardSetUnicodeString(up, 1, buffer);
+      CGEventKeyboardSetUnicodeString(up, count, buffer);
       agentTag(up);
       CGEventPost(kCGHIDEventTap, up);
       CFRelease(up);
     }
     agentSleep(8);
   }
+  return YES;
 }
 
 /** Presses one key with a modifier mask; used for shortcuts and Return/Tab. */
-static void agentKey(int64_t keyCode, CGEventFlags flags) {
+static BOOL agentKey(int64_t keyCode, CGEventFlags flags) {
   CGEventRef down = CGEventCreateKeyboardEvent(NULL, (CGKeyCode)keyCode, true);
   CGEventRef up = CGEventCreateKeyboardEvent(NULL, (CGKeyCode)keyCode, false);
-  if (down) {
+  if (!down || !up) {
+    if (down) CFRelease(down);
+    if (up) CFRelease(up);
+    return NO;
+  }
+  {
     // A shortcut is the one place where the flags are the point: ⌘S is not "s
     // with modifiers lying around", it is the combination itself.
     CGEventSetFlags(down, flags);
@@ -349,12 +424,13 @@ static void agentKey(int64_t keyCode, CGEventFlags flags) {
     CFRelease(down);
   }
   agentSleep(30);
-  if (up) {
+  {
     CGEventSetFlags(up, flags);
     agentTag(up);
     CGEventPost(kCGHIDEventTap, up);
     CFRelease(up);
   }
+  return YES;
 }
 
 static int agentRequireAccessibility(void) {
@@ -452,6 +528,28 @@ static int commandWatch(BOOL watchMouse, BOOL interaction) {
 
   CFRelease(source);
   CFRelease(tap);
+  return 0;
+}
+
+static int commandOpenBrowser(void) {
+  NSWorkspace *workspace = [NSWorkspace sharedWorkspace];
+  // Resolve the default HTTPS handler without loading a page.
+  NSURL *url = [workspace URLForApplicationToOpenURL:[NSURL URLWithString:@"https://example.invalid/"]];
+  if (!url) {
+    emit(@{@"ok": @NO, @"error": @"browser-not-found"});
+    return 0;
+  }
+  if (agentCancelled) { emit(@{@"ok": @NO, @"error": @"interrupted"}); return 0; }
+  NSRunningApplication *browser = [workspace launchApplicationAtURL:url
+    options:NSWorkspaceLaunchDefault configuration:@{} error:NULL];
+  NSString *bundleId = [browser bundleIdentifier];
+  if (!bundleId) {
+    emit(@{@"ok": @NO, @"error": @"browser-launch-failed"});
+    return 0;
+  }
+  if (agentCancelled) { emit(@{@"ok": @NO, @"error": @"interrupted"}); return 0; }
+  [browser activateWithOptions:NSApplicationActivateIgnoringOtherApps];
+  emit(@{@"ok": @YES, @"bundleId": bundleId});
   return 0;
 }
 
@@ -902,7 +1000,7 @@ static BOOL axRoleIsControl(NSString *role) {
       @"AXButton", @"AXMenuItem", @"AXMenuBarItem", @"AXMenuButton", @"AXCheckBox",
       @"AXRadioButton", @"AXPopUpButton", @"AXComboBox", @"AXLink", @"AXTab",
       @"AXToolbarButton", @"AXDisclosureTriangle", @"AXSegmentedControl", @"AXIncrementor",
-      @"AXSlider", @"AXColorWell", @"AXCell", @"AXRow"
+      @"AXSlider", @"AXColorWell", @"AXCell", @"AXRow", @"AXDockItem"
     ]];
   });
   return [roles containsObject:role];
@@ -920,6 +1018,10 @@ static NSDictionary *axDescribe(AXUIElementRef element, NSArray<NSString *> *act
   if (value) info[@"value"] = value;
   NSString *described = axText(element, kAXDescriptionAttribute);
   if (described) info[@"description"] = described;
+  if (!title && !described && (axRoleIsControl(role) || [actions containsObject:@"AXPress"])) {
+    NSString *help = axText(element, kAXHelpAttribute);
+    if (help.length > 0 && help.length <= 60) info[@"help"] = help;
+  }
   NSString *roleDescription = axText(element, kAXRoleDescriptionAttribute);
   if (roleDescription) info[@"roleDescription"] = roleDescription;
   NSDictionary *frame = axFrame(element);
@@ -944,7 +1046,10 @@ static NSDictionary *axDescribe(AXUIElementRef element, NSArray<NSString *> *act
  * static text inside a button resolves to the button, and a button inside a
  * toolbar stays the button instead of becoming the toolbar.
  */
-static NSArray<NSDictionary *> *axChainAtPoint(double x, double y) {
+static NSArray *axChildren(AXUIElementRef element);
+
+static NSArray<NSDictionary *> *axChainAtPoint(double x, double y,
+                                               NSMutableArray<NSDictionary *> *neighbors) {
   NSMutableArray<NSDictionary *> *chain = [NSMutableArray array];
   AXUIElementRef system = AXUIElementCreateSystemWide();
   if (!system) return chain;
@@ -959,6 +1064,19 @@ static NSArray<NSDictionary *> *axChainAtPoint(double x, double y) {
     pid_t owner = 0;
     if (AXUIElementGetPid(element, &owner) == kAXErrorSuccess) info[@"pid"] = @(owner);
     [chain addObject:info];
+
+    // The hit test can land on a system surface owned by another process.
+    // Include neighboring icons so a near miss can resolve by name.
+    if (depth == 1 && [chain.firstObject[@"role"] isEqual:@"AXDockItem"]) {
+      CFTimeInterval deadline = CFAbsoluteTimeGetCurrent() + 0.25;
+      for (id sibling in axChildren(element)) {
+        if (neighbors.count >= 64 || CFAbsoluteTimeGetCurrent() >= deadline) break;
+        AXUIElementRef candidate = (__bridge AXUIElementRef)sibling;
+        if (![axText(candidate, kAXRoleAttribute) isEqual:@"AXDockItem"]) continue;
+        NSDictionary *item = axDescribe(candidate, axActions(candidate));
+        if (item[@"frame"]) [neighbors addObject:item];
+      }
+    }
 
     CFTypeRef parentValue = NULL;
     if (AXUIElementCopyAttributeValue(element, kAXParentAttribute, &parentValue) !=
@@ -1175,8 +1293,10 @@ static int commandProbe(pid_t requestedPid, double x, double y) {
   payload[@"ok"] = @YES;
   payload[@"pid"] = @(pid);
   payload[@"app"] = [application localizedName] ?: @"";
-  if (x >= 0 && y >= 0) payload[@"chain"] = axChainAtPoint(x, y);
-  payload[@"targets"] = axCollectTargets(pid, 600);
+  NSMutableArray<NSDictionary *> *targets = [NSMutableArray array];
+  if (isfinite(x) && isfinite(y)) payload[@"chain"] = axChainAtPoint(x, y, targets);
+  [targets addObjectsFromArray:axCollectTargets(pid, 600)];
+  payload[@"targets"] = targets;
   NSDictionary *focused = axFocusedElement(pid);
   if (focused) payload[@"focused"] = focused;
   payload[@"elapsedMs"] = @((CFAbsoluteTimeGetCurrent() - started) * 1000.0);
@@ -1219,11 +1339,29 @@ int main(int argc, const char *argv[]) {
       return 1;
     }
     const char *command = argv[1];
+    if (strcmp(command, "open-browser") == 0) signal(SIGTERM, cancelAgentInput);
+    if (strcmp(command, "input") == 0 && argc >= 6) {
+      signal(SIGTERM, cancelAgentInput);
+      agentExpectedPid = (pid_t)strtol(argv[2], NULL, 10);
+      agentExpectedWindow = strtol(argv[3], NULL, 10);
+      double x, y, width, height;
+      agentHasExpectedBounds = sscanf(argv[4], "%lf,%lf,%lf,%lf", &x, &y, &width, &height) == 4;
+      if (agentHasExpectedBounds) agentExpectedBounds = CGRectMake(x, y, width, height);
+      if (agentExpectedPid <= 0 || !agentTargetMatches()) {
+        emit(@{@"ok": @NO, @"error": @"target-changed"});
+        return 0;
+      }
+      argv += 4;
+      argc -= 4;
+      command = argv[1];
+    }
     if (strcmp(command, "permissions") == 0) return commandPermissions(NO);
     if (strcmp(command, "request-permissions") == 0) return commandPermissions(YES);
     if (strcmp(command, "cursor") == 0) return commandCursor();
     if (strcmp(command, "apps") == 0) return commandApps();
-    if (strcmp(command, "front") == 0) return commandFront();
+    if (strcmp(command, "front") == 0) return commandFront(0);
+    if (strcmp(command, "window") == 0 && argc == 3) return commandFront((pid_t)strtol(argv[2], NULL, 10));
+    if (strcmp(command, "open-browser") == 0) return commandOpenBrowser();
     if (strcmp(command, "copy") == 0) return commandKey("copy");
     if (strcmp(command, "paste") == 0) return commandKey("paste");
     if (strcmp(command, "activate") == 0) {
@@ -1262,6 +1400,7 @@ int main(int argc, const char *argv[]) {
         return 1;
       }
       if (agentRequireAccessibility()) return 0;
+      if (!agentCanPost()) { emit(@{@"ok": @NO, @"error": @"interrupted"}); return 0; }
       agentMoveTo(strtod(argv[2], NULL), strtod(argv[3], NULL));
       emit(@{@"ok" : @YES});
       return 0;
@@ -1273,13 +1412,13 @@ int main(int argc, const char *argv[]) {
         return 1;
       }
       if (agentRequireAccessibility()) return 0;
+      if (!agentCanPost()) { emit(@{@"ok": @NO, @"error": @"interrupted"}); return 0; }
       const char *which = argc > 4 ? argv[4] : "left";
       CGMouseButton button = kCGMouseButtonLeft;
       int count = 1;
       if (strcmp(which, "right") == 0) button = kCGMouseButtonRight;
       if (strcmp(which, "double") == 0) count = 2;
-      agentClick(strtod(argv[2], NULL), strtod(argv[3], NULL), button, count);
-      emit(@{@"ok" : @YES});
+      emit(agentClick(strtod(argv[2], NULL), strtod(argv[3], NULL), button, count));
       return 0;
     }
     if (strcmp(command, "drag") == 0) {
@@ -1289,9 +1428,9 @@ int main(int argc, const char *argv[]) {
         return 1;
       }
       if (agentRequireAccessibility()) return 0;
-      agentDrag(strtod(argv[2], NULL), strtod(argv[3], NULL), strtod(argv[4], NULL),
-                strtod(argv[5], NULL));
-      emit(@{@"ok" : @YES});
+      if (!agentCanPost()) { emit(@{@"ok": @NO, @"error": @"interrupted"}); return 0; }
+      emit(@{@"ok" : @(agentDrag(strtod(argv[2], NULL), strtod(argv[3], NULL),
+                                      strtod(argv[4], NULL), strtod(argv[5], NULL)))});
       return 0;
     }
     if (strcmp(command, "scroll") == 0) {
@@ -1301,6 +1440,7 @@ int main(int argc, const char *argv[]) {
         return 1;
       }
       if (agentRequireAccessibility()) return 0;
+      if (!agentCanPost()) { emit(@{@"ok": @NO, @"error": @"interrupted"}); return 0; }
       agentScroll(strtod(argv[2], NULL), strtod(argv[3], NULL));
       emit(@{@"ok" : @YES});
       return 0;
@@ -1312,8 +1452,8 @@ int main(int argc, const char *argv[]) {
         return 1;
       }
       if (agentRequireAccessibility()) return 0;
-      agentKey(strtoll(argv[2], NULL, 10), (CGEventFlags)strtoull(argv[3], NULL, 10));
-      emit(@{@"ok" : @YES});
+      if (!agentCanPost()) { emit(@{@"ok": @NO, @"error": @"interrupted"}); return 0; }
+      emit(@{@"ok" : @(agentKey(strtoll(argv[2], NULL, 10), (CGEventFlags)strtoull(argv[3], NULL, 10)))});
       return 0;
     }
     if (strcmp(command, "type") == 0) {
@@ -1325,6 +1465,7 @@ int main(int argc, const char *argv[]) {
         return 1;
       }
       if (agentRequireAccessibility()) return 0;
+      if (!agentCanPost()) { emit(@{@"ok": @NO, @"error": @"interrupted"}); return 0; }
       NSString *encoded = [NSString stringWithUTF8String:argv[2]];
       NSData *decoded = [[NSData alloc] initWithBase64EncodedString:encoded ?: @"" options:0];
       NSString *text = decoded ? [[NSString alloc] initWithData:decoded encoding:NSUTF8StringEncoding]
@@ -1333,8 +1474,7 @@ int main(int argc, const char *argv[]) {
         emit(@{@"ok" : @NO, @"error" : @"bad-payload"});
         return 0;
       }
-      agentType(text);
-      emit(@{@"ok" : @YES, @"length" : @([text length])});
+      emit(@{@"ok" : @(agentType(text))});
       return 0;
     }
     if (strcmp(command, "probe") == 0) {
@@ -1342,8 +1482,8 @@ int main(int argc, const char *argv[]) {
       // hit test, only the element list". Both are optional because the caller
       // sometimes knows the app but has no point yet.
       pid_t pid = 0;
-      double x = -1;
-      double y = -1;
+      double x = NAN;
+      double y = NAN;
       if (argc > 2) pid = (pid_t)strtol(argv[2], NULL, 10);
       if (argc > 4) {
         x = strtod(argv[3], NULL);

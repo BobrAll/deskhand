@@ -8,7 +8,8 @@ import {
   DEFAULT_SETTINGS,
   DEFAULT_SYSTEM_PROMPT,
   DEFAULT_VOICE,
-  normalizeSettings
+  normalizeSettings,
+  resolveSearchModel
 } from './defaults'
 
 // `models` is the one block that does not fall back to the shipped defaults: an
@@ -141,6 +142,19 @@ describe('normalizeSettings: provider', () => {
 })
 
 describe('normalizeSettings: models and base URLs', () => {
+  it('keeps web search model overrides separate and uses the old default when blank', () => {
+    const settings = normalizeSettings({
+      provider: 'openrouter',
+      models: { openrouter: 'ordinary-model' },
+      searchModels: { openrouter: '  search-model  ', openai: false }
+    })
+    expect(settings.models.openrouter).toBe('ordinary-model')
+    expect(settings.searchModels).toEqual({ ...EMPTY_MODELS, openrouter: 'search-model' })
+    expect(resolveSearchModel(settings)).toBe('search-model')
+    expect(resolveSearchModel({ ...settings, provider: 'openai' })).toBe('gpt-5-search-api')
+    expect(resolveSearchModel({ ...settings, searchModels: EMPTY_MODELS })).toBe('ordinary-model')
+  })
+
   it('keeps a model per provider and defaults the rest to empty', () => {
     const result = normalizeSettings({ models: { anthropic: 'claude-3-5-sonnet' } })
 

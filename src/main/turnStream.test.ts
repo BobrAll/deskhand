@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 
 import type { Annotation } from '@shared/types'
-import type { ChatMessage, LlmProvider, StreamChunk, StreamOptions } from './llm/provider'
+import type { ChatMessage, LlmProvider, StreamChunk, StreamEnd, StreamOptions } from './llm/provider'
 import { consumeTurnStream } from './turnStream'
 
 /**
@@ -23,19 +23,20 @@ const STREAM_OPTIONS: StreamOptions = {
 }
 
 /** A provider that yields exactly the deltas it was given, and records the call. */
-function fakeProvider(deltas: string[], failWith?: Error): LlmProvider & {
+function fakeProvider(deltas: string[], failWith?: Error, end: StreamEnd = 'complete'): LlmProvider & {
   calls: Array<{ messages: ChatMessage[]; apiKey: string; options: StreamOptions }>
 } {
   const calls: Array<{ messages: ChatMessage[]; apiKey: string; options: StreamOptions }> = []
   return {
     id: 'openai',
     calls,
-    async *stream(messages, apiKey, options): AsyncGenerator<StreamChunk> {
+    async *stream(messages, apiKey, options): AsyncGenerator<StreamChunk, StreamEnd> {
       calls.push({ messages, apiKey, options })
       for (const delta of deltas) {
         if (failWith) throw failWith
         yield { delta }
       }
+      return end
     }
   }
 }
@@ -78,6 +79,22 @@ describe('consumeTurnStream: the request it makes', () => {
 })
 
 describe('consumeTurnStream: prose', () => {
+  it('captures the web lookup marker across chunks without printing it', async () => {
+    const out = recorder()
+    const result = await consumeTurnStream({
+      provider: fakeProvider(['@we', 'b']),
+      messages: MESSAGES,
+      apiKey: '',
+      streamOptions: STREAM_OPTIONS,
+      isAlive: () => true,
+      onShapes: out.onShapes,
+      onText: out.onText
+    })
+
+    expect(result).toEqual({ text: '', steps: [], webLookup: true })
+    expect(out.text).toEqual([])
+  })
+
   it('reports every piece of prose as it arrives and returns it joined', async () => {
     const out = recorder()
     const result = await consumeTurnStream({
@@ -348,5 +365,23 @@ describe('consumeTurnStream: a round that is no longer wanted', () => {
         onText: () => undefined
       })
     ).rejects.toThrow('provider exploded')
+  })
+})
+
+describe('consumeTurnStream: execution integrity', () => {
+  it.each(['incomplete', 'limit'] as const)('rejects a partial batch on %s', async (end) => {
+    await expect(consumeTurnStream({
+      provider: fakeProvider(['@click 0.4 0.5\n@type Привет🙂'], undefined, end),
+      messages: MESSAGES, apiKey: '', streamOptions: STREAM_OPTIONS, isAlive: () => true,
+      onShapes: () => undefined, onText: () => undefined
+    })).rejects.toThrow('Ответ модели оборвался')
+  })
+
+  it('rejects a malformed action followed by a valid submission', async () => {
+    await expect(consumeTurnStream({
+      provider: fakeProvider(['@type\n@key enter\n']),
+      messages: MESSAGES, apiKey: '', streamOptions: STREAM_OPTIONS, isAlive: () => true,
+      onShapes: () => undefined, onText: () => undefined
+    })).rejects.toThrow('некорректный план')
   })
 })

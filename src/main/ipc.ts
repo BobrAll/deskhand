@@ -19,6 +19,7 @@ import type {
 } from '@shared/types'
 import type { ActionResult, AppPickResult, SettingsBundle } from '@shared/api'
 import type { OverlayController } from './overlay'
+import { applyHistorySettings } from './overlay/history'
 import type { VoiceController } from './voice'
 import type { GestureController } from './gesture'
 import { testApiKey } from './llm/testKey'
@@ -37,7 +38,7 @@ import {
   markSettingsBusy,
   openSettingsWindow
 } from './windows'
-import { downloadModel, importModel, voiceStatus } from './voice/whisper'
+import { deleteModel, downloadModel, importModel, voiceStatus } from './voice/whisper'
 
 const PROVIDER_IDS: ProviderId[] = PROVIDERS.map((provider) => provider.id)
 
@@ -132,6 +133,10 @@ export function registerIpc(deps: IpcDeps): void {
     // Only the native dialog can add approvals. Settings drafts can be stale.
     if (patch.agent) patch.agent = { ...patch.agent, rememberedApprovals: previous.agent.rememberedApprovals }
     const next = patchSettings(patch)
+    if (next.rememberConversation !== previous.rememberConversation ||
+      JSON.stringify(next.excludedApps) !== JSON.stringify(previous.excludedApps)) {
+      applyHistorySettings(next.rememberConversation, next.excludedApps)
+    }
 
     if (next.hotkey !== previous.hotkey) {
       const ok = deps.applyHotkey(next.hotkey)
@@ -248,6 +253,12 @@ export function registerIpc(deps: IpcDeps): void {
       /* the failure is already in the last progress event */
     }
     return deps.voice.status()
+  })
+
+  ipcMain.handle(CH.voice.deleteModel, async (_event, model: string) => {
+    await deleteModel(String(model ?? ''))
+    const status = await deps.voice.status()
+    return { ...status, gestureError: deps.gestures.status().gestureError }
   })
 
   ipcMain.handle(CH.voice.importModel, async () => {

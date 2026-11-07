@@ -26,7 +26,8 @@ const state = vi.hoisted(() => ({
   watchKilled: 0,
   watchClosed: 0,
   watchSpawnError: false,
-  watchLineHandler: null as null | ((line: string) => void)
+  watchLineHandler: null as null | ((line: string) => void),
+  inputProcess: null as null | { close?: (error: Error | null, stdout: string) => void; signals: string[] }
 }))
 
 /** `process.resourcesPath` does not exist outside Electron; the module reads it. */
@@ -53,6 +54,11 @@ vi.mock('node:child_process', () => ({
     callback: (error: Error | null, stdout: string) => void
   ) => {
     state.calls.push({ file, args, options })
+    if (state.inputProcess && args[0] === 'input') {
+      const input = state.inputProcess
+      input.close = callback
+      return { kill: (signal: string) => input.signals.push(signal) }
+    }
     const answer = state.handler?.(file, args, options) ?? { error: new Error('no handler') }
     // Answer on a later tick, as the real call does.
     queueMicrotask(() => callback(answer.error ?? null, answer.stdout ?? ''))
@@ -429,6 +435,27 @@ describe('input posting: rounding and arguments', () => {
     const args = helperCalls()[0].args
     expect(args[0]).toBe('type')
     expect(Buffer.from(args[1], 'base64').toString('utf8')).toBe('привет')
+  })
+
+  it('binds input to the observed window and waits for process close after cancellation', async () => {
+    const process: NonNullable<typeof state.inputProcess> = { signals: [] }
+    state.inputProcess = process
+    try {
+      const controller = new AbortController()
+      let settled = false
+      const input = helper.helperTypeText('🙂', {
+        pid: 42, windowId: 11, bounds: { x: 1, y: 2, width: 300, height: 200 }, signal: controller.signal
+      }).then((ok) => { settled = true; return ok })
+      expect(helperCalls()[0].args.slice(0, 5)).toEqual(['input', '42', '11', '1,2,300,200', 'type'])
+      controller.abort()
+      expect(process.signals).toEqual(['SIGTERM'])
+      await Promise.resolve()
+      expect(settled).toBe(false)
+      process.close?.(null, '{"ok":false,"error":"interrupted"}')
+      await expect(input).resolves.toBe(false)
+    } finally {
+      state.inputProcess = null
+    }
   })
 
   it('extends the timeout with the text length, capped at 30 s', async () => {

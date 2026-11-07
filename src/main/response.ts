@@ -29,6 +29,8 @@ export class ResponseStream {
   private pending = ''
   private shapes: Annotation[] = []
   private planned: AgentPlanStep[] = []
+  webLookup = false
+  invalidAction = false
 
   /** Feeds one delta; returns everything that can be acted on right now. */
   push(delta: string): ParsedChunk {
@@ -78,8 +80,13 @@ export class ResponseStream {
   }
 
   private consume(line: string, result: ParsedChunk): void {
+    if (line.trim() === '@web') {
+      this.webLookup = true
+      return
+    }
     const steps = parseAgentLine(line)
     if (steps) {
+      if (steps.length === 0) this.invalidAction = true
       result.steps.push(...steps)
       return
     }

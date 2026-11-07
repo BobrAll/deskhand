@@ -1,3 +1,4 @@
+import { Writable } from 'node:stream'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 /**
@@ -17,6 +18,7 @@ const state = vi.hoisted(() => ({
   spawned: [] as Array<{ binary: string; args: string[] }>,
   /** What the fake whisper process prints and how it ends. */
   whisper: { stdout: '', stderr: '', code: 0 as number | null, emitError: false },
+  transcript: '',
   written: [] as Array<{ path: string; data: Buffer }>,
   removed: [] as string[],
   renamed: [] as Array<[string, string]>,
@@ -40,13 +42,11 @@ vi.mock('electron', () => ({
 
 vi.mock('node:fs', () => ({
   existsSync: (path: string) => state.existing.has(path),
-  createWriteStream: () => ({
-    write: () => true,
-    end: (callback: () => void) => callback()
-  })
+  createWriteStream: () => new Writable({ write: (_chunk, _encoding, done) => done() })
 }))
 
 vi.mock('node:fs/promises', () => ({
+  readFile: async () => state.transcript,
   readdir: async (path: string) => {
     const entries = state.dirs[path]
     if (!entries) throw new Error(`ENOENT: ${path}`)
@@ -136,6 +136,7 @@ beforeEach(async () => {
   state.settings = { voice: { model: 'small-q5_1', language: 'ru' } }
   state.spawned = []
   state.whisper = { stdout: '', stderr: '', code: 0, emitError: false }
+  state.transcript = ''
   state.written = []
   state.removed = []
   state.renamed = []
@@ -176,9 +177,9 @@ describe('resolveBinary', () => {
 
 describe('installedModels', () => {
   it('reports the catalog ids whose files are on disk', async () => {
-    state.dirs['/userdata/models'] = ['ggml-base.bin', 'ggml-small-q5_1.bin', 'notes.txt']
+    state.dirs['/userdata/models'] = ['ggml-base.bin', 'ggml-small-q5_1.bin', 'ggml-custom.bin', 'notes.txt']
 
-    expect(await whisper.installedModels()).toEqual(['base', 'small-q5_1'])
+    expect(await whisper.installedModels()).toEqual(['base', 'small-q5_1', 'ggml-custom.bin'])
   })
 
   it('returns an empty list when the directory does not exist yet', async () => {
@@ -266,6 +267,32 @@ describe('transcribe', () => {
   function ready(): void {
     state.existing = new Set(['/app/resources/whisper-cli', '/userdata/models/ggml-small-q5_1.bin'])
   }
+
+  it('runs the selected GigaAM model in Russian and reads only its transcript file', async () => {
+    state.settings.voice = { model: 'gigaam-v3-e2e-rnnt', language: 'en' }
+    const binary = '/app/resources/transcribe-cli'
+    const model = '/userdata/models/gigaam-v3-e2e-rnnt-Q4_K_M.gguf'
+    state.existing = new Set([binary, model])
+    state.whisper.stdout = 'run: ok\ntext: Открой настройки.'
+    state.transcript = 'Открой настройки.'
+
+    expect(await whisper.transcribe({ wav: WAV })).toMatchObject({
+      ok: true,
+      text: state.transcript
+    })
+    expect(state.spawned).toEqual([{
+      binary,
+      args: ['-m', model, '-l', 'ru', '--timestamps', 'none', '-o', expect.any(String), expect.any(String)]
+    }])
+  })
+
+  it('requires the selected GigaAM weights even when Whisper weights are installed', async () => {
+    state.settings.voice.model = 'gigaam-v3-e2e-rnnt'
+    state.existing.add('/app/resources/transcribe-cli')
+    state.dirs['/userdata/models'] = ['ggml-small-q5_1.bin']
+    state.sizes['/userdata/models/ggml-small-q5_1.bin'] = 181
+    expect(await whisper.voiceStatus()).toMatchObject({ ready: false, modelPath: null })
+  })
 
   it('fails cleanly when whisper-cli is missing', async () => {
     expect(await whisper.transcribe({ wav: WAV })).toEqual({
@@ -482,6 +509,36 @@ describe('downloadModel', () => {
     expect(progress.at(-1)?.error).toBe('HTTP 404')
   })
 
+  it('aborts an unresponsive server and allows a retry', async () => {
+    vi.useFakeTimers()
+    try {
+      vi.mocked(fetch).mockImplementationOnce(async (_url, init) => {
+        const signal = init?.signal
+        return new Promise((_resolve, reject) => {
+          signal?.addEventListener('abort', () => reject(signal.reason), { once: true })
+        })
+      })
+      const report = vi.fn()
+      const task = whisper.downloadModel('tiny', report)
+      const failure = expect(task).rejects.toThrow('Сервер загрузки модели не отвечает')
+
+      await vi.advanceTimersByTimeAsync(30_000)
+      await failure
+      expect(report).toHaveBeenLastCalledWith(expect.objectContaining({
+        done: true,
+        error: expect.stringContaining('Сервер загрузки модели не отвечает')
+      }))
+      expect(whisper.isDownloading('tiny')).toBe(false)
+      expect(state.renamed).toHaveLength(0)
+
+      state.fetchResponses = [async () => new Response(bodyOf('model'), { status: 200 })]
+      await whisper.downloadModel('tiny', report)
+      expect(state.renamed).toHaveLength(1)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('returns the same promise for a model that is already downloading', async () => {
     let release = (): void => undefined
     const gate = new Promise<void>((resolve) => {
@@ -502,6 +559,25 @@ describe('downloadModel', () => {
     release()
     await first
     expect(whisper.isDownloading('tiny')).toBe(false)
+  })
+})
+
+describe('deleteModel', () => {
+  it('removes catalog and imported files from the app models directory', async () => {
+    await whisper.deleteModel('gigaam-v3-e2e-rnnt')
+    await whisper.deleteModel('ggml-custom.bin')
+
+    expect(state.removed).toEqual([
+      '/userdata/models/gigaam-v3-e2e-rnnt-Q4_K_M.gguf',
+      '/userdata/models/ggml-custom.bin'
+    ])
+  })
+
+  it('rejects paths and unrelated filenames', async () => {
+    for (const id of ['ggml-x/../../ggml-base.bin', '/tmp/ggml-base.bin', 'notes.txt']) {
+      await expect(whisper.deleteModel(id)).rejects.toThrow('Неизвестная модель')
+    }
+    expect(state.removed).toEqual([])
   })
 })
 

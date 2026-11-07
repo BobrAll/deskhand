@@ -24,6 +24,13 @@ describe('per-turn progress memory', () => {
     expect(guard.allow(steps, { ...shot, area: { x: 1000, y: 0, width: 1000, height: 800 } })).toBe(true)
   })
 
+  it('blocks reopening the same URL even when the screenshot changed', () => {
+    const guard = new ProgressGuard()
+    const open: AgentPlanStep[] = [{ label: 'Open', action: { kind: 'navigate', url: 'https://example.org' } }]
+    expect(guard.allow(open, shot)).toBe(true)
+    expect(guard.allow(open, { ...shot, dataUrl: 'data:image/png;base64,changed' })).toBe(false)
+  })
+
   it('allows waiting for loading and claiming a visible result without further input', () => {
     const guard = new ProgressGuard()
     const passive: AgentPlanStep[] = [{ label: 'Wait', action: { kind: 'wait', ms: 500 } }]

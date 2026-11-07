@@ -23,6 +23,8 @@ export interface StreamOptions {
   signal: AbortSignal
 }
 
+export type StreamEnd = 'complete' | 'incomplete' | 'limit'
+
 export interface StreamChunk {
   delta: string
 }
@@ -42,5 +44,5 @@ export class ProviderError extends Error {
 export interface LlmProvider {
   id: ProviderId
   /** Yields text deltas until the model stops. */
-  stream(messages: ChatMessage[], apiKey: string, options: StreamOptions): AsyncGenerator<StreamChunk>
+  stream(messages: ChatMessage[], apiKey: string, options: StreamOptions): AsyncGenerator<StreamChunk, StreamEnd | void>
 }

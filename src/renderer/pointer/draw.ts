@@ -1,16 +1,4 @@
-/**
- * Turns a `PointerPayload` into SVG and injects it into the page.
- *
- * The whole point of this renderer is the animation: a shape that just appears
- * looks like a glitch, while a shape that is *drawn* — the stroke travelling
- * along the path, then a caption fading in — reads as someone standing next to
- * you with a marker. Both effects are pure CSS (`stroke-dashoffset`), so they run
- * on the compositor and cost nothing while a full-screen window is open.
- *
- * Re-rendering is wholesale rather than incremental: the payload is at most a
- * handful of shapes, and replacing the SVG guarantees the draw-in replays every
- * time the assistant points at something new.
- */
+/** Draws the annotation paths and lays out their captions in screen coordinates. */
 
 import type { PointerPayload, PointerShape } from '@shared/types'
 
@@ -78,8 +66,11 @@ function pathFor(shape: PointerShape): string {
   }
 }
 
-function arrowHead(shape: PointerShape, size = 17): SVGElementTagNameMap['path'] {
-  const angle = Math.atan2(shape.to.y - shape.from.y, shape.to.x - shape.from.x)
+function arrowHead(shape: PointerShape): SVGElementTagNameMap['path'] {
+  const dx = shape.to.x - shape.from.x
+  const dy = shape.to.y - shape.from.y
+  const angle = Math.atan2(dy, dx)
+  const size = Math.min(16, Math.hypot(dx, dy))
   const spread = 0.42
   const left = angle + Math.PI - spread
   const right = angle + Math.PI + spread
@@ -92,104 +83,76 @@ function arrowHead(shape: PointerShape, size = 17): SVGElementTagNameMap['path']
   return el('path', { d, class: 'pointer-head' })
 }
 
-function label(
-  shape: PointerShape,
-  text: string,
-  bounds: { width: number; height: number }
-): SVGElementTagNameMap['g'] {
-  const group = el('g', { class: 'pointer-label' })
-  const paddingX = 9
-  const fontSize = 15
-  // Width is estimated instead of measured: `getBBox` would force layout during
-  // the animation and the label only needs to look right, not to be exact.
-  const width = Math.min(280, text.length * fontSize * 0.56 + paddingX * 2)
-  const height = fontSize + 12
+type Rect = { left: number; top: number; right: number; bottom: number }
 
-  // Where the caption would like to sit, relative to its shape. Clamping is kept
-  // as a last resort instead of the main strategy: a caption shoved to the far
-  // edge of the display is worse than one overlapping, because the user can no
-  // longer tell which shape it belongs to.
-  const gap = 10
-  let x: number
-  let y: number
-  if (shape.kind === 'underline') {
-    x = Math.min(shape.from.x, shape.to.x)
-    y = Math.max(shape.from.y, shape.to.y) + gap
-  } else if (shape.kind === 'arrow') {
-    // Beside the head, on the side it points away from, so the text never sits on
-    // the shaft the user is supposed to follow.
-    x = shape.to.x >= shape.from.x ? shape.to.x + gap + 6 : shape.to.x - width - gap - 6
-    y = shape.to.y - height - gap
-  } else {
-    x = Math.max(shape.from.x, shape.to.x) + gap
-    y = Math.min(shape.from.y, shape.to.y)
+function targetBounds(shape: PointerShape): Rect {
+  const { from, to } = shape
+  if (shape.kind === 'arrow') {
+    return { left: to.x - 6, top: to.y - 6, right: to.x + 6, bottom: to.y + 6 }
   }
-
-  const clampX = (value: number): number =>
-    Math.max(6, Math.min(value, Math.max(6, bounds.width - width - 6)))
-  const clampY = (value: number): number =>
-    Math.max(6, Math.min(value, Math.max(6, bounds.height - height - 6)))
-
-  // If the preferred position does not fit, try the opposite side of the shape
-  // before accepting a clamp — that keeps the caption next to what it labels.
-  if (x < 6 || x + width > bounds.width - 6) {
-    if (shape.kind === 'arrow') {
-      const mirrored = shape.to.x >= shape.from.x ? shape.to.x - width - gap - 6 : shape.to.x + gap + 6
-      if (mirrored >= 6 && mirrored + width <= bounds.width - 6) x = mirrored
-    } else if (shape.kind !== 'underline') {
-      const mirrored = Math.min(shape.from.x, shape.to.x) - width - gap
-      if (mirrored >= 6 && mirrored + width <= bounds.width - 6) x = mirrored
-    }
+  return {
+    left: Math.min(from.x, to.x),
+    top: Math.min(from.y, to.y),
+    right: Math.max(from.x, to.x),
+    bottom: Math.max(from.y, to.y)
   }
-  if (y < 6) {
-    // No room above: drop the caption below the shape instead.
-    const below =
-      shape.kind === 'arrow'
-        ? shape.to.y + gap + 4
-        : Math.max(shape.from.y, shape.to.y) + gap
-    if (below + height <= bounds.height - 6) y = below
-  }
-
-  x = clampX(x)
-  y = clampY(y)
-
-  group.append(
-    el('rect', {
-      x,
-      y,
-      width,
-      height,
-      rx: height / 2,
-      class: 'pointer-label-bg'
-    })
-  )
-  const textNode = el('text', {
-    x: x + paddingX,
-    y: y + height / 2 + fontSize * 0.35,
-    class: 'pointer-label-text'
-  })
-  textNode.textContent = text
-  group.append(textNode)
-  return group
 }
 
-/** Draws one shape, arrowheads and captions included. */
-function renderShape(
+function overlap(a: Rect, b: Rect): number {
+  // Leave room for the stroke and a small visual gap between captions.
+  const gap = 4
+  return (
+    Math.max(0, Math.min(a.right, b.right + gap) - Math.max(a.left, b.left - gap)) *
+    Math.max(0, Math.min(a.bottom, b.bottom + gap) - Math.max(a.top, b.top - gap))
+  )
+}
+
+function placeLabel(
+  width: number,
+  height: number,
   shape: PointerShape,
-  index: number,
-  bounds: { width: number; height: number }
-): SVGElementTagNameMap['g'] {
-  const group = el('g', { class: `pointer-shape kind-${shape.kind}` })
-  // Stagger so a multi-shape answer reads as a sequence of gestures, and expose
-  // the same delay to children through a custom property so the stroke does not
-  // start drawing while its group is still invisible.
-  group.style.setProperty('--delay', `${index * 130}ms`)
+  screen: { width: number; height: number },
+  obstacles: Rect[]
+): Rect {
+  const { left, top, right, bottom } = targetBounds(shape)
+  const gap = 8
+  const margin = 6
+  const below = { x: left, y: bottom + gap }
+  const above = { x: left, y: top - height - gap }
+  const after = { x: right + gap, y: top }
+  const before = { x: left - width - gap, y: top }
+  const candidates = shape.kind === 'underline'
+    ? [below, above, after, before]
+    : [after, before, below, above]
+  // In a crowded corner, try just beyond the existing obstacles as well.
+  const alternatives = obstacles.flatMap((obstacle) => [
+    { x: left, y: obstacle.top - height - gap },
+    { x: left, y: obstacle.bottom + gap }
+  ]).sort((a, b) => Math.abs(a.y - top) - Math.abs(b.y - top))
+
+  let best: Rect | undefined
+  let leastOverlap = Infinity
+  for (const { x, y } of [...candidates, ...alternatives]) {
+    const clampedX = Math.max(margin, Math.min(x, screen.width - width - margin))
+    const clampedY = Math.max(margin, Math.min(y, screen.height - height - margin))
+    const rect = { left: clampedX, top: clampedY, right: clampedX + width, bottom: clampedY + height }
+    const covered = obstacles.reduce((area, obstacle) => area + overlap(rect, obstacle), 0)
+    if (covered === 0) return rect
+    if (covered < leastOverlap) {
+      best = rect
+      leastOverlap = covered
+    }
+  }
+  return best!
+}
+
+function renderShape(shape: PointerShape, delay: string): SVGGElement {
+  const group = el('g', { class: 'pointer-shape' })
+  group.style.setProperty('--delay', delay)
 
   const path = el('path', {
     d: pathFor(shape),
-    class: 'pointer-stroke',
-    'stroke-linecap': 'round',
-    'stroke-linejoin': 'round'
+    class: 'pointer-stroke'
   })
   // `pathLength=1` normalises the dash maths for every shape, whatever its real
   // length, so one CSS rule animates circles, boxes and arrows identically.
@@ -197,7 +160,6 @@ function renderShape(
   group.append(path)
 
   if (shape.kind === 'arrow') group.append(arrowHead(shape))
-  if (shape.label) group.append(label(shape, shape.label, bounds))
   return group
 }
 
@@ -217,14 +179,36 @@ export function render(root: HTMLElement, payload: PointerPayload): void {
 
   root.classList.remove('leaving')
 
-  const bounds = { width: payload.width, height: payload.height }
+  const layer = document.createElement('div')
+  layer.className = 'pointer-layer'
   const svg = el('svg', {
     width: payload.width,
     height: payload.height,
-    viewBox: `0 0 ${payload.width} ${payload.height}`,
-    class: 'pointer-layer'
+    viewBox: `0 0 ${payload.width} ${payload.height}`
   })
-  payload.shapes.forEach((shape, index) => svg.append(renderShape(shape, index, bounds)))
+  layer.append(svg)
+  const labels = payload.shapes.flatMap((shape, index) => {
+    const delay = `${Math.min(index, 4) * 45}ms`
+    svg.append(renderShape(shape, delay))
+    if (!shape.label) return []
 
-  root.replaceChildren(svg)
+    const node = document.createElement('div')
+    node.className = 'pointer-label'
+    node.style.setProperty('--delay', delay)
+    node.textContent = shape.label
+    layer.append(node)
+    return [{ node, shape }]
+  })
+  root.replaceChildren(layer)
+
+  // Measure the wrapped captions in one layout pass, then position them.
+  const sizes = labels.map(({ node }) => node.getBoundingClientRect())
+  const obstacles = payload.shapes.map(targetBounds)
+  labels.forEach(({ node, shape }, index) => {
+    const { width, height } = sizes[index]
+    const rect = placeLabel(width, height, shape, payload, obstacles)
+    node.style.left = `${rect.left}px`
+    node.style.top = `${rect.top}px`
+    obstacles.push(rect)
+  })
 }

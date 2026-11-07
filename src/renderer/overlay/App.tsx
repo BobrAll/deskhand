@@ -1277,7 +1277,15 @@ export function App() {
       */}
       {hasAnswer && (
         <div ref={answerRef} className="answer">
-          {answer}
+          {busy ? answer : answer
+            .split(/(\[[^\]\n]+\]\(https?:\/\/[^\s)]+\)|https?:\/\/[^\s<>()\]]+)/gi)
+            .map((part, index) => {
+              if (index % 2 === 0) return part
+              const markdown = /^\[([^\]]+)\]\((https?:\/\/.+)\)$/i.exec(part)
+              return <a key={index} href={markdown?.[2] ?? part} target="_blank" rel="noreferrer">
+                {markdown?.[1] ?? part}
+              </a>
+            })}
           {busy && <span className="caret" />}
         </div>
       )}

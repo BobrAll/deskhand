@@ -34,8 +34,6 @@ exports[`palette: per-window colours > matches the resolved palette snapshot, pe
     "--text-dim": "rgba(242, 243, 245, 0.66)",
     "--text-faint": "rgba(242, 243, 245, 0.45)",
     "--warning": "#f3c26b",
-    "--x": "0px",
-    "--y": "0px",
   },
   "cursor/light": {
     "--accent": "#4a68f0",
@@ -69,8 +67,6 @@ exports[`palette: per-window colours > matches the resolved palette snapshot, pe
     "--text-dim": "rgba(22, 23, 27, 0.68)",
     "--text-faint": "rgba(22, 23, 27, 0.45)",
     "--warning": "#a8760f",
-    "--x": "0px",
-    "--y": "0px",
   },
   "onboarding/dark": {
     "--accent": "#7b95ff",

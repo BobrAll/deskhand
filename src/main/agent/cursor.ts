@@ -1,29 +1,12 @@
 /**
- * The cursor highlight: a ring and a one-line caption that follow the pointer
- * while an agent plan runs.
- *
- * Why this exists. The runner moves the *real* cursor with `CGWarpMouseCursorPosition`,
- * so between two steps the pointer teleports across the screen in one frame and a
- * click happens 90 ms later. Without a mark on the pointer, the user sees their
- * cursor jump and a menu open by itself and has no way to tell which step of the
- * plan that was — the card may even be behind the window the assistant is
- * operating. The ring answers "where", the caption answers "what".
- *
- * The three properties from `pointer.ts` apply unchanged: it must
- * never take focus (`focusable: false` + `showInactive`), never eat clicks
- * (`setIgnoreMouseEvents`), and never end up in the next screenshot
- * (`setContentProtection`). A highlight that was photographed would come back to
- * the model as "there is a ring on your screen" and, worse, as a target.
- *
- * Geometry. This layer is display-sized: the ring is moved with a CSS
- * `translate` on every follow tick instead of by moving the window. macOS composites a window move on the main thread and a pointer that
- * the helper warps across the screen would make that visibly late; moving one
- * element inside a stationary layer stays on the compositor and is exact.
+ * A display-sized glow with a status caption that follows the pointer.
+ * The window passes clicks through, stays unfocused and is excluded from captures.
  */
 
 import { BrowserWindow, screen } from 'electron'
 import { CH } from '@shared/ipc'
 import type { AgentCursorFrame, AgentEvent, ScreenRect } from '@shared/types'
+import { trace } from './trace'
 import { createLayerWindow } from '../layerWindow'
 
 /** How long the renderer's fade-out runs before the window is actually hidden. */
@@ -35,7 +18,7 @@ const LOAD_TIMEOUT_MS = 1500
 
 /**
  * Follow rate. 16 ms is roughly one display frame: the helper warps the pointer
- * in one jump, so anything slower would show the ring arriving after the click.
+ * in one jump, so anything slower would show the caption arriving after the click.
  */
 const FOLLOW_MS = 16
 
@@ -60,21 +43,19 @@ let follow: NodeJS.Timeout | null = null
 let hideTimer: NodeJS.Timeout | null = null
 /** Bumped on every paint, so a stale fade-out cannot hide a new step. */
 let paintToken = 0
-/** Incremented per action, so the renderer replays the click ripple. */
-let pulse = 0
 /**
- * The turn that currently owns the ring, if any.
+ * The turn that currently owns the glow, if any.
  *
  * A turn is not one plan: the model may look at the screen again and continue,
- * and every plan ends with `done`. Hiding on that `done` made the ring go out
+ * and every plan ends with `done`. Hiding on that `done` made the glow go out
  * between two plans and come back a moment later — the user saw the mark blink
- * mid-run and could not tell a pause from the end. While a turn holds the ring,
+ * mid-run and could not tell a pause from the end. While a turn holds the glow,
  * a finished plan parks it in `waiting` instead of hiding it, and only
  * `endAgentTurn` takes it away.
  *
  * The token, not a flag, is what keeps a slow turn from being un-held by an
  * older one: the previous request can finish after the next one has already
- * started, and its release must not take the new turn's ring down.
+ * started, and its release must not take the new turn's glow down.
  */
 let held: number | null = null
 let turn = 0
@@ -106,7 +87,7 @@ function createWindow(): BrowserWindow {
  * Resolves once the page can receive messages.
  *
  * Bounded for the same reason as the other layers: a page that never loads would
- * otherwise leave the follow loop waiting forever, and the ring would never
+ * otherwise leave the follow loop waiting forever, and the glow would never
  * appear again in this session.
  */
 function ensureWindow(): Promise<BrowserWindow | null> {
@@ -178,10 +159,10 @@ function send(target: BrowserWindow, next: AgentCursorFrame): void {
 }
 
 /**
- * Paints the current frame at the pointer's current spot and starts following it.
+ * Paints the glow on the active display and starts following the pointer for the caption.
  *
  * Awaiting the window is safe here: the first `arming` event arrives before the
- * run's start delay, so the ring still appears while "приготовился" is on screen.
+ * run's start delay, so the glow still appears while "приготовился" is on screen.
  */
 async function paint(): Promise<void> {
   cancelSuccess()
@@ -208,8 +189,9 @@ async function paint(): Promise<void> {
 
   if (!visible) {
     visible = true
+    trace('cursor.show', { phase: shown.phase })
     // showInactive keeps the user's app frontmost — the assistant is about to
-    // operate it, and a focused ring layer would break that.
+    // operate it, and a focused glow layer would break that.
     target.showInactive()
   }
   startFollow()
@@ -250,24 +232,21 @@ function stopFollow(): void {
 const WAIT_LABEL_MS = 700
 
 /**
- * Keeps the ring where it is while the turn is still working.
+ * Keeps the glow visible while the turn is still working.
  *
  * Between two plans there is no step to name and no click to mark, but the
  * assistant is not finished: the screen is being read again before it continues.
- * A ring left on the last step would claim a click is still running, and a ring
- * that went out would read as the end of the run. The ring therefore stays on the
- * last step and only relaxes into `waiting` once the pause is long enough to be a
- * pause and not the end of the turn — otherwise the last "Выполнено" would be
- * replaced by a "Смотрю…" that lives for the length of the fade-out.
+ * Wait briefly before replacing the last step caption with "Смотрю…", since
+ * the turn might finish before the new caption would be readable.
  *
- * Returns `false` when there is nothing to park (the ring was never shown), so
+ * Returns `false` when there is nothing to park (the glow was never shown), so
  * the caller can fall through to a real hide.
  */
 function park(): boolean {
   const target = win
   const shown = frame
   if (!shown || !visible || !target || target.isDestroyed()) return false
-  if (waitTimer) return true
+  if (waitTimer || shown.phase === 'waiting') return true
   // The pause belongs to *this* turn: a newer turn already painting its own step
   // must not be relabelled by a timer the previous one left behind.
   const owner = held
@@ -276,8 +255,6 @@ function park(): boolean {
     const stillShown = frame
     if (!stillShown || !visible || !win || win.isDestroyed() || held === null) return
     if (held !== owner) return
-    // The follow loop keeps running through the pause: the pointer is still the
-    // user's, and the ring has to stay on it while the model thinks.
     send(win, {
       ...stillShown,
       visible: true,
@@ -299,7 +276,7 @@ function cancelWait(): void {
 function hide(force = false): void {
   if (!force && frame?.phase === 'success') return
   cancelSuccess()
-  // A turn that is still running keeps the ring: the plan it just finished is a
+  // A turn that is still running keeps the glow: the plan it just finished is a
   // pause, not the end (see `held`). Only `endAgentTurn` — or a stop, an error or
   // a close, which pass `force` — is allowed to take it away.
   if (!force && held !== null && park()) return
@@ -331,8 +308,9 @@ function hide(force = false): void {
     placedOn = null
     return
   }
+  trace('cursor.fade', { phase: shown.phase })
   // Let the renderer play its fade-out before the window disappears. The frame
-  // stays `null` while hidden, so a late tick cannot resurrect the ring.
+  // stays `null` while hidden, so a late tick cannot resurrect the glow.
   if (!target.isDestroyed()) {
     target.webContents.send(CH.agent.cursor, { ...shown, visible: false })
   }
@@ -349,8 +327,8 @@ function hide(force = false): void {
  * Feeds one agent event into the layer.
  *
  * `arming` and `acting` are painted as they come. `done` inside a longer turn
- * parks the ring (see `held`); `done` outside a turn, and `aborted`, `error` and
- * `idle`, mean the pointer belongs to the user again and the ring goes at once.
+ * parks the glow (see `held`); `done` outside a turn, and `aborted`, `error` and
+ * `idle`, mean the pointer belongs to the user again and the glow goes at once.
  * The follow loop stops on the same events, so nothing keeps polling the cursor
  * after the run is over.
  */
@@ -363,30 +341,30 @@ export function updateAgentCursor(event: AgentEvent): void {
       phase: 'success',
       label: 'Готово',
       step: 0,
-      total: 0,
-      pulse
+      total: 0
     }
     void paint()
     return
   }
-  // The check between the last action and «Готово» is a real pause with nothing
-  // moving, but the turn is not over: the ring stays on the pointer and says
-  // what is going on. Letting it fall through to `hide` would read as "готово"
-  // half a second before the answer to that question even arrived.
-  if (event.phase === 'checking') {
-    const shown = frame
-    if (!shown || !visible || !win || win.isDestroyed()) return
-    // The scheduled "Смотрю на экран…" describes the same pause; cancel it so a
-    // later timer cannot overwrite the more specific caption.
+  const recovering = event.phase === 'error' && event.recoverable && held !== null
+  if (event.phase === 'checking' || recovering) {
+    if (!frame && held === null) return
     cancelWait()
-    send(win, {
-      ...shown,
+    const waiting: AgentCursorFrame = {
       visible: true,
+      anchor: frame?.anchor ?? { x: 0, y: 0 },
+      side: frame?.side ?? 'above',
       phase: 'waiting',
-      label: 'Проверяю результат…',
+      label: recovering ? event.message || 'Проверяю экран…' : event.label || 'Проверяю результат…',
       step: 0,
       total: 0
-    })
+    }
+    trace('cursor.waiting', { recovering: Boolean(recovering) })
+    if (visible && win && !win.isDestroyed()) send(win, waiting)
+    else {
+      frame = waiting
+      void paint()
+    }
     return
   }
 
@@ -397,7 +375,6 @@ export function updateAgentCursor(event: AgentEvent): void {
   }
 
   const acting = event.phase === 'acting'
-  if (acting) pulse += 1
 
   const previous = frame
   const label =
@@ -410,8 +387,7 @@ export function updateAgentCursor(event: AgentEvent): void {
     phase: event.phase,
     label,
     step: acting ? event.step : 0,
-    total: event.total,
-    pulse: acting ? pulse : 0
+    total: event.total
   }
 
   frame = next
@@ -419,11 +395,11 @@ export function updateAgentCursor(event: AgentEvent): void {
 }
 
 /**
- * Hides the ring unless a turn is still running.
+ * Hides the glow unless a turn is still running.
  *
  * This is the safety net the runner calls from its `finally`: after a plan it
  * must not leave a stale mark behind, but between two plans of the same turn it
- * must not take the ring down either. It parks instead, and the turn's own
+ * must not take the glow down either. It parks instead, and the turn's own
  * release (`endAgentTurn`) is what finally hides it.
  */
 export function hideAgentCursor(): void {
@@ -431,32 +407,28 @@ export function hideAgentCursor(): void {
 }
 
 /**
- * Claims the ring for one agent turn and returns the token that releases it.
+ * Claims the glow for one agent turn and returns the token that releases it.
  *
  * Called once per turn, before its first plan runs. Until the matching
- * `endAgentTurn` the ring only ever parks, so a turn that runs several plans
- * shows one continuous ring instead of one per plan.
+ * `endAgentTurn` the glow only ever parks, so a turn that runs several plans
+ * shows one continuous glow instead of one per plan.
  */
 export function beginAgentTurn(label?: string): number {
   turn += 1
-  // A new request supersedes whatever the previous turn left on screen: a ring
-  // parked on a step the user has already moved past would sit there for the
-  // length of the new model round, describing work that no longer exists. Turns
-  // that finish normally have hidden it in their `finally`, so this only ever
-  // fires when two turns overlap.
+  // A new request supersedes the previous turn's glow and caption.
   if (frame) hide(true)
   held = turn
   if (label) {
     frame = { visible: true, anchor: { x: 0, y: 0 }, side: 'above',
-      phase: 'waiting', label, step: 0, total: 0, pulse: 0 }
+      phase: 'waiting', label, step: 0, total: 0 }
     void paint()
   }
   return held
 }
 
-/** Releases the ring when the turn is really over: the one moment it goes out. */
+/** Releases the glow when the turn is really over: the one moment it goes out. */
 export function endAgentTurn(token: number): void {
-  // A newer turn already owns the ring: this release is stale.
+  // A newer turn already owns the glow: this release is stale.
   if (held !== token) return
   held = null
   if (frame?.phase !== 'success') hide(true)

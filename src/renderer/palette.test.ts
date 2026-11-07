@@ -152,7 +152,7 @@ describe('palette: per-window colours', () => {
     expect(light['--panel-drawing']).toBe('rgba(249, 249, 251, 0.42)')
   })
 
-  it('keeps the cursor ring colours fixed and matches the caption to the overlay', () => {
+  it('keeps the screen glow colours fixed and matches the caption to the overlay', () => {
     const dark = resolveWindow('cursor', 'dark')
     const light = resolveWindow('cursor', 'light')
     const captionTokens = {

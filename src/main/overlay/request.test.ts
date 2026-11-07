@@ -58,13 +58,14 @@ function request(overrides: Partial<SendRequest> = {}): SendRequest {
 }
 
 function input(overrides: Partial<BuildTurnRequestInput> = {}): BuildTurnRequestInput {
+  const session = overrides.session ?? { snapshot: snapshot(), history: [], target: null }
   return {
     request: request(),
-    session: { snapshot: snapshot(), history: [], target: null },
+    session,
     settings: settings(),
     visionSupported: true,
     availability: { ready: true, reason: null },
-    ensureFreshScreenshot: async () => null,
+    ensureFreshScreenshot: async () => session.snapshot.screenshot,
     describeScreen: async () => null,
     aborted: () => false,
     ...overrides
@@ -99,6 +100,16 @@ describe('buildTurnRequest: the message list', () => {
     const system = turn.messages[0]?.parts[0]
     expect(system?.type).toBe('text')
     expect((system as { text: string }).text.startsWith('Ты помощник.\n\n')).toBe(true)
+  })
+
+  it('adds the previous command as context for a new card', async () => {
+    const turn = await buildTurnRequest(input({ previousCommand: 'Открой YouTube' }))
+
+    expect(turn.messages.map(({ role }) => role)).toEqual(['system', 'user'])
+    expect(turn.messages[1]?.parts.at(-1)).toEqual({
+      type: 'text',
+      text: expect.stringContaining('[Предыдущая просьба из другой карточки]\nОткрой YouTube\n\n[Контекст]')
+    })
   })
 
   it('matches what prompt.ts builds for the same inputs', async () => {
@@ -277,6 +288,18 @@ describe('buildTurnRequest: the two awaits', () => {
     await buildTurnRequest(input({ ensureFreshScreenshot: ensure, visionSupported: false }))
 
     expect(ensure).toHaveBeenCalledTimes(1)
+  })
+
+  it('binds coordinates to the returned frame even when the preview changes', async () => {
+    const deps = input()
+    const frame = deps.session.snapshot.screenshot!
+    deps.ensureFreshScreenshot = async () => {
+      deps.session.snapshot.screenshot = { ...frame, area: { ...AREA, x: AREA.x + 400 } }
+      return frame
+    }
+    const turn = await buildTurnRequest(deps)
+    expect(turn.screenshot).toBe(frame)
+    expect(turn.area).toEqual(AREA)
   })
 
   it('reports the turn as abandoned when the abort fired during the capture', async () => {

@@ -16,8 +16,8 @@
  *    element with that text exists near the point, its centre is the target. This
  *    is the strongest signal, because it survives a point that missed by a mile.
  * 2. **Containment.** No label match, but the point is inside an actionable
- *    element: the click stays where the model aimed, only pulled inside the
- *    edges. A static text inside a button resolves to the button, because the
+ *    element: compact buttons are clicked at their centre, and other controls
+ *    keep the aim inside their edges. Static text resolves to its button because the
  *    *smallest* container wins.
  * 3. **Snap.** No containment, but a control sits within a few dozen points of
  *    the guess. This is the case that used to fall through to the model's raw
@@ -31,10 +31,8 @@
  *
  * A click that is *inferred* (rules 1 and 3) goes to the centre of the rectangle,
  * because the model never landed inside it: the centre is the only part of a
- * control that is guaranteed to be the control. A click that is *contained*
- * (rule 2) keeps the model's aim, because the point is already on the element and
- * the centre of a wide row or a text field is a worse place than where the model
- * pointed.
+ * control that is guaranteed to be the control. For containment, small buttons use their centre and wide controls or
+ * text fields preserve the model's aim.
  *
  * Pure module: no Electron, no Node, no I/O. Everything here is arithmetic on
  * rectangles and strings, so it can be reasoned about (and tested) on its own.
@@ -57,6 +55,8 @@ type TargetSource =
   | 'snap'
   /** Nothing on the screen matched: the model's own point is used. */
   | 'model'
+  /** A numbered control was confirmed by a fresh hit test. */
+  | 'marker'
 
 export interface TargetResolution {
   point: ScreenPoint
@@ -316,45 +316,25 @@ export function textMatchScore(label: string, candidate: string): number {
 }
 
 /**
- * Every name an element carries.
- *
- * `roleDescription` is in the list because for an icon-only button it is the
- * *only* name macOS gives: the traffic-light buttons of a window report no title
- * and no description, just "кнопка закрытия". Leaving it out meant the model's
- * «Закрыть» could never match the × it was looking at.
- *
- * `value` is not a name for a text field: it is the text *inside* it, so a model
- * that writes «поиск» for a field containing "youtube.com" would look like it was
- * contradicting the element it meant. For everything else the value is the
- * visible text of a static element and belongs in the comparison.
+ * AXValue can be text or the state of a toggle. Only textual values can name
+ * a target. The generic role name can help match, but cannot contradict a name.
  */
-function elementTexts(element: AxElementInfo): string[] {
-  return [element.title, element.editable ? null : element.value, element.description, element.roleDescription].filter(
-    (text): text is string => Boolean(text && text.trim())
+export function nameTexts(element: AxElementInfo): string[] {
+  const value = element.value?.trim()
+  const stateValue = /^(?:AXButton|AXToolbarButton|AXCheckBox|AXRadioButton|AXSlider|AXSwitch)$/.test(element.role) &&
+    /^(?:[+-]?\d+(?:[.,]\d+)?|true|false)$/i.test(value ?? '')
+  const textValue = element.editable || stateValue ? null : value
+  return [element.title, element.description, element.help, textValue].filter(
+    (text): text is string => Boolean(text?.trim())
   )
 }
 
-/** The best similarity between the label and any name the element carries. */
 function bestTextScore(label: string, element: AxElementInfo): number {
   let best = 0
-  for (const text of elementTexts(element)) {
+  for (const text of [...nameTexts(element), element.roleDescription ?? '']) {
     best = Math.max(best, textMatchScore(label, text))
   }
   return best
-}
-
-/**
- * The names the element *shows*, as opposed to the kind of control it is.
- *
- * `roleDescription` is the Accessibility API's word for the widget ("кнопка",
- * "контурный ряд"), never the thing the model named, so it can never contradict
- * a label: an icon button that only reports "кнопка" is unnamed as far as this
- * question goes, and its aim is still trusted.
- */
-function nameTexts(element: AxElementInfo): string[] {
-  return [element.title, element.value, element.description].filter((text): text is string =>
-    Boolean(text && String(text).trim())
-  )
 }
 
 // ---------------------------------------------------------------------------
@@ -445,13 +425,8 @@ function byLabel(
 }
 
 /**
- * The model's point, pulled inside an element's clickable area.
- *
- * Containment does not move the click to the centre on purpose: the point is
- * already inside the target, and the centre of a wide row or a text field is a
- * worse place than where the model aimed. Only the edges are corrected, because
- * a point two points outside a button is a miss with a very expensive kind of
- * confidence.
+ * Pulls a click away from the edge while preserving the aim inside a wide
+ * control or text field.
  */
 function insetPoint(point: ScreenPoint, rect: ScreenRect): ScreenPoint {
   const inset = Math.min(3, rect.width / 4, rect.height / 4)
@@ -478,11 +453,18 @@ function byPoint(
   let best: AxElementInfo | null = null
   for (const element of list) {
     const frame = element.frame as ScreenRect
-    if (!containsPoint(frame, rough, 2)) continue
+    if (!containsPoint(frame, rough)) continue
     if (!best || rectArea(frame) < rectArea(best.frame as ScreenRect)) best = element
   }
   if (!best) return null
-  const point = clampPoint(insetPoint(rough, best.frame as ScreenRect), area)
+  const frame = best.frame as ScreenRect
+  // Small icon controls have padding around the glyph. Keep the model's point
+  // on wide controls, where the intended spot may matter.
+  if (!best.editable && frame.width <= 48 && frame.height <= 48 &&
+      /^(?:AXButton|AXToolbarButton|AXCheckBox|AXRadioButton|AXDisclosureTriangle)$/.test(best.role)) {
+    return resolution(best, 'point', 0.7, rough, area)
+  }
+  const point = clampPoint(insetPoint(rough, frame), area)
   return {
     point,
     element: best,
@@ -538,7 +520,7 @@ function bySnap(
     const text = needle ? bestTextScore(label ?? '', element) : 0
     // A visible, different name is decisive: the neighbour of the named control
     // is a different control, and a miss is cheaper than a wrong click.
-    if (needle && elementTexts(element).length > 0 && text < CONTRADICTION) continue
+    if (needle && nameTexts(element).length > 0 && text < CONTRADICTION) continue
     const closeness = 1 - gap / reach
     const score =
       closeness * 0.55 + alignmentScore(frame, rough) * 0.15 + sizeScore(frame) * 0.08 + text * 0.4
@@ -556,6 +538,29 @@ function bySnap(
     shift: Math.round(distanceBetween(rough, point)),
     confidence: Math.min(0.75, 0.3 + best.closeness * 0.25 + best.text * 0.2)
   }
+}
+
+/** Check that the centre of a marked control still hits the same control. */
+export function resolveMarkedTarget(
+  observed: AxElementInfo, rough: ScreenPoint, probe: AxProbe | null, area: ScreenRect
+): TargetResolution | null {
+  const point = clampPoint(rough, area)
+  const live = probe?.chain.find((element) =>
+    actionable(element) && element.frame && containsPoint(element.frame, point))
+  if (!observed.frame || !live?.frame || live.role !== observed.role ||
+      (observed.pid && live.pid !== observed.pid)) return null
+
+  const oldNames = nameTexts(observed).map(normalizeText).filter(Boolean)
+  const liveNames = nameTexts(live).map(normalizeText).filter(Boolean)
+  if ((oldNames.length || liveNames.length) && !oldNames.some((name) => liveNames.includes(name))) return null
+
+  const a = observed.frame
+  const b = live.frame
+  const width = Math.max(0, Math.min(a.x + a.width, b.x + b.width) - Math.max(a.x, b.x))
+  const height = Math.max(0, Math.min(a.y + a.height, b.y + b.height) - Math.max(a.y, b.y))
+  const overlap = width * height
+  if (overlap < 0.6 * (rectArea(a) + rectArea(b) - overlap)) return null
+  return { point, element: live, source: 'marker', shift: 0, confidence: 1 }
 }
 
 /**
@@ -601,8 +606,7 @@ export function resolveTarget(input: ResolveInput): TargetResolution {
     const labelText = normalizeText(label ?? '')
     if (labelText.length >= 2) {
       const names = nameTexts(contained.element as AxElementInfo)
-      let best = 0
-      for (const name of names) best = Math.max(best, textMatchScore(label ?? '', name))
+      const best = bestTextScore(label ?? '', contained.element as AxElementInfo)
       if (names.length > 0 && best < CONTRADICTION) {
         return { ...contained, confidence: 0.2, conflict: names[0] }
       }

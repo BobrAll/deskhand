@@ -73,13 +73,14 @@ export function useSpeech() {
   const begin = useCallback((id: string, prompt: string, voice: boolean) => {
     stop()
     setError(null)
+    if (!voice) return
     // Read the preference while the model is thinking, not after its answer.
     const action = looksLikeAction(prompt)
     const preferences = window.smartCursor.settings.load().then(({ settings }) => settings.voice)
     const acknowledgement = preferences.then(settings => action
-      ? settings.agentFeedback !== false : voice && settings.dialogue).catch(() => false)
+      ? settings.agentFeedback !== false : settings.dialogue).catch(() => false)
     const enabled = preferences
-      .then(settings => requestedReading(prompt) || (voice && settings.dialogue))
+      .then(settings => requestedReading(prompt) || settings.dialogue)
       .catch(() => false)
     const current = { id, prompt, enabled, buffer: '', spoken: '' }
     turn.current = current
@@ -105,7 +106,7 @@ export function useSpeech() {
       waitingVoice.current = true
       enqueue(waitingPhrases[phraseIndex.current++ % waitingPhrases.length])
     }
-    if (action || voice) waitingTimer.current = setTimeout(() => void acknowledge(), WAIT_STATUS_MS)
+    waitingTimer.current = setTimeout(() => void acknowledge(), WAIT_STATUS_MS)
   }, [stop, enqueue])
   const append = useCallback(async (id: string, delta: string) => {
     const current = turn.current

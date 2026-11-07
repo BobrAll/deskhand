@@ -18,9 +18,11 @@
     "test:coverage": "vitest run --coverage",
     "build:helper": "node scripts/build-helper.mjs",
     "build:whisper": "node scripts/build-whisper.mjs",
+    "build:transcribe": "node scripts/build-transcribe.mjs",
     "pack": "electron-vite build && electron-builder --mac --dir",
     "dist": "electron-vite build && electron-builder --mac",
     "test:gesture": "node scripts/test-gesture.mjs",
+    "agent:report": "node scripts/agent-trace-report.mjs",
     "test:native": "node scripts/test-native.mjs",
     "lint": "eslint src"
   },
@@ -46,6 +48,11 @@
         "to": "whisper-cli"
       },
       {
+        "from": "resources",
+        "to": ".",
+        "filter": ["transcribe-cli", "transcribe-licenses/**"]
+      },
+      {
         "from": "resources/trayTemplate.png",
         "to": "trayTemplate.png"
       },
@@ -60,7 +67,7 @@
       "identity": null,
       "hardenedRuntime": false,
       "gatekeeperAssess": false,
-      "x64ArchFiles": "Contents/Resources/{smartcursor-helper,whisper-cli}",
+      "x64ArchFiles": "Contents/Resources/{smartcursor-helper,whisper-cli,transcribe-cli}",
       "target": [
         {
           "target": "zip",

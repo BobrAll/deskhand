@@ -104,6 +104,22 @@ export function providerInfo(id: string): ProviderInfo | undefined {
   return PROVIDERS.find((provider) => provider.id === id)
 }
 
+export const OPENAI_DEFAULT_SEARCH_MODEL = 'gpt-5-search-api'
+
+type SearchModelDefaults = Pick<AppSettings, 'provider' | 'models' | 'baseUrls'>
+
+export function defaultSearchModel(settings: SearchModelDefaults): string {
+  const { provider } = settings
+  if (provider === 'openai' && !isPlusVibeApi(resolveBaseUrl(provider, settings.baseUrls[provider]))) {
+    return OPENAI_DEFAULT_SEARCH_MODEL
+  }
+  return settings.models[provider].trim() || providerInfo(provider)?.defaultModel || ''
+}
+
+export function resolveSearchModel(settings: SearchModelDefaults & Pick<AppSettings, 'searchModels'>): string {
+  return settings.searchModels[settings.provider].trim() || defaultSearchModel(settings)
+}
+
 /**
  * Cleans a user-supplied base URL: trims it, drops trailing slashes and any
  * copy-pasted endpoint path, so `.../v1` and `.../v1/` behave the same.
@@ -116,7 +132,7 @@ export function normalizeBaseUrl(input: unknown): string {
   if (!value) return ''
   value = value.replace(/\/+$/, '')
   // Users often paste the full endpoint instead of the API root.
-  value = value.replace(/\/(chat\/completions|messages|models|key)$/i, '')
+  value = value.replace(/\/(chat\/completions|messages|responses|models|key)$/i, '')
   if (!/^https?:\/\/[^\s/]+/i.test(value)) return ''
   try {
     // Throws on things like "https://" with no host.
@@ -130,6 +146,12 @@ export function normalizeBaseUrl(input: unknown): string {
 /** The URL actually used for requests: the override when valid, else the default. */
 export function resolveBaseUrl(provider: ProviderId, configured: string | undefined): string {
   return normalizeBaseUrl(configured) || providerInfo(provider)?.defaultBaseUrl || ''
+}
+
+export function isPlusVibeApi(baseUrl: string): boolean {
+  if (!URL.canParse(baseUrl)) return false
+  const { hostname } = new URL(baseUrl)
+  return hostname === 'plusvibeapi.ru' || hostname === 'gw.plusvibeapi.ru' || hostname === 'plusvibeapi.com'
 }
 
 /**
@@ -196,6 +218,36 @@ export const WHISPER_MODELS: WhisperModelMeta[] = [
 
 export function whisperModel(id: string): WhisperModelMeta | undefined {
   return WHISPER_MODELS.find((model) => model.id === id)
+}
+
+export interface VoiceModelMeta extends WhisperModelMeta {
+  engine: 'whisper' | 'transcribe'
+  url: string
+  language?: string
+}
+
+const gigaamFile = 'gigaam-v3-e2e-rnnt-Q4_K_M.gguf'
+
+export const VOICE_MODELS: VoiceModelMeta[] = [
+  ...WHISPER_MODELS.map((model): VoiceModelMeta => ({
+    ...model,
+    engine: 'whisper',
+    url: `${WHISPER_MODEL_BASE_URL}/${model.file}`
+  })),
+  {
+    id: 'gigaam-v3-e2e-rnnt',
+    label: 'GigaAM v3 E2E-RNNT · Q4_K_M',
+    file: gigaamFile,
+    mb: 184,
+    note: 'Русская речь с пунктуацией и нормализацией чисел.',
+    engine: 'transcribe',
+    language: 'ru',
+    url: `https://huggingface.co/handy-computer/gigaam-v3-e2e-rnnt-gguf/resolve/main/${gigaamFile}`
+  }
+]
+
+export function voiceModel(id: string): VoiceModelMeta | undefined {
+  return VOICE_MODELS.find((model) => model.id === id)
 }
 
 /** Key held to talk, language and what to do with the transcript. */
@@ -282,6 +334,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     openai: 'gpt-4o-mini',
     anthropic: 'claude-sonnet-4-5'
   },
+  searchModels: { openrouter: '', openai: '', anthropic: '' },
   baseUrls: {
     openrouter: '',
     openai: '',
@@ -296,6 +349,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   screenshotQuality: 70,
   quickActions: DEFAULT_QUICK_ACTIONS,
   excludedApps: DEFAULT_EXCLUDED_APPS,
+  rememberConversation: true,
   launchAtLogin: false,
   onboardingCompleted: false,
   voice: DEFAULT_VOICE,
@@ -336,7 +390,7 @@ function sanitizeStringList(input: unknown, fallback: string[]): string[] {
 
 function sanitizeVoice(input: unknown): VoiceSettings {
   const raw = (typeof input === 'object' && input !== null ? input : {}) as Partial<VoiceSettings>
-  const model = whisperModel(String(raw.model ?? ''))?.id ?? DEFAULT_VOICE.model
+  const model = voiceModel(String(raw.model ?? ''))?.id ?? DEFAULT_VOICE.model
   const language =
     typeof raw.language === 'string' && raw.language.trim()
       ? raw.language.trim().toLowerCase().slice(0, 8)
@@ -397,10 +451,6 @@ function sanitizeGestures(input: unknown): GestureSettings {
 /** Coerces anything coming from disk or IPC into a valid settings object. */
 export function normalizeSettings(input: unknown): AppSettings {
   const raw = (typeof input === 'object' && input !== null ? input : {}) as Partial<AppSettings>
-  const models = (typeof raw.models === 'object' && raw.models !== null ? raw.models : {}) as Record<
-    string,
-    unknown
-  >
   const baseUrls = (
     typeof raw.baseUrls === 'object' && raw.baseUrls !== null ? raw.baseUrls : {}
   ) as Record<string, unknown>
@@ -408,11 +458,8 @@ export function normalizeSettings(input: unknown): AppSettings {
     provider: PROVIDERS.some((provider) => provider.id === raw.provider)
       ? (raw.provider as ProviderId)
       : DEFAULT_SETTINGS.provider,
-    models: {
-      openrouter: typeof models.openrouter === 'string' ? models.openrouter.trim() : '',
-      openai: typeof models.openai === 'string' ? models.openai.trim() : '',
-      anthropic: typeof models.anthropic === 'string' ? models.anthropic.trim() : ''
-    },
+    models: normalizeModelIds(raw.models),
+    searchModels: normalizeModelIds(raw.searchModels),
     baseUrls: {
       openrouter: normalizeBaseUrl(baseUrls.openrouter),
       openai: normalizeBaseUrl(baseUrls.openai),
@@ -436,6 +483,9 @@ export function normalizeSettings(input: unknown): AppSettings {
     screenshotQuality: Math.round(clamp(raw.screenshotQuality, 30, 95, DEFAULT_SETTINGS.screenshotQuality)),
     quickActions: sanitizeQuickActions(raw.quickActions),
     excludedApps: sanitizeStringList(raw.excludedApps, DEFAULT_EXCLUDED_APPS),
+    rememberConversation: typeof raw.rememberConversation === 'boolean'
+      ? raw.rememberConversation
+      : DEFAULT_SETTINGS.rememberConversation,
     launchAtLogin:
       typeof raw.launchAtLogin === 'boolean' ? raw.launchAtLogin : DEFAULT_SETTINGS.launchAtLogin,
     onboardingCompleted:
@@ -445,6 +495,15 @@ export function normalizeSettings(input: unknown): AppSettings {
     voice: sanitizeVoice(raw.voice),
     gestures: sanitizeGestures(raw.gestures),
     agent: sanitizeAgent(raw.agent)
+  }
+}
+
+function normalizeModelIds(input: unknown): Record<ProviderId, string> {
+  const models = (typeof input === 'object' && input !== null ? input : {}) as Record<string, unknown>
+  return {
+    openrouter: typeof models.openrouter === 'string' ? models.openrouter.trim() : '',
+    openai: typeof models.openai === 'string' ? models.openai.trim() : '',
+    anthropic: typeof models.anthropic === 'string' ? models.anthropic.trim() : ''
   }
 }
 

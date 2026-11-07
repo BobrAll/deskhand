@@ -12,7 +12,7 @@
  */
 
 import type { AppSettings, KeyStatus, ProviderId } from '@shared/types'
-import { DEFAULT_SYSTEM_PROMPT, PROVIDERS, normalizeBaseUrl, providerInfo } from '@shared/defaults'
+import { DEFAULT_SYSTEM_PROMPT, PROVIDERS, defaultSearchModel, normalizeBaseUrl, providerInfo } from '@shared/defaults'
 import { MAX_TOKENS_MAX, MAX_TOKENS_MIN } from '../applyGate'
 
 interface ProviderSectionProps {
@@ -41,6 +41,8 @@ export function ProviderSection({
 }: ProviderSectionProps) {
   const info = providerInfo(draft.provider)
   const status = providerKeys[draft.provider]
+  const searchModel = draft.searchModels[draft.provider]
+  const fallbackSearchModel = defaultSearchModel(draft)
   // An invalid override is rejected instead of being silently replaced by the
   // default, so a typo cannot quietly send traffic to the official host.
   const baseUrlError = invalidBaseUrls.includes(draft.provider)
@@ -90,6 +92,31 @@ export function ProviderSection({
             </button>
           ))}
         </div>
+      </div>
+
+      <div className="field">
+        <label htmlFor="search-model">Модель веб-поиска</label>
+        <div className="key-row">
+          <input
+            id="search-model"
+            value={searchModel}
+            onChange={(event) =>
+              patch({ searchModels: { ...draft.searchModels, [draft.provider]: event.target.value } })
+            }
+            placeholder={fallbackSearchModel}
+            spellCheck={false}
+          />
+          <button
+            className="ghost"
+            disabled={!searchModel}
+            onClick={() => patch({ searchModels: { ...draft.searchModels, [draft.provider]: '' } })}
+          >
+            Сбросить
+          </button>
+        </div>
+        <p className="hint">
+          Укажите ID модели {info?.label} с поддержкой веб-поиска. Пустое поле — {fallbackSearchModel}.
+        </p>
       </div>
 
       <div className="field">

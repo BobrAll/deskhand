@@ -1,19 +1,4 @@
-/**
- * The cursor ring.
- *
- * A display-sized transparent layer whose only content is one ring at the
- * pointer and one caption next to it. White and blue, like every other surface
- * in the app: a white ring with the app's blue accent, white text on dark glass.
- * The same blue is used by the drawing layer's ink and the listening chip, so
- * "the assistant is present at the cursor" looks like the same object whether it
- * draws, hears or acts. The palette and the rules behind it live in
- * `docs/style.md`; a new cursor layer must not invent an accent of its own.
- *
- * The caption follows the chat's light/dark surface, text and edge tokens.
- * The ring and standalone completion check keep their white/blue contrast over
- * arbitrary content. No backdrop-filter: the transparent layer has no backing
- * surface to sample.
- */
+/* The agent layer paints over arbitrary content, using a fixed blue accent. */
 
 html,
 body,
@@ -39,12 +24,9 @@ body,
   --cursor-surface: rgba(26, 27, 33, 0.86);
   --cursor-edge: rgba(255, 255, 255, 0.15);
   --cursor-shadow: 0 4px 14px rgba(0, 0, 0, 0.32), 0 1px 3px rgba(0, 0, 0, 0.24);
-  /* Match the chat surface; the ring keeps its contrast on arbitrary content. */
+  /* Match the chat surface. */
   --cursor-panel: rgba(21, 23, 29, 0.94);
   --cursor-panel-edge: rgba(255, 255, 255, 0.10);
-  /* Set from `cursor.ts` on every frame; the default keeps the first paint sane. */
-  --x: 0px;
-  --y: 0px;
 }
 
 @media (prefers-color-scheme: light) {
@@ -54,111 +36,53 @@ body,
   }
 }
 
-/* ---------------------------------------------------------------- the ring */
-
-/**
- * The ring is centred on the pointer's hotspot. 38 points is wide enough to
- * enclose a cursor arrow without covering the control underneath: the user still
- * has to see what is being clicked.
- *
- * The ring is white with a blue inner and outer hairline, so it is legible on
- * both a white document and a dark editor without introducing a second hue: the
- * white carries it on dark content, the blue edge carries it on white content,
- * and the dark outer shadow separates it from both.
- */
-.ring {
+.screen-glow {
   position: absolute;
-  left: 0;
-  top: 0;
-  width: 38px;
-  height: 38px;
-  margin: -19px 0 0 -19px;
-  border-radius: 50%;
-  border: 2px solid rgba(255, 255, 255, 0.96);
-  box-shadow:
-    0 0 0 1.5px var(--cursor-accent),
-    0 0 0 2.5px rgba(0, 0, 0, 0.22),
-    inset 0 0 0 1px var(--cursor-accent),
-    0 2px 10px rgba(0, 0, 0, 0.26);
-  translate: var(--x) var(--y);
+  inset: 0;
   opacity: 0;
-  scale: 0.86;
-  transition:
-    opacity 110ms ease,
-    scale 150ms cubic-bezier(0.2, 0.9, 0.3, 1.2),
-    translate 16ms linear;
-  will-change: translate, scale, opacity;
+  transition: opacity 130ms ease-out;
 }
 
-#root[data-visible='true'] .ring {
+.screen-glow::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(ellipse at top left, var(--cursor-text), transparent 60%),
+    radial-gradient(ellipse at bottom right, var(--cursor-text), transparent 55%),
+    var(--cursor-accent);
+  box-shadow: inset 0 0 0 1px var(--cursor-accent);
+  /* The four masks combine into a perimeter that fades inward. */
+  --glow-width: 44px;
+  --edge-fade: black, rgb(0 0 0 / 0.78) 12%, rgb(0 0 0 / 0.3) 48%, transparent;
+  mask:
+    linear-gradient(to bottom, var(--edge-fade)) top / 100% var(--glow-width) no-repeat,
+    linear-gradient(to left, var(--edge-fade)) right / var(--glow-width) 100% no-repeat,
+    linear-gradient(to top, var(--edge-fade)) bottom / 100% var(--glow-width) no-repeat,
+    linear-gradient(to right, var(--edge-fade)) left / var(--glow-width) 100% no-repeat;
+  opacity: 0.93;
+}
+
+#root[data-visible='true'] .screen-glow {
   opacity: 1;
-  scale: 1;
 }
 
-/* A running step breathes instead of sitting dead still: the ring is the only
-   sign that the assistant is still working and not waiting for the user. */
-#root[data-visible='true'][data-phase='acting'] .ring {
-  animation: ring-breathe 1500ms ease-in-out infinite;
+#root[data-phase='acting'] .screen-glow::before,
+#root[data-phase='waiting'] .screen-glow::before {
+  animation: glow-breathe 3s ease-in-out infinite;
 }
 
-/* Between two plans the ring stays put but calms down: the assistant is looking
-   at the screen again, so the mark must not go out (that reads as "finished") and
-   must not pulse like a click either. Slower breathing says "still here, nothing
-   to press right now". */
-#root[data-visible='true'][data-phase='waiting'] .ring {
-  animation: ring-breathe 2400ms ease-in-out infinite;
+#root[data-visible='false'] .screen-glow::before {
+  animation-play-state: paused;
 }
 
-@keyframes ring-breathe {
-  0%,
-  100% {
-    scale: 1;
-  }
-  50% {
-    scale: 1.06;
-  }
+#root[data-visible='true'][data-phase='success'] .screen-glow {
+  opacity: 0.55;
 }
 
-/* --------------------------------------------------------------- the ripple */
-
-/**
- * One expanding ring per action, started from `cursor.ts` when the step's pulse
- * counter changes. It is a sibling of the ring rather than a pseudo-element so
- * the breathing animation on `.ring` cannot reset it.
- */
-.ring-pulse {
-  position: absolute;
-  left: 0;
-  top: 0;
-  width: 38px;
-  height: 38px;
-  margin: -19px 0 0 -19px;
-  border-radius: 50%;
-  border: 2px solid var(--cursor-accent);
-  translate: var(--x) var(--y);
-  opacity: 0;
-  will-change: translate, scale, opacity;
+@keyframes glow-breathe {
+  50% { opacity: 0.72; }
 }
-
-.ring-pulse.pulse {
-  animation: click-ripple 560ms cubic-bezier(0.2, 0.7, 0.3, 1) 1;
-}
-
-@keyframes click-ripple {
-  0% {
-    opacity: 0.7;
-    scale: 0.9;
-  }
-  70% {
-    opacity: 0.16;
-  }
-  100% {
-    opacity: 0;
-    scale: 1.8;
-  }
-}
-
-/* ---------------------------------------------------------------- the caption */
 
 .tag {
   position: absolute;
@@ -233,11 +157,6 @@ body,
   stroke-width: 3.5;
 }
 
-#root[data-phase='success'] .ring,
-#root[data-phase='success'] .ring-pulse {
-  display: none;
-}
-
 #root[data-phase='success'] .tag {
   padding: 2px;
   gap: 0;
@@ -271,24 +190,16 @@ body,
   to { stroke-dashoffset: 0; }
 }
 
-/* Anyone who asked the system to reduce motion gets a still ring and a still
-   caption: the step is still readable from the text and the badge. */
 @media (prefers-reduced-motion: reduce) {
-  #root[data-visible='true'][data-phase='acting'] .ring,
-  #root[data-visible='true'][data-phase='waiting'] .ring,
-  .ring-pulse.pulse,
+  #root[data-phase='acting'] .screen-glow::before,
+  #root[data-phase='waiting'] .screen-glow::before,
   #root[data-phase='success'] .completion-check,
   #root[data-phase='success'] .completion-check path {
     animation: none;
   }
 
-  .ring,
-  .tag,
-  .ring-pulse {
-    transition-duration: 1ms;
-  }
-
-  .ring-pulse.pulse {
-    opacity: 0.35;
+  .screen-glow,
+  .tag {
+    transition: none;
   }
 }

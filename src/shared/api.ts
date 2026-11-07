@@ -105,7 +105,7 @@ export interface SmartCursorApi {
     onDraw(handler: (payload: PointerPayload) => void): Unsubscribe
   }
   /**
-   * Used only by the ring that follows the pointer while an agent plan runs.
+   * Used by the agent's display layer for its edge glow and status caption.
    * Like the drawing layer, it renders what it is given and never sends input.
    */
   agentCursor: {
@@ -195,6 +195,7 @@ export interface SmartCursorApi {
     download(model: string): Promise<VoiceStatus>
     onDownloadProgress(handler: (progress: DownloadProgress) => void): Unsubscribe
     importModel(): Promise<VoiceStatus | null>
+    deleteModel(id: string): Promise<VoiceStatus>
     /** Records a short clip and transcribes it, so the user can hear the quality. */
     test(): Promise<TranscribeResult>
   }

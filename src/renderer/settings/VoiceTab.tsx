@@ -14,24 +14,27 @@ import type {
   VoiceSettings,
   VoiceStatus
 } from '@shared/types'
-import { WHISPER_LANGUAGES, WHISPER_MODELS, whisperModel } from '@shared/defaults'
+import { WHISPER_LANGUAGES, VOICE_MODELS, voiceModel } from '@shared/defaults'
 import { HotkeyField, prettyHotkey } from './HotkeyField'
 
 interface VoiceTabProps {
   voice: VoiceSettings
+  savedModel: string
   gestures: GestureSettings
   onChange(changes: Partial<VoiceSettings>): void
   onGestureChange(changes: Partial<GestureSettings>): void
 }
 
 function megabytes(bytes: number): string {
-  if (!bytes) return '0 МБ'
+  if (bytes > 0 && bytes < 1024 * 1024) return '< 1 МБ'
   return `${Math.round(bytes / (1024 * 1024))} МБ`
 }
 
-export function VoiceTab({ voice, gestures, onChange, onGestureChange }: VoiceTabProps) {
+export function VoiceTab({ voice, savedModel, gestures, onChange, onGestureChange }: VoiceTabProps) {
   const [status, setStatus] = useState<VoiceStatus | null>(null)
+  const [deleting, setDeleting] = useState<string | null>(null)
   const [progress, setProgress] = useState<DownloadProgress | null>(null)
+  const [downloadError, setDownloadError] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [checking, setChecking] = useState(false)
 
@@ -44,35 +47,60 @@ export function VoiceTab({ voice, gestures, onChange, onGestureChange }: VoiceTa
 
   useEffect(() => {
     refresh()
-    const off = window.smartCursor.voice.onDownloadProgress((event) => {
-      setProgress(event)
-      if (event.done) {
-        // The file has landed: re-read the status so the row switches from
-        // "скачать" to "готово" without the user touching anything.
-        window.setTimeout(() => {
-          refresh()
-          setProgress(null)
-        }, 600)
-      }
-    })
-    return off
-  }, [refresh])
+  }, [refresh, savedModel])
+
+  useEffect(() => window.smartCursor.voice.onDownloadProgress((event) => {
+    if (event.error) setDownloadError(event.error)
+    if (!event.done) setProgress(event)
+  }), [])
 
   const installed = useMemo(() => new Set(status?.installed ?? []), [status])
 
   const download = useCallback(
     async (id: string) => {
-      setError(null)
+      setDownloadError(null)
       setProgress({ model: id, received: 0, total: 0, done: false })
       try {
         setStatus(await window.smartCursor.voice.download(id))
       } catch {
-        setError('Не удалось скачать модель. Проверьте соединение и попробуйте снова.')
+        setDownloadError('Не удалось скачать модель. Проверьте соединение и попробуйте снова.')
+      } finally {
         setProgress(null)
       }
     },
     []
   )
+
+  async function importModel(): Promise<void> {
+    const next = await window.smartCursor.voice.importModel()
+    if (next) setStatus(next)
+  }
+
+  async function remove(id: string, label: string): Promise<void> {
+    if (!window.confirm(`Удалить модель «${label}» с этого Mac?`)) return
+    setDownloadError(null)
+    setDeleting(id)
+    try {
+      setStatus(await window.smartCursor.voice.deleteModel(id))
+    } catch {
+      setDownloadError('Не удалось удалить модель. Попробуйте снова.')
+    } finally {
+      setDeleting(null)
+    }
+  }
+
+  function deleteButton(id: string, label: string) {
+    return (
+      <button
+        className="model-state"
+        disabled={deleting !== null || progress !== null}
+        aria-label={`Удалить ${label}`}
+        onClick={() => void remove(id, label)}
+      >
+        {deleting === id ? 'Удаляем…' : 'Удалить'}
+      </button>
+    )
+  }
 
   const check = useCallback(async () => {
     setChecking(true)
@@ -85,7 +113,7 @@ export function VoiceTab({ voice, gestures, onChange, onGestureChange }: VoiceTa
     }
   }, [refresh])
 
-  const selected = whisperModel(voice.model)
+  const selected = voiceModel(voice.model)
 
   return (
     <section>
@@ -96,7 +124,7 @@ export function VoiceTab({ voice, gestures, onChange, onGestureChange }: VoiceTa
             onChange={(event) => onChange({ agentFeedback: event.target.checked })} />
           Короткие реплики агента
         </label>
-        <p className="hint">Подтверждать долгую обработку команды системным голосом, в том числе для текстовых команд.
+        <p className="hint">Подтверждать долгую обработку голосовой команды системным голосом.
           Не чаще раза в 45 секунд. Для озвучки нужен русский голос macOS.</p>
       </div>
       <div className="field">
@@ -106,11 +134,11 @@ export function VoiceTab({ voice, gestures, onChange, onGestureChange }: VoiceTa
           Голосовой диалог
         </label>
         <p className="hint">Коротко озвучивать ответы на голосовые вопросы системным голосом.
-          Диктовка и подготовленный текст остаются без звука. По умолчанию озвучка — по кнопке «Прослушать».</p>
+          Для текстовых запросов используйте кнопку «Прослушать».</p>
       </div>
       <p className="hint">
         Удерживайте клавишу или три пальца на трекпаде, говорите, отпустите. Распознавание идёт
-        на этом Mac через whisper.cpp — звук никуда не отправляется.
+        локально на этом Mac — звук никуда не отправляется.
       </p>
 
       <div className="field">
@@ -208,7 +236,8 @@ export function VoiceTab({ voice, gestures, onChange, onGestureChange }: VoiceTa
       <div className="field">
         <label>Язык речи</label>
         <select
-          value={voice.language}
+          value={selected?.language ?? voice.language}
+          disabled={Boolean(selected?.language)}
           onChange={(event) => onChange({ language: event.target.value })}
         >
           {WHISPER_LANGUAGES.map((language) => (
@@ -218,15 +247,17 @@ export function VoiceTab({ voice, gestures, onChange, onGestureChange }: VoiceTa
           ))}
         </select>
         <div className="hint">
-          Указанный язык точнее, чем автоопределение: короткая фраза слишком мала, чтобы
-          определить её надёжно.
+          {selected?.language
+            ? 'У выбранной модели фиксированный язык распознавания.'
+            : 'Для коротких команд указанный язык надёжнее автоопределения.'}
         </div>
       </div>
 
       <div className="field">
         <label>Модель распознавания</label>
+        {downloadError && <div className="hint err" role="alert">{downloadError}</div>}
         <div className="models">
-          {WHISPER_MODELS.map((model) => {
+          {VOICE_MODELS.map((model) => {
             const ready = installed.has(model.id)
             const busy = progress?.model === model.id && !progress.done
             const share = progress && progress.total > 0 ? progress.received / progress.total : 0
@@ -239,14 +270,18 @@ export function VoiceTab({ voice, gestures, onChange, onGestureChange }: VoiceTa
                   </span>
                 </button>
                 {ready ? (
-                  <span className="model-state ok">Готово</span>
+                  <div className="model-actions">
+                    <span className="model-state ok">Готово</span>
+                    {deleteButton(model.id, model.label)}
+                  </div>
                 ) : busy ? (
                   <span className="model-state">
-                    {megabytes(progress.received)}
-                    {progress.total > 0 ? ` из ${megabytes(progress.total)}` : ''}
+                    {progress.received > 0
+                      ? `${megabytes(progress.received)} из ${megabytes(progress.total)}`
+                      : 'Подключение…'}
                   </span>
                 ) : (
-                  <button className="model-state" onClick={() => void download(model.id)}>
+                  <button className="model-state" disabled={progress !== null || deleting !== null} onClick={() => void download(model.id)}>
                     Скачать
                   </button>
                 )}
@@ -258,13 +293,23 @@ export function VoiceTab({ voice, gestures, onChange, onGestureChange }: VoiceTa
               </div>
             )
           })}
+          {Array.from(installed).filter((id) => !voiceModel(id)).map((file) => (
+            <div key={file} className="model-row">
+              <span className="model-name">{file}</span>
+              {deleteButton(file, file)}
+            </div>
+          ))}
         </div>
         <div className="hint">
           {selected
-            ? `Выбрана «${selected.label}» — ${selected.note.toLowerCase()}. Чем больше модель, тем точнее и медленнее.`
+            ? `Выбрана «${selected.label}» — ${selected.note}`
             : 'Модель не выбрана.'}
         </div>
-        <button className="ghost" onClick={() => void window.smartCursor.voice.importModel()}>
+        <button
+          className="ghost"
+          disabled={progress !== null || deleting !== null}
+          onClick={() => void importModel()}
+        >
           Указать файл ggml-*.bin вручную
         </button>
       </div>
@@ -272,7 +317,7 @@ export function VoiceTab({ voice, gestures, onChange, onGestureChange }: VoiceTa
       <div className="field">
         <label>Состояние</label>
         <div className="hint">
-          {status?.ready ? 'Всё готово: модель и whisper-cli на месте.' : (status?.detail ?? 'Проверка…')}
+          {voice.model !== savedModel ? 'Применяем модель…' : status?.ready ? 'Всё готово: модель и движок на месте.' : (status?.detail ?? 'Проверка…')}
         </div>
         {status?.listenerError && <div className="hint err">{status.listenerError}</div>}
         {status?.modelPath && <div className="hint mono">{status.modelPath}</div>}

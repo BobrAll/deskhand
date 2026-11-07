@@ -1,12 +1,4 @@
-/**
- * The cursor highlight's entry point.
- *
- * Like the drawing layer and the listening chip, this page has no framework and
- * no app state: it exists to render one small, fast-changing picture at the
- * pointer, and every frame it receives is a complete description of that picture.
- * The main process owns the window and the follow loop; this module only moves
- * the ring and writes the caption.
- */
+/** Entry point for the agent’s transparent display layer. */
 
 import './cursor.css'
 import { createCursor } from './cursor'

@@ -91,8 +91,10 @@ describe('parseAgentLine: @click', () => {
     })
   })
 
-  it('clamps out-of-range coordinates', () => {
-    expect(parseAgentLine('@click -2 3')?.[0].action).toMatchObject({ at: { x: 0, y: 0.03 } })
+  it('rejects points outside the observed frame', () => {
+    expect(parseAgentLine('@click -2 3')).toEqual([])
+    expect(parseAgentLine('@click 101 50')).toEqual([])
+    expect(parseAgentLine('@click 0.4junk 0.5')).toEqual([])
   })
 
   it('rejects a click with fewer than two numbers', () => {
@@ -148,10 +150,10 @@ describe('parseAgentLine: @type', () => {
     expect(parseAgentLine('@type    ')).toEqual([])
   })
 
-  it('truncates the payload at 4000 characters', () => {
+  it('preserves the full payload for plan validation', () => {
     const action = parseAgentLine(`@type ${'я'.repeat(5000)}`)?.[0].action
     expect(action).toMatchObject({ kind: 'type' })
-    expect((action as { text: string }).text).toHaveLength(4000)
+    expect((action as { text: string }).text).toHaveLength(5000)
   })
 
   it('keeps a payload of exactly 4000 characters', () => {

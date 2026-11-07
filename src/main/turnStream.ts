@@ -1,3 +1,4 @@
+import { trace } from './agent/trace'
 /**
  * One round of a turn, streamed: provider deltas in, painted shapes and prose out.
  *
@@ -16,7 +17,7 @@
 
 import type { AgentPlanStep, Annotation } from '@shared/types'
 import { isDrawable } from './annotations'
-import type { ChatMessage, LlmProvider, StreamOptions } from './llm/provider'
+import { ProviderError, type ChatMessage, type LlmProvider, type StreamEnd, type StreamOptions } from './llm/provider'
 import { ResponseStream } from './response'
 
 export interface TurnStreamOptions {
@@ -44,6 +45,7 @@ export interface TurnStreamResult {
   steps: AgentPlanStep[]
   /** The prose this round produced, whether or not it was shown. */
   text: string
+  webLookup?: boolean
 }
 
 /**
@@ -81,11 +83,29 @@ export async function consumeTurnStream(options: TurnStreamOptions): Promise<Tur
     if (drawable.length > 0) onShapes(drawable)
   }
 
-  for await (const chunk of provider.stream(messages, apiKey, streamOptions)) {
-    if (!isAlive()) return { steps: [], text }
-    const parsed = parser.push(chunk.delta)
-    paint(parsed.annotations)
-    append(parsed.text)
+  const started = performance.now()
+  let first = true
+  const stream = provider.stream(messages, apiKey, streamOptions)
+  let end: StreamEnd | void
+  try {
+    for (;;) {
+      const next = await stream.next()
+      if (next.done) {
+        end = next.value
+        break
+      }
+      const chunk = next.value
+      if (!isAlive()) return { steps: [], text }
+      if (first) {
+        first = false
+        trace('model.firstChunk', { ttftMs: Math.round(performance.now() - started) })
+      }
+      const parsed = parser.push(chunk.delta)
+      paint(parsed.annotations)
+      append(parsed.text)
+    }
+  } finally {
+    await stream.return()
   }
   if (!isAlive()) return { steps: [], text }
 
@@ -95,5 +115,12 @@ export async function consumeTurnStream(options: TurnStreamOptions): Promise<Tur
   paint(tail.annotations)
   append(tail.text)
 
-  return { steps: parser.plan(), text }
+  trace('model.termination', { reason: end ?? 'incomplete' })
+  if (parser.invalidAction || (end !== 'complete' && (parser.plan().length || parser.webLookup))) {
+    throw new ProviderError(parser.invalidAction
+      ? 'Модель вернула некорректный план. Действия этого этапа не выполнены.'
+      : 'Ответ модели оборвался. Действия этого этапа не выполнены.', true)
+  }
+
+  return { steps: parser.plan(), text, ...(parser.webLookup ? { webLookup: true } : {}) }
 }

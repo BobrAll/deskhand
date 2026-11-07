@@ -4,10 +4,11 @@
  * Electron cannot (a) reliably synthesize Cmd+C/Cmd+V into a *foreign*
  * application, (b) enumerate the focused window of another process, or
  * (c) query the TCC permission state. The helper covers exactly those gaps.
- * Every function degrades gracefully: when the binary is missing or refuses to
- * run we fall back to `osascript`, and if that fails too the caller gets null.
+ * Context and clipboard helpers can fall back to osascript. Agent input
+ * requires the native binary.
  */
 
+import { trace, traceEnd } from '../agent/trace'
 import { execFile, spawn } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { createInterface } from 'node:readline'
@@ -54,21 +55,45 @@ export function helperBinary(): string | null {
   return resolveHelperPath()
 }
 
-function runHelper(args: string[], timeoutMs = 4000): Promise<HelperPayload | null> {
+function runHelper(args: string[], timeoutMs = 4000, signal?: AbortSignal): Promise<HelperPayload | null> {
   const binary = resolveHelperPath()
-  if (!binary) return Promise.resolve(null)
+  if (!binary || signal?.aborted) return Promise.resolve(null)
+  const command = args[0] === 'input' ? args[4] : args[0]
+  const end = traceEnd('helper', { command })
   return new Promise((resolve) => {
-    execFile(binary, args, { timeout: timeoutMs, maxBuffer: 8 * 1024 * 1024 }, (error, stdout) => {
+    // Wait for process close instead of using execFile's AbortSignal: its
+    // callback can fire before the helper releases a held key or button.
+    const child = execFile(binary, args, { ...(signal ? {} : { timeout: timeoutMs }), maxBuffer: 8 * 1024 * 1024 }, (error, stdout) => {
+      clearTimeout(timer)
+      clearTimeout(force)
+      signal?.removeEventListener('abort', cancel)
+      end()
       if (error) {
+        trace('helper.error', { command, killed: error.killed === true })
         resolve(null)
         return
       }
       try {
-        resolve(JSON.parse(stdout.trim()) as HelperPayload)
+        const payload = JSON.parse(stdout.trim()) as HelperPayload
+        if (command === 'probe' && typeof payload.elapsedMs === 'number') {
+          trace('ax.native', { durationMs: Math.round(payload.elapsedMs) })
+        }
+        if (command === 'click' && typeof payload.pressMs === 'number' && typeof payload.releaseMs === 'number') {
+          trace('click.native', { pressMs: payload.pressMs, releaseMs: payload.releaseMs })
+        }
+        resolve(payload)
       } catch {
         resolve(null)
       }
     })
+    let force: ReturnType<typeof setTimeout> | undefined
+    const cancel = (): void => {
+      if (force) return
+      child.kill('SIGTERM')
+      force = setTimeout(() => child.kill('SIGKILL'), 1500)
+    }
+    const timer = signal ? setTimeout(cancel, timeoutMs) : undefined
+    signal?.addEventListener('abort', cancel, { once: true })
   })
 }
 
@@ -86,6 +111,7 @@ function runOsascript(lines: string[], timeoutMs = 4000): Promise<string | null>
 }
 
 function numberOf(value: unknown): number | null {
+  if (value == null) return null
   const num = typeof value === 'number' ? value : Number(value)
   return Number.isFinite(num) ? num : null
 }
@@ -101,23 +127,32 @@ function mapBounds(raw: unknown): RawFrontApp['bounds'] {
   return { x, y, width, height }
 }
 
+function mapFront(payload: HelperPayload | null): RawFrontApp | null {
+  if (!payload?.ok) return null
+  const bundleId = typeof payload.bundleId === 'string' ? payload.bundleId : ''
+  const pid = numberOf(payload.pid)
+  if (pid === null) return null
+  return {
+    bundleId,
+    name: typeof payload.name === 'string' ? payload.name : bundleId,
+    pid,
+    windowId: numberOf(payload.windowId),
+    windowTitle: typeof payload.title === 'string' && payload.title ? payload.title : null,
+    bounds: mapBounds(payload.bounds),
+    accessibility: flag(payload.accessibility)
+  }
+}
+
+/** Re-read the focused window of the app under the overlay, without activating it. */
+export async function helperWindow(pid: number): Promise<RawFrontApp | null> {
+  if (!Number.isInteger(pid) || pid <= 0) return null
+  return mapFront(await runHelper(['window', String(pid)]))
+}
+
 /** Frontmost application plus its focused window, as seen by macOS. */
 export async function helperFront(): Promise<RawFrontApp | null> {
-  const payload = await runHelper(['front'])
-  if (payload && payload.ok) {
-    const bundleId = typeof payload.bundleId === 'string' ? payload.bundleId : ''
-    const pid = numberOf(payload.pid)
-    if (pid === null) return null
-    return {
-      bundleId,
-      name: typeof payload.name === 'string' ? payload.name : bundleId,
-      pid,
-      windowId: numberOf(payload.windowId),
-      windowTitle: typeof payload.title === 'string' && payload.title ? payload.title : null,
-      bounds: mapBounds(payload.bounds),
-      accessibility: payload.accessibility === true
-    }
-  }
+  const mapped = mapFront(await runHelper(['front']))
+  if (mapped) return mapped
 
   const bundleId = await runOsascript([
     'tell application "System Events" to get bundle identifier of first application process whose frontmost is true'
@@ -152,8 +187,18 @@ export async function helperSendKey(command: 'copy' | 'paste'): Promise<boolean>
   return result !== null
 }
 
+export async function helperOpenBrowser(signal?: AbortSignal): Promise<string | null> {
+  const payload = await runHelper(['open-browser'], 4000, signal)
+  return payload?.ok && typeof payload.bundleId === 'string' ? payload.bundleId : null
+}
+
 /** Brings a previously remembered application back to the front. */
-export async function helperActivate(target: { bundleId: string; pid: number }): Promise<boolean> {
+export async function helperActivate(target: { bundleId: string; pid: number }, signal?: AbortSignal): Promise<boolean> {
+  if (signal) {
+    // Agent activation is bound to a specific process and cannot fall back to
+    // an uncancellable AppleScript.
+    return target.pid > 0 && (await runHelper(['activate', String(target.pid)], 4000, signal))?.ok === true
+  }
   const byBundle = target.bundleId ? await runHelper(['activate', target.bundleId]) : null
   if (byBundle?.ok) return true
   if (target.pid > 0) {
@@ -171,12 +216,26 @@ export async function helperActivate(target: { bundleId: string; pid: number }):
 //
 // Every function here needs the Accessibility grant; the helper answers with
 // `accessibility-denied` otherwise and the caller turns that into a message the
-// user can act on. `false` always means "nothing was posted", never "maybe".
+// user can act on. `false` may mean partial input or an unknown effect.
+
+export interface NativeInputTarget {
+  pid: number
+  windowId: number | null
+  bounds: RawFrontApp['bounds']
+  signal: AbortSignal
+}
+
+function runInput(args: string[], target?: NativeInputTarget, timeout = 4000) {
+  const bounds = target?.bounds
+  const geometry = bounds ? [bounds.x, bounds.y, bounds.width, bounds.height].join(',') : '-'
+  return runHelper(target ? ['input', String(target.pid), String(target.windowId ?? 0), geometry, ...args] : args,
+    timeout, target?.signal)
+}
 // ---------------------------------------------------------------------------
 
 /** Moves the pointer to a point in global screen coordinates (points). */
-export async function helperMoveMouse(x: number, y: number): Promise<boolean> {
-  const payload = await runHelper(['move', String(Math.round(x)), String(Math.round(y))])
+export async function helperMoveMouse(x: number, y: number, target?: NativeInputTarget): Promise<boolean> {
+  const payload = await runInput(['move', String(Math.round(x)), String(Math.round(y))], target)
   return payload?.ok === true
 }
 
@@ -186,52 +245,54 @@ export type HelperClickButton = 'left' | 'right' | 'double'
 export async function helperClick(
   x: number,
   y: number,
-  button: HelperClickButton = 'left'
+  button: HelperClickButton = 'left',
+  target?: NativeInputTarget
 ): Promise<boolean> {
-  const payload = await runHelper([
+  const payload = await runInput([
     'click',
     String(Math.round(x)),
     String(Math.round(y)),
     button
-  ])
+  ], target)
   return payload?.ok === true
 }
 
 /** Presses and holds the left button while travelling to a second point. */
 export async function helperDrag(
   from: { x: number; y: number },
-  to: { x: number; y: number }
+  to: { x: number; y: number },
+  target?: NativeInputTarget
 ): Promise<boolean> {
-  const payload = await runHelper([
+  const payload = await runInput([
     'drag',
     String(Math.round(from.x)),
     String(Math.round(from.y)),
     String(Math.round(to.x)),
     String(Math.round(to.y))
-  ])
+  ], target)
   return payload?.ok === true
 }
 
 /** Posts a wheel event; positive `dy` scrolls content up (natural direction). */
-export async function helperScroll(dx: number, dy: number): Promise<boolean> {
-  const payload = await runHelper(['scroll', String(Math.round(dx)), String(Math.round(dy))])
+export async function helperScroll(dx: number, dy: number, target?: NativeInputTarget): Promise<boolean> {
+  const payload = await runInput(['scroll', String(Math.round(dx)), String(Math.round(dy))], target)
   return payload?.ok === true
 }
 
 /** Types text into the focused field. Unicode-safe: the payload travels as base64. */
-export async function helperTypeText(text: string): Promise<boolean> {
+export async function helperTypeText(text: string, target?: NativeInputTarget): Promise<boolean> {
   if (!text) return true
   const encoded = Buffer.from(text, 'utf8').toString('base64')
   // A long paragraph is one helper call; the argument list is fine for it, but
   // the timeout has to cover the per-character pacing the helper does.
   const timeout = Math.min(30_000, 4_000 + text.length * 40)
-  const payload = await runHelper(['type', encoded], timeout)
+  const payload = await runInput(['type', encoded], target, timeout)
   return payload?.ok === true
 }
 
 /** Presses one key with a modifier mask (shortcuts, Return, Tab, arrows). */
-export async function helperPressKey(keyCode: number, flags: number): Promise<boolean> {
-  const payload = await runHelper(['key', String(keyCode), String(flags)])
+export async function helperPressKey(keyCode: number, flags: number, target?: NativeInputTarget): Promise<boolean> {
+  const payload = await runInput(['key', String(keyCode), String(flags)], target)
   return payload?.ok === true
 }
 
@@ -255,6 +316,7 @@ function mapAxElement(raw: unknown): AxElementInfo | null {
   if (typeof source.title === 'string') element.title = source.title
   if (typeof source.value === 'string') element.value = source.value
   if (typeof source.description === 'string') element.description = source.description
+  if (typeof source.help === 'string') element.help = source.help
   if (typeof source.roleDescription === 'string') element.roleDescription = source.roleDescription
   const depth = numberOf(source.depth)
   if (depth !== null) element.depth = depth

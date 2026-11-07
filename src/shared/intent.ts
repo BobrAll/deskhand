@@ -1,16 +1,15 @@
 /**
  * A deliberately small guess at what the user wants: an action or an explanation.
  *
- * This is **not** used to route anything. The model still decides what to do —
- * it is the only one that can read the request in context. The guess exists for
- * one interface question the app got wrong on its own: mouse control ships
+ * The model still decides how to handle screen context. This guess helps give
+ * explicit commands priority over background search and show a hint when mouse
+ * control is unavailable. Mouse control ships
  * switched off, so a user who says «запусти видео» gets a drawing and has no way
  * to learn that the assistant could have pressed it. A pure keyword matcher is
  * enough to know when that line is worth showing, and cheap enough to run on
  * every keystroke-free state change.
  *
- * False positives are harmless (an extra hint line), false negatives are the
- * status quo, so the rules lean towards catching action verbs.
+ * The rules lean towards catching action verbs.
  */
 
 /**
@@ -38,7 +37,7 @@ const ACTION_AT_START =
  * than answering them with an arrow.
  */
 const QUESTION =
-  /(^|[^а-яё])(где|куда|откуда|что|чем|какой|какая|какое|какие|почему|зачем|сколько|подскажи|покажи|объясни|расскажи|переведи|перепиши|сократи)/i
+  /(^|[^а-яё])(где|куда|откуда|когда|во сколько|что|чем|какой|какая|какое|какие|почему|зачем|сколько|подскажи|покажи|объясни|расскажи|переведи|перепиши|сократи)/i
 
 /**
  * «Как» only counts as a question word in front position: mid-sentence it is
@@ -53,4 +52,13 @@ export function looksLikeAction(text: string): boolean {
   if (QUESTION_AT_START.test(value)) return false
   if (QUESTION.test(value)) return false
   return ACTION.test(value)
+}
+
+const BROWSER_COMMAND =
+  /(?:^|\b(?:and|then)\s+)(?:please\s+)?(?:open|launch|click|press|go to|navigate to)\b/i
+const FOLLOWING_ACTION =
+  /\s(?:и|затем|потом)\s+(?:открой|нажми|запусти|перейди|скачай|отправь)(?![а-яё])/i
+export function allowsWebLookup(prompt: string): boolean {
+  const text = prompt.trim()
+  return !looksLikeAction(text) && !BROWSER_COMMAND.test(text) && !FOLLOWING_ACTION.test(text)
 }

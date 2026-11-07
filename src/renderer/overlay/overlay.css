@@ -625,6 +625,10 @@ button.tag.clear {
   user-select: text;
 }
 
+.answer a {
+  color: var(--accent);
+}
+
 /* A 9px scrollbar would read as browser chrome inside a 420px bubble. */
 .answer::-webkit-scrollbar {
   width: 5px;

@@ -4,12 +4,13 @@
  * it gets its own implementation.
  */
 
+import { traceModelUsage } from '../agent/trace'
 import {
   ProviderError,
   type ChatMessage,
   type ContentPart,
   type LlmProvider,
-  type StreamChunk,
+  type StreamChunk, type StreamEnd,
   type StreamOptions
 } from './provider'
 import { readSse, toProviderError, toTransportError } from './http'
@@ -54,7 +55,7 @@ export class AnthropicProvider implements LlmProvider {
     messages: ChatMessage[],
     apiKey: string,
     options: StreamOptions
-  ): AsyncGenerator<StreamChunk> {
+  ): AsyncGenerator<StreamChunk, StreamEnd> {
     const system = messages
       .filter((message) => message.role === 'system')
       .flatMap((message) => message.parts)
@@ -101,17 +102,24 @@ export class AnthropicProvider implements LlmProvider {
     if (!response.ok) throw await toProviderError(response, 'Anthropic')
     if (!response.body) throw new ProviderError('Пустой ответ от Anthropic.', true)
 
-    for await (const event of readSse(response.body)) {
+    let end: StreamEnd = 'incomplete'
+    let malformed = false
+    let inputTokens: number | undefined
+    let outputTokens: number | undefined
+    for await (const event of readSse(response.body, false)) {
       let parsed: unknown
       try {
         parsed = JSON.parse(event.data)
       } catch {
+        malformed = true
         continue
       }
       const payload = parsed as {
         type?: string
-        delta?: { type?: string; text?: string }
+        delta?: { type?: string; text?: string; stop_reason?: string }
         error?: { message?: string }
+        message?: { usage?: { input_tokens?: number; output_tokens?: number } }
+        usage?: { output_tokens?: number }
       }
       if (payload.type === 'error' && payload.error?.message) {
         throw new ProviderError(`Ошибка Anthropic: ${payload.error.message}`, true)
@@ -119,7 +127,21 @@ export class AnthropicProvider implements LlmProvider {
       if (payload.type === 'content_block_delta' && payload.delta?.type === 'text_delta') {
         if (payload.delta.text) yield { delta: payload.delta.text }
       }
-      if (payload.type === 'message_stop') return
+      if (payload.type === 'message_start') {
+        inputTokens = payload.message?.usage?.input_tokens
+        outputTokens = payload.message?.usage?.output_tokens
+      }
+      if (payload.type === 'message_delta') outputTokens = payload.usage?.output_tokens ?? outputTokens
+      if (payload.type === 'message_delta' && payload.delta?.stop_reason) {
+        const reason = payload.delta.stop_reason
+        end = reason === 'end_turn' || reason === 'stop_sequence' ? 'complete'
+          : reason === 'max_tokens' ? 'limit' : 'incomplete'
+      }
+      if (payload.type === 'message_stop') {
+        traceModelUsage(inputTokens, outputTokens)
+        return malformed ? 'incomplete' : end
+      }
     }
+    return 'incomplete'
   }
 }

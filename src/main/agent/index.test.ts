@@ -18,10 +18,11 @@ const state = vi.hoisted(() => ({
   },
   binary: '/bin/helper' as string | null,
   trusted: true,
+  openExternal: vi.fn(async (_url: string) => undefined),
   confirm: vi.fn(async () => ({ response: 1 })),
   helper: {
     activate: true,
-    front: null as null | { bundleId: string; pid: number },
+    front: null as null | { bundleId: string; pid: number; windowId?: number; bounds?: ScreenRect | null; windowTitle?: string | null },
     move: true,
     click: true,
     drag: true,
@@ -35,11 +36,13 @@ const state = vi.hoisted(() => ({
   abortHandler: null as null | ((reason: 'escape' | 'mousemove') => void),
   watcherStopped: 0,
   hideCursor: 0,
-  cursorPoint: { x: 10, y: 20 }
+  cursorPoint: { x: 10, y: 20 },
+  typeOperation: null as null | ((signal: AbortSignal) => Promise<boolean>)
 }))
 
 vi.mock('electron', () => ({
   dialog: { showMessageBox: state.confirm },
+  shell: { openExternal: state.openExternal },
   screen: { getCursorScreenPoint: () => state.cursorPoint },
   systemPreferences: { isTrustedAccessibilityClient: () => state.trusted }
 }))
@@ -53,6 +56,11 @@ vi.mock('../native/helper', () => ({
   helperFront: async () => {
     state.calls.push({ name: 'front', args: [] })
     return state.helper.front
+  },
+  helperOpenBrowser: async () => {
+    state.calls.push({ name: 'open-browser', args: [] })
+    state.helper.front = { bundleId: 'com.example.browser', pid: 76 }
+    return state.helper.front.bundleId
   },
   helperMoveMouse: async (x: number, y: number) => {
     state.calls.push({ name: 'move', args: [x, y] })
@@ -70,9 +78,9 @@ vi.mock('../native/helper', () => ({
     state.calls.push({ name: 'scroll', args: [dx, dy] })
     return state.helper.scroll
   },
-  helperTypeText: async (text: string) => {
+  helperTypeText: async (text: string, target: { signal: AbortSignal }) => {
     state.calls.push({ name: 'type', args: [text] })
-    return state.helper.type
+    return state.typeOperation?.(target.signal) ?? state.helper.type
   },
   helperPressKey: async (keyCode: number, flags: number) => {
     state.calls.push({ name: 'key', args: [keyCode, flags] })
@@ -338,7 +346,7 @@ describe('execute: the shape of a run', () => {
       { x: 0, y: 0 },
       { x: 1000, y: 1000 }
     ])
-    expect(state.calls.find((call) => call.name === 'scroll')?.args).toEqual([0, -120])
+    expect(state.calls.find((call) => call.name === 'scroll')?.args).toEqual([0, 120])
     expect(state.calls.find((call) => call.name === 'type')?.args).toEqual(['привет'])
     expect(state.calls.find((call) => call.name === 'key')?.args).toEqual([1, 0x00100000])
   })
@@ -358,8 +366,10 @@ describe('execute: the shape of a run', () => {
   })
 
   it('reports a finished plan on @done with «Готово»', async () => {
+    state.settings.agent.stepDelayMs = 420
     const host = makeHost()
     const agent = createAgentController(host)
+    const delay = vi.spyOn(await import('../util'), 'delay')
 
     const result = await agent.execute(
       { steps: [step({ kind: 'move', at: { x: 0.5, y: 0.5 } }), step({ kind: 'done' })], area } as never
@@ -367,6 +377,7 @@ describe('execute: the shape of a run', () => {
 
     expect(result).toMatchObject({ finished: true })
     expect(last(host)).toMatchObject({ phase: 'done', label: 'Готово', step: 2, total: 2 })
+    expect(delay).not.toHaveBeenCalled()
   })
 
   it('says «Выполнено» when the steps ran out without a claim', async () => {
@@ -588,6 +599,25 @@ describe('execute: aiming through the Accessibility tree', () => {
 })
 
 describe('execute: stopping a run', () => {
+  it('skips arming on a continuation and still stops on Escape between actions', async () => {
+    state.settings.agent.startDelayMs = 900
+    state.settings.agent.stepDelayMs = 420
+    const host = makeHost()
+    const agent = createAgentController(host)
+    const delay = vi.spyOn(await import('../util'), 'delay').mockImplementation(async () => {
+      state.abortHandler?.('escape')
+    })
+    const move = step({ kind: 'move', at: { x: 0.5, y: 0.5 } })
+    const result = await agent.execute({
+      requestId: 'continued', prompt: 'test', finished: false, continuing: true,
+      steps: [move, move], area
+    })
+
+    expect(delay).not.toHaveBeenCalledWith(900)
+    expect(result.message).toBe('Остановлено по Escape.')
+    expect(ran('move')).toBe(1)
+  })
+
   it('aborts on Escape and says so', async () => {
     state.settings.agent.startDelayMs = 50
     const host = makeHost()
@@ -668,7 +698,7 @@ describe('execute: stopping a run', () => {
 })
 
 describe('execute: bringing the target app to the front', () => {
-  it('refreshes focus and targeting when an action switches apps inside one plan', async () => {
+  it('requires a new observation when an action switches apps inside one plan', async () => {
     state.helper.front = { bundleId: 'com.apple.Safari', pid: 42 }
     state.helper.probe = probe([])
     const host = makeHost()
@@ -680,13 +710,61 @@ describe('execute: bringing the target app to the front', () => {
       }
     }
     const agent = createAgentController(host)
-    await agent.execute({ steps: [
+    const result = await agent.execute({ steps: [
       step({ kind: 'key', combo: 'enter' }, 'Launch'),
       step({ kind: 'type', text: 'Title' }),
       step({ kind: 'move', at: { x: 0.5, y: 0.5 } })
     ], area } as never)
-    expect(state.calls.filter((call) => call.name === 'focused').at(-1)?.args[0]).toBe(777)
-    expect(state.calls.filter((call) => call.name === 'probe').at(-1)?.args[0]).toBe(777)
+    expect(result).toMatchObject({ recoverable: true, performed: [{ label: 'Launch', ok: true }] })
+    expect(ran('type') + ran('move')).toBe(0)
+  })
+
+  it('blocks input when the observed app is already gone before the first action', async () => {
+    state.helper.front = { bundleId: 'com.apple.Terminal', pid: 55 }
+    const result = await createAgentController(makeHost()).execute({
+      requestId: 'stale', prompt: 'Впиши заголовок', finished: false, area, observedPid: 42,
+      steps: [step({ kind: 'type', text: 'Title' })]
+    })
+    expect(result).toMatchObject({ recoverable: true, performed: [] })
+    expect(ran('type')).toBe(0)
+  })
+
+  it('rejects a different window of the same process', async () => {
+    const observedWindow = { pid: 42, windowId: 11, bounds: area, windowTitle: 'Document' }
+    state.helper.front = { ...observedWindow, bundleId: 'com.example.fixture', windowId: 12 }
+    const result = await createAgentController(makeHost()).execute({
+      requestId: 'changed-window', prompt: 'Впиши заголовок', finished: false, area, observedPid: 42,
+      observedWindow, requireObservation: true, steps: [step({ kind: 'type', text: 'Title' })]
+    })
+    expect(result).toMatchObject({ recoverable: true, performed: [] })
+    expect(ran('type')).toBe(0)
+  })
+
+  it('cancels native input and waits for the helper before announcing a stop', async () => {
+    const host = makeHost()
+    const agent = createAgentController(host)
+    let finish!: (ok: boolean) => void
+    let started!: (signal: AbortSignal) => void
+    const signalReady = new Promise<AbortSignal>((resolve) => { started = resolve })
+    state.typeOperation = (signal) => {
+      started(signal)
+      return new Promise((resolve) => { finish = resolve })
+    }
+    try {
+      const run = agent.execute({ steps: [
+        step({ kind: 'type', text: 'Привет🙂' }), step({ kind: 'key', combo: 'enter' })
+      ], area } as never)
+      const signal = await signalReady
+      agent.stop()
+      expect(signal.aborted).toBe(true)
+      expect(last(host).phase).not.toBe('aborted')
+      finish(false)
+      await expect(run).resolves.toMatchObject({ message: 'Остановлено.' })
+      expect(last(host).phase).toBe('aborted')
+      expect(ran('key')).toBe(0)
+    } finally {
+      state.typeOperation = null
+    }
   })
 
   it('activates the target when the card itself is frontmost', async () => {
@@ -699,13 +777,24 @@ describe('execute: bringing the target app to the front', () => {
     expect(ran('activate')).toBe(1)
   })
 
-  it('activates the target when it is already in front', async () => {
+  it('restores the app from the observation when the overlay is frontmost', async () => {
+    state.helper.front = null
+    const host = makeHost()
+    await createAgentController(host).execute({
+      requestId: 'observed', prompt: 'Проверь окно', finished: false, area, observedPid: 77,
+      steps: [step({ kind: 'done' })]
+    })
+    expect(state.calls.find((call) => call.name === 'activate')?.args).toEqual([{ bundleId: '', pid: 77 }])
+  })
+
+  it('reuses the frontmost app without activating it again', async () => {
     const host = makeHost()
     const agent = createAgentController(host)
 
     await agent.execute({ steps: [step({ kind: 'done' })], area } as never)
 
-    expect(ran('activate')).toBe(1)
+    expect(ran('activate')).toBe(0)
+    expect(ran('front')).toBe(1)
   })
 
   it('leaves a third app in front, because the plan was written against it', async () => {
@@ -851,4 +940,42 @@ describe('execute: one-action approval', () => {
     expect(ran('type')).toBe(0)
     expect(state.confirm).not.toHaveBeenCalled()
   })
+})
+
+it('opens an explicit web destination without typing in the foreground app', async () => {
+  state.helper.front = { bundleId: 'ru.keepcoder.Telegram', pid: 55 }
+  const url = 'https://example.org/catalog?q=cats'
+  const result = await createAgentController(makeHost()).execute({
+    requestId: 'web', prompt: 'Открой ' + url, finished: false, area,
+    steps: [step({ kind: 'navigate', url }, 'Открыть страницу в браузере')]
+  })
+  expect(state.openExternal).toHaveBeenCalledWith(url)
+  expect(result.performed[0]?.ok).toBe(true)
+  expect(ran('key') + ran('type') + ran('click')).toBe(0)
+})
+
+it('opens the default browser and checks that it has focus before reporting success', async () => {
+  const agent = createAgentController(makeHost())
+  const result = await agent.execute({
+    requestId: 'browser', prompt: 'Открой браузер', finished: false, area,
+    steps: [step({ kind: 'browser' }, 'Открыть браузер')]
+  })
+  expect(ran('open-browser')).toBe(1)
+  expect(state.calls.slice(-2).map((call) => call.name)).toEqual(['open-browser', 'front'])
+  expect(result.performed).toEqual([{ label: 'Открыть браузер', ok: true }])
+})
+
+it.each([true, false])('clicks a numbered target only if the live hit agrees (same: %s)', async (same) => {
+  const observedTarget = {
+    role: 'AXButton', pid: 42, title: 'Apply', pressable: true,
+    frame: { x: 485, y: 488, width: 30, height: 24 }
+  }
+  state.helper.probe = { ...probe([observedTarget]), chain: [{ ...observedTarget, title: same ? 'Apply' : 'Cancel' }] }
+  const result = await createAgentController(makeHost()).execute({
+    requestId: 'marked', prompt: 'Apply', finished: false, area,
+    steps: [step({ kind: 'click', at: { x: 0.5, y: 0.5 }, button: 'left', observedTarget })]
+  })
+  expect(ran('click')).toBe(same ? 1 : 0)
+  if (same) expect(state.calls.find((call) => call.name === 'click')?.args).toEqual([500, 500, 'left'])
+  else expect(result).toMatchObject({ recoverable: true, performed: [] })
 })

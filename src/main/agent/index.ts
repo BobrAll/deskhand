@@ -26,7 +26,7 @@
  * bubble.
  */
 
-import { dialog, screen, systemPreferences, type BrowserWindow } from 'electron'
+import { dialog, screen, shell, systemPreferences, type BrowserWindow } from 'electron'
 import type {
   AgentAction,
   AgentAvailability,
@@ -42,6 +42,7 @@ import {
   helperClick,
   helperDrag,
   helperMoveMouse,
+  helperOpenBrowser,
   helperPressKey,
   helperFocused,
   helperProbe,
@@ -49,6 +50,8 @@ import {
   helperTypeText,
   helperFront,
   watchForAbort,
+  type NativeInputTarget,
+  type RawFrontApp,
   type AbortWatcher
 } from '../native/helper'
 import { getSettings, patchSettings } from '../settings/store'
@@ -56,7 +59,11 @@ import { delay, waitFor } from '../util'
 import { hideAgentCursor } from './cursor'
 import { toScreenPoint as toScreen, type ScreenPoint } from './geometry'
 import { describeShortcut, parseShortcut } from './keys'
-import { isTextField, resolveTarget, type TargetResolution } from './targeting'
+import { isTextField, resolveMarkedTarget, resolveTarget, type TargetResolution } from './targeting'
+import { timed, trace, traceEnd } from './trace'
+import { sameObservedWindow } from './observation'
+import { MAX_TYPE_CHARS } from './plan'
+import { navigationUrl } from './navigation'
 import { approvalKey, assessAction } from './safety'
 
 export interface AgentHost {
@@ -103,6 +110,7 @@ export function createAgentController(host: AgentHost) {
   /** Bumped by `stop()`; a running plan compares it and gives up. */
   let run = 0
   let running = false
+  let operation: AbortController | null = null
   let confirming = false
   let approval: AbortController | null = null
   let last: AgentEvent = EMPTY
@@ -153,6 +161,7 @@ export function createAgentController(host: AgentHost) {
       label: event.label ?? last.label,
       plan: event.plan ?? last.plan,
       skipped: event.skipped ?? last.skipped,
+      recoverable: event.recoverable,
       message: event.message
     }
     host.emit(last)
@@ -185,11 +194,12 @@ export function createAgentController(host: AgentHost) {
    */
   let working: { bundleId: string; pid: number } | null = null
 
-  async function refreshWorking(): Promise<void> {
+  async function refreshWorking(): Promise<RawFrontApp | null> {
     const front = await helperFront()
-    if (!front || front.pid === process.pid) return
+    if (!front || front.pid === process.pid) return null
     if (front.pid !== working?.pid) forgetProbe()
     working = { bundleId: front.bundleId, pid: front.pid }
+    return front
   }
 
   /**
@@ -260,7 +270,15 @@ export function createAgentController(host: AgentHost) {
     if (action.kind !== 'click' && action.kind !== 'move') return null
     const rough = toScreen(action.at, area)
     const info = await probeAt(rough)
-    const target = resolveTarget({ rough, label: action.label ?? null, probe: info, area })
+    const target = action.kind === 'click' && action.observedTarget
+      ? resolveMarkedTarget(action.observedTarget, rough, info, area)
+      : resolveTarget({ rough, label: action.label ?? null, probe: info, area })
+    if (!target) return null
+    trace('agent.grounding', {
+      shift: target.shift, confidence: target.confidence,
+      role: target.element?.role ?? null, hasHelp: Boolean(target.element?.help),
+      chain: info?.chain.length ?? 0, candidates: info?.targets.length ?? 0
+    })
     return { point: target.point, target }
   }
 
@@ -293,33 +311,43 @@ export function createAgentController(host: AgentHost) {
   async function perform(
     action: AgentAction,
     area: ScreenRect,
-    aimed: ScreenPoint | null
+    aimed: ScreenPoint | null,
+    url: string | null,
+    target: NativeInputTarget
   ): Promise<boolean> {
     switch (action.kind) {
+      case 'browser': {
+        const bundleId = await helperOpenBrowser(target.signal)
+        return Boolean(bundleId && await waitFor(async () => (await helperFront())?.bundleId === bundleId, 1800))
+      }
+      case 'navigate':
+        if (!url) return false
+        return shell.openExternal(url).then(() => true, () => false)
       case 'move': {
         const point = aimed ?? toScreen(action.at, area)
-        return helperMoveMouse(point.x, point.y)
+        return helperMoveMouse(point.x, point.y, target)
       }
       case 'click': {
         const point = aimed ?? toScreen(action.at, area)
-        return helperClick(point.x, point.y, action.button)
+        return helperClick(point.x, point.y, action.button, target)
       }
       case 'drag': {
         const from = toScreen(action.from, area)
         const to = toScreen(action.to, area)
-        return helperDrag(from, to)
+        return helperDrag(from, to, target)
       }
       case 'scroll':
-        return helperScroll(action.dx, action.dy)
+        // The plan uses screen directions. Native wheel deltas have the opposite sign.
+        return helperScroll(-action.dx || 0, -action.dy || 0, target)
       case 'type':
-        return helperTypeText(action.text)
+        return helperTypeText(action.text, target)
       case 'key': {
         const parsed = parseShortcut(action.combo)
         if (!parsed) return false
-        return helperPressKey(parsed.keyCode, parsed.flags)
+        return helperPressKey(parsed.keyCode, parsed.flags, target)
       }
       case 'wait':
-        await delay(Math.min(action.ms, 10_000))
+        await delay(Math.min(action.ms, 10_000), target.signal)
         return true
       case 'done':
         return true
@@ -361,106 +389,108 @@ export function createAgentController(host: AgentHost) {
     }
     if (total === 0) return { finished: false, performed }
 
+    trace('agent.batch', { steps: total, continuing: request.continuing === true,
+      startDelayMs: settings.agent.startDelayMs, stepDelayMs: settings.agent.stepDelayMs })
     const token = ++run
     running = true
-    const aborted: { reason: 'escape' | 'mousemove' | null } = { reason: null }
-
-    // The card is a normal window and it holds the keyboard while the answer
-    // streams, so the app the plan is about has to come back to the front or the
-    // first click lands on the bubble. Two cases where it must not: the app is
-    // already in front (nothing to restore), and — the one that matters — a
-    // third app is. That third app is where the last round walked the user
-    // (System Settings, a dialog, a window the plan just opened), and it is what
-    // the remaining steps were written against; re-activating the app the card
-    // was opened in puts the old window in front of that screen and every step
-    // after it lands somewhere nobody planned for — "переключилось не на ту
-    // вкладку, всё слетело".
-    const opened = host.target()
-    host.setPassthrough(true)
-    const before = await helperFront()
-    const inFrontOfTarget = Boolean(
-      before && opened && (before.pid === opened.pid || (before.bundleId && before.bundleId === opened.bundleId))
-    )
-    const cardFocused = !before || before.pid === process.pid
-    if (opened && (cardFocused || inFrontOfTarget)) {
-      await helperActivate(opened)
-      await waitFor(async () => {
-        const front = await helperFront()
-        if (!front) return false
-        if (front.bundleId && front.bundleId === opened.bundleId) return true
-        return opened.pid > 0 && front.pid === opened.pid
-      }, 1200, 60)
-    }
-
-    // Whoever is in front now is the app this round aims at — its Accessibility
-    // tree is the one the clicks are snapped against. When we cannot tell (no
-    // permission, no window), the app the card was opened in is still the best
-    // guess we have.
-    const front = await helperFront()
-    working = front && front.pid !== process.pid ? { bundleId: front.bundleId, pid: front.pid } : opened
-
-    watcher = watchForAbort({ watchMouse: settings.agent.abortOnMouseMove }, (reason) => {
-      if (confirming && reason === 'mousemove') return
-      if (aborted.reason) return
-      aborted.reason = reason
-      approval?.abort()
-    })
-
-    publish({
-      phase: 'arming',
-      step: 0,
-      total,
-      label: 'Приготовился',
-      plan: labels,
-      skipped: request.skipped
-    })
-
-    /**
-     * Announces the end of a plan.
-     *
-     * Normally that is «Готово», and the card takes it as the truth. When the
-     * caller said it is going to check the result on a fresh screenshot
-     * (`request.verify`), the word is withheld: the runner has no evidence yet,
-     * and a «Готово» for half a second followed by "не получилось" is worse than
-     * no word at all. The caption then describes what happens next, and the
-     * verdict arrives from whoever looked.
-     */
-    const done = (progress: { step: number; total: number; claimed: boolean }): void => {
-      publish({
-        phase: 'done',
-        step: progress.step,
-        total: progress.total,
-        // Two words, two meanings, and the difference matters to the user: «Готово»
-        // is the model saying the task is finished (`@done`), «Выполнено» is the
-        // runner saying the steps ran out without such a claim. Neither is spoken
-        // when a check is coming: then the label describes the next moment, and the
-        // verdict arrives from whoever looked at the screen.
-        label: request.verify ? 'Проверяю результат' : progress.claimed ? 'Готово' : 'Выполнено',
-        plan: labels
-      })
-    }
+    const input = new AbortController()
+    operation = input
+    const aborted: { reason: 'escape' | 'mousemove' | 'deadline' | null } = { reason: null }
 
     const deadline = setTimeout(() => {
-      if (!aborted.reason) aborted.reason = 'escape'
+      if (!aborted.reason) aborted.reason = 'deadline'
+      input.abort()
       approval?.abort()
     }, RUN_TIMEOUT_MS)
 
     try {
-      // The window in which Escape still wins. 900 ms by default: long enough to
-      // notice a wrong plan, short enough not to feel broken.
-      const arming = settings.agent.startDelayMs
+      // The card is a normal window and it holds the keyboard while the answer
+      // streams, so the app the plan is about has to come back to the front or the
+      // first click lands on the bubble. If another app is already in front, leave
+      // it there: it may be the destination of an earlier step (for example,
+      // System Settings or an app that just opened a file).
+      const opened = host.target()
+      const target = request.observedPid ? { bundleId: '', pid: request.observedPid } : opened
+      host.setPassthrough(true)
+      let front = await helperFront()
+      if (!input.signal.aborted && target && (!front || front.pid === process.pid)) {
+        await helperActivate(target, input.signal)
+        const activated = await waitFor(async () => {
+          if (input.signal.aborted) return true
+          front = await helperFront()
+          if (!front) return false
+          if (front.bundleId && front.bundleId === target.bundleId) return true
+          return target.pid > 0 && front.pid === target.pid
+        }, 1200, 60)
+        if (!activated) front = await helperFront()
+      }
+
+      if (input.signal.aborted) return { finished: false, message: 'Остановлено.', performed }
+
+      // Whoever is in front now is the app this round aims at — its Accessibility
+      // tree is the one the clicks are snapped against. When we cannot tell (no
+      // permission, no window), the app the card was opened in is still the best
+      // guess we have.
+      working = front && front.pid !== process.pid ? { bundleId: front.bundleId, pid: front.pid } : opened
+
+      const batchPid = request.observedPid || working?.pid
+      const observedWindow = request.observedWindow ?? front
+
+      watcher = watchForAbort({ watchMouse: settings.agent.abortOnMouseMove }, (reason) => {
+        if (token !== run || operation !== input) return
+        if (confirming && reason === 'mousemove') return
+        if (aborted.reason) return
+        aborted.reason = reason
+        trace('agent.abort', { reason })
+        input.abort()
+        approval?.abort()
+      })
+
+      publish({
+        phase: 'arming',
+        step: 0,
+        total,
+        label: 'Приготовился',
+        plan: labels,
+        skipped: request.skipped
+      })
+
+      /**
+       * Announces the end of a plan.
+       *
+       * Normally that is «Готово», and the card takes it as the truth. When the
+       * caller said it is going to check the result on a fresh screenshot
+       * (`request.verify`), the word is withheld: the runner has no evidence yet,
+       * and a «Готово» for half a second followed by "не получилось" is worse than
+       * no word at all. The caption then describes what happens next, and the
+       * verdict arrives from whoever looked.
+       */
+      const done = (progress: { step: number; total: number; claimed: boolean }): void => {
+        publish({
+          phase: 'done',
+          step: progress.step,
+          total: progress.total,
+          // Two words, two meanings, and the difference matters to the user: «Готово»
+          // is the model saying the task is finished (`@done`), «Выполнено» is the
+          // runner saying the steps ran out without such a claim. Neither is spoken
+          // when a check is coming: then the label describes the next moment, and the
+          // verdict arrives from whoever looked at the screen.
+          label: request.verify ? 'Проверяю результат' : progress.claimed ? 'Готово' : 'Выполнено',
+          plan: labels
+        })
+      }
+
+      const first = plan[0]
+      // Give the user a chance to cancel before the request starts acting.
+      const arming = request.continuing || first.action.kind === 'done' ? 0 : settings.agent.startDelayMs
       // The tree for the first click is read while the plan is still "приготовился",
       // not after it: a probe costs a couple of hundred milliseconds and this is
       // the one pause the run already has. Not awaited on purpose — Escape must
       // end the run without waiting for the Accessibility API to answer.
-      const first = plan[0]
-      const firstRough = first ? roughPoint(first.action, request.area) : null
+      const firstRough = roughPoint(first.action, request.area)
       if (firstRough) void probeAt(firstRough)
-      if (arming > 0) await delay(arming)
-      // Stopped before the first click: `stop()` published the "Остановлено" the
-      // user saw, and the message is what tells the caller this turn was
-      // cancelled rather than completed — a cancelled turn must not go on to be
-      // checked and reported as a result.
+      if (arming > 0) await timed('agent.arming', () => delay(arming, input.signal))
+      // A cancelled run must not proceed to result verification.
       if (token !== run) return { finished: false, message: 'Остановлено.', performed }
 
       for (let index = 0; index < plan.length; index += 1) {
@@ -473,8 +503,31 @@ export function createAgentController(host: AgentHost) {
           return { finished: true, performed }
         }
 
-        await refreshWorking()
+        const beforeAction = await refreshWorking()
         if (token !== run || aborted.reason) break
+
+        const desktopInput = step.action.kind !== 'navigate' && step.action.kind !== 'browser' && step.action.kind !== 'wait'
+        if (!beforeAction && desktopInput) {
+          trace('agent.blocked', { reason: 'focus-unknown' })
+          const message = 'Не удалось проверить, какое приложение получит клавиши.'
+          publish({ phase: 'error', step: index + 1, total, label: step.label, message, recoverable: true })
+          return { finished: false, message, recoverable: true, performed }
+        }
+
+        if (step.action.kind !== 'navigate' && step.action.kind !== 'browser' && batchPid && working && working.pid !== batchPid) {
+          trace('agent.blocked', { reason: 'focus-changed', backend: 'desktop' })
+          const message = 'Активное приложение сменилось — нужен новый снимок экрана.'
+          publish({ phase: 'error', step: index + 1, total, label: step.label, message, recoverable: true })
+          return { finished: false, message, recoverable: true, performed }
+        }
+
+        if (desktopInput && ((request.requireObservation && !request.observedWindow) ||
+            (observedWindow && !sameObservedWindow(observedWindow, beforeAction)))) {
+          trace('agent.blocked', { reason: 'window-changed-or-unobserved' })
+          const message = 'Не удалось подтвердить наблюдённое окно — нужен новый снимок экрана.'
+          publish({ phase: 'error', step: index + 1, total, label: step.label, message, recoverable: true })
+          return { finished: false, message, recoverable: true, performed }
+        }
 
         // A permission check per step is cheap (one `front` call) and is what
         // makes the failure message honest instead of "клик не сработал".
@@ -492,14 +545,18 @@ export function createAgentController(host: AgentHost) {
         if (step.action.kind === 'type') {
           const blocked = await typingBlocked()
           if (blocked) {
-            publish({ phase: 'error', step: index + 1, total, label: step.label, message: blocked })
+            publish({ phase: 'error', step: index + 1, total, label: step.label, message: blocked, recoverable: true })
             return { finished: false, message: blocked, recoverable: true, performed }
           }
         }
 
         // Aim before acting: the model's point picks the region, the rectangle the
         // Accessibility API reports picks the pixel.
-        const aimed = await aim(step.action, request.area)
+        const aimed = await timed('agent.aim', () => aim(step.action, request.area!), { step: index + 1 })
+        if (aimed) trace('agent.target', {
+          step: index + 1, source: aimed.target.source,
+          conflict: Boolean(aimed.target.conflict)
+        })
         if (token !== run || aborted.reason) break
 
         // The point sits inside a control whose name is not the label the model
@@ -509,9 +566,17 @@ export function createAgentController(host: AgentHost) {
         // it is a different action, so the step is reported instead of pressed:
         // the plan stops here, where the user can read why, rather than two
         // steps later on a screen nobody planned for.
+        if (step.action.kind === 'click' && step.action.observedTarget && !aimed) {
+          trace('agent.blocked', { reason: 'marked-target-changed' })
+          const message = 'Отмеченный элемент сместился или перекрыт — нужен новый снимок.'
+          publish({ phase: 'error', step: index + 1, total, label: step.label, message, recoverable: true })
+          return { finished: false, message, recoverable: true, performed }
+        }
+
         if (aimed?.target.conflict) {
+          trace('agent.blocked', { reason: 'target-conflict', role: aimed.target.element?.role ?? null })
           const message = `Под точкой «${aimed.target.conflict}», а не «${step.label}» — не нажимаю.`
-          publish({ phase: 'error', step: index + 1, total, label: step.label, message })
+          publish({ phase: 'error', step: index + 1, total, label: step.label, message, recoverable: true })
           return { finished: false, message, recoverable: true, performed }
         }
 
@@ -526,6 +591,7 @@ export function createAgentController(host: AgentHost) {
         let safetyMessage: string | null = safety.kind === 'deny' ? safety.reason : null
         if (safety.kind === 'confirm' && !remembered) {
           const approvedTarget = working ? { ...working } : null
+          const endConfirmation = traceEnd('agent.confirmation', { step: index + 1 })
           confirming = true
           let accepted = false
           try {
@@ -549,6 +615,7 @@ export function createAgentController(host: AgentHost) {
           } catch {
             // A missing dialog must never silently grant permission.
           } finally {
+            endConfirmation()
             confirming = false
             approval = null
             if (token === run && !aborted.reason) host.setPassthrough(true)
@@ -558,7 +625,7 @@ export function createAgentController(host: AgentHost) {
           else if (!approvedTarget) safetyMessage = 'Неизвестно целевое приложение. Действие отменено.'
           else {
             // Dialog focus must not become the destination of approved input.
-            await helperActivate(approvedTarget)
+            await helperActivate(approvedTarget, input.signal)
             const front = await helperFront()
             forgetProbe()
             const freshAim = await aim(step.action, request.area)
@@ -572,11 +639,26 @@ export function createAgentController(host: AgentHost) {
           }
         }
         if (token !== run || aborted.reason) break
+        const url = step.action.kind === 'navigate' ? navigationUrl(step.action.url, request.prompt) : null
+        if (step.action.kind === 'navigate' && !url) {
+          const message = 'Прямой переход требует адреса из запроса. Для сайта по названию открой браузер через @browser, затем продолжи по свежему экрану.'
+          publish({ phase: 'error', step: index + 1, total, label: step.label, message, recoverable: true })
+          return { finished: false, message, recoverable: true, performed }
+        }
         const latestGuard = !getSettings().agent.enabled ? 'Агентный режим выключен.' : guardStep(step)
         if (safetyMessage || latestGuard) {
           const message = safetyMessage ?? latestGuard!
           publish({ phase: 'error', step: index + 1, total, label: step.label, message })
           return { finished: false, message, performed }
+        }
+
+        const recipient = desktopInput ? await helperFront() : null
+        if (input.signal.aborted) break
+        if (desktopInput && (!beforeAction || !sameObservedWindow(beforeAction, recipient))) {
+          const message = 'Окно сменилось перед вводом — нужен новый снимок экрана.'
+          trace('agent.blocked', { reason: 'window-changed-before-dispatch' })
+          publish({ phase: 'error', step: index + 1, total, label: step.label, message, recoverable: true })
+          return { finished: false, message, recoverable: true, performed }
         }
 
         // A resolution that found nothing on the screen is a guess, and the card
@@ -588,19 +670,27 @@ export function createAgentController(host: AgentHost) {
           const agent = getSettings().agent
           patchSettings({ agent: { ...agent, rememberedApprovals: [...agent.rememberedApprovals, approvalId] } })
         }
-        const ok = await perform(step.action, request.area, aimed?.point ?? null)
+        const ok = await timed('agent.action', () => perform(step.action, request.area!, aimed?.point ?? null, url, {
+          pid: recipient?.pid ?? 0, windowId: recipient?.windowId ?? null,
+          bounds: recipient?.bounds ?? null, signal: input.signal
+        }), {
+          step: index + 1, kind: step.action.kind
+        })
+        trace('agent.actionResult', { step: index + 1, ok, effect: ok ? 'dispatched' : 'unknown' })
         performed.push({ label: step.label, ok })
         // Whatever happened, the screen is not the same place: a menu opened, a
         // field took focus, a list re-sorted. The next step must not aim at a map
         // of the previous screen.
         forgetProbe()
+        if (input.signal.aborted) break
         if (!ok) {
           const message = `Не удалось выполнить: ${step.label}`
           publish({ phase: 'error', step: index + 1, total, label: step.label, message })
           return { finished: false, message, performed }
         }
 
-        if (index < plan.length - 1 && settings.agent.stepDelayMs > 0) {
+        const next = plan[index + 1]
+        if (next && next.action.kind !== 'done' && settings.agent.stepDelayMs > 0) {
           // The pause is also where the next step's tree is read: the cost is the
           // same, but the user sees a deliberate beat instead of a slow click.
           //
@@ -611,12 +701,12 @@ export function createAgentController(host: AgentHost) {
           // no longer exists.
           const delayMs = settings.agent.stepDelayMs
           const settle = Math.min(220, Math.round(delayMs * 0.55))
-          if (settle > 0) await delay(settle)
+          if (settle > 0) await delay(settle, input.signal)
+          if (input.signal.aborted) break
           await refreshWorking()
-          const next = plan[index + 1]
-          const nextRough = next ? roughPoint(next.action, request.area) : null
+          const nextRough = roughPoint(next.action, request.area)
           if (nextRough) void probeAt(nextRough)
-          if (delayMs > settle) await delay(delayMs - settle)
+          if (delayMs > settle) await delay(delayMs - settle, input.signal)
         }
       }
 
@@ -624,7 +714,8 @@ export function createAgentController(host: AgentHost) {
         const message =
           aborted.reason === 'escape'
             ? 'Остановлено по Escape.'
-            : 'Остановлено: вы взяли мышь.'
+            : aborted.reason === 'mousemove' ? 'Остановлено: вы взяли мышь.'
+              : 'Время выполнения действий истекло.'
         publish({ phase: 'aborted', label: '', message })
         return { finished: false, message, performed }
       }
@@ -636,6 +727,8 @@ export function createAgentController(host: AgentHost) {
       return { finished: false, performed }
     } finally {
       clearTimeout(deadline)
+      operation = null
+      if (token !== run) publish({ phase: 'aborted', label: '', message: 'Остановлено.' })
       watcher?.stop()
       watcher = null
       host.setPassthrough(false)
@@ -652,6 +745,9 @@ export function createAgentController(host: AgentHost) {
   /** Settings that make a step impossible, checked before anything is posted. */
   function guardStep(step: AgentPlanStep): string | null {
     const settings = getSettings()
+    if (step.action.kind === 'type' && step.action.text.length > MAX_TYPE_CHARS) {
+      return `Текст превышает лимит в ${MAX_TYPE_CHARS} единиц UTF-16.`
+    }
     if (step.action.kind === 'type' && !settings.agent.allowTyping) {
       return 'Печать отключена в настройках агента.'
     }
@@ -664,12 +760,14 @@ export function createAgentController(host: AgentHost) {
 
   /** Stops the run in flight. Safe to call when nothing is running. */
   function stop(): void {
+    if (running) trace('agent.stop')
     run += 1
     approval?.abort()
     watcher?.stop()
     watcher = null
-    if (running) publish({ phase: 'aborted', label: '', message: 'Остановлено.' })
-    host.setPassthrough(false)
+    operation?.abort()
+    if (running) publish({ phase: 'checking', label: 'Останавливаю', message: 'Останавливаю…' })
+    else host.setPassthrough(false)
     // execute() owns the lock until its pending confirmation/helper has settled.
   }
 

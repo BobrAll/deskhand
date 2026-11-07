@@ -21,6 +21,8 @@
 
 import type {
   AgentEvent,
+  AxElementInfo,
+  ScreenRect,
   AgentPlanStep,
   AgentRunRequest,
   AppSettings,
@@ -32,7 +34,7 @@ import { readVerdict } from '../agent/verdict'
 import { ProgressGuard, REPEATED_PLAN } from '../agent/progress'
 import { imagePart } from '../imagePart'
 import type { ChatMessage, ContentPart } from '../llm/provider'
-import { buildVerify } from '../prompt'
+import { buildVerify, withPreviousCommand } from '../prompt'
 
 /**
  * How many verification requests one turn may spend.
@@ -43,6 +45,8 @@ import { buildVerify } from '../prompt'
  * guess about why.
  */
 export const MAX_CHECKS = 2
+const MAX_PENDING_RECHECKS = 4
+const PENDING_RECHECK_MS = 3_000
 
 /**
  * Pause before the verification screenshot, in ms.
@@ -92,6 +96,8 @@ export interface VerifyDeps {
   maxTokens: number
   /** What the plan did, in order; the correction's steps are appended to it. */
   performedLines: string[]
+  historyMessages?: ChatMessage[]
+  previousCommand?: string
   progress?: ProgressGuard
   signal: AbortSignal
   /** False once the turn is gone (the session was closed or superseded). */
@@ -99,6 +105,7 @@ export interface VerifyDeps {
   publishAgent: (event: AgentEvent) => void
   /** A screenshot taken now. `null` when the screen could not be captured. */
   capture: () => Promise<ScreenshotInfo | null>
+  describeScreen?: (area: ScreenRect, onTargets: (elements: AxElementInfo[]) => void) => Promise<string | null>
   streamRound: (options: {
     messages: ChatMessage[]
     requestId: string
@@ -108,6 +115,7 @@ export interface VerifyDeps {
     area: ScreenshotInfo['area'] | null
     apiKey: string
     holdText: boolean
+    actionTargets?: AxElementInfo[]
   }) => Promise<RoundResult>
   execute: (request: AgentRunRequest & { skipped?: string[] }) => Promise<AgentRunResult>
   /** The phase the runner last published, for "did the user stop the correction". */
@@ -124,11 +132,11 @@ export interface VerifyDeps {
  * - `not-run` — it never got to look (no key, no screenshot, aborted). A missing
  *   screenshot must not be reported as either outcome.
  */
-export type VerifyOutcome = 'confirmed' | 'unconfirmed' | 'not-run'
+export type VerifyOutcome = 'confirmed' | 'unconfirmed' | 'pending' | 'not-run'
 
 export interface VerifyResult {
   outcome: VerifyOutcome
-  /** The check's own words: the answer when the claim was not confirmed. */
+  /** The check's report for the user, separate from the verdict marker. */
   evidence: string
 }
 
@@ -149,6 +157,10 @@ export async function verifyResult(deps: VerifyDeps): Promise<VerifyResult> {
   const gone = (): boolean => deps.signal.aborted || !deps.isAlive()
 
   let evidence = ''
+  let correctionFeedback = ''
+  let replanned = false
+  let pendingRechecks = 0
+  let waiting = false
   const progress = deps.progress ?? new ProgressGuard()
 
   /**
@@ -173,8 +185,9 @@ export async function verifyResult(deps: VerifyDeps): Promise<VerifyResult> {
     return notRun()
   }
 
-  for (let check = 1; check <= MAX_CHECKS; check += 1) {
-    if (check > 1) {
+  let check = 1
+  while (check <= MAX_CHECKS) {
+    if (check > 1 && !waiting) {
       // A correction ran, so the screen moved again: the row goes back to
       // "проверяю" for the second look instead of keeping the fix's own
       // "Выполнено" — which is the exact sentence under test.
@@ -191,7 +204,8 @@ export async function verifyResult(deps: VerifyDeps): Promise<VerifyResult> {
     // plan was running*. The whole question here is what the screen looks like
     // after the last action, so the delay is part of the answer and the picture
     // has to be a new one.
-    await deps.delay(VERIFY_SETTLE_MS)
+    await deps.delay(waiting ? PENDING_RECHECK_MS : VERIFY_SETTLE_MS)
+    waiting = false
     if (gone()) return bail()
     const shot = await deps.capture()
     if (gone()) return bail()
@@ -208,13 +222,21 @@ export async function verifyResult(deps: VerifyDeps): Promise<VerifyResult> {
     }
 
     const freshArea = shot.area
+    const canFix = check < MAX_CHECKS
+    let actionTargets: AxElementInfo[] | undefined
+    const outline = canFix
+      ? await deps.describeScreen?.(freshArea, (targets) => { actionTargets = targets }).catch(() => null)
+      : null
+    if (gone()) return bail()
     const checkRequest = buildVerify({
       performed: deps.performedLines,
       prompt: deps.prompt,
       // The last check may not act: a fix it invents would be executed with no
       // chance to look at the result, which is the blind click this whole
       // mechanism exists to prevent. It reports instead.
-      canFix: check < MAX_CHECKS
+      canFix,
+      outline,
+      feedback: correctionFeedback
     })
 
     const parts: ContentPart[] = []
@@ -225,7 +247,7 @@ export async function verifyResult(deps: VerifyDeps): Promise<VerifyResult> {
       return notRun()
     }
     parts.push(image)
-    parts.push({ type: 'text', text: checkRequest.userText })
+    parts.push({ type: 'text', text: withPreviousCommand(checkRequest.userText, deps.previousCommand) })
 
     // A new local name on purpose: the caller's `round` holds the plan's answer
     // and is still read after this block, so a verdict must not overwrite it.
@@ -240,6 +262,7 @@ export async function verifyResult(deps: VerifyDeps): Promise<VerifyResult> {
             }
           ]
         },
+        ...(deps.historyMessages ?? []),
         { role: 'user', parts }
       ],
       requestId: deps.requestId,
@@ -250,17 +273,31 @@ export async function verifyResult(deps: VerifyDeps): Promise<VerifyResult> {
       canDraw: false,
       area: freshArea,
       apiKey: deps.apiKey,
-      // The verdict is held: for a successful check it is discarded, and for a
-      // failed one it becomes the answer. Streaming it first would mean printing
-      // a sentence and then contradicting it with a red row.
-      holdText: true
+      // Hold the text until we know whether this is a final report or a plan
+      // for another correction.
+      holdText: true,
+      actionTargets
     })
     if (gone()) return bail()
     evidence = verdict.text
 
+    if (verdict.steps.length === 1 && verdict.steps[0].action.kind === 'look') {
+      if (pendingRechecks >= MAX_PENDING_RECHECKS) {
+        return { outcome: 'pending', evidence: 'Последний снимок всё ещё показывает промежуточное состояние. Результат пока не подтверждён.' }
+      }
+      pendingRechecks += 1
+      deps.publishAgent({
+        phase: 'checking', step: 0, total: 0,
+        label: 'Жду, пока экран обновится…', plan: []
+      })
+      waiting = true
+      continue
+    }
+
     const plan = normalizePlan(verdict.steps, {
       settings: deps.settings.agent,
-      area: freshArea
+      area: freshArea,
+      prompt: deps.prompt
     })
     const answer = readVerdict(plan, { canFix: check < MAX_CHECKS })
 
@@ -296,10 +333,21 @@ export async function verifyResult(deps: VerifyDeps): Promise<VerifyResult> {
       // "не выполнено" over it would blame the result for a decision that was
       // theirs.
       if (deps.lastPhase() === 'aborted') return notRun()
+      if (fix.recoverable && fix.message && fix.performed.length === 0) {
+        evidence = fix.message
+        if (!replanned) {
+          replanned = true
+          correctionFeedback = fix.message
+          deps.publishAgent({ phase: 'checking', step: 0, total: 0, label: fix.message, plan: [] })
+          continue
+        }
+      }
       // A fix that broke off stops the checks: the card already explains why, and
       // another screenshot would just re-take the same broken screen.
       break
     }
+    correctionFeedback = ''
+    check += 1
   }
 
   // The turn ends unverified. The check's words are the answer: what is actually

@@ -1,7 +1,20 @@
 /** Small shared helpers for the main process. */
 
-export function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms))
+import { traceEnd } from './agent/trace'
+
+export function delay(ms: number, signal?: AbortSignal): Promise<void> {
+  const end = traceEnd('timer', { requestedMs: ms })
+  return new Promise((resolve) => {
+    const finish = (): void => {
+      clearTimeout(timer)
+      signal?.removeEventListener('abort', finish)
+      end()
+      resolve()
+    }
+    const timer = setTimeout(finish, ms)
+    if (signal?.aborted) finish()
+    else signal?.addEventListener('abort', finish, { once: true })
+  })
 }
 
 /** Polls `check` until it returns true or the timeout elapses. */

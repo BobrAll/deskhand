@@ -15,6 +15,9 @@ const click: AgentPlanStep = {
 }
 const look: AgentPlanStep = { action: { kind: 'look' }, label: 'Look' }
 const done: AgentPlanStep = { action: { kind: 'done' }, label: 'Done' }
+const visibleResult: AgentPlanStep = {
+  action: { kind: 'done', label: 'Settings window is open' }, label: 'Done'
+}
 
 function harness(steps = [click, look]) {
   const settings = structuredClone(DEFAULT_SETTINGS)
@@ -50,10 +53,33 @@ describe('agent rounds', () => {
   })
 
   it('observes again when @done came with unobserved actions', async () => {
-    const h = harness([click, done])
+    const h = harness([click, visibleResult])
     h.execute.mockResolvedValue({ finished: true, performed: [{ label: 'Open', ok: true }] })
-    expect(await runAgentRounds(h.deps)).toMatchObject({ claimedDone: false, suppressed: true })
+    expect(await runAgentRounds(h.deps)).toMatchObject({
+      claimedDone: false, confirmedOnScreen: false, suppressed: true
+    })
     expect(h.capture).toHaveBeenCalledOnce()
+  })
+
+  it('uses the continuation verdict when the result is visible after the actions', async () => {
+    const h = harness([click])
+    h.streamRound.mockResolvedValue({ steps: [visibleResult], text: 'Настройки открыты.' })
+
+    expect(await runAgentRounds(h.deps)).toMatchObject({
+      confirmedOnScreen: true, claimedDone: true, held: 'Настройки открыты.', suppressed: false
+    })
+    expect(h.execute).toHaveBeenCalledOnce()
+    expect(h.capture).toHaveBeenCalledOnce()
+    expect(h.streamRound).toHaveBeenCalledOnce()
+  })
+
+  it('leaves an initial completion claim for separate verification', async () => {
+    const h = harness([visibleResult])
+    h.execute.mockResolvedValue({ finished: true, performed: [] })
+    expect(await runAgentRounds(h.deps)).toMatchObject({
+      claimedDone: true, confirmedOnScreen: false
+    })
+    expect(h.capture).not.toHaveBeenCalled()
   })
 
   it('observes after actions even if the model omitted @look', async () => {
@@ -80,6 +106,38 @@ describe('agent rounds', () => {
     await runAgentRounds(h.deps)
     expect(h.execute).toHaveBeenCalledOnce()
     expect(h.capture).not.toHaveBeenCalled()
+  })
+
+  it('keeps action rounds available after a rejected transition and a blocked repeat', async () => {
+    const navigate: AgentPlanStep = { label: 'Navigate', action: { kind: 'navigate', url: 'https://example.org/' } }
+    const browser: AgentPlanStep = { label: 'Browser', action: { kind: 'browser' } }
+    const h = harness([navigate, look])
+    h.deps.request.prompt = 'Открой https://example.org/'
+    h.deps.settings.agent.maxSteps = 2
+    h.execute.mockResolvedValueOnce({ finished: false, performed: [], message: 'Address rejected', recoverable: true })
+    h.streamRound.mockResolvedValueOnce({ steps: [navigate, look], text: '' })
+      .mockResolvedValueOnce({ steps: [browser, look], text: '' })
+      .mockResolvedValueOnce({ steps: [visibleResult], text: 'Открыто.' })
+
+    expect(await runAgentRounds(h.deps)).toMatchObject({ confirmedOnScreen: true })
+    expect(h.execute).toHaveBeenCalledTimes(2)
+    expect(h.execute.mock.calls[1][0].steps).toEqual([browser])
+    expect(h.deps.session?.rounds).toBe(1)
+  })
+
+  it('opens the browser once and directs a repeated navigation plan to the observed interface', async () => {
+    const navigate: AgentPlanStep = { label: 'Navigate', action: { kind: 'navigate', url: 'https://example.org/' } }
+    const address: AgentPlanStep = { label: 'Фокус адресной строки', action: { kind: 'key', combo: 'cmd+l' } }
+    const h = harness([navigate, look])
+    h.deps.request.prompt = 'Открой сайт библиотеки'
+    h.streamRound.mockResolvedValueOnce({ steps: [navigate, look], text: '' })
+      .mockResolvedValueOnce({ steps: [address], text: '' })
+      .mockResolvedValueOnce({ steps: [visibleResult], text: 'Открыто.' })
+
+    await runAgentRounds(h.deps)
+    expect(h.execute.mock.calls.map(([request]) => request.steps.map((step) => step.action.kind)))
+      .toEqual([['browser'], ['key']])
+    expect(JSON.stringify(h.streamRound.mock.calls[1][0].messages)).toContain('Браузер уже открывали')
   })
 
   it('passes the exact continuation messages and verification policy', async () => {
@@ -146,7 +204,7 @@ describe('agent rounds', () => {
 
   it('allows a look-only continuation without executing a plan', async () => {
     const h = harness([look])
-    expect(await runAgentRounds(h.deps)).toMatchObject({ held: 'NarrationResult', suppressed: false })
+    expect(await runAgentRounds(h.deps)).toMatchObject({ held: 'Result', suppressed: false })
     expect(h.execute).not.toHaveBeenCalled()
     expect(h.capture).toHaveBeenCalledOnce()
   })
@@ -278,10 +336,23 @@ describe('agent rounds', () => {
     const h = harness()
     h.deps.settings.agent.verifyResult = false
     h.streamRound.mockResolvedValue({ steps: [], text: 'Нужно выбрать одну из двух презентаций.' })
-    expect(await runAgentRounds(h.deps)).toMatchObject({ interrupted: true })
+    expect(await runAgentRounds(h.deps)).toMatchObject({
+      interrupted: true, suppressed: false, held: 'Нужно выбрать одну из двух презентаций.'
+    })
     expect(h.publish).toHaveBeenLastCalledWith(expect.objectContaining({
-      phase: 'error', message: 'Нужно выбрать одну из двух презентаций.'
+      phase: 'error', message: 'Выполнение всей просьбы не подтверждено.'
     }))
+  })
+
+  it('keeps the report alongside a completion marker after observing the result', async () => {
+    const h = harness()
+    h.execute.mockResolvedValueOnce({ finished: false, performed: [{ label: 'Open', ok: true }] })
+      .mockResolvedValueOnce({ finished: true, performed: [] })
+    h.streamRound.mockResolvedValue({ steps: [done], text: 'Два новых сообщения от Анны.' })
+
+    expect(await runAgentRounds(h.deps)).toMatchObject({
+      claimedDone: true, confirmedOnScreen: false, suppressed: false, held: 'Два новых сообщения от Анны.'
+    })
   })
 
   it('does not announce unobserved success even when final verification is disabled', async () => {

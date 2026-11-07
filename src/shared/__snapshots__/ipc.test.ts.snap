@@ -8,7 +8,7 @@ exports[`CH: the channel set is a wire protocol > keeps the size of every namesp
   "permissions": 4,
   "pointer": 1,
   "settings": 10,
-  "voice": 13,
+  "voice": 14,
 }
 `;
 
@@ -213,6 +213,10 @@ exports[`CH: the channel set is a wire protocol > matches the snapshot 1`] = `
   [
     "voice.importModel",
     "voice:import-model",
+  ],
+  [
+    "voice.deleteModel",
+    "voice:delete-model",
   ],
   [
     "voice.test",

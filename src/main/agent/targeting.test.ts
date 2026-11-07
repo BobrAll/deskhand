@@ -386,3 +386,33 @@ describe('resolveTarget: elements that cannot be targets', () => {
     expect(result.source).toBe('point')
   })
 })
+
+describe('resolveTarget: icon controls', () => {
+  it('finds an icon by its accessibility tooltip even when the point missed it', () => {
+    const icon = element({ help: 'Показать загрузки', frame: { x: 240, y: 100, width: 24, height: 24 } })
+    expect(resolveTarget({ rough: { x: 195, y: 115 }, label: 'Показать загрузки', probe: probe([icon]), area }))
+      .toMatchObject({ source: 'label', point: { x: 252, y: 112 } })
+  })
+
+  it('snaps to an unnamed toggle despite its generic role and numeric state', () => {
+    const icon = element({ role: 'AXCheckBox', roleDescription: 'флажок', value: '0',
+      frame: { x: 240, y: 100, width: 24, height: 24 } })
+    expect(resolveTarget({ rough: { x: 230, y: 111 }, label: 'Уведомления', probe: probe([icon]), area }))
+      .toMatchObject({ source: 'snap', point: { x: 252, y: 112 } })
+  })
+
+  it('centres the click on the actual icon instead of picking a smaller neighbour across the edge', () => {
+    const icon = element({ frame: { x: 240, y: 100, width: 24, height: 24 } })
+    const neighbour = element({ frame: { x: 264, y: 102, width: 16, height: 20 } })
+    expect(resolveTarget({ rough: { x: 263, y: 111 }, label: 'Настройки', probe: probe([icon, neighbour]), area }))
+      .toMatchObject({ source: 'point', point: { x: 252, y: 112 } })
+  })
+})
+
+it('uses the named Dock icon when the hit test landed on its neighbor', () => {
+  const wrong = element({ role: 'AXDockItem', title: 'Notes', frame: { x: 200, y: 850, width: 40, height: 40 } })
+  const wanted = element({ role: 'AXDockItem', title: 'Calendar', frame: { x: 250, y: 850, width: 40, height: 40 } })
+  const tree = { ...probe([wanted]), chain: [wrong] }
+  expect(resolveTarget({ rough: { x: 230, y: 870 }, label: 'Calendar', probe: tree, area }))
+    .toMatchObject({ source: 'label', point: { x: 270, y: 870 }, element: wanted })
+})

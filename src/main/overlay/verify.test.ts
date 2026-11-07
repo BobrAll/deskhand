@@ -316,3 +316,61 @@ describe('verifyResult: a check that never ran', () => {
     expect(rounds).toHaveLength(0)
   })
 })
+
+describe('verifyResult: a transient screen', () => {
+  const look: AgentPlanStep = { action: { kind: 'look' }, label: 'Посмотреть ещё раз' }
+
+  it('observes again after the final correction when a transition hides the result', async () => {
+    const responses = [[clickStep()], [look], [doneStep()]]
+    const { deps, events, executed, delays } = harness({
+      streamRound: async () => ({ steps: responses.shift() ?? [], text: '' })
+    })
+    expect(await verifyResult(deps)).toMatchObject({ outcome: 'confirmed' })
+    expect(executed).toHaveLength(1)
+    expect(delays).toEqual([VERIFY_SETTLE_MS, VERIFY_SETTLE_MS, 3_000])
+    expect(events).toContain('checking:Жду, пока экран обновится…')
+  })
+
+  it('returns a neutral pending result when the screen stays transient', async () => {
+    const { deps, rounds, executed } = harness({
+      streamRound: async () => ({ steps: [look], text: '' })
+    })
+    expect(await verifyResult(deps)).toMatchObject({ outcome: 'pending' })
+    expect(rounds).toHaveLength(5)
+    expect(executed).toHaveLength(0)
+  })
+})
+
+it('replans a final correction rejected before input and verifies the alternative', async () => {
+  const alternative: AgentPlanStep = { action: { kind: 'key', combo: 'enter' }, label: 'Подтвердить' }
+  const failure = 'Под точкой оказалась другая кнопка.'
+  const replies = [[clickStep()], [alternative], [doneStep()]]
+  const { deps, executed, rounds } = harness({
+    settings: { ...settings, agent: { ...settings.agent, allowShortcuts: true } },
+    streamRound: async () => ({ steps: replies.shift() ?? [], text: '' }),
+    execute: async ({ steps }) => steps[0].action.kind === 'click'
+      ? { finished: false, performed: [], message: failure, recoverable: true }
+      : { finished: false, performed: [{ ok: true, label: alternative.label }] }
+  })
+
+  expect(await verifyResult(deps)).toMatchObject({ outcome: 'confirmed' })
+  expect(executed).toHaveLength(2)
+  expect(JSON.stringify(rounds[1].messages)).toContain(failure)
+})
+
+it('supplies control geometry when the verification model can correct the result', async () => {
+  const target = { role: 'AXButton', pressable: true, frame: { x: 10, y: 10, width: 24, height: 24 } }
+  const { deps } = harness({
+    describeScreen: async (area, onTargets) => {
+      expect(area).toEqual(AREA)
+      onTargets([target])
+      return 'Элементы текущего экрана'
+    },
+    streamRound: async ({ actionTargets, messages }) => {
+      expect(actionTargets).toEqual([target])
+      expect(JSON.stringify(messages)).toContain('Элементы текущего экрана')
+      return { steps: [doneStep()], text: '' }
+    }
+  })
+  expect(await verifyResult(deps)).toMatchObject({ outcome: 'confirmed' })
+})
