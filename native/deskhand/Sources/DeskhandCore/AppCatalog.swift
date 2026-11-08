@@ -249,6 +249,34 @@ public enum AppCatalog {
     /// difference is visible there and not on the command line, which already
     /// keeps its loop alive: the same run does strictly more work per gesture
     /// in the app than in the terminal.
+    /// Brings one of the app's windows to the front, and the app with it.
+    ///
+    /// `activate` alone raises whichever window the app considers main, which is
+    /// not necessarily the one the tree was read from: an app with a chat window
+    /// and a main window will come forward showing the wrong one, and the click
+    /// that follows lands in the window the user is not looking at. Raising the
+    /// specific AX window first, then activating, puts the right one in front.
+    ///
+    /// The raise is what picks the window; the activation is what gives a posted
+    /// mouse event a frontmost app to land in. Both are needed, and the order
+    /// matters: the app is activated first, because a raise on a fully background
+    /// app is ignored by several apps, and then the specific window is raised to
+    /// correct whichever window the app chose to bring forward by itself.
+    @discardableResult
+    public static func activate(pid: pid_t, raising window: AXElement?, timeout: TimeInterval = 1.0) -> Double? {
+        let elapsed = activate(pid: pid, timeout: timeout)
+        if let window {
+            // Best effort: a raise is a no-op for some windows, and that is not a
+            // reason to fail an action the activation already made possible.
+            _ = window.perform(kAXRaiseAction)
+            // The window server processes a raise asynchronously; give it a
+            // chance to land before the synthetic event is posted, or the click
+            // races the raise and lands in the window that is still in front.
+            MainRunLoop.wait(until: { false }, deadline: Date().addingTimeInterval(0.03))
+        }
+        return elapsed
+    }
+
     @discardableResult
     public static func activate(pid: pid_t, timeout: TimeInterval = 1.0) -> Double? {
         guard let app = NSRunningApplication(processIdentifier: pid) else { return nil }

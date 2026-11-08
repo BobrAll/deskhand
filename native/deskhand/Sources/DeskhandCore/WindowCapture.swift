@@ -56,7 +56,8 @@ public enum WindowCapture {
 
     public static func capture(
         pid: pid_t,
-        options: Options = Options()
+        options: Options = Options(),
+        preferredFrame: CGRect? = nil
     ) async throws -> Result {
         WindowServer.prepare()
         guard CGPreflightScreenCaptureAccess() else { throw CaptureError.noPermission }
@@ -72,13 +73,29 @@ public enum WindowCapture {
         let windows = content.windows.filter { $0.owningApplication?.processID == pid }
         guard !windows.isEmpty else { throw CaptureError.windowNotFound }
 
-        // Prefer the biggest layer-0 window: that is the app's main window.
-        // Sheets and popovers are separate windows and are captured as part of
-        // the parent when the parent is captured, but if the app's main window
-        // is not visible we fall back to whatever is largest.
-        let candidate = windows
-            .filter { $0.windowLayer == 0 && $0.frame.width > 40 && $0.frame.height > 40 }
-            .max { lhs, rhs in lhs.frame.width * lhs.frame.height < rhs.frame.width * rhs.frame.height }
+        // Prefer the window the accessibility tree was read from.
+        //
+        // The tree comes from the app's *focused* window, while the largest
+        // layer-0 window is usually — but not always — the same one. When an app
+        // has several windows open (a chat window and a main window, a document
+        // and a search window) the two disagree, and the disagreement is silent:
+        // the model reads indices from one window and pixel coordinates from a
+        // screenshot of the other, so an x/y click is measured against the wrong
+        // frame and lands in a different window entirely. Element indices keep
+        // working, which is why the run looks half-right instead of broken.
+        //
+        // So the frame the tree reported wins when it is available. The size
+        // heuristic stays as the fallback for a caller that has no tree.
+        let usable = windows.filter { $0.windowLayer == 0 && $0.frame.width > 40 && $0.frame.height > 40 }
+        let largest = usable.max {
+            $0.frame.width * $0.frame.height < $1.frame.width * $1.frame.height
+        }
+        let matching = preferredFrame.flatMap { frame in
+            usable.min {
+                distance($0.frame, frame) < distance($1.frame, frame)
+            }.flatMap { distance($0.frame, frame) <= 8 ? $0 : nil }
+        }
+        let candidate = matching ?? largest
             ?? windows.max { lhs, rhs in lhs.frame.width * lhs.frame.height < rhs.frame.width * rhs.frame.height }
 
         guard let window = candidate else { throw CaptureError.windowNotFound }
@@ -127,6 +144,22 @@ public enum WindowCapture {
             captureMilliseconds: captureMilliseconds,
             encodeMilliseconds: encodeMilliseconds
         )
+    }
+
+    /// How far apart two window frames are, in points.
+    ///
+    /// Used to recognise the window the accessibility tree was read from among
+    /// the app's windows. ScreenCaptureKit reports a window by identity, not by
+    /// the AX window it corresponds to, so the frame is what ties the two
+    /// together. Eight points is the tolerance: a window can shift by its own
+    /// shadow or by a title bar the two APIs measure differently, but two
+    /// distinct windows are never that close.
+    static func distance(_ a: CGRect, _ b: CGRect) -> Double {
+        let dx = abs(a.origin.x - b.origin.x)
+        let dy = abs(a.origin.y - b.origin.y)
+        let dw = abs(a.width - b.width)
+        let dh = abs(a.height - b.height)
+        return max(max(dx, dy), max(dw, dh))
     }
 
     static func fit(size: CGSize, longestEdge: Double) -> CGSize {

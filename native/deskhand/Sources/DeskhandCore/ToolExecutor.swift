@@ -459,7 +459,7 @@ public final class ToolExecutor: @unchecked Sendable {
     /// system stream, which the window server delivers to the frontmost app.
     /// Accessibility actions and per-process key events do not need this.
     private func bringToFront(_ session: AppSession) {
-        AppCatalog.activate(pid: session.pid)
+        AppCatalog.activate(pid: session.pid, raising: session.windowElement)
     }
 
     /// Brings the window forward and says so when that did not work.
@@ -470,7 +470,7 @@ public final class ToolExecutor: @unchecked Sendable {
     /// spends turns re-aiming at a window that was never going to receive the
     /// event.
     private func bringToFrontChecked(_ session: AppSession, action: String) -> String? {
-        guard AppCatalog.activate(pid: session.pid) == nil else { return nil }
+        guard AppCatalog.activate(pid: session.pid, raising: session.windowElement) == nil else { return nil }
         return " Warning: \(session.app.name) did not come to the front, so \(action) may have"
             + " landed in another window. Check the screen before repeating it."
     }

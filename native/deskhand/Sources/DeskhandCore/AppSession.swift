@@ -54,6 +54,13 @@ public final class AppSession {
     /// The tree the next diff is computed against. It advances after every
     /// diff, so each action's report covers only what that action changed.
     private var diffBaseline: AXSnapshot?
+    /// The accessibility window the current snapshot was read from.
+    ///
+    /// Kept as an element, not just as a frame, because bringing the app forward
+    /// is not enough to put *this* window in front: an app with several windows
+    /// raises its own main window and leaves the one being worked on behind. The
+    /// element is what lets an action raise the window the indices belong to.
+    var windowElement: AXElement?
 
     public init(app: AppHandle) {
         self.app = app
@@ -100,11 +107,23 @@ public final class AppSession {
         if let frame = snap.windowFrame {
             mapper = Self.mapperAfterTreeWalk(existing: mapper, windowFrame: frame)
         }
+        // Resolved again rather than carried in the snapshot: the snapshot is
+        // `Sendable` and describes a window, while an action needs a handle it
+        // can raise. Re-resolving is one attribute read and cannot go stale
+        // between the walk and the action.
+        windowElement = AXTreeWalker.focusedWindow(of: AXElement.application(pid: app.pid))
 
         if includeScreenshot {
             do {
                 let captureClock = TimingClock()
-                let result = try await WindowCapture.capture(pid: app.pid, options: captureOptions)
+                // The screenshot must be of the window the tree was read from.
+                // Otherwise an app with two windows gives the model indices from
+                // one and pixels from the other, and every x/y click is measured
+                // against a frame the target does not live in.
+                let result = try await WindowCapture.capture(
+                    pid: app.pid,
+                    options: captureOptions,
+                    preferredFrame: snap.windowFrame)
                 timings.capture = captureClock.milliseconds
                 timings.encode = result.encodeMilliseconds
                 timings.screenshotBytes = result.pngData.count
