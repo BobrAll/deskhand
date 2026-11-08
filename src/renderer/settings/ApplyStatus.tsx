@@ -40,8 +40,9 @@ export function ApplyStatus(props: { state: ApplyState; holdReason: string | nul
 
   return (
     <span
-      className={`banner ${status.bad ? 'err' : 'ok'}`}
+      className={`status ${status.bad ? 'err' : 'ok'}`}
       title={props.holdReason ?? undefined}
+      role="status"
     >
       {status.text}
     </span>

@@ -5,16 +5,17 @@
  * on it answers one question the user is right to ask before turning it on:
  * "what exactly is it allowed to do to my machine, and how do I stop it?"
  *
- * So the layout is: the switch, then the gates macOS puts in front of it (each
- * with its own fix), then the one limit that matters, then the escape hatches.
+ * Two cards, in that order: what it may do (the switch and the grant it needs),
+ * then the limits that keep a misunderstood request from running all afternoon.
  * There is deliberately no list of per-action permissions here: the actions that
  * need one are asked about at the moment they happen, in the card, next to the
- * element they concern — a checkbox in a settings window is a worse place to
+ * element they concern — a switch in a settings window is a worse place to
  * decide whether to send a message than the message itself.
  */
 
 import { useCallback, useEffect, useState } from 'react'
 import type { AgentAvailability, AgentSettings } from '@shared/types'
+import { Group, Row, ToggleRow } from './Row'
 
 interface AgentTabProps {
   agent: AgentSettings
@@ -76,112 +77,93 @@ export function AgentTab({ agent, onChange, onEnabledChange }: AgentTabProps) {
     if (Number.isFinite(value) && value >= 1) onChange({ maxSteps: value })
   }
 
+  const needsGrant = agent.enabled && availability !== null && !availability.ready
+
   return (
-    <section>
-      <h2>Агент</h2>
+    <div className="pane">
+      <Group title="Управление">
+        <ToggleRow
+          title="Разрешить управлять мышью и клавиатурой"
+          hint="Сохраняется сразу. Пока выключено, ассистент отвечает словами и рисует, но ничего не нажимает."
+          checked={agent.enabled}
+          onChange={(enabled) => {
+            // This one is written straight through instead of waiting for the
+            // panel's autosave: it decides whether the assistant can act at all,
+            // and a tick that has not reached the disk yet looks exactly like a
+            // broken mode the next time something is asked of it.
+            onChange({ enabled })
+            void onEnabledChange(enabled)
+              .then(setAvailability)
+              .catch(() => undefined)
+          }}
+        />
 
-      <div className="field">
-        <label className="check">
-          <input
-            type="checkbox"
-            checked={agent.enabled}
-            onChange={(event) => {
-              const enabled = event.target.checked
-              // This one is written straight through instead of waiting for the
-              // panel's autosave: it decides whether the assistant can act at all,
-              // and a tick that has not reached the disk yet looks exactly like a
-              // broken mode the next time something is asked of it.
-              onChange({ enabled })
-              void onEnabledChange(enabled)
-                .then(setAvailability)
-                .catch(() => undefined)
-            }}
-          />{' '}
-          Разрешить управлять мышью и клавиатурой
-        </label>
-        <div className="hint">
-          Сохраняется сразу. Пока выключено, ассистент отвечает словами и рисует, но ничего
-          не нажимает.
-        </div>
-      </div>
-
-      {agent.enabled && availability && !availability.ready && (
-        <div className="field">
-          <label>Готовность</label>
+        {needsGrant && (
           <div className="agent-ready">
             <span className="agent-ready-dot" aria-hidden />
-            <span>{availability.reason ?? 'Нужен доступ в «Универсальный доступ».'}</span>
+            <span>{availability?.reason ?? 'Нужен доступ в «Универсальный доступ».'}</span>
             <button
-              className="tag"
               onClick={() => window.smartCursor.permissions.open('accessibility')}
             >
               Открыть доступ
             </button>
           </div>
-        </div>
-      )}
+        )}
 
-      <div className="field">
-        <label htmlFor="agent-max-steps">Лимит шагов задачи</label>
-        <input
-          id="agent-max-steps"
-          type="number"
-          min={1}
-          step={1}
-          value={steps}
-          onChange={(event) => editSteps(event.target.value)}
-          onBlur={() => setSteps(String(agent.maxSteps))}
-        />
-        <div className="hint">
-          Сколько действий агент может сделать за одну задачу. Escape останавливает в любой
-          момент.
-        </div>
-      </div>
-
-      <div className="field">
-        <label className="check">
-          <input
-            type="checkbox"
-            checked={agent.abortOnMouseMove}
-            onChange={(event) => onChange({ abortOnMouseMove: event.target.checked })}
-          />{' '}
-          Останавливать, если я взял мышь
-        </label>
-        <div className="hint">
-          Потянулись за курсором — управление сразу вернулось к вам.
-        </div>
-      </div>
-
-      <div className="field">
-        <label className="check">
-          <input
-            type="checkbox"
-            checked={agent.verifyResult}
-            onChange={(event) => onChange({ verifyResult: event.target.checked })}
-          />{' '}
-          Проверять результат по экрану
-        </label>
-        <div className="hint">
-          После действия агент проверяет, что на экране действительно изменилось.
-        </div>
-      </div>
-
-      <div className="field">
-        <button
-          type="button"
-          onClick={() => {
-            void window.smartCursor.agent.clearApprovals().then(
-              () => setApprovalStatus('Разрешения сброшены.'),
-              () => setApprovalStatus('Не удалось сбросить разрешения.')
-            )
-          }}
+        <Row
+          title="Постоянные разрешения"
+          hint={
+            approvalStatus ||
+            'Выбор «Разрешить всегда» запоминается для каждого действия отдельно.'
+          }
         >
-          Сбросить постоянные разрешения
-        </button>
-        <div className="hint" role="status">
-          {approvalStatus || 'Забыть выбор «Разрешить всегда» для всех действий.'}
-        </div>
-      </div>
-    </section>
+          <button
+            type="button"
+            onClick={() => {
+              void window.smartCursor.agent.clearApprovals().then(
+                () => setApprovalStatus('Разрешено заново спрашивать обо всём.'),
+                () => setApprovalStatus('Не удалось сбросить разрешения.')
+              )
+            }}
+          >
+            Забыть
+          </button>
+        </Row>
+      </Group>
+
+      <Group
+        title="Границы"
+        footnote="Escape останавливает задачу в любой момент, независимо от этих настроек."
+      >
+        <Row
+          title="Лимит шагов задачи"
+          hint="Сколько действий агент может сделать за одну задачу."
+        >
+          <input
+            type="number"
+            min={1}
+            step={1}
+            value={steps}
+            aria-label="Лимит шагов задачи"
+            onChange={(event) => editSteps(event.target.value)}
+            onBlur={() => setSteps(String(agent.maxSteps))}
+          />
+        </Row>
+
+        <ToggleRow
+          title="Останавливать, если я взял мышь"
+          hint="Потянулись за курсором — управление сразу вернулось к вам."
+          checked={agent.abortOnMouseMove}
+          onChange={(abortOnMouseMove) => onChange({ abortOnMouseMove })}
+        />
+
+        <ToggleRow
+          title="Проверять результат по экрану"
+          hint="После действия агент проверяет, что на экране действительно изменилось."
+          checked={agent.verifyResult}
+          onChange={(verifyResult) => onChange({ verifyResult })}
+        />
+      </Group>
+    </div>
   )
 }

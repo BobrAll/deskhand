@@ -1,3 +1,21 @@
+/**
+ * The settings window.
+ *
+ * Three ideas hold the whole sheet together:
+ *
+ * 1. A pane is a column of cards. Each card is one subject ("Подключение",
+ *    "Границы"), its rows are the individual settings, and a divider between
+ *    rows does the work that a label used to do. Nothing here floats: if a
+ *    control is not inside a card, it is not a setting.
+ * 2. A row has two columns and one sentence. The name of the thing on the left,
+ *    the thing itself on the right, the explanation in smaller grey underneath
+ *    the name. The old layout put the explanation after the control, which made
+ *    every control look like the start of a paragraph.
+ * 3. Colour is the accent's job, and only for state: focus, an active pill, a
+ *    switch that is on. Everything else is text and hairline. The tokens come
+ *    from `styles/base.css` — see `docs/style.md` — and this sheet adds none.
+ */
+
 html,
 body,
 #root {
@@ -8,96 +26,143 @@ body.window {
   background: var(--bg-solid);
 }
 
+/* ---- loading and failure states ---------------------------------------- */
+
 .pending {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  height: 100%;
   padding: 40px;
+  text-align: center;
   color: var(--text-dim);
   font-size: 13px;
 }
 
+/* ---- shell -------------------------------------------------------------- */
+
 .shell {
   display: grid;
-  grid-template-columns: 208px 1fr;
+  grid-template-columns: 216px 1fr;
   height: 100vh;
   overflow: hidden;
 }
 
+/* ---- sidebar ------------------------------------------------------------ */
+
 .sidebar {
   display: flex;
   flex-direction: column;
-  gap: 3px;
-  padding: 46px 12px 14px;
+  gap: 2px;
+  padding: 52px 10px 12px;
   border-right: 1px solid var(--border);
   background: var(--surface);
   -webkit-app-region: drag;
 }
 
-.sidebar .brand {
-  padding: 0 10px 14px;
+.brand {
+  padding: 0 10px 16px;
+}
+
+.brand-name {
   font-size: 13px;
   font-weight: 700;
-  letter-spacing: 0.02em;
+  letter-spacing: 0.01em;
 }
 
-.sidebar .nav {
+.brand-sub {
+  margin-top: 1px;
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+.nav {
   -webkit-app-region: no-drag;
-  text-align: left;
-  background: transparent;
-  border: 1px solid transparent;
-  color: var(--text-dim);
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
   padding: 7px 10px;
+  border: 1px solid transparent;
   border-radius: 8px;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 13px;
+  text-align: left;
 }
 
-.sidebar .nav:hover {
+.sidebar .nav:hover:not(.active) {
   background: var(--surface-strong);
+  border-color: transparent;
   color: var(--text);
 }
 
 .sidebar .nav.active {
   background: var(--accent-soft);
-  border-color: rgba(123, 149, 255, 0.32);
+  border-color: color-mix(in srgb, var(--accent) 30%, transparent);
   color: var(--text);
   font-weight: 600;
 }
 
+.nav svg {
+  flex: none;
+  opacity: 0.75;
+}
+
+.nav.active svg {
+  opacity: 1;
+  color: var(--accent);
+}
+
 .sidebar-foot {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
   margin-top: auto;
-  padding: 10px;
+  padding: 12px 4px 0;
   border-top: 1px solid var(--border);
 }
 
 /* The sidebar is a drag region; the controls in its footer are not. */
 .sidebar-foot .hotkey-field,
-.sidebar-foot .check {
+.sidebar-foot .switch {
   -webkit-app-region: no-drag;
 }
 
-.sidebar-foot .hotkey-field {
-  margin-top: 5px;
-  flex-wrap: wrap;
+.sidebar-label {
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-faint);
 }
 
-.sidebar-foot .hotkey-field button {
-  width: 100%;
-  min-width: 0;
-  padding: 6px 8px;
+.sidebar-value {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   font-size: 12.5px;
-  line-height: 1.3;
-  letter-spacing: 0.04em;
-  white-space: normal;
+  color: var(--text-dim);
 }
 
-.sidebar-foot .sidebar-check {
-  margin-top: 12px;
+.sidebar-value strong {
+  font-weight: 600;
+  color: var(--text);
+  letter-spacing: 0.04em;
+}
+
+.side-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
   font-size: 12px;
   color: var(--text-dim);
 }
 
-.hotkey-badge {
-  font-size: 13px;
-  font-weight: 600;
-  letter-spacing: 0.06em;
-}
+/* ---- content ------------------------------------------------------------ */
 
 .content {
   display: flex;
@@ -106,39 +171,155 @@ body.window {
   min-height: 0;
 }
 
-.settings-scroll {
-  flex: 1;
-  min-height: 0;
-  padding: 44px 26px 16px;
-  overflow-y: auto;
+.pane-head {
+  flex: none;
+  padding: 38px 28px 10px;
+  -webkit-app-region: drag;
 }
 
-.content section {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-  max-width: 640px;
-}
-
-h2 {
+.pane-head h1 {
   margin: 0;
   font-size: 19px;
   font-weight: 700;
   letter-spacing: -0.01em;
 }
 
-.field {
-  display: flex;
-  flex-direction: column;
-  gap: 7px;
+.pane-sub {
+  margin: 3px 0 0;
+  font-size: 12.5px;
+  line-height: 1.4;
+  color: var(--text-dim);
 }
 
-.field > label {
-  font-size: 12px;
+.settings-scroll {
+  flex: 1;
+  min-height: 0;
+  padding: 8px 28px 26px;
+  overflow-y: auto;
+}
+
+.pane {
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+  max-width: 620px;
+  margin: 0 auto;
+}
+
+/* ---- cards and rows ----------------------------------------------------- */
+
+.group-title {
+  margin: 0 0 7px 4px;
+  font-size: 10.5px;
   font-weight: 600;
-  color: var(--text-dim);
+  letter-spacing: 0.06em;
   text-transform: uppercase;
-  letter-spacing: 0.05em;
+  color: var(--text-faint);
+}
+
+.group-body {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--text) 3%, transparent);
+  overflow: hidden;
+}
+
+.group-foot {
+  margin: 7px 4px 0;
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--text-faint);
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  padding: 11px 14px;
+}
+
+.row + .row {
+  border-top: 1px solid var(--border);
+}
+
+.row-stacked {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+}
+
+.row-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.row-title {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+}
+
+.row-hint {
+  margin-top: 2px;
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--text-faint);
+}
+
+.row-hint.err {
+  color: var(--danger);
+}
+
+.row-control {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+}
+
+.row-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.row-actions > input {
+  flex: 1;
+  min-width: 160px;
+}
+
+.row-actions > .row-hint {
+  flex: 1;
+  min-width: 0;
+}
+
+/* Controls that live beside their label rather than under it. */
+.row-control > select {
+  width: auto;
+  min-width: 150px;
+}
+
+.row-control > input[type='number'] {
+  width: 108px;
+  text-align: right;
+}
+
+.row-control > input[type='range'] {
+  width: 180px;
+}
+
+/* The base sheet gives buttons no focus ring, which leaves a keyboard user with
+   nothing to follow. Only `:focus-visible`, so a mouse click does not ring. */
+button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .row-grid {
@@ -147,11 +328,129 @@ h2 {
   gap: 16px;
 }
 
-/* A budget the user types is a short number, not a paragraph: a full-width box
-   makes it look like the field wants a sentence. */
-input[type="number"] {
-  max-width: 132px;
+/* ---- switch ------------------------------------------------------------- */
+
+.switch {
+  position: relative;
+  flex: none;
+  width: 38px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  background: var(--surface-strong);
+  transition: background 140ms ease, border-color 140ms ease;
+}
+
+.switch[aria-checked='true'] {
+  background: var(--accent);
+  border-color: transparent;
+}
+
+.switch[aria-checked='true']:hover:not(:disabled) {
+  background: var(--accent-strong);
+}
+
+.switch-knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
+  transition: transform 140ms cubic-bezier(0.3, 0.7, 0.4, 1);
+}
+
+.switch[aria-checked='true'] .switch-knob {
+  transform: translateX(16px);
+}
+
+/* ---- controls ----------------------------------------------------------- */
+
+textarea {
+  min-height: 84px;
+}
+
+input[type='number'] {
+  max-width: 108px;
   font-variant-numeric: tabular-nums;
+}
+
+/* Ranges are a control, not a text field: the base input box around them was
+   what made the sampling sliders look like they were disabled. */
+input[type='range'] {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 20px;
+  padding: 0;
+  border: none;
+  background: transparent;
+}
+
+input[type='range']:focus {
+  box-shadow: none;
+}
+
+input[type='range']::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 999px;
+  background: var(--border-strong);
+}
+
+input[type='range']::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 14px;
+  height: 14px;
+  margin-top: -5px;
+  border: 1px solid rgba(0, 0, 0, 0.16);
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.28);
+}
+
+.segmented {
+  display: flex;
+  gap: 4px;
+  padding: 3px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+}
+
+.segmented button {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 12.5px;
+}
+
+.segmented button:hover:not(.active) {
+  background: var(--surface-strong);
+  color: var(--text);
+}
+
+.segmented button.active {
+  background: var(--accent-soft);
+  color: var(--text);
+  font-weight: 600;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 28%, transparent);
+}
+
+.badge {
+  padding: 1px 5px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 10px;
 }
 
 .chips {
@@ -160,111 +459,8 @@ input[type="number"] {
   gap: 6px;
 }
 
-.segmented {
-  display: flex;
-  gap: 4px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  padding: 3px;
-}
-
-.segmented button {
-  flex: 1;
-  background: transparent;
-  border: none;
-  border-radius: 7px;
-  padding: 7px 8px;
-  color: var(--text-dim);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-}
-
-.segmented button.active {
-  background: var(--surface-strong);
-  color: var(--text);
-  font-weight: 600;
-}
-
-.badge {
-  font-size: 10px;
-  padding: 1px 5px;
-  border-radius: 999px;
-  background: var(--accent-soft);
-  color: var(--accent);
-}
-
-.key-row {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-}
-
-.key-row > input,
-.key-row > select {
-  flex: 1;
-}
-
-/* A hint that explains the button beside it takes the room the button leaves,
-   instead of pushing the button to the window edge. */
-.key-row > .hint {
-  flex: 1;
-}
-
-.check {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  font-size: 13px;
-  color: var(--text);
-}
-
-.check input[type="checkbox"] {
-  flex: none;
-  width: auto;
-  margin: 0;
-  padding: 0;
-}
-
-/* A checkbox label is a sentence, not a field caption: undo the uppercase
-   treatment `.field > label` gives every direct label child. */
-.field > label.check {
-  font-size: 13px;
-  font-weight: 400;
-  text-transform: none;
-  letter-spacing: normal;
-  color: var(--text);
-}
-
-/* Everything most people never open, folded into one row. */
-.advanced {
-  padding: 0 12px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-}
-
-.advanced[open] {
-  padding-bottom: 14px;
-}
-
-.advanced > summary {
-  padding: 10px 0;
-  cursor: pointer;
+.chips .chip {
   font-size: 12px;
-  font-weight: 600;
-  color: var(--text-dim);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-}
-
-.advanced[open] > summary {
-  margin-bottom: 12px;
-}
-
-.advanced > * + * {
-  margin-top: 16px;
 }
 
 .hotkey-field {
@@ -275,9 +471,9 @@ input[type="number"] {
 
 .hotkey-field button {
   min-width: 118px;
-  font-size: 14px;
-  letter-spacing: 0.08em;
-  padding: 8px 14px;
+  padding: 7px 12px;
+  font-size: 13px;
+  letter-spacing: 0.06em;
 }
 
 .hotkey-field button.recording {
@@ -285,38 +481,88 @@ input[type="number"] {
   box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
-.permissions {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
+/* The sidebar has 216 px to spend on a recorder; the full-size one does not fit. */
+.sidebar-foot .hotkey-field {
+  flex-wrap: wrap;
 }
 
-.permission {
+.sidebar-foot .hotkey-field button {
+  width: 100%;
+  min-width: 0;
+  padding: 6px 8px;
+  font-size: 12.5px;
+  line-height: 1.3;
+  white-space: normal;
+}
+
+/* ---- disclosure --------------------------------------------------------- */
+
+.disclosure {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--text) 3%, transparent);
+  overflow: hidden;
+}
+
+.disclosure > summary {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 14px;
   padding: 12px 14px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  list-style: none;
 }
 
-.permission-title {
-  font-size: 13.5px;
-  font-weight: 600;
+.disclosure > summary::-webkit-details-marker {
+  display: none;
 }
 
-.permission-actions {
+.disclosure > summary::after {
+  content: '';
+  width: 7px;
+  height: 7px;
+  margin-right: 2px;
+  border-right: 1.5px solid var(--text-dim);
+  border-bottom: 1.5px solid var(--text-dim);
+  transform: rotate(45deg);
+  transition: transform 140ms ease;
+}
+
+.disclosure[open] > summary::after {
+  transform: rotate(-135deg);
+}
+
+.disclosure-body {
   display: flex;
-  gap: 7px;
-  flex-shrink: 0;
+  flex-direction: column;
+  gap: 14px;
+  padding: 14px;
+  border-top: 1px solid var(--border);
+}
+
+/* ---- lists inside cards ------------------------------------------------- */
+
+.permission-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+}
+
+.permission-state.ok {
+  color: var(--success);
+}
+
+.permission-state.warn {
+  color: var(--warning);
 }
 
 .excluded-list {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 6px;
   max-height: 190px;
   overflow-y: auto;
 }
@@ -327,64 +573,38 @@ input[type="number"] {
   justify-content: space-between;
   gap: 8px;
   padding: 5px 9px;
-  background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 7px;
+  background: var(--surface);
 }
 
 .mono {
   font-family: var(--mono);
-  font-size: 12px;
+  font-size: 11px;
   color: var(--text-dim);
+  word-break: break-all;
 }
 
 .notice {
   padding: 9px 11px;
+  border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   background: var(--surface);
-  border: 1px solid var(--border);
   font-size: 12.5px;
 }
 
 .notice.err {
+  border-color: color-mix(in srgb, var(--danger) 34%, transparent);
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
   color: var(--danger);
 }
 
-.footer {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex: none;
-  padding: 10px 26px 12px;
-  background: var(--bg-solid);
-}
-
-.spacer {
-  flex: 1;
-}
-
-.banner {
-  font-size: 12.5px;
-}
-
-.banner.ok {
-  color: var(--success);
-}
-
-.banner.err {
-  color: var(--danger);
-}
-
-a {
-  color: var(--accent);
-}
-/* ---- voice: model list ------------------------------------------------- */
+/* ---- voice: model list -------------------------------------------------- */
 
 .models {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  margin-top: 6px;
 }
 
 .model-row {
@@ -393,10 +613,9 @@ a {
   grid-template-columns: 1fr auto;
   align-items: center;
   gap: 8px;
-  padding: 7px 10px;
+  padding: 8px 10px;
   border: 1px solid var(--border);
   border-radius: 9px;
-  background: transparent;
   overflow: hidden;
 }
 
@@ -410,13 +629,18 @@ a {
   flex-direction: column;
   align-items: flex-start;
   gap: 2px;
-  background: none;
-  border: none;
   padding: 0;
-  text-align: left;
-  cursor: pointer;
+  border: none;
+  background: none;
   color: inherit;
   font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.models .model-pick:hover:not(:disabled) {
+  background: none;
+  border-color: transparent;
 }
 
 .model-name {
@@ -436,13 +660,12 @@ a {
 }
 
 .model-state {
-  font-size: 11.5px;
-  color: var(--text-dim);
-  background: none;
+  padding: 3px 9px;
   border: 1px solid var(--border);
   border-radius: 7px;
-  padding: 3px 9px;
-  cursor: pointer;
+  background: none;
+  color: var(--text-dim);
+  font-size: 11.5px;
   font-variant-numeric: tabular-nums;
 }
 
@@ -469,41 +692,82 @@ a {
   transition: width 180ms linear;
 }
 
-.spacer-row {
+/* ---- footer ------------------------------------------------------------- */
+
+.footer {
   display: flex;
-  gap: 8px;
-  margin-top: 8px;
+  flex: none;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 28px 14px;
+  border-top: 1px solid var(--border);
 }
 
-.mono {
-  font-family: var(--font-mono, ui-monospace, SFMono-Regular, monospace);
-  font-size: 11px;
-  word-break: break-all;
+.footer .spacer {
+  flex: 1;
 }
 
-.field .hint.err {
+.status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.status::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.75;
+}
+
+.status.ok {
+  color: var(--success);
+}
+
+.status.err {
   color: var(--danger);
+}
+
+.banner {
+  font-size: 12.5px;
+}
+
+.banner.ok {
+  color: var(--success);
+}
+
+.banner.err {
+  color: var(--danger);
+}
+
+a {
+  color: var(--accent);
 }
 
 /* ------------------------------------------------------------------ агент
  *
- * The readiness line is the only thing in this window that reports a state the
- * user cannot change from here: the Accessibility grant lives in System
- * Settings. So it is drawn as a status band rather than a field — a warning
- * surface with a dot, and a shortcut to the pane that fixes it.
+ * The readiness line reports a state the user cannot change from here: the
+ * Accessibility grant lives in System Settings. So it is drawn as a warning
+ * band rather than a row — a surface with a dot and a shortcut to the pane that
+ * fixes it — and it only appears when something is actually wrong.
  */
 
 .agent-ready {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 9px;
+  margin: 0 14px 12px;
   padding: 9px 11px;
-  border-radius: 8px;
   border: 1px solid color-mix(in srgb, var(--warning) 34%, transparent);
+  border-radius: 8px;
   background: color-mix(in srgb, var(--warning) 10%, transparent);
+  color: var(--text);
   font-size: 12.5px;
   line-height: 1.4;
-  color: var(--text);
 }
 
 .agent-ready > span:nth-child(2) {
@@ -512,9 +776,9 @@ a {
 }
 
 .agent-ready-dot {
+  flex: none;
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  flex: none;
   background: var(--warning);
 }

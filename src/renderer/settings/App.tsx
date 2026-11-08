@@ -25,6 +25,7 @@ import {
 import { ApplyStatus, type ApplyState } from './ApplyStatus'
 import { AgentTab } from './AgentTab'
 import { VoiceTab } from './VoiceTab'
+import { Toggle } from './Row'
 import { ProviderSection } from './sections/ProviderSection'
 import { PrivacySection } from './sections/PrivacySection'
 
@@ -36,6 +37,75 @@ const TABS: Array<{ id: Tab; label: string }> = [
   { id: 'agent', label: 'Агент' },
   { id: 'privacy', label: 'Приватность' }
 ]
+
+/** The heading above each pane: what it is, in one line, without repeating the rows. */
+const PANE: Record<Tab, { title: string; subtitle: string }> = {
+  provider: {
+    title: 'Модель',
+    subtitle: 'Кто отвечает на вопрос и что именно он получает на вход.'
+  },
+  voice: {
+    title: 'Голос',
+    subtitle: 'Речь распознаётся на этом Mac и никуда не отправляется.'
+  },
+  agent: {
+    title: 'Агент',
+    subtitle: 'Что ассистент может делать сам, а где останавливается и спрашивает.'
+  },
+  privacy: {
+    title: 'Приватность',
+    subtitle: 'Разрешения macOS, приложения-исключения и что хранится на диске.'
+  }
+}
+
+/**
+ * A 16 px line icon per pane.
+ *
+ * Drawn rather than pulled from a font: a stray glyph from a system font renders
+ * at a different weight on every macOS version, and these sit next to 13 px text
+ * where the difference is visible.
+ */
+function NavIcon({ tab }: { tab: Tab }) {
+  const common = {
+    width: 16,
+    height: 16,
+    viewBox: '0 0 16 16',
+    fill: 'none',
+    stroke: 'currentColor',
+    strokeWidth: 1.4,
+    strokeLinecap: 'round' as const,
+    strokeLinejoin: 'round' as const,
+    'aria-hidden': true
+  }
+  if (tab === 'provider') {
+    return (
+      <svg {...common}>
+        <path d="M8 1.9 9.6 6.4 14 8l-4.4 1.6L8 14.1 6.4 9.6 2 8l4.4-1.6Z" />
+      </svg>
+    )
+  }
+  if (tab === 'voice') {
+    return (
+      <svg {...common}>
+        <rect x="6" y="1.8" width="4" height="7" rx="2" />
+        <path d="M3.6 7.4a4.4 4.4 0 0 0 8.8 0M8 11.8v2.4" />
+      </svg>
+    )
+  }
+  if (tab === 'agent') {
+    return (
+      <svg {...common}>
+        <path d="M3.2 2.4v9.2l2.5-2.4 1.7 3.4 1.9-.9-1.7-3.3 3.4-.2Z" />
+      </svg>
+    )
+  }
+  return (
+    <svg {...common}>
+      <path d="M8 1.9 13 3.9v4.2c0 3-2.1 5-5 6-2.9-1-5-3-5-6V3.9Z" />
+      <path d="m5.9 7.8 1.5 1.5 2.8-3" />
+    </svg>
+  )
+}
 
 interface Banner {
   kind: 'ok' | 'err'
@@ -64,6 +134,19 @@ export function App() {
   const [apps, setApps] = useState<RunningAppInfo[]>([])
   const [hotkeyError, setHotkeyError] = useState<string | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
+
+  /**
+   * The scrolling pane, so switching tabs starts at the top.
+   *
+   * All four panes share one scroll container, so without this a glance at the
+   * long «Голос» pane leaves «Агент» scrolled to its second card — the new pane
+   * opens in the middle of itself, which reads as a missing heading.
+   */
+  const scrollRef = useRef<HTMLDivElement | null>(null)
+
+  useEffect(() => {
+    scrollRef.current?.scrollTo(0, 0)
+  }, [tab])
 
   useEffect(() => {
     // A rejected `load()` used to leave the window spinning on "Загрузка…"
@@ -342,47 +425,56 @@ export function App() {
   return (
     <div className="shell">
       <aside className="sidebar">
-        <div className="brand">Smart Cursor</div>
+        <div className="brand">
+          <div className="brand-name">Smart Cursor</div>
+          <div className="brand-sub">Настройки</div>
+        </div>
         {TABS.map((item) => (
           <button
             key={item.id}
             className={`nav ${tab === item.id ? 'active' : ''}`}
+            aria-current={tab === item.id ? 'page' : undefined}
             onClick={() => setTab(item.id)}
           >
+            <NavIcon tab={item.id} />
             {item.label}
           </button>
         ))}
         <div className="sidebar-foot">
-          <div className="hint">Карточка</div>
-          <HotkeyField
-            value={draft.hotkey}
-            onChange={(accelerator) => {
-              setHotkeyError(null)
-              patch({ hotkey: accelerator })
-            }}
-          />
-          {hotkeyError && <div className="hint err">{hotkeyError}</div>}
-          {draft.voice.enabled && (
-            <>
-              <div className="hint" style={{ marginTop: 8 }}>
-                Голос
-              </div>
-              <div className="hotkey-badge">{prettyHotkey(draft.voice.hotkey)}</div>
-            </>
-          )}
-          <label className="check sidebar-check">
-            <input
-              type="checkbox"
-              checked={draft.launchAtLogin}
-              onChange={(event) => patch({ launchAtLogin: event.target.checked })}
+          <div>
+            <div className="sidebar-label">Карточка</div>
+            <HotkeyField
+              value={draft.hotkey}
+              onChange={(accelerator) => {
+                setHotkeyError(null)
+                patch({ hotkey: accelerator })
+              }}
             />
-            Запускать при входе
-          </label>
+            {hotkeyError && <div className="hint err">{hotkeyError}</div>}
+          </div>
+          {draft.voice.enabled && (
+            <div className="sidebar-value">
+              Голос <strong>{prettyHotkey(draft.voice.hotkey)}</strong>
+            </div>
+          )}
+          <div className="side-toggle">
+            При входе
+            <Toggle
+              checked={draft.launchAtLogin}
+              label="Запускать при входе в систему"
+              onChange={(launchAtLogin) => patch({ launchAtLogin })}
+            />
+          </div>
         </div>
       </aside>
 
       <main className="content">
-        <div className="settings-scroll">
+        <header className="pane-head">
+          <h1>{PANE[tab].title}</h1>
+          <p className="pane-sub">{PANE[tab].subtitle}</p>
+        </header>
+
+        <div className="settings-scroll" ref={scrollRef}>
           {tab === 'provider' && (
             <ProviderSection
               draft={draft}
@@ -452,7 +544,9 @@ export function App() {
             <ApplyStatus state={applyState} holdReason={holdReason} />
           )}
           <div className="spacer" />
-          <button onClick={() => void closeWindow()}>Закрыть</button>
+          <button className="ghost" onClick={() => void closeWindow()}>
+            Закрыть
+          </button>
         </div>
       </main>
     </div>

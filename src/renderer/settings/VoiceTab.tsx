@@ -5,6 +5,9 @@
  * the audio leaving the machine. That makes the section mostly a readiness panel —
  * which whisper model is on disk, how big it is, whether the keyboard tap could
  * start — because those are the only things that can actually be wrong.
+ *
+ * Three cards, in the order the work happens: how you start talking, what is done
+ * with the words, and whether the machine is ready to do either.
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
@@ -16,6 +19,7 @@ import type {
 } from '@shared/types'
 import { WHISPER_LANGUAGES, VOICE_MODELS, voiceModel } from '@shared/defaults'
 import { HotkeyField, prettyHotkey } from './HotkeyField'
+import { Group, Row, ToggleRow } from './Row'
 
 interface VoiceTabProps {
   voice: VoiceSettings
@@ -114,217 +118,226 @@ export function VoiceTab({ voice, savedModel, gestures, onChange, onGestureChang
   }, [refresh])
 
   const selected = voiceModel(voice.model)
+  const ready = status?.ready ?? false
 
   return (
-    <section>
-      <h2>Голос</h2>
-      <div className="field">
-        <label className="check">
-          <input type="checkbox" checked={voice.agentFeedback}
-            onChange={(event) => onChange({ agentFeedback: event.target.checked })} />
-          Короткие реплики агента
-        </label>
-        <p className="hint">Системным голосом подтверждать долгую обработку. Не чаще раза в 45 секунд.</p>
-      </div>
-      <div className="field">
-        <label className="check">
-          <input type="checkbox" checked={voice.dialogue}
-            onChange={(event) => onChange({ dialogue: event.target.checked })} />
-          Голосовой диалог
-        </label>
-        <p className="hint">Озвучивать ответы на голосовые вопросы. Текстовые — кнопкой «Прослушать».</p>
-      </div>
-      <p className="hint">
-        Удерживайте клавишу или три пальца на трекпаде. Распознавание локальное — звук не
-        покидает Mac.
-      </p>
+    <div className="pane">
+      <Group title="Ввод">
+        <ToggleRow
+          title="Включить голосовой ввод"
+          hint="Удерживайте клавишу или три пальца на трекпаде. Распознавание локальное — звук не покидает Mac."
+          checked={voice.enabled}
+          onChange={(enabled) => onChange({ enabled })}
+        />
 
-      <div className="field">
-        <label className="check">
-          <input
-            type="checkbox"
-            checked={voice.enabled}
-            onChange={(event) => onChange({ enabled: event.target.checked })}
-          />{' '}
-          Включить голосовой ввод
-        </label>
-      </div>
+        <Row title="Клавиша удержания" hint={`Сейчас ${prettyHotkey(voice.hotkey)}. Esc во время записи отменяет её.`}>
+          <HotkeyField value={voice.hotkey} onChange={(hotkey) => onChange({ hotkey })} />
+        </Row>
 
-      <div className="field">
-        <label className="check">
-          <input
-            type="checkbox"
-            checked={gestures.enabled}
-            onChange={(event) => onGestureChange({ enabled: event.target.checked })}
-          />{' '}
-          Три пальца на трекпаде
-        </label>
-        <div className="hint">
-          Короткое касание открывает карточку, удержание записывает речь.
-        </div>
+        <ToggleRow
+          title="Три пальца на трекпаде"
+          hint="Короткое касание открывает карточку, удержание записывает речь."
+          checked={gestures.enabled}
+          onChange={(enabled) => onGestureChange({ enabled })}
+        />
+
         {gestures.enabled && (
-          <>
-            <div className="field">
-              <label>Граница «касание / удержание» · {gestures.holdMs} мс</label>
-              <input
-                type="range"
-                min={250}
-                max={900}
-                step={10}
-                value={gestures.holdMs}
-                onChange={(event) => onGestureChange({ holdMs: Number(event.target.value) })}
-              />
-              <div className="hint">
-                Короче — случайное касание начнёт запись. Длиннее — придётся держать дольше.
-              </div>
-            </div>
-          </>
-        )}
-        {status?.gestureError && <div className="hint err">{status.gestureError}</div>}
-      </div>
-
-      <div className="field">
-        <label>Клавиша удержания</label>
-        <HotkeyField value={voice.hotkey} onChange={(hotkey) => onChange({ hotkey })} />
-        <div className="hint">
-          Сейчас: {prettyHotkey(voice.hotkey)}. Esc во время записи отменяет её.
-        </div>
-      </div>
-
-      <div className="field">
-        <label>Что делать с распознанным</label>
-        <div className="segmented">
-          <button
-            className={voice.action === 'command' ? 'active' : ''}
-            onClick={() => onChange({ action: 'command' })}
+          <Row
+            title="Граница «касание / удержание»"
+            hint={`${gestures.holdMs} мс. Короче — случайное касание начнёт запись.`}
           >
-            Спросить модель
-          </button>
-          <button
-            className={voice.action === 'dictate' ? 'active' : ''}
-            onClick={() => onChange({ action: 'dictate' })}
-          >
-            Напечатать в приложении
-          </button>
-        </div>
-        <div className="hint">
-          {voice.action === 'command'
-            ? 'Речь станет запросом к модели вместе с контекстом окна — как набранный текст.'
-            : 'Речь вставится в то поле, где стоял курсор. Карточка при этом закроется.'}
-        </div>
-      </div>
-
-      {voice.action === 'command' && (
-        <div className="field">
-          <label className="check">
             <input
-              type="checkbox"
-              checked={voice.autoSend}
-              onChange={(event) => onChange({ autoSend: event.target.checked })}
-            />{' '}
-            Отправлять автоматически, не дожидаясь Enter
-          </label>
-        </div>
-      )}
+              type="range"
+              min={250}
+              max={900}
+              step={10}
+              value={gestures.holdMs}
+              aria-label="Граница между касанием и удержанием"
+              onChange={(event) => onGestureChange({ holdMs: Number(event.target.value) })}
+            />
+          </Row>
+        )}
 
-      <div className="field">
-        <label>Язык речи</label>
-        <select
-          value={selected?.language ?? voice.language}
-          disabled={Boolean(selected?.language)}
-          onChange={(event) => onChange({ language: event.target.value })}
+        {status?.gestureError && (
+          <Row stacked>
+            <div className="row-hint err">{status.gestureError}</div>
+          </Row>
+        )}
+      </Group>
+
+      <Group title="Распознавание">
+        <Row
+          stacked
+          title="Что делать с распознанным"
+          hint={
+            voice.action === 'command'
+              ? 'Речь станет запросом к модели вместе с контекстом окна — как набранный текст.'
+              : 'Речь вставится в то поле, где стоял курсор. Карточка при этом закроется.'
+          }
         >
-          {WHISPER_LANGUAGES.map((language) => (
-            <option key={language.id} value={language.id}>
-              {language.label}
-            </option>
-          ))}
-        </select>
-        <div className="hint">
-          {selected?.language
-            ? 'У выбранной модели фиксированный язык.'
-            : 'Для коротких команд язык надёжнее автоопределения.'}
-        </div>
-      </div>
+          <div className="segmented">
+            <button
+              className={voice.action === 'command' ? 'active' : ''}
+              onClick={() => onChange({ action: 'command' })}
+            >
+              Спросить модель
+            </button>
+            <button
+              className={voice.action === 'dictate' ? 'active' : ''}
+              onClick={() => onChange({ action: 'dictate' })}
+            >
+              Напечатать в приложении
+            </button>
+          </div>
+        </Row>
 
-      <div className="field">
-        <label>Модель распознавания</label>
-        {downloadError && <div className="hint err" role="alert">{downloadError}</div>}
-        <div className="models">
-          {VOICE_MODELS.map((model) => {
-            const ready = installed.has(model.id)
-            const busy = progress?.model === model.id && !progress.done
-            const share = progress && progress.total > 0 ? progress.received / progress.total : 0
-            return (
-              <div key={model.id} className="model-row" data-active={voice.model === model.id}>
-                <button className="model-pick" onClick={() => onChange({ model: model.id })}>
-                  <span className="model-name">{model.label}</span>
-                  <span className="model-meta">
-                    {model.mb} МБ · {model.note}
-                  </span>
-                </button>
-                {ready ? (
-                  <div className="model-actions">
-                    <span className="model-state ok">Готово</span>
-                    {deleteButton(model.id, model.label)}
-                  </div>
-                ) : busy ? (
-                  <span className="model-state">
-                    {progress.received > 0
-                      ? `${megabytes(progress.received)} из ${megabytes(progress.total)}`
-                      : 'Подключение…'}
-                  </span>
-                ) : (
-                  <button className="model-state" disabled={progress !== null || deleting !== null} onClick={() => void download(model.id)}>
-                    Скачать
-                  </button>
-                )}
-                {busy && (
-                  <div className="model-bar">
-                    <i style={{ width: `${Math.round(share * 100)}%` }} />
-                  </div>
-                )}
-              </div>
-            )
-          })}
-          {Array.from(installed).filter((id) => !voiceModel(id)).map((file) => (
-            <div key={file} className="model-row">
-              <span className="model-name">{file}</span>
-              {deleteButton(file, file)}
+        {voice.action === 'command' && (
+          <ToggleRow
+            title="Отправлять не дожидаясь Enter"
+            hint="Ответ начнётся сразу, как только речь распознана."
+            checked={voice.autoSend}
+            onChange={(autoSend) => onChange({ autoSend })}
+          />
+        )}
+
+        <Row
+          title="Язык речи"
+          hint={
+            selected?.language
+              ? 'У выбранной модели фиксированный язык.'
+              : 'Для коротких команд язык надёжнее автоопределения.'
+          }
+        >
+          <select
+            value={selected?.language ?? voice.language}
+            disabled={Boolean(selected?.language)}
+            aria-label="Язык речи"
+            onChange={(event) => onChange({ language: event.target.value })}
+          >
+            {WHISPER_LANGUAGES.map((language) => (
+              <option key={language.id} value={language.id}>
+                {language.label}
+              </option>
+            ))}
+          </select>
+        </Row>
+
+        <Row stacked title="Модель распознавания">
+          {downloadError && (
+            <div className="row-hint err" role="alert">
+              {downloadError}
             </div>
-          ))}
-        </div>
-        <button
-          className="ghost"
-          disabled={progress !== null || deleting !== null}
-          onClick={() => void importModel()}
+          )}
+          <div className="models">
+            {VOICE_MODELS.map((model) => {
+              const modelReady = installed.has(model.id)
+              const busy = progress?.model === model.id && !progress.done
+              const share = progress && progress.total > 0 ? progress.received / progress.total : 0
+              return (
+                <div key={model.id} className="model-row" data-active={voice.model === model.id}>
+                  <button className="model-pick" onClick={() => onChange({ model: model.id })}>
+                    <span className="model-name">{model.label}</span>
+                    <span className="model-meta">
+                      {model.mb} МБ · {model.note}
+                    </span>
+                  </button>
+                  {modelReady ? (
+                    <div className="model-actions">
+                      <span className="model-state ok">Готово</span>
+                      {deleteButton(model.id, model.label)}
+                    </div>
+                  ) : busy ? (
+                    <span className="model-state">
+                      {progress.received > 0
+                        ? `${megabytes(progress.received)} из ${megabytes(progress.total)}`
+                        : 'Подключение…'}
+                    </span>
+                  ) : (
+                    <button
+                      className="model-state"
+                      disabled={progress !== null || deleting !== null}
+                      onClick={() => void download(model.id)}
+                    >
+                      Скачать
+                    </button>
+                  )}
+                  {busy && (
+                    <div className="model-bar">
+                      <i style={{ width: `${Math.round(share * 100)}%` }} />
+                    </div>
+                  )}
+                </div>
+              )
+            })}
+            {Array.from(installed).filter((id) => !voiceModel(id)).map((file) => (
+              <div key={file} className="model-row">
+                <span className="model-name">{file}</span>
+                {deleteButton(file, file)}
+              </div>
+            ))}
+          </div>
+          <div className="row-actions">
+            <span className="row-hint">
+              {selected ? `Выбрана «${selected.label}».` : 'Модель не выбрана.'}
+            </span>
+            <button
+              className="ghost"
+              disabled={progress !== null || deleting !== null}
+              onClick={() => void importModel()}
+            >
+              Указать файл ggml-*.bin
+            </button>
+          </div>
+        </Row>
+      </Group>
+
+      <Group title="Озвучка">
+        <ToggleRow
+          title="Короткие реплики агента"
+          hint="Системным голосом подтверждать долгую обработку. Не чаще раза в 45 секунд."
+          checked={voice.agentFeedback}
+          onChange={(agentFeedback) => onChange({ agentFeedback })}
+        />
+        <ToggleRow
+          title="Голосовой диалог"
+          hint="Озвучивать ответы на голосовые вопросы. Текстовые — кнопкой «Прослушать»."
+          checked={voice.dialogue}
+          onChange={(dialogue) => onChange({ dialogue })}
+        />
+      </Group>
+
+      <Group title="Состояние">
+        <Row
+          title={ready ? 'Готово' : 'Не готово'}
+          hint={
+            voice.model !== savedModel
+              ? 'Применяем модель…'
+              : (status?.detail ?? 'Проверка…')
+          }
         >
-          Указать файл ggml-*.bin вручную
-        </button>
-      </div>
-
-      <div className="field">
-        <label>Состояние</label>
-        <div className="hint">
-          {voice.model !== savedModel ? 'Применяем модель…' : status?.ready ? 'Всё готово: модель и движок на месте.' : (status?.detail ?? 'Проверка…')}
-        </div>
-        {status?.listenerError && <div className="hint err">{status.listenerError}</div>}
-        {status?.modelPath && <div className="hint mono">{status.modelPath}</div>}
-        <div className="spacer-row">
-          <button disabled={checking} onClick={() => void check()}>
-            {checking ? 'Проверка…' : 'Проверить готовность'}
-          </button>
-        </div>
-        {error && <div className="hint err">{error}</div>}
-      </div>
-
-      <div className="field">
-        <label>Точность срабатывания</label>
-        <div className="hint">
-          Короче {voice.minDurationMs} мс считается случайным нажатием. Запись обрывается
-          на {Math.round(voice.maxDurationMs / 1000)} с.
-        </div>
-      </div>
-    </section>
+          <div className="row-actions">
+            {ready && <span className="permission-state ok">● Всё на месте</span>}
+            <button disabled={checking} onClick={() => void check()}>
+              {checking ? 'Проверка…' : 'Проверить'}
+            </button>
+          </div>
+        </Row>
+        {status?.listenerError && (
+          <Row stacked>
+            <div className="row-hint err">{status.listenerError}</div>
+          </Row>
+        )}
+        {error && (
+          <Row stacked>
+            <div className="row-hint err">{error}</div>
+          </Row>
+        )}
+        {status?.modelPath && (
+          <Row stacked>
+            <div className="mono">{status.modelPath}</div>
+          </Row>
+        )}
+      </Group>
+    </div>
   )
 }
