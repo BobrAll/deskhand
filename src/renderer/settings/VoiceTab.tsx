@@ -18,7 +18,6 @@ import type {
   VoiceStatus
 } from '@shared/types'
 import { WHISPER_LANGUAGES, VOICE_MODELS, voiceModel } from '@shared/defaults'
-import { HotkeyField, prettyHotkey } from './HotkeyField'
 import { Group, Row, ToggleRow } from './Row'
 
 interface VoiceTabProps {
@@ -129,10 +128,6 @@ export function VoiceTab({ voice, savedModel, gestures, onChange, onGestureChang
           checked={voice.enabled}
           onChange={(enabled) => onChange({ enabled })}
         />
-
-        <Row title="Клавиша удержания" hint={`Сейчас ${prettyHotkey(voice.hotkey)}. Esc во время записи отменяет её.`}>
-          <HotkeyField value={voice.hotkey} onChange={(hotkey) => onChange({ hotkey })} />
-        </Row>
 
         <ToggleRow
           title="Три пальца на трекпаде"

@@ -40,11 +40,10 @@ describe('PROVIDERS: the catalog itself', () => {
     }
   })
 
-  it('gives every provider a label, a key URL and a model list', () => {
+  it('gives every provider a label and a key URL', () => {
     for (const provider of PROVIDERS) {
       expect(provider.label, provider.id).toBeTruthy()
       expect(provider.keyUrl, provider.id).toMatch(/^https:\/\//)
-      expect(provider.popularModels.length, provider.id).toBeGreaterThan(0)
     }
   })
 

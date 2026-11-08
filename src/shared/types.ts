@@ -586,7 +586,6 @@ export interface ProviderInfo {
   defaultModel: string
   /** Used when the user leaves the base URL field empty. */
   defaultBaseUrl: string
-  popularModels: string[]
   supportsVision: boolean
   keyUrl: string
 }

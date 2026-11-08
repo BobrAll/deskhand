@@ -76,7 +76,11 @@ export function ProviderSection({
         <Row
           stacked
           title="Модель"
-          hint={info ? `Например: ${info.popularModels[0] ?? info.defaultModel}.` : undefined}
+          hint={
+            info
+              ? `ID модели ${info.label}. Пусто — ${info.defaultModel}.`
+              : 'ID модели провайдера.'
+          }
         >
           <input
             value={draft.models[draft.provider]}
@@ -86,18 +90,6 @@ export function ProviderSection({
             placeholder={info?.defaultModel}
             spellCheck={false}
           />
-          <div className="chips">
-            {info?.popularModels.map((model) => (
-              <button
-                key={model}
-                className="chip"
-                data-active={draft.models[draft.provider] === model}
-                onClick={() => patch({ models: { ...draft.models, [draft.provider]: model } })}
-              >
-                {model}
-              </button>
-            ))}
-          </div>
         </Row>
 
         <Row

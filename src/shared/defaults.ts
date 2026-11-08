@@ -31,13 +31,6 @@ export const PROVIDERS: ProviderInfo[] = [
     label: 'OpenRouter',
     defaultModel: 'openai/gpt-4o-mini',
     defaultBaseUrl: 'https://openrouter.ai/api/v1',
-    popularModels: [
-      'openai/gpt-4o-mini',
-      'openai/gpt-4o',
-      'anthropic/claude-sonnet-4.5',
-      'google/gemini-2.5-flash',
-      'meta-llama/llama-3.2-11b-vision-instruct'
-    ],
     supportsVision: true,
     keyUrl: 'https://openrouter.ai/keys'
   },
@@ -46,7 +39,6 @@ export const PROVIDERS: ProviderInfo[] = [
     label: 'OpenAI',
     defaultModel: 'gpt-4o-mini',
     defaultBaseUrl: 'https://api.openai.com/v1',
-    popularModels: ['gpt-4o-mini', 'gpt-4o', 'gpt-4.1-mini', 'gpt-4.1'],
     supportsVision: true,
     keyUrl: 'https://platform.openai.com/api-keys'
   },
@@ -55,12 +47,6 @@ export const PROVIDERS: ProviderInfo[] = [
     label: 'Anthropic',
     defaultModel: 'claude-sonnet-4-5',
     defaultBaseUrl: 'https://api.anthropic.com/v1',
-    popularModels: [
-      'claude-sonnet-4-5',
-      'claude-opus-4-1',
-      'claude-3-7-sonnet-latest',
-      'claude-3-5-haiku-latest'
-    ],
     supportsVision: true,
     keyUrl: 'https://console.anthropic.com/settings/keys'
   }

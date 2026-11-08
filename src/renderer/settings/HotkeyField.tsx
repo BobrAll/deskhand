@@ -114,9 +114,21 @@ export function HotkeyField({ value, onChange }: HotkeyFieldProps) {
       <button
         ref={buttonRef}
         className={recording ? 'recording' : ''}
+        aria-pressed={recording}
         onClick={() => {
           setError(null)
           setRecording((prev) => !prev)
+        }}
+        /**
+         * Two recorders can be on screen at once — the card key and the voice key
+         * share the sidebar footer — and both listen on `window`. Without this,
+         * starting the second one left the first still armed, and one keystroke
+         * was written into both shortcuts. Moving focus away is the same gesture
+         * that ends the recording, so it is also the one that disarms it.
+         */
+        onBlur={() => {
+          setRecording(false)
+          setError(null)
         }}
       >
         {recording ? 'Нажмите комбинацию…' : prettyHotkey(value)}

@@ -15,7 +15,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { AppSettings, KeyStatus, PermissionState, ProviderId } from '@shared/types'
 import { PROVIDERS } from '@shared/defaults'
 import type { AppPickResult, RunningAppInfo, SettingsBundle } from '@shared/api'
-import { HotkeyField, prettyHotkey } from './HotkeyField'
+import { HotkeyField } from './HotkeyField'
 import {
   hasUnsaved,
   holdReasonFor,
@@ -441,7 +441,7 @@ export function App() {
           </button>
         ))}
         <div className="sidebar-foot">
-          <div>
+          <div className="side-key">
             <div className="sidebar-label">Карточка</div>
             <HotkeyField
               value={draft.hotkey}
@@ -452,13 +452,20 @@ export function App() {
             />
             {hotkeyError && <div className="hint err">{hotkeyError}</div>}
           </div>
-          {draft.voice.enabled && (
-            <div className="sidebar-value">
-              Голос <strong>{prettyHotkey(draft.voice.hotkey)}</strong>
+
+          <div className="side-key">
+            <div className="sidebar-label">
+              Голос
+              {!draft.voice.enabled && <span className="sidebar-off">выключен</span>}
             </div>
-          )}
+            <HotkeyField
+              value={draft.voice.hotkey}
+              onChange={(hotkey) => patch({ voice: { ...draft.voice, hotkey } })}
+            />
+          </div>
+
           <div className="side-toggle">
-            При входе
+            <span>Запускать при входе</span>
             <Toggle
               checked={draft.launchAtLogin}
               label="Запускать при входе в систему"

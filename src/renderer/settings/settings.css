@@ -119,7 +119,7 @@ body.window {
 .sidebar-foot {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 12px;
   margin-top: auto;
   padding: 12px 4px 0;
   border-top: 1px solid var(--border);
@@ -131,7 +131,16 @@ body.window {
   -webkit-app-region: no-drag;
 }
 
+.side-key {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
 .sidebar-label {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
   font-size: 10.5px;
   font-weight: 600;
   letter-spacing: 0.06em;
@@ -139,26 +148,26 @@ body.window {
   color: var(--text-faint);
 }
 
-.sidebar-value {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 12.5px;
-  color: var(--text-dim);
-}
-
-.sidebar-value strong {
-  font-weight: 600;
-  color: var(--text);
-  letter-spacing: 0.04em;
+/* A hotkey for a mode that is switched off still works as a setting; the word is
+   there so the dim key cap is not read as broken. */
+.sidebar-off {
+  font-size: 10px;
+  font-weight: 400;
+  letter-spacing: 0.02em;
+  text-transform: none;
+  color: var(--text-faint);
+  opacity: 0.8;
 }
 
 .side-toggle {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  gap: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
   font-size: 12px;
+  line-height: 1.3;
   color: var(--text-dim);
 }
 
@@ -307,8 +316,8 @@ body.window {
 }
 
 .row-control > input[type='number'] {
-  width: 108px;
-  text-align: right;
+  width: 76px;
+  text-align: center;
 }
 
 .row-control > input[type='range'] {
@@ -373,9 +382,19 @@ textarea {
   min-height: 84px;
 }
 
+/* A budget is three or four digits, not a paragraph: a full-width box made the
+   field look like it wanted a sentence, and the native steppers ate the space
+   the digits needed. Arrow keys still step the value. */
 input[type='number'] {
-  max-width: 108px;
+  max-width: 76px;
+  padding: 6px 8px;
   font-variant-numeric: tabular-nums;
+}
+
+input[type='number']::-webkit-inner-spin-button,
+input[type='number']::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
 }
 
 /* Ranges are a control, not a text field: the base input box around them was
@@ -451,16 +470,6 @@ input[type='range']::-webkit-slider-thumb {
   background: var(--accent-soft);
   color: var(--accent);
   font-size: 10px;
-}
-
-.chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-
-.chips .chip {
-  font-size: 12px;
 }
 
 .hotkey-field {
