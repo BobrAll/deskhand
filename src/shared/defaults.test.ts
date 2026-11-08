@@ -338,12 +338,14 @@ describe('normalizeSettings: gestures', () => {
 })
 
 describe('normalizeSettings: agent', () => {
-  it('clamps the step budget', () => {
+  it('keeps the step budget the user typed, with a floor of one', () => {
     const result = normalizeSettings({ agent: { maxSteps: 0 } })
 
     expect(result.agent.maxSteps).toBe(1)
-    expect(normalizeSettings({ agent: { maxSteps: 99 } }).agent.maxSteps).toBe(50)
+    expect(normalizeSettings({ agent: { maxSteps: 99 } }).agent.maxSteps).toBe(99)
+    expect(normalizeSettings({ agent: { maxSteps: 500 } }).agent.maxSteps).toBe(500)
     expect(normalizeSettings({ agent: { maxSteps: 'много' } }).agent.maxSteps).toBe(DEFAULT_AGENT.maxSteps)
+    expect(DEFAULT_AGENT.maxSteps).toBe(100)
   })
 
   it('keeps the flags and falls back on non-booleans', () => {

@@ -87,9 +87,8 @@ export interface AgentSettings {
    *
    * The agent decides its next call from the previous result, so this is a
    * budget rather than a plan length: one turn can hold several calls, and a run
-   * that reaches the ceiling stops with what it has instead of looping. It is
-   * bounded because an agent with no ceiling is an agent that can spend an
-   * afternoon on a request it misunderstood.
+   * that reaches the ceiling stops with what it has instead of looping. The
+   * ceiling is set by the user; only a floor of one is enforced.
    */
   maxSteps: number
   /** Moving the physical mouse takes control back immediately. */

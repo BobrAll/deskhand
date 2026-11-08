@@ -279,9 +279,9 @@ export const WHISPER_LANGUAGES: Array<{ id: string; label: string }> = [
 export const DEFAULT_AGENT: AgentSettings = {
   rememberedApprovals: [],
   enabled: false,
-  // Multi-stage requests need room to navigate, search, open and observe. This
-  // remains bounded, and Escape/mouse interruption applies throughout.
-  maxSteps: 50,
+  // Multi-stage requests need room to navigate, search, open and observe. The
+  // ceiling is the user's call; Escape and mouse interruption apply throughout.
+  maxSteps: 100,
   abortOnMouseMove: true,
   // On by default: the whole point of the mode is that the user asked for the
   // thing to *happen*, and "готово" without a look at the result is a claim the
@@ -387,9 +387,13 @@ function sanitizeAgent(input: unknown): AgentSettings {
       ? [...new Set(raw.rememberedApprovals.filter(value => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value)))].slice(-256)
       : [],
     enabled: flag(raw.enabled, DEFAULT_AGENT.enabled),
-    // The floor is 0 rather than a "sane" minimum: a user who wants no pause is
-    // allowed to have none, but the slider cannot go below it by accident.
-    maxSteps: Math.round(clamp(raw.maxSteps, 1, 50, DEFAULT_AGENT.maxSteps)),
+    // Only the floor is enforced: a typo cannot produce a zero-step run, but the
+    // user decides how large the budget is. The field is a text input, not a
+    // preset, so an upper bound here would silently rewrite what they typed.
+    maxSteps:
+      typeof raw.maxSteps === 'number' && Number.isFinite(raw.maxSteps)
+        ? Math.max(1, Math.round(raw.maxSteps))
+        : DEFAULT_AGENT.maxSteps,
     abortOnMouseMove: flag(raw.abortOnMouseMove, DEFAULT_AGENT.abortOnMouseMove),
     verifyResult: flag(raw.verifyResult, DEFAULT_AGENT.verifyResult)
   }

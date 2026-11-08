@@ -124,8 +124,7 @@ export function VoiceTab({ voice, savedModel, gestures, onChange, onGestureChang
             onChange={(event) => onChange({ agentFeedback: event.target.checked })} />
           Короткие реплики агента
         </label>
-        <p className="hint">Подтверждать долгую обработку голосовой команды системным голосом.
-          Не чаще раза в 45 секунд. Для озвучки нужен русский голос macOS.</p>
+        <p className="hint">Системным голосом подтверждать долгую обработку. Не чаще раза в 45 секунд.</p>
       </div>
       <div className="field">
         <label className="check">
@@ -133,12 +132,11 @@ export function VoiceTab({ voice, savedModel, gestures, onChange, onGestureChang
             onChange={(event) => onChange({ dialogue: event.target.checked })} />
           Голосовой диалог
         </label>
-        <p className="hint">Коротко озвучивать ответы на голосовые вопросы системным голосом.
-          Для текстовых запросов используйте кнопку «Прослушать».</p>
+        <p className="hint">Озвучивать ответы на голосовые вопросы. Текстовые — кнопкой «Прослушать».</p>
       </div>
       <p className="hint">
-        Удерживайте клавишу или три пальца на трекпаде, говорите, отпустите. Распознавание идёт
-        локально на этом Mac — звук никуда не отправляется.
+        Удерживайте клавишу или три пальца на трекпаде. Распознавание локальное — звук не
+        покидает Mac.
       </p>
 
       <div className="field">
@@ -162,9 +160,7 @@ export function VoiceTab({ voice, savedModel, gestures, onChange, onGestureChang
           Три пальца на трекпаде
         </label>
         <div className="hint">
-          Короткое касание тремя пальцами открывает карточку — как горячая клавиша. Удержание
-          трёх пальцев записывает речь: отпустили — распознали. Клавиши работают как раньше,
-          жест только добавляет способ.
+          Короткое касание открывает карточку, удержание записывает речь.
         </div>
         {gestures.enabled && (
           <>
@@ -179,8 +175,7 @@ export function VoiceTab({ voice, savedModel, gestures, onChange, onGestureChang
                 onChange={(event) => onGestureChange({ holdMs: Number(event.target.value) })}
               />
               <div className="hint">
-                Короче — и случайное касание начнёт записывать; длиннее — и придётся держать
-                пальцы дольше, прежде чем откроется микрофон.
+                Короче — случайное касание начнёт запись. Длиннее — придётся держать дольше.
               </div>
             </div>
           </>
@@ -192,8 +187,7 @@ export function VoiceTab({ voice, savedModel, gestures, onChange, onGestureChang
         <label>Клавиша удержания</label>
         <HotkeyField value={voice.hotkey} onChange={(hotkey) => onChange({ hotkey })} />
         <div className="hint">
-          Сейчас: {prettyHotkey(voice.hotkey)}. Комбинация перехватывается приложением — в
-          других программах она не сработает. Esc во время записи отменяет её.
+          Сейчас: {prettyHotkey(voice.hotkey)}. Esc во время записи отменяет её.
         </div>
       </div>
 
@@ -248,8 +242,8 @@ export function VoiceTab({ voice, savedModel, gestures, onChange, onGestureChang
         </select>
         <div className="hint">
           {selected?.language
-            ? 'У выбранной модели фиксированный язык распознавания.'
-            : 'Для коротких команд указанный язык надёжнее автоопределения.'}
+            ? 'У выбранной модели фиксированный язык.'
+            : 'Для коротких команд язык надёжнее автоопределения.'}
         </div>
       </div>
 
@@ -300,11 +294,6 @@ export function VoiceTab({ voice, savedModel, gestures, onChange, onGestureChang
             </div>
           ))}
         </div>
-        <div className="hint">
-          {selected
-            ? `Выбрана «${selected.label}» — ${selected.note}`
-            : 'Модель не выбрана.'}
-        </div>
         <button
           className="ghost"
           disabled={progress !== null || deleting !== null}
@@ -325,9 +314,6 @@ export function VoiceTab({ voice, savedModel, gestures, onChange, onGestureChang
           <button disabled={checking} onClick={() => void check()}>
             {checking ? 'Проверка…' : 'Проверить готовность'}
           </button>
-          <button className="ghost" onClick={refresh}>
-            Обновить
-          </button>
         </div>
         {error && <div className="hint err">{error}</div>}
       </div>
@@ -335,8 +321,8 @@ export function VoiceTab({ voice, savedModel, gestures, onChange, onGestureChang
       <div className="field">
         <label>Точность срабатывания</label>
         <div className="hint">
-          Слишком короткое нажатие ({voice.minDurationMs} мс) считается случайным и не
-          записывается. Запись обрывается на {Math.round(voice.maxDurationMs / 1000)} с.
+          Короче {voice.minDurationMs} мс считается случайным нажатием. Запись обрывается
+          на {Math.round(voice.maxDurationMs / 1000)} с.
         </div>
       </div>
     </section>

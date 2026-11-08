@@ -1,6 +1,7 @@
 /**
- * Settings window (ТЗ §7). Five sections: провайдер и ключи, поведение, голос,
- * агент, исключения и права.
+ * Settings window (ТЗ §7). Four sections: провайдер и ключи, голос, агент,
+ * исключения и права. The hotkey and launch-at-login controls live in the
+ * sidebar: they are two values, and a tab for two values is a tab nobody opens.
  *
  * There is no «Сохранить»: every field is written as it is edited. The button was
  * the reason a ticked checkbox could sit in a draft while the rest of the app
@@ -14,7 +15,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { AppSettings, KeyStatus, PermissionState, ProviderId } from '@shared/types'
 import { PROVIDERS } from '@shared/defaults'
 import type { AppPickResult, RunningAppInfo, SettingsBundle } from '@shared/api'
-import { prettyHotkey } from './HotkeyField'
+import { HotkeyField, prettyHotkey } from './HotkeyField'
 import {
   hasUnsaved,
   holdReasonFor,
@@ -25,14 +26,12 @@ import { ApplyStatus, type ApplyState } from './ApplyStatus'
 import { AgentTab } from './AgentTab'
 import { VoiceTab } from './VoiceTab'
 import { ProviderSection } from './sections/ProviderSection'
-import { BehaviorSection } from './sections/BehaviorSection'
 import { PrivacySection } from './sections/PrivacySection'
 
-type Tab = 'provider' | 'behavior' | 'voice' | 'agent' | 'privacy'
+type Tab = 'provider' | 'voice' | 'agent' | 'privacy'
 
 const TABS: Array<{ id: Tab; label: string }> = [
   { id: 'provider', label: 'Модель' },
-  { id: 'behavior', label: 'Поведение' },
   { id: 'voice', label: 'Голос' },
   { id: 'agent', label: 'Агент' },
   { id: 'privacy', label: 'Приватность' }
@@ -355,7 +354,14 @@ export function App() {
         ))}
         <div className="sidebar-foot">
           <div className="hint">Карточка</div>
-          <div className="hotkey-badge">{prettyHotkey(draft.hotkey)}</div>
+          <HotkeyField
+            value={draft.hotkey}
+            onChange={(accelerator) => {
+              setHotkeyError(null)
+              patch({ hotkey: accelerator })
+            }}
+          />
+          {hotkeyError && <div className="hint err">{hotkeyError}</div>}
           {draft.voice.enabled && (
             <>
               <div className="hint" style={{ marginTop: 8 }}>
@@ -364,6 +370,14 @@ export function App() {
               <div className="hotkey-badge">{prettyHotkey(draft.voice.hotkey)}</div>
             </>
           )}
+          <label className="check sidebar-check">
+            <input
+              type="checkbox"
+              checked={draft.launchAtLogin}
+              onChange={(event) => patch({ launchAtLogin: event.target.checked })}
+            />
+            Запускать при входе
+          </label>
         </div>
       </aside>
 
@@ -380,15 +394,6 @@ export function App() {
               testing={testing}
               onSaveKey={() => void saveKey()}
               onRemoveKey={() => void removeKey()}
-            />
-          )}
-
-          {tab === 'behavior' && (
-            <BehaviorSection
-              draft={draft}
-              patch={patch}
-              hotkeyError={hotkeyError}
-              onHotkeyError={setHotkeyError}
             />
           )}
 

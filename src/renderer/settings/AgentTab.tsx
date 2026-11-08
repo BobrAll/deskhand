@@ -34,6 +34,7 @@ interface AgentTabProps {
 export function AgentTab({ agent, onChange, onEnabledChange }: AgentTabProps) {
   const [approvalStatus, setApprovalStatus] = useState('')
   const [availability, setAvailability] = useState<AgentAvailability | null>(null)
+  const [steps, setSteps] = useState(String(agent.maxSteps))
 
   const refresh = useCallback(() => {
     void window.smartCursor.agent
@@ -58,23 +59,26 @@ export function AgentTab({ agent, onChange, onEnabledChange }: AgentTabProps) {
     refresh()
   }, [agent.enabled, refresh])
 
+  // The input is a text field, not a slider: the user types the budget they want.
+  // Keeping the raw string locally lets the field be emptied mid-edit; the value
+  // is only committed when it is a positive whole number. The sync from props is
+  // skipped when the field already means the same number, so "05" is not rewritten
+  // to "5" under the cursor as the user types.
+  useEffect(() => {
+    setSteps((current) =>
+      Number(current) === agent.maxSteps ? current : String(agent.maxSteps)
+    )
+  }, [agent.maxSteps])
+
+  const editSteps = (raw: string): void => {
+    setSteps(raw)
+    const value = Math.round(Number(raw))
+    if (Number.isFinite(value) && value >= 1) onChange({ maxSteps: value })
+  }
+
   return (
     <section>
       <h2>Агент</h2>
-      <div className="field">
-        <button type="button" onClick={() => {
-          void window.smartCursor.agent.clearApprovals().then(
-            () => setApprovalStatus('Разрешения сброшены.'),
-            () => setApprovalStatus('Не удалось сбросить разрешения.')
-          )
-        }}>Сбросить постоянные разрешения</button>
-        <div className="hint" role="status">{approvalStatus || 'Удаляет выбор «Разрешить всегда» для всех действий агента.'}</div>
-      </div>
-      <p className="hint">
-        Ассистент сможет сам нажимать кнопки и печатать текст — не только рассказывать, где
-        они. Он делает это только когда вы прямо просите что-то сделать: «нажми сохранить»,
-        «открой вкладку», «впиши адрес».
-      </p>
 
       <div className="field">
         <label className="check">
@@ -96,64 +100,41 @@ export function AgentTab({ agent, onChange, onEnabledChange }: AgentTabProps) {
           Разрешить управлять мышью и клавиатурой
         </label>
         <div className="hint">
-          Переключатель сохраняется сразу. Пока выключено, ассистент отвечает словами и может
-          рисовать на экране, но ничего не нажимает — даже если вы просите именно нажать.
+          Сохраняется сразу. Пока выключено, ассистент отвечает словами и рисует, но ничего
+          не нажимает.
         </div>
       </div>
 
-      {agent.enabled && (
+      {agent.enabled && availability && !availability.ready && (
         <div className="field">
           <label>Готовность</label>
-          <div className="agent-ready" data-ok={availability?.ready ? true : undefined}>
-            {availability?.ready ? (
-              <>
-                <span className="agent-ready-dot" aria-hidden />
-                <span>Всё готово: можно нажимать и печатать.</span>
-              </>
-            ) : (
-              <>
-                <span className="agent-ready-dot" aria-hidden />
-                <span>{availability?.reason ?? 'Проверяю доступ…'}</span>
-                <button
-                  className="tag"
-                  onClick={() => window.smartCursor.permissions.open('accessibility')}
-                >
-                  Открыть доступ
-                </button>
-              </>
-            )}
+          <div className="agent-ready">
+            <span className="agent-ready-dot" aria-hidden />
+            <span>{availability.reason ?? 'Нужен доступ в «Универсальный доступ».'}</span>
+            <button
+              className="tag"
+              onClick={() => window.smartCursor.permissions.open('accessibility')}
+            >
+              Открыть доступ
+            </button>
           </div>
         </div>
       )}
 
       <div className="field">
-        <label>Подтверждение действий</label>
-        <div className="hint">
-          Обычные клики, навигация и ввод текста выполняются самостоятельно.
-          Подтверждение нужно для того, что нельзя отменить: оплаты, подписки, отправки и
-          публикации, удаления, изменения доступа или защиты аккаунта. Вопрос появляется
-          прямо в карточке, на том шаге, к которому относится, — с кнопками «Разрешить»,
-          «Разрешить всегда» и «Отменить». Пароли и секреты агент не вводит никогда.
-        </div>
-      </div>
-
-      <div className="field">
-        <label>Лимит шагов задачи · {agent.maxSteps}</label>
+        <label htmlFor="agent-max-steps">Лимит шагов задачи</label>
         <input
-          type="range"
+          id="agent-max-steps"
+          type="number"
           min={1}
-          max={50}
           step={1}
-          value={agent.maxSteps}
-          onChange={(event) => onChange({ maxSteps: Number(event.target.value) })}
+          value={steps}
+          onChange={(event) => editSteps(event.target.value)}
+          onBlur={() => setSteps(String(agent.maxSteps))}
         />
         <div className="hint">
-          Сколько раз агент может посмотреть на экран и что-то сделать, прежде чем
-          остановиться. Это потолок, а не план: одна задача — это обычно осмотреться,
-          сделать и проверить, а поиск по интерфейсу, ввод текста и подтверждение
-          добавляют ещё по шагу. Ставьте с запасом: упёршись в лимит, агент
-          останавливается с невыполненной задачей, а не доводит её до конца.
-          Escape останавливает задачу в любой момент.
+          Сколько действий агент может сделать за одну задачу. Escape останавливает в любой
+          момент.
         </div>
       </div>
 
@@ -167,8 +148,7 @@ export function AgentTab({ agent, onChange, onEnabledChange }: AgentTabProps) {
           Останавливать, если я взял мышь
         </label>
         <div className="hint">
-          Самое надёжное «нет»: потянулись за курсором — управление сразу вернулось к вам.
-          Escape работает всегда, независимо от этой настройки.
+          Потянулись за курсором — управление сразу вернулось к вам.
         </div>
       </div>
 
@@ -182,18 +162,24 @@ export function AgentTab({ agent, onChange, onEnabledChange }: AgentTabProps) {
           Проверять результат по экрану
         </label>
         <div className="hint">
-          После последнего действия агент заново читает состояние окна и сравнивает его с
-          тем, что было до действия: нажал — ещё не значит получилось. Если ничего не
-          изменилось, он видит это и пробует иначе, вместо того чтобы сказать «готово».
+          После действия агент проверяет, что на экране действительно изменилось.
         </div>
       </div>
 
       <div className="field">
-        <div className="hint">
-          Что ассистент не делает никогда: не отправляет формы, не удаляет файлы и не
-          подтверждает покупки без вашего ответа. Такие действия он показывает в карточке
-          кнопкой «Разрешить» и ждёт. Всё, что он делает, видно в карточке строкой за
-          строкой, а Escape и рука на мыши останавливают его мгновенно.
+        <button
+          type="button"
+          onClick={() => {
+            void window.smartCursor.agent.clearApprovals().then(
+              () => setApprovalStatus('Разрешения сброшены.'),
+              () => setApprovalStatus('Не удалось сбросить разрешения.')
+            )
+          }}
+        >
+          Сбросить постоянные разрешения
+        </button>
+        <div className="hint" role="status">
+          {approvalStatus || 'Забыть выбор «Разрешить всегда» для всех действий.'}
         </div>
       </div>
     </section>

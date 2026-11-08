@@ -1,5 +1,5 @@
 /**
- * The «Модель» tab: provider, model, base URL override, key, sampling.
+ * The «Модель» tab: provider, model, base URL override, key, sampling, screenshot.
  *
  * Moved out of `App.tsx` verbatim. The only thing that changed is where the
  * derived values are computed: `info`, `status` and `baseUrlError` were already
@@ -9,6 +9,12 @@
  * The key field's own state stays in the window, not here: switching tabs
  * unmounts this section, and a half-typed key must not be thrown away by a
  * glance at «Поведение».
+ *
+ * Sampling and the system prompt live behind «Дополнительно». They are the two
+ * things almost nobody touches, and leaving them open pushed the key field below
+ * the fold on a laptop screen. The screenshot controls are here rather than on a
+ * tab of their own because they are the same decision as the model: what the
+ * model gets to look at.
  */
 
 import type { AppSettings, KeyStatus, ProviderId } from '@shared/types'
@@ -52,9 +58,6 @@ export function ProviderSection({
   return (
     <section>
       <h2>Модель и ключ</h2>
-      <p className="hint">
-        Ключ хранится в связке ключей macOS (Keychain) и никогда не показывается целиком.
-      </p>
 
       <div className="field">
         <label>Провайдер</label>
@@ -115,7 +118,7 @@ export function ProviderSection({
           </button>
         </div>
         <p className="hint">
-          Укажите ID модели {info?.label} с поддержкой веб-поиска. Пустое поле — {fallbackSearchModel}.
+          Модель {info?.label} с веб-поиском. Пусто — {fallbackSearchModel}.
         </p>
       </div>
 
@@ -143,8 +146,8 @@ export function ProviderSection({
         ) : (
           <div className="hint">
             {draft.baseUrls[draft.provider]
-              ? `Запросы пойдут на ${normalizeBaseUrl(draft.baseUrls[draft.provider])}. Пустое поле — ${info?.defaultBaseUrl}.`
-              : `Корень API, без /chat/completions. По умолчанию: ${info?.defaultBaseUrl}.`}
+              ? `Запросы идут на ${normalizeBaseUrl(draft.baseUrls[draft.provider])}.`
+              : `Корень API без /chat/completions. По умолчанию: ${info?.defaultBaseUrl}.`}
           </div>
         )}
       </div>
@@ -178,7 +181,7 @@ export function ProviderSection({
         )}
         {info && (
           <div className="hint">
-            Получить ключ:{' '}
+            Ключ хранится в Keychain. Получить:{' '}
             <a href={info.keyUrl} target="_blank" rel="noreferrer">
               {info.keyUrl}
             </a>
@@ -186,50 +189,88 @@ export function ProviderSection({
         )}
       </div>
 
-      <div className="row-grid">
-        <div className="field">
-          <label>Температура · {draft.temperature.toFixed(1)}</label>
-          <input
-            type="range"
-            min={0}
-            max={2}
-            step={0.1}
-            value={draft.temperature}
-            onChange={(event) => patch({ temperature: Number(event.target.value) })}
-          />
+      <details className="advanced">
+        <summary>Дополнительно</summary>
+        <div className="row-grid">
+          <div className="field">
+            <label>Температура · {draft.temperature.toFixed(1)}</label>
+            <input
+              type="range"
+              min={0}
+              max={2}
+              step={0.1}
+              value={draft.temperature}
+              onChange={(event) => patch({ temperature: Number(event.target.value) })}
+            />
+          </div>
+          <div className="field">
+            <label>Максимум токенов</label>
+            <input
+              type="number"
+              min={MAX_TOKENS_MIN}
+              max={MAX_TOKENS_MAX}
+              step={MAX_TOKENS_MIN}
+              value={draft.maxTokens}
+              onChange={(event) => patch({ maxTokens: Number(event.target.value) })}
+            />
+          </div>
         </div>
+
         <div className="field">
-          <label>Максимум токенов</label>
-          <input
-            type="number"
-            min={MAX_TOKENS_MIN}
-            max={MAX_TOKENS_MAX}
-            step={MAX_TOKENS_MIN}
-            value={draft.maxTokens}
-            onChange={(event) => patch({ maxTokens: Number(event.target.value) })}
+          <label>Системный промпт</label>
+          <textarea
+            rows={4}
+            value={draft.systemPrompt}
+            onChange={(event) => patch({ systemPrompt: event.target.value })}
           />
+          <div className="key-row">
+            <span className="hint">Пустой промпт не применяется.</span>
+            <button
+              className="ghost"
+              disabled={draft.systemPrompt === DEFAULT_SYSTEM_PROMPT}
+              onClick={() => patch({ systemPrompt: DEFAULT_SYSTEM_PROMPT })}
+            >
+              Вернуть стандартный
+            </button>
+          </div>
         </div>
-      </div>
+      </details>
 
       <div className="field">
-        <label>Системный промпт</label>
-        <textarea
-          rows={4}
-          value={draft.systemPrompt}
-          onChange={(event) => patch({ systemPrompt: event.target.value })}
-        />
-        <div className="key-row">
-          <span className="hint">
-            Пустое поле не применяется: стереть промпт нельзя, только заменить.
-          </span>
-          <button
-            className="ghost"
-            disabled={draft.systemPrompt === DEFAULT_SYSTEM_PROMPT}
-            onClick={() => patch({ systemPrompt: DEFAULT_SYSTEM_PROMPT })}
-          >
-            Вернуть стандартный
-          </button>
+        <label>Скриншот</label>
+        <label className="check">
+          <input
+            type="checkbox"
+            checked={draft.captureScreenshotByDefault}
+            onChange={(event) => patch({ captureScreenshotByDefault: event.target.checked })}
+          />
+          Снимать экран, когда нет выделения
+        </label>
+        <div className="row-grid">
+          <div className="field">
+            <label>Длинная сторона · {draft.screenshotMaxSide}px</label>
+            <input
+              type="range"
+              min={480}
+              max={2400}
+              step={80}
+              value={draft.screenshotMaxSide}
+              onChange={(event) => patch({ screenshotMaxSide: Number(event.target.value) })}
+            />
+          </div>
+          <div className="field">
+            <label>Качество JPEG · {draft.screenshotQuality}</label>
+            <input
+              type="range"
+              min={30}
+              max={95}
+              step={5}
+              value={draft.screenshotQuality}
+              onChange={(event) => patch({ screenshotQuality: Number(event.target.value) })}
+            />
+          </div>
         </div>
+        <div className="hint">Меньше размер и качество — быстрее ответ и дешевле.</div>
       </div>
     </section>
   )
