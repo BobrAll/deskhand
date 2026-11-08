@@ -396,19 +396,57 @@ private final class BridgeObserver: AgentObserver, @unchecked Sendable {
         bridge.emit(["event": .string("tool"), "params": .object(params)])
     }
 
-    func toolFinished(_ step: Int, call: ToolCall, text: String, isError: Bool) {
-        bridge.emit(["event": .string("result"), "params": .object([
+    func stepTimed(_ step: Int, timing: StepTiming) {
+        var params: [String: JSONValue] = [
+            "step": .number(Double(step)),
+            "llm_ms": .number(timing.llmMilliseconds),
+            "prompt_bytes": .number(Double(timing.promptBytes)),
+            "history": .number(Double(timing.historyMessages)),
+            "calls": .number(Double(timing.callCount)),
+        ]
+        if let input = timing.inputTokens { params["input_tokens"] = .number(Double(input)) }
+        if let output = timing.outputTokens { params["output_tokens"] = .number(Double(output)) }
+        bridge.emit(["event": .string("step-timing"), "params": .object(params)])
+    }
+
+    func toolFinished(_ step: Int, call: ToolCall, text: String, isError: Bool, timings: ToolTimings) {
+        var params: [String: JSONValue] = [
             "step": .number(Double(step)),
             "name": .string(call.name),
             "ok": .bool(!isError),
             "text": .string(text.count > 2000 ? String(text.prefix(2000)) + "…" : text),
-        ])])
+        ]
+        // Only the phases that actually ran, so the host does not have to tell
+        // "0 ms" from "did not happen". Sent unrounded: a tool that takes 0.4 ms
+        // is not the same as one that takes 0, and rounding here would make the
+        // cheap tools — which is most of them — indistinguishable from free.
+        if timings.wall > 0 { params["wall_ms"] = .number(timings.wall) }
+        if timings.tree > 0 { params["tree_ms"] = .number(timings.tree) }
+        if timings.capture > 0 { params["capture_ms"] = .number(timings.capture) }
+        if timings.encode > 0 { params["encode_ms"] = .number(timings.encode) }
+        if timings.screenshotBytes > 0 {
+            params["image_bytes"] = .number(Double(timings.screenshotBytes))
+        }
+        bridge.emit(["event": .string("result"), "params": .object(params)])
     }
 
     func loopStopped(_ reason: String) {
         bridge.emit(["event": .string("stopped"), "params": .object([
             "reason": .string(reason),
         ])])
+    }
+
+    func runFinished(_ report: RunReport) {
+        var params: [String: JSONValue] = [
+            "steps": .number(Double(report.steps)),
+            "calls": .number(Double(report.calls)),
+            "failed_calls": .number(Double(report.failedCalls)),
+            "total_ms": .number(report.totalMilliseconds),
+            "llm_ms": .number(report.llmMilliseconds),
+            "tool_ms": .number(report.toolMilliseconds),
+        ]
+        if !report.table.isEmpty { params["table"] = .string(report.table) }
+        bridge.emit(["event": .string("run-report"), "params": .object(params)])
     }
 }
 

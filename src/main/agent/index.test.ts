@@ -29,11 +29,22 @@ const state = vi.hoisted(() => ({
   runRejects: null as Error | null,
   approvals: [] as { id: string; allow: boolean; reason?: string }[],
   cancels: 0,
-  runs: [] as unknown[]
+  runs: [] as unknown[],
+  /** Everything the controller asked the trace to record. */
+  traceEvents: [] as Record<string, unknown>[]
 }))
 
+vi.mock('./trace', () => ({
+  trace: (event: string, fields: Record<string, unknown> = {}) => {
+    state.traceEvents.push({ event, ...fields })
+  },
+  // The controller runs inside a turn of its own when the caller did not open
+  // one; in these tests the turn is irrelevant, so it just runs the work.
+  traceWithin: (_fields: unknown, work: () => Promise<unknown>) => work()
+}))
 vi.mock('electron', () => ({
-  systemPreferences: { isTrustedAccessibilityClient: () => state.trusted }
+  systemPreferences: { isTrustedAccessibilityClient: () => state.trusted },
+  app: { getPath: () => '/tmp', getVersion: () => '0.0.0' }
 }))
 vi.mock('../native/helper', () => ({
   helperBinary: () => state.helper,
@@ -109,6 +120,8 @@ function harness() {
     passthrough,
     /** The last thing the card was told. */
     last: () => events.at(-1)!,
+    /** Everything this run asked the trace to record. */
+    trace: () => state.traceEvents.filter((line) => line.event !== 'agent.start'),
     run: (prompt = 'Нажми «Купить»') => controller.run({
       prompt, appName: 'Safari', windowTitle: 'Магазин', provider: PROVIDER
     })
@@ -129,6 +142,7 @@ beforeEach(() => {
   state.approvals = []
   state.cancels = 0
   state.runs = []
+  state.traceEvents = []
 })
 
 describe('availability: three separate reasons, three separate fixes', () => {
@@ -204,7 +218,7 @@ describe('a run that works', () => {
 
     await vi.waitFor(() => expect(state.runs).toHaveLength(1))
     state.emit({ kind: 'narration', step: 1, text: 'Нажимаю «Купить»' })
-    state.emit({ kind: 'result', step: 1, name: 'click', ok: true, text: 'ok' })
+    state.emit({ kind: 'result', step: 1, name: 'click', ok: true, text: 'ok', timing: {} })
     state.emit({ kind: 'done', answer: 'Товар в корзине.' })
 
     const result = await running
@@ -398,5 +412,80 @@ describe('the agent dying mid-run', () => {
 
     expect(result).toMatchObject({ blocked: true, message: 'Компонент агента не собран.' })
     expect(h.passthrough).toEqual([true, false])
+  })
+})
+
+describe('the trace a run leaves behind', () => {
+  /**
+   * The trace is the only place a slow run can be diagnosed after the fact, so
+   * what it records is part of the contract: a step without its cost, or a call
+   * without its phases, would leave the one question the trace exists to answer
+   * — "what took the time" — unanswerable.
+   */
+  it('records each step, its round trip, and each call with its phases', async () => {
+    const h = harness()
+    const running = h.run()
+    await vi.waitFor(() => expect(state.runs).toHaveLength(1))
+
+    state.emit({ kind: 'step', step: 1, total: 3 })
+    state.emit({
+      kind: 'stepTiming',
+      step: 1,
+      timing: { llmMs: 1432.5, promptBytes: 20823, history: 4, calls: 1, inputTokens: 900, outputTokens: 40 }
+    })
+    state.emit({ kind: 'tool', step: 1, name: 'get_app_state', args: { app: 'Finder' } })
+    state.emit({
+      kind: 'result', step: 1, name: 'get_app_state', ok: true, text: 'tree',
+      timing: { wallMs: 493.02, treeMs: 476.35, captureMs: 12.1, imageBytes: 151812 }
+    })
+    state.emit({
+      kind: 'runReport',
+      report: { steps: 1, calls: 1, failedCalls: 0, totalMs: 1950.4, llmMs: 1432.5, toolMs: 493.02 }
+    })
+    state.emit({ kind: 'done', answer: 'Готово.' })
+    await running
+
+    const lines = h.trace()
+    const events = lines.map((line) => line.event)
+    expect(events).toContain('agent.step')
+    expect(events).toContain('agent.llm')
+    expect(events).toContain('agent.tool')
+    expect(events).toContain('agent.call')
+    expect(events).toContain('agent.report')
+
+    const llm = lines.find((line) => line.event === 'agent.llm')!
+    expect(llm).toMatchObject({
+      step: 1, llmMs: 1432.5, promptBytes: 20823, history: 4, calls: 1,
+      inputTokens: 900, outputTokens: 40
+    })
+
+    // The phases are what makes a 493 ms call diagnosable: without the split it
+    // is indistinguishable from a slow model, and the fix is in a different file.
+    const call = lines.find((line) => line.event === 'agent.call')!
+    expect(call).toMatchObject({
+      step: 1, tool: 'get_app_state', ok: true,
+      wallMs: 493, treeMs: 476.4, captureMs: 12.1, imageBytes: 151812
+    })
+    // A phase that did not run is absent, not zero.
+    expect('encodeMs' in call).toBe(false)
+
+    const report = lines.find((line) => line.event === 'agent.report')!
+    expect(report).toMatchObject({ steps: 1, calls: 1, failedCalls: 0, totalMs: 1950.4 })
+    expect(report.modelShare).toBe(73)
+  })
+
+  it('keeps the timings table out of the trace when the agent did not build one', async () => {
+    const h = harness()
+    const running = h.run()
+    await vi.waitFor(() => expect(state.runs).toHaveLength(1))
+
+    state.emit({
+      kind: 'runReport',
+      report: { steps: 1, calls: 0, failedCalls: 0, totalMs: 10, llmMs: 10, toolMs: 0 }
+    })
+    state.emit({ kind: 'done', answer: '' })
+    await running
+
+    expect(h.trace().some((line) => line.event === 'agent.timings')).toBe(false)
   })
 })

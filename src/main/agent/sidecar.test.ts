@@ -18,11 +18,14 @@ const TRANSCRIPT: string[] = [
   '{"event":"ready","params":{"tools":11,"version":"1"}}',
   '{"id":1,"result":{"started":true}}',
   '{"event":"step","params":{"step":1,"total":3}}',
+  '{"event":"step-timing","params":{"calls":1,"history":1,"input_tokens":10,"llm_ms":13.2,"output_tokens":5,"prompt_bytes":46,"step":1}}',
   '{"event":"narration","params":{"step":1,"text":"Смотрю, какие приложения открыты."}}',
   '{"event":"tool","params":{"arguments":{},"name":"list_apps","narration":"Смотрю, какие приложения открыты.","step":1}}',
-  '{"event":"result","params":{"name":"list_apps","ok":true,"step":1,"text":"Running applications:\\n- Finder (com.apple.finder) pid=83830"}}',
+  '{"event":"result","params":{"name":"list_apps","ok":true,"step":1,"text":"Running applications:\\n- Finder (com.apple.finder) pid=83830","wall_ms":0.085}}',
   '{"event":"step","params":{"step":2,"total":3}}',
+  '{"event":"step-timing","params":{"calls":0,"history":3,"input_tokens":10,"llm_ms":2.7,"output_tokens":5,"prompt_bytes":553,"step":2}}',
   '{"event":"narration","params":{"step":2,"text":"Готово: приложения перечислены."}}',
+  '{"event":"run-report","params":{"calls":1,"failed_calls":0,"llm_ms":15.9,"steps":2,"table":"timings (total 39 ms)","tool_ms":0.085,"total_ms":23.4}}',
   '{"event":"done","params":{"answer":"Готово: приложения перечислены."}}'
 ]
 
@@ -37,14 +40,29 @@ describe('translate: a recorded transcript from the real agent', () => {
     expect(translate(parsed[2])).toEqual({ kind: 'step', step: 1, total: 3 })
   })
 
-  it('reads the model’s own sentence about what it is doing', () => {
+  it('reads what the round trip cost, and what it was asked with', () => {
     expect(translate(parsed[3])).toEqual({
+      kind: 'stepTiming',
+      step: 1,
+      timing: {
+        llmMs: 13.2,
+        promptBytes: 46,
+        history: 1,
+        calls: 1,
+        inputTokens: 10,
+        outputTokens: 5
+      }
+    })
+  })
+
+  it('reads the model’s own sentence about what it is doing', () => {
+    expect(translate(parsed[4])).toEqual({
       kind: 'narration', step: 1, text: 'Смотрю, какие приложения открыты.'
     })
   })
 
   it('reads a call, its arguments and the narration it belongs to', () => {
-    expect(translate(parsed[4])).toEqual({
+    expect(translate(parsed[5])).toEqual({
       kind: 'tool',
       step: 1,
       name: 'list_apps',
@@ -54,14 +72,29 @@ describe('translate: a recorded transcript from the real agent', () => {
   })
 
   it('reads a result, and keeps the text the agent got back', () => {
-    const event = translate(parsed[5])
+    const event = translate(parsed[6])
     expect(event).toMatchObject({ kind: 'result', name: 'list_apps', ok: true, step: 1 })
     if (event?.kind !== 'result') return
     expect(event.text).toContain('com.apple.finder')
   })
 
+  it('reads the run’s totals', () => {
+    expect(translate(parsed[10])).toEqual({
+      kind: 'runReport',
+      report: {
+        steps: 2,
+        calls: 1,
+        failedCalls: 0,
+        totalMs: 23.4,
+        llmMs: 15.9,
+        toolMs: 0.085,
+        table: 'timings (total 39 ms)'
+      }
+    })
+  })
+
   it('reads the closing answer', () => {
-    expect(translate(parsed[8])).toEqual({ kind: 'done', answer: 'Готово: приложения перечислены.' })
+    expect(translate(parsed[11])).toEqual({ kind: 'done', answer: 'Готово: приложения перечислены.' })
   })
 
   it('produces no event for a plain acknowledgement', () => {
@@ -74,7 +107,8 @@ describe('translate: a recorded transcript from the real agent', () => {
     const events = parsed.map(translate).filter(Boolean)
 
     expect(events.map((event) => event!.kind)).toEqual([
-      'ready', 'step', 'narration', 'tool', 'result', 'step', 'narration', 'done'
+      'ready', 'step', 'stepTiming', 'narration', 'tool', 'result',
+      'step', 'stepTiming', 'narration', 'runReport', 'done'
     ])
   })
 })
@@ -139,6 +173,73 @@ describe('translate: the fields the card depends on', () => {
     expect(translate({ event: 'cancelled' })).toEqual({ kind: 'cancelled' })
     expect(translate({ event: 'error', params: { message: 'нет доступа', code: 'permission' } }))
       .toEqual({ kind: 'error', message: 'нет доступа', code: 'permission' })
+  })
+
+  it('splits a call into the phases that actually ran', () => {
+    // A `get_app_state` walk and capture: the two phases that can dominate a
+    // call, and the two that are fixed in completely different places.
+    const event = translate({
+      event: 'result',
+      params: {
+        name: 'get_app_state', ok: true, step: 1,
+        text: 'tree', wall_ms: 493.02, tree_ms: 476.35, capture_ms: 12.1, encode_ms: 4.6,
+        image_bytes: 151812
+      }
+    })
+
+    expect(event).toMatchObject({
+      timing: {
+        wallMs: 493.02, treeMs: 476.35, captureMs: 12.1, encodeMs: 4.6, imageBytes: 151812
+      }
+    })
+  })
+
+  it('keeps a phase that did not run absent, rather than zero', () => {
+    // "no capture" and "a capture that took 0 ms" are different facts, and a
+    // report that conflates them blames the wrong phase.
+    const event = translate({
+      event: 'result',
+      params: { name: 'list_apps', ok: true, step: 1, text: 'apps', wall_ms: 0.085 }
+    })
+
+    expect(event).toMatchObject({ timing: { wallMs: 0.085 } })
+    if (event?.kind !== 'result') return
+    expect('treeMs' in event.timing).toBe(false)
+    expect('captureMs' in event.timing).toBe(false)
+    expect('imageBytes' in event.timing).toBe(false)
+  })
+
+  it('does not round a sub-millisecond call away', () => {
+    // Most tools are this cheap. Rounding them to 0 would make the fast path
+    // look free and hide the ones that are not.
+    const event = translate({
+      event: 'result',
+      params: { name: 'click', ok: true, step: 1, text: '', wall_ms: 0.4 }
+    })
+
+    expect(event).toMatchObject({ timing: { wallMs: 0.4 } })
+  })
+
+  it('reads a step with no narration, which is still a step the user waited for', () => {
+    expect(translate({
+      event: 'step-timing',
+      params: { step: 2, llm_ms: 900, prompt_bytes: 20000, history: 12, calls: 0 }
+    })).toEqual({
+      kind: 'stepTiming',
+      step: 2,
+      timing: { llmMs: 900, promptBytes: 20000, history: 12, calls: 0 }
+    })
+  })
+
+  it('omits token counts the provider did not report', () => {
+    const event = translate({
+      event: 'step-timing',
+      params: { step: 1, llm_ms: 10, prompt_bytes: 46, history: 1, calls: 0 }
+    })
+
+    if (event?.kind !== 'stepTiming') throw new Error('expected a step timing')
+    expect('inputTokens' in event.timing).toBe(false)
+    expect('outputTokens' in event.timing).toBe(false)
   })
 
   it('ignores an event it does not know', () => {

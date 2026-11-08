@@ -69,15 +69,72 @@ export interface AgentRunOptions {
   verifyActions: boolean
 }
 
+/**
+ * Where one tool call spent its time.
+ *
+ * The three phases have three different fixes — the accessibility walk is IPC,
+ * the capture is ScreenCaptureKit, the encode is PNG compression — so a single
+ * "the click took 1.9 s" number says nothing about what to change. Fields are
+ * absent when the phase did not run, which is not the same as taking 0 ms.
+ */
+export interface AgentToolTiming {
+  /** Total wall time of the call. */
+  wallMs?: number
+  /** Accessibility tree walk. */
+  treeMs?: number
+  /** Window capture. */
+  captureMs?: number
+  /** PNG encoding of the captured image. */
+  encodeMs?: number
+  /** Size of the screenshot handed to the model, before base64. */
+  imageBytes?: number
+}
+
+/** What one model round trip cost, and what it was asked with. */
+export interface AgentStepTiming {
+  /** Wall time of the provider call. */
+  llmMs: number
+  /** Bytes of prompt text after history trimming. */
+  promptBytes: number
+  /** How many messages survived trimming. */
+  history: number
+  /** Tool calls the model asked for in this answer. */
+  calls: number
+  /** Tokens the provider reported, when it reported any. */
+  inputTokens?: number
+  outputTokens?: number
+}
+
+/** The run's totals, emitted once when the loop exits. */
+export interface AgentRunReport {
+  steps: number
+  calls: number
+  failedCalls: number
+  totalMs: number
+  llmMs: number
+  toolMs: number
+  /** The agent's own timing table, when it was collecting one. */
+  table?: string
+}
+
 /** What the agent reports while a run is in flight. */
 export type AgentSidecarEvent =
   | { kind: 'ready'; tools: number }
   | { kind: 'step'; step: number; total: number }
+  | { kind: 'stepTiming'; step: number; timing: AgentStepTiming }
   | { kind: 'narration'; step: number; text: string }
   | { kind: 'tool'; step: number; name: string; args: Record<string, unknown>; narration?: string }
-  | { kind: 'result'; step: number; name: string; ok: boolean; text: string }
+  | {
+      kind: 'result'
+      step: number
+      name: string
+      ok: boolean
+      text: string
+      timing: AgentToolTiming
+    }
   | { kind: 'approval'; request: AgentToolRequest }
   | { kind: 'stopped'; reason: string }
+  | { kind: 'runReport'; report: AgentRunReport }
   | { kind: 'done'; answer: string }
   | { kind: 'cancelled' }
   | { kind: 'error'; message: string; code?: string }
@@ -336,6 +393,23 @@ function wireProvider(provider: AgentProvider): Record<string, unknown> {
 }
 
 /**
+ * One optional numeric field, renamed.
+ *
+ * Spread into an object so an absent field stays absent: the difference between
+ * "the capture did not run" and "the capture took 0 ms" is the difference
+ * between a tool that does not screenshot and one that screenshots instantly,
+ * and a `0` would erase it.
+ */
+function optionalNumber(
+  params: Record<string, unknown>,
+  wire: string,
+  local: string
+): Record<string, number> {
+  const value = params[wire]
+  return typeof value === 'number' && Number.isFinite(value) ? { [local]: value } : {}
+}
+
+/**
  * Turns one protocol line into the shape the app thinks in.
  *
  * Exported for the transcript test: the protocol is a contract between two
@@ -361,13 +435,46 @@ export function translate(message: Message): AgentSidecarEvent | null {
         args: (params.arguments as Record<string, unknown>) ?? {},
         narration: text('narration') || undefined
       }
+    case 'step-timing':
+      return {
+        kind: 'stepTiming',
+        step: number('step'),
+        timing: {
+          llmMs: number('llm_ms'),
+          promptBytes: number('prompt_bytes'),
+          history: number('history'),
+          calls: number('calls'),
+          ...optionalNumber(params, 'input_tokens', 'inputTokens'),
+          ...optionalNumber(params, 'output_tokens', 'outputTokens')
+        }
+      }
     case 'result':
       return {
         kind: 'result',
         step: number('step'),
         name: text('name'),
         ok: params.ok !== false,
-        text: text('text')
+        text: text('text'),
+        timing: {
+          ...optionalNumber(params, 'wall_ms', 'wallMs'),
+          ...optionalNumber(params, 'tree_ms', 'treeMs'),
+          ...optionalNumber(params, 'capture_ms', 'captureMs'),
+          ...optionalNumber(params, 'encode_ms', 'encodeMs'),
+          ...optionalNumber(params, 'image_bytes', 'imageBytes')
+        }
+      }
+    case 'run-report':
+      return {
+        kind: 'runReport',
+        report: {
+          steps: number('steps'),
+          calls: number('calls'),
+          failedCalls: number('failed_calls'),
+          totalMs: number('total_ms'),
+          llmMs: number('llm_ms'),
+          toolMs: number('tool_ms'),
+          table: text('table') || undefined
+        }
       }
     case 'approval':
       return {

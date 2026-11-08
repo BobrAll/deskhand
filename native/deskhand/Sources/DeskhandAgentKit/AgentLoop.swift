@@ -185,6 +185,12 @@ public final class AgentLoop {
         var lastCallSignature: String?
         var repeatCount = 0
         let runClock = TimingClock()
+        // Counted here rather than read back from `timings`: the timing table is
+        // opt-in and grouped by label, so it cannot answer "how many calls
+        // failed" without the host parsing strings.
+        var stepsRun = 0
+        var callsRun = 0
+        var callsFailed = 0
 
         let systemPrompt = Self.systemPrompt + "\n\n" + environmentSummary()
 
@@ -192,6 +198,7 @@ public final class AgentLoop {
             try Task.checkCancellation()
             try cancel?.check()
             observer?.stepStarted(step, of: options.maxSteps)
+            stepsRun = step
             log("step \(step): asking \(provider.config.model)")
 
             let prompt = trim(messages)
@@ -210,6 +217,18 @@ public final class AgentLoop {
             }
             let llmMilliseconds = stepClock.milliseconds
             timings.record("llm", milliseconds: llmMilliseconds)
+            // The host records this as the step's cost. It is emitted before the
+            // branch below so the step that ends the run is timed too: the last
+            // round trip is usually the most expensive one, and a timeline that
+            // stops one line short of the answer is a timeline nobody trusts.
+            observer?.stepTimed(step, timing: StepTiming(
+                llmMilliseconds: llmMilliseconds,
+                promptBytes: promptBytes,
+                historyMessages: prompt.count,
+                callCount: completion.toolCalls.count,
+                inputTokens: completion.usage?.inputTokens,
+                outputTokens: completion.usage?.outputTokens
+            ))
 
             // Only narration that leads into tool calls is logged; the final
             // answer is printed once by the CLI, so echoing it here too would
@@ -227,6 +246,7 @@ public final class AgentLoop {
                 try Task.checkCancellation()
                 timings.record("run total", milliseconds: runClock.milliseconds)
                 observer?.stepAnswered(step, narration: completion.text, calls: [])
+                reportRun(steps: stepsRun, calls: callsRun, failed: callsFailed, clock: runClock)
                 return completion.text
             }
 
@@ -278,8 +298,12 @@ public final class AgentLoop {
                     narration: completion.text
                 )
                 let wall = callClock.milliseconds
+                callsRun += 1
+                if result.isError { callsFailed += 1 }
                 recordToolTimings(result.timings, name: call.name)
-                observer?.toolFinished(step, call: call, text: result.plainText, isError: result.isError)
+                observer?.toolFinished(
+                    step, call: call, text: result.plainText,
+                    isError: result.isError, timings: result.timings)
                 log("  -> \(result.isError ? "error: " : "")\(previewText(result.plainText))")
                 if options.timings, !result.timings.describe().isEmpty {
                     log("  ~ \(TimingFormat.duration(wall)): \(result.timings.describe())")
@@ -336,12 +360,33 @@ public final class AgentLoop {
 
         timings.record("run total", milliseconds: runClock.milliseconds)
         observer?.loopStopped("the step budget ran out")
+        reportRun(steps: stepsRun, calls: callsRun, failed: callsFailed, clock: runClock)
         return "Stopped after \(options.maxSteps) steps without finishing the task."
     }
 
     /// The timing table, for the CLI to print after the run.
     public func timingReport() -> String {
         timings.report()
+    }
+
+    /// Hands the host the run's totals exactly once.
+    ///
+    /// Called at both exits of the loop and nowhere else: a report emitted from a
+    /// cancellation path as well would arrive twice, and the second one would
+    /// describe a run that had already been accounted for.
+    private func reportRun(steps: Int, calls: Int, failed: Int, clock: TimingClock) {
+        let rows = timings.grouped()
+        let llm = rows.first { $0.label == "llm" }?.total ?? 0
+        let tools = rows.filter { $0.label.hasPrefix("tool ") }.reduce(0) { $0 + $1.total }
+        observer?.runFinished(RunReport(
+            steps: steps,
+            calls: calls,
+            failedCalls: failed,
+            totalMilliseconds: clock.milliseconds,
+            llmMilliseconds: llm,
+            toolMilliseconds: tools,
+            table: options.timings ? timings.report() : ""
+        ))
     }
 
     private func recordToolTimings(_ tool: ToolTimings, name: String) {

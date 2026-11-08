@@ -24,6 +24,7 @@
     "dist": "electron-vite build && electron-builder --mac",
     "test:gesture": "node scripts/test-gesture.mjs",
     "agent:report": "node scripts/agent-trace-report.mjs",
+    "agent:timeline": "node scripts/agent-trace-report.mjs --timeline",
     "test:native": "node scripts/test-native.mjs",
     "lint": "eslint src"
   },

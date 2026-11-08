@@ -37,7 +37,7 @@ import { helperBinary, watchForAbort, type AbortWatcher } from '../native/helper
 import { getSettings, patchSettings } from '../settings/store'
 import { classifyCall, describeCall, rememberKey } from './approval'
 import { agentBinary, AgentSidecar, type AgentProvider, type AgentSidecarEvent } from './sidecar'
-import { trace } from './trace'
+import { trace, traceWithin } from './trace'
 
 export interface AgentHost {
   /** Makes the card ignore the mouse while the agent works, and take it back while it asks. */
@@ -67,6 +67,39 @@ const EMPTY: AgentEvent = { phase: 'idle', step: 0, total: 0, label: '' }
  * for the rest of the day. The agent has its own ceiling; this one is the host's.
  */
 const APPROVAL_TIMEOUT_MS = 5 * 60_000
+
+/**
+ * Milliseconds, at one decimal.
+ *
+ * Not integers: most tool calls take a fraction of a millisecond, and rounding
+ * them to 0 would make the cheap path look free — which is exactly the wrong
+ * lesson to draw from a trace when a 476 ms tree walk sits next to it.
+ */
+function ms(value: number): number {
+  return Math.round(value * 10) / 10
+}
+
+/** A phase's share of a total, as a whole percent; null when the total is 0. */
+function share(part: number, total: number): number | null {
+  return total > 0 ? Math.round((part / total) * 100) : null
+}
+
+/** The same rounding, applied to the phases a tool call may have reported. */
+function roundedTiming(timing: {
+  wallMs?: number
+  treeMs?: number
+  captureMs?: number
+  encodeMs?: number
+  imageBytes?: number
+}): Record<string, number> {
+  const fields: Record<string, number> = {}
+  if (timing.wallMs !== undefined) fields.wallMs = ms(timing.wallMs)
+  if (timing.treeMs !== undefined) fields.treeMs = ms(timing.treeMs)
+  if (timing.captureMs !== undefined) fields.captureMs = ms(timing.captureMs)
+  if (timing.encodeMs !== undefined) fields.encodeMs = ms(timing.encodeMs)
+  if (timing.imageBytes !== undefined) fields.imageBytes = timing.imageBytes
+  return fields
+}
 
 export function createAgentController(host: AgentHost) {
   const sidecar = new AgentSidecar()
@@ -172,7 +205,15 @@ export function createAgentController(host: AgentHost) {
    * phase through `host.emit`, so the caller only has to deal with the outcome —
    * and to put it into the answer.
    */
-  async function run(input: AgentRunInput): Promise<AgentRunResult> {
+  function run(input: AgentRunInput): Promise<AgentRunResult> {
+    // A turn of its own when the caller did not open one. The recorder is
+    // silent outside a turn by design, so a run that reached here from a path
+    // that does not trace would otherwise be invisible — and an invisible run
+    // is indistinguishable from one that never happened.
+    return traceWithin({ source: 'agent-controller' }, () => runTurn(input))
+  }
+
+  async function runTurn(input: AgentRunInput): Promise<AgentRunResult> {
     if (running) return { answer: '', actions: [], message: 'Агент уже выполняет действие.' }
     const settings = getSettings()
     const state = availability()
@@ -202,6 +243,7 @@ export function createAgentController(host: AgentHost) {
     })
 
     publish({ phase: 'arming', step: 0, total, label: 'Приготовился', actions: [], approval: null })
+    trace('agent.start', { maxSteps: total, verify: settings.agent.verifyResult, hasApp: Boolean(input.appName) })
     // The card must not eat the agent's clicks from here on. It is lifted again
     // for each question and put back after the answer.
     host.setPassthrough(true)
@@ -226,7 +268,7 @@ export function createAgentController(host: AgentHost) {
         maxSteps: total,
         verifyActions: settings.agent.verifyResult
       })
-      trace('agent.run', { maxSteps: total, hasApp: Boolean(input.appName) })
+      trace('agent.accepted', { maxSteps: total })
     } catch (error) {
       finish({
         answer: '',
@@ -258,6 +300,7 @@ export function createAgentController(host: AgentHost) {
       case 'step':
         active.step = event.step
         active.total = event.total || active.total
+        trace('agent.step', { step: event.step, total: active.total })
         publish({
           phase: 'acting',
           step: event.step,
@@ -280,6 +323,10 @@ export function createAgentController(host: AgentHost) {
         }
         return
       case 'tool':
+        // The start is recorded separately from the result so a call that never
+        // finished — cancelled mid-flight, or the process killed — still appears
+        // in the timeline as a call that began.
+        trace('agent.tool', { step: event.step, tool: event.name })
         publish({
           phase: 'acting',
           step: event.step,
@@ -294,14 +341,52 @@ export function createAgentController(host: AgentHost) {
           actions: rows()
         })
         return
-      case 'result':
+      case 'stepTiming':
+        // The round trip, as the agent measured it. `promptBytes` and `history`
+        // are here because they explain the duration better than the duration
+        // does: a slow step on a small history is the network, the same step on
+        // a large one is the prompt.
+        trace('agent.llm', {
+          step: event.step,
+          llmMs: ms(event.timing.llmMs),
+          promptBytes: event.timing.promptBytes,
+          history: event.timing.history,
+          calls: event.timing.calls,
+          ...(event.timing.inputTokens === undefined ? {} : { inputTokens: event.timing.inputTokens }),
+          ...(event.timing.outputTokens === undefined ? {} : { outputTokens: event.timing.outputTokens })
+        })
+        return
+      case 'result': {
         active.actions.push({
           tool: event.name,
           label: last.label || event.name,
           ok: event.ok
         })
-        trace('agent.call', { tool: event.name, ok: event.ok })
+        // The phases are recorded separately because they have different fixes;
+        // a field that did not run is omitted rather than written as 0.
+        trace('agent.call', {
+          step: event.step,
+          tool: event.name,
+          ok: event.ok,
+          ...roundedTiming(event.timing)
+        })
         publish({ phase: 'acting', step: event.step, total: active.total, actions: rows() })
+        return
+      }
+      case 'runReport':
+        trace('agent.report', {
+          steps: event.report.steps,
+          calls: event.report.calls,
+          failedCalls: event.report.failedCalls,
+          totalMs: ms(event.report.totalMs),
+          llmMs: ms(event.report.llmMs),
+          toolMs: ms(event.report.toolMs),
+          // The split that decides what to fix: waiting on the model versus
+          // working on the machine. Percentages rather than a second opinion on
+          // the raw numbers, because the ratio is the point.
+          modelShare: share(event.report.llmMs, event.report.totalMs)
+        })
+        if (event.report.table) trace('agent.timings', { table: event.report.table })
         return
       case 'approval':
         ask(event.request)

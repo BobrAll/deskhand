@@ -15,6 +15,7 @@ import { registerIpc } from './ipc'
 import { createTray, destroyTray, refreshTray } from './tray'
 import { destroyPointer } from './pointer'
 import { destroyAgentCursor } from './agent/cursor'
+import { flushTrace } from './agent/trace'
 import { openOnboardingWindow, openSettingsWindow, overlayHost, showActiveWindow } from './windows'
 import { getSettings, patchSettings } from './settings/store'
 import { readPermissions } from './permissions'
@@ -228,6 +229,9 @@ if (!app.requestSingleInstanceLock()) {
     // The agent is a child process that blocks in a run loop; without this it
     // outlives the app and keeps a pipe open.
     overlay.disposeAgent()
+    // The trace queues its appends; a quit on the last event of a run would
+    // otherwise drop the line that says how the run ended.
+    void flushTrace()
     destroyTray()
     destroyPointer()
     destroyAgentCursor()
