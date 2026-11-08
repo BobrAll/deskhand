@@ -93,8 +93,29 @@ describe('translate: a recorded transcript from the real agent', () => {
     })
   })
 
-  it('reads the closing answer', () => {
-    expect(translate(parsed[11])).toEqual({ kind: 'done', answer: 'Готово: приложения перечислены.' })
+  it('reads the closing answer, and whether the run actually finished', () => {
+    expect(translate(parsed[11])).toEqual({
+      kind: 'done', answer: 'Готово: приложения перечислены.', complete: true
+    })
+  })
+
+  it('reads a run that stopped at its budget as unfinished', () => {
+    // The loop returns a closing sentence on this path too, so the flag is the
+    // only thing that distinguishes it from success.
+    expect(translate({
+      event: 'done',
+      params: { answer: 'Stopped after 3 steps without finishing the task.', complete: false }
+    })).toEqual({
+      kind: 'done', answer: 'Stopped after 3 steps without finishing the task.', complete: false
+    })
+  })
+
+  it('treats a done without the flag as finished, for older binaries', () => {
+    // A missing field is not a failure: an agent built before this flag existed
+    // still describes a run that ended, and turning those into errors would
+    // break every run against a stale binary.
+    expect(translate({ event: 'done', params: { answer: 'Готово.' } }))
+      .toMatchObject({ complete: true })
   })
 
   it('produces no event for a plain acknowledgement', () => {

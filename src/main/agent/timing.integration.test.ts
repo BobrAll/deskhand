@@ -26,7 +26,15 @@ const BINARY = fileURLToPath(
 )
 const built = existsSync(BINARY)
 
-/** Two answers: a batched pair of read-only calls, then a closing sentence. */
+/**
+ * What the stub model does on its first answer.
+ *
+ * Two modes, because the two things this file has to prove are different: that
+ * the timings arrive at all, and that a run which never finishes is reported as
+ * unfinished rather than as success. The second is the one that cost a real
+ * user a task.
+ */
+let mode: 'batch' | 'spin' = 'batch'
 let round = 0
 let server: Server
 let baseUrl: string
@@ -40,6 +48,22 @@ function startModel(): Promise<void> {
     request.resume()
     request.on('end', () => {
       round += 1
+      if (mode === 'spin') {
+        // Always asks for another call, so the loop can only end on its budget.
+        response.writeHead(200, { 'Content-Type': 'application/json' })
+        response.end(JSON.stringify({
+          id: `c${round}`, object: 'chat.completion',
+          choices: [{ index: 0, finish_reason: 'tool_calls', message: {
+            role: 'assistant', content: 'Смотрю.',
+            tool_calls: [{
+              id: `c${round}`, type: 'function',
+              function: { name: 'list_apps', arguments: '{}' }
+            }]
+          } }],
+          usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 }
+        }))
+        return
+      }
       const message = round === 1
         ? {
             role: 'assistant',
@@ -79,7 +103,7 @@ function startModel(): Promise<void> {
 }
 
 /** Runs one task through the real binary and collects every event it emits. */
-function runAgent(task: string): Promise<AgentSidecarEvent[]> {
+function runAgent(task: string, maxSteps = 3): Promise<AgentSidecarEvent[]> {
   // The stub answers by turn number, so each run has to start from its first
   // answer again — otherwise the second test gets a closing sentence for step 1.
   round = 0
@@ -131,7 +155,7 @@ function runAgent(task: string): Promise<AgentSidecarEvent[]> {
           wire: 'openai', base_url: baseUrl, model: 'stub',
           api_key: 'test', max_tokens: 512, temperature: 0
         },
-        options: { max_steps: 3, verify_actions: false, verbose: false, timings: true }
+        options: { max_steps: maxSteps, verify_actions: false, verbose: false, timings: true }
       }
     }) + '\n')
   })
@@ -143,6 +167,54 @@ beforeAll(async () => {
 
 afterAll(() => {
   server?.close()
+})
+
+describe.skipIf(!built)('a run that never finishes is reported as unfinished', () => {
+  /**
+   * The failure this pins down: a task the agent could not complete ended with
+   * a `done` carrying the loop's own English sentence, and the card drew a
+   * green checkmark over it. The task was "send a message in Telegram"; the run
+   * opened Telegram, typed the word into search, and called itself done.
+   */
+  it('ends with a done that says it did not finish', async () => {
+    mode = 'spin'
+    try {
+      const events = await runAgent('отправь сообщение в избранное', 3)
+      const done = events.find((event) => event.kind === 'done')
+
+      if (done?.kind !== 'done') throw new Error('expected a done event')
+      expect(done.complete).toBe(false)
+      // The loop's own sentence is still what it returns; the flag is what tells
+      // the host not to show it as an answer.
+      expect(done.answer).toContain('Stopped after 3 steps')
+    } finally {
+      mode = 'batch'
+    }
+  })
+
+  it('says why it stopped, before it ends', async () => {
+    mode = 'spin'
+    try {
+      const events = await runAgent('отправь сообщение в избранное', 3)
+      const kinds = events.map((event) => event.kind)
+
+      expect(kinds).toContain('stopped')
+      expect(kinds.indexOf('stopped')).toBeLessThan(kinds.indexOf('done'))
+      expect(events.find((event) => event.kind === 'stopped'))
+        .toMatchObject({ reason: 'the step budget ran out' })
+    } finally {
+      mode = 'batch'
+    }
+  })
+
+  it('still reports a finished run as finished', async () => {
+    const events = await runAgent('Посмотри, что открыто')
+    const done = events.find((event) => event.kind === 'done')
+
+    if (done?.kind !== 'done') throw new Error('expected a done event')
+    expect(done.complete).toBe(true)
+    expect(events.some((event) => event.kind === 'stopped')).toBe(false)
+  })
 })
 
 describe.skipIf(!built)('the agent reports its timings over the wire', () => {

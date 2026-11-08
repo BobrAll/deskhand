@@ -1006,12 +1006,23 @@ export function createOverlayController(host: OverlayHost) {
 
         // The agent's closing sentence is the answer. It is the only text that
         // knows what actually happened on screen, so nothing here paraphrases it.
-        session.answer = run.answer.trim() || (run.message ?? '')
-        outcome = run.blocked ? 'blocked' : run.aborted ? 'cancelled'
-          : run.answer.trim() ? 'agent-report' : 'agent-silent'
-        reason = run.blocked ? 'agent-unavailable' : run.aborted ? 'agent-stop'
-          : run.answer.trim() ? 'agent-answer' : 'no-answer'
-        if (run.actions.length === 0 && !run.blocked) {
+        //
+        // Except when the run gave up: the loop's own closing line on that path
+        // ("Stopped after 3 steps without finishing the task") is a diagnostic,
+        // not an answer, and it is in English. `message` carries what the
+        // controller decided to say instead, so the two never mix.
+        session.answer = run.incomplete
+          ? (run.message ?? '')
+          : run.answer.trim() || (run.message ?? '')
+        outcome = run.blocked ? 'blocked'
+          : run.aborted ? 'cancelled'
+            : run.incomplete ? 'incomplete'
+              : run.answer.trim() ? 'agent-report' : 'agent-silent'
+        reason = run.blocked ? 'agent-unavailable'
+          : run.aborted ? 'agent-stop'
+            : run.incomplete ? 'agent-incomplete'
+              : run.answer.trim() ? 'agent-answer' : 'no-answer'
+        if (run.actions.length === 0 && !run.blocked && !run.incomplete) {
           // Nothing was touched: this was an answer that happened to be phrased
           // as a command. The fallback keeps the card from showing an empty body.
           session.answer = emptyAnswerFallback(session.answer, 0) || session.answer

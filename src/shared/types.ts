@@ -247,6 +247,16 @@ export interface AgentRunResult {
   aborted?: boolean
   /** Nothing was attempted: the mode is off or a permission is missing. */
   blocked?: boolean
+  /**
+   * The run ended without finishing the task: it ran out of steps, or the loop
+   * guard caught it repeating itself.
+   *
+   * Distinct from `blocked`, which means the run never started, and from
+   * `aborted`, which means the user stopped it. This is the agent's own failure,
+   * and the one case where an answer exists but the task does not — so the card
+   * has to say so rather than show a checkmark over a task it did not finish.
+   */
+  incomplete?: boolean
 }
 
 /** State of the agent’s screen glow and its caption at the pointer. */

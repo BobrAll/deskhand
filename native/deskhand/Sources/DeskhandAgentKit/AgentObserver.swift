@@ -31,7 +31,16 @@ public protocol AgentObserver: AnyObject, Sendable {
     /// accessibility walk, the window capture and the PNG encode.
     func toolFinished(_ step: Int, call: ToolCall, text: String, isError: Bool, timings: ToolTimings)
     /// The loop stopped for a reason other than success.
+    ///
+    /// Only ever emitted when the run actually ends: a host can treat it as a
+    /// verdict.
     func loopStopped(_ reason: String)
+    /// The loop guard fired, but the run continues.
+    ///
+    /// A separate event from `loopStopped` because it is not a stop. Folding the
+    /// two together — which is what this used to be — made a run that warned and
+    /// then finished look abandoned, and the host had no way to tell.
+    func loopWarned(_ reason: String)
     /// The run is over. `report` is the same table the CLI prints to stderr.
     func runFinished(_ report: RunReport)
 }
@@ -111,5 +120,6 @@ public extension AgentObserver {
     func toolStarted(_ step: Int, call: ToolCall, narration: String) {}
     func toolFinished(_ step: Int, call: ToolCall, text: String, isError: Bool, timings: ToolTimings) {}
     func loopStopped(_ reason: String) {}
+    func loopWarned(_ reason: String) {}
     func runFinished(_ report: RunReport) {}
 }

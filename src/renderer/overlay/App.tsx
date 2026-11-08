@@ -42,6 +42,7 @@ import { useWaiting } from './useWaiting'
 import { waitingStage } from './waiting'
 import { useVoice } from './useVoice'
 import { deriveView } from './viewFlags'
+import { agentLabel, agentMark, agentShowsCount } from './agentRow'
 import { keyPolicy, type KeyAction } from './keyPolicy'
 import { routeStream } from './streamRouting'
 
@@ -1182,9 +1183,9 @@ export function App() {
         afterwards.
       */}
       {agent && (
-        <div className="agent" data-phase={agent.phase}>
+        <div className="agent" data-phase={agent.phase} data-mark={agentMark(agent)}>
           <div className="agent-head">
-            {agent.phase === 'done' && agent.completed ? (
+            {agentMark(agent) === 'done' ? (
               <svg className="agent-check" viewBox="0 0 20 20" aria-hidden="true">
                 <circle className="agent-check-disc" cx="10" cy="10" r="9" />
                 <path className="agent-check-stroke" d="m5.5 10 3 3 6-6" pathLength="1" />
@@ -1192,14 +1193,8 @@ export function App() {
             ) : (
               <span className="agent-dot" aria-hidden />
             )}
-            <span className="agent-label">
-              {agent.phase === 'arming'
-                ? 'Нажму через мгновение — Escape отменит'
-                : agent.phase === 'aborted' || agent.phase === 'error'
-                  ? (agent.message ?? 'Остановлено')
-                  : agent.label || 'Готово'}
-            </span>
-            {agent.total > 0 && (agent.phase === 'acting' || agent.phase === 'asking') && (
+            <span className="agent-label">{agentLabel(agent)}</span>
+            {agentShowsCount(agent) && (
               <span className="agent-count">
                 {agent.step}/{agent.total}
               </span>

@@ -191,6 +191,11 @@ public final class AgentLoop {
         var stepsRun = 0
         var callsRun = 0
         var callsFailed = 0
+        // Set by the loop guard. Its own variable rather than a flag on the
+        // return value: the run still returns a sentence, and the caller needs
+        // to tell "the model finished" from "the guard cut it short" without
+        // matching on English text.
+        finished = false
 
         let systemPrompt = Self.systemPrompt + "\n\n" + environmentSummary()
 
@@ -246,6 +251,9 @@ public final class AgentLoop {
                 try Task.checkCancellation()
                 timings.record("run total", milliseconds: runClock.milliseconds)
                 observer?.stepAnswered(step, narration: completion.text, calls: [])
+                // The only exit where the model decided it was done. Both other
+                // exits fall through to the return below.
+                finished = true
                 reportRun(steps: stepsRun, calls: callsRun, failed: callsFailed, clock: runClock)
                 return completion.text
             }
@@ -278,7 +286,16 @@ public final class AgentLoop {
                         change. Re-read the app state with get_app_state and try a different approach.
                         """
                     log("loop guard triggered on \(call.name)")
-                    observer?.loopStopped("the same call repeated without a change")
+                    // A warning, not a stop. The model is told what it did wrong
+                    // and gets the next step to recover — by then it has seen a
+                    // failure it can act on, and cutting the run short would
+                    // throw away a task that was one correction from finishing.
+                    //
+                    // It is reported as its own event rather than `loopStopped`:
+                    // this branch does not stop the loop, and a host that took
+                    // the old call at its word recorded a run as abandoned when
+                    // it went on to succeed.
+                    observer?.loopWarned("the same call repeated without a change")
                     messages.append(ChatMessage(
                         role: .tool,
                         text: warning,
@@ -356,6 +373,7 @@ public final class AgentLoop {
                     ))
                 }
             }
+
         }
 
         timings.record("run total", milliseconds: runClock.milliseconds)
@@ -363,6 +381,15 @@ public final class AgentLoop {
         reportRun(steps: stepsRun, calls: callsRun, failed: callsFailed, clock: runClock)
         return "Stopped after \(options.maxSteps) steps without finishing the task."
     }
+
+    /// Whether the last run ended because the model finished, rather than
+    /// because the loop cut it short.
+    ///
+    /// Read by the host after `run` returns. The loop returns a closing sentence
+    /// on every path, so the answer alone cannot carry this: a run that stopped
+    /// at its budget and a run that finished both produce one, and only this
+    /// tells them apart.
+    public private(set) var finished = false
 
     /// The timing table, for the CLI to print after the run.
     public func timingReport() -> String {

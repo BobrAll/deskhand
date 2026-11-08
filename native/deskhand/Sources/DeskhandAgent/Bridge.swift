@@ -182,8 +182,14 @@ final class Bridge: @unchecked Sendable {
             self?.finishRun(handle)
             guard let self else { return }
             if let answer {
+                // `complete` is the verdict, not an inference from the sentence.
+                // The loop returns a closing line on every path, so a host that
+                // only had the text could not tell "the model finished" from
+                // "the budget ran out" — and the app drew a checkmark over the
+                // second one.
                 self.emit(["event": .string("done"), "params": .object([
                     "answer": .string(answer),
+                    "complete": .bool(loop.finished),
                 ])])
             } else if let failure {
                 self.emit(["event": .string("error"), "params": .object([
@@ -428,6 +434,12 @@ private final class BridgeObserver: AgentObserver, @unchecked Sendable {
             params["image_bytes"] = .number(Double(timings.screenshotBytes))
         }
         bridge.emit(["event": .string("result"), "params": .object(params)])
+    }
+
+    func loopWarned(_ reason: String) {
+        bridge.emit(["event": .string("warning"), "params": .object([
+            "reason": .string(reason),
+        ])])
     }
 
     func loopStopped(_ reason: String) {

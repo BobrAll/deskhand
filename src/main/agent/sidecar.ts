@@ -133,9 +133,25 @@ export type AgentSidecarEvent =
       timing: AgentToolTiming
     }
   | { kind: 'approval'; request: AgentToolRequest }
+  /**
+   * The loop guard fired, and the run continues.
+   *
+   * Not a stop: the model is told what it did wrong and gets the next step to
+   * recover. Kept as its own event so a warned run that then succeeds is not
+   * recorded as one that was abandoned.
+   */
+  | { kind: 'warning'; reason: string }
   | { kind: 'stopped'; reason: string }
   | { kind: 'runReport'; report: AgentRunReport }
-  | { kind: 'done'; answer: string }
+  /**
+   * The run ended. `complete` is the loop's own verdict.
+   *
+   * Not inferred from `answer`: the loop returns a closing sentence on every
+   * path, including the one where it ran out of steps, so the text alone cannot
+   * distinguish "finished" from "gave up". A host that guessed from the sentence
+   * drew a checkmark over a task that had not been done.
+   */
+  | { kind: 'done'; answer: string; complete: boolean }
   | { kind: 'cancelled' }
   | { kind: 'error'; message: string; code?: string }
 
@@ -493,10 +509,15 @@ export function translate(message: Message): AgentSidecarEvent | null {
           narration: text('narration') || undefined
         }
       }
+    case 'warning':
+      return { kind: 'warning', reason: text('reason') }
     case 'stopped':
       return { kind: 'stopped', reason: text('reason') }
     case 'done':
-      return { kind: 'done', answer: text('answer') }
+      // Absent means complete: an older binary that does not send the field is
+      // still describing a run that ended, and treating a missing field as
+      // failure would turn every such run into an error.
+      return { kind: 'done', answer: text('answer'), complete: params.complete !== false }
     case 'cancelled':
       return { kind: 'cancelled' }
     case 'error':

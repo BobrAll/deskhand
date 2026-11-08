@@ -84,6 +84,42 @@ function share(part: number, total: number): number | null {
   return total > 0 ? Math.round((part / total) * 100) : null
 }
 
+/**
+ * A Russian noun in the form the number demands.
+ *
+ * `3 шага` and `8 шагов` are the same sentence with different endings, and a
+ * message that gets it wrong reads as broken at exactly the moment the user is
+ * trying to work out whether to trust the failure.
+ */
+function plural(count: number, one: string, few: string, many: string): string {
+  const mod10 = count % 10
+  const mod100 = count % 100
+  if (mod10 === 1 && mod100 !== 11) return one
+  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return few
+  return many
+}
+
+/**
+ * Why the run ended without finishing, in the user's language.
+ *
+ * The loop's reasons are its own English diagnostics ("the step budget ran
+ * out"), written for a log rather than for a person. Passing them through would
+ * put a sentence about budgets in front of someone who asked to send a message —
+ * and the loop's closing sentence on this path ("Stopped after 3 steps without
+ * finishing the task") is worse still, because it reads like an answer.
+ */
+function stopMessage(reason: string, total: number): string {
+  if (reason.includes('budget')) {
+    return `Не успел за ${total} ${plural(total, 'шаг', 'шага', 'шагов')} — задача осталась ` +
+      'невыполненной. Увеличьте лимит шагов в настройках или уточните запрос.'
+  }
+  if (reason.includes('repeated')) {
+    return 'Остановился: одно и то же действие повторялось без изменений. ' +
+      'Задача осталась невыполненной.'
+  }
+  return 'Задача осталась невыполненной.'
+}
+
 /** The same rounding, applied to the phases a tool call may have reported. */
 function roundedTiming(timing: {
   wallMs?: number
@@ -114,6 +150,16 @@ export function createAgentController(host: AgentHost) {
     actions: AgentActionRow[]
     step: number
     total: number
+    /**
+     * Why the loop gave up, when it did.
+     *
+     * The agent reports a stop and then ends the run anyway, so the two events
+     * arrive in that order: a run that hit its step budget still produces a
+     * `done` carrying the loop's last sentence. Without remembering the stop,
+     * that `done` is indistinguishable from success — and the card drew a green
+     * checkmark over a task it had not finished.
+     */
+    stopped: string | null
     /** The question waiting for the user; null when nothing is being asked. */
     pending: {
       request: AgentToolRequest
@@ -233,6 +279,7 @@ export function createAgentController(host: AgentHost) {
         actions,
         step: 0,
         total,
+        stopped: null,
         pending: null,
         finish: (result) => {
           if (settled) return
@@ -391,17 +438,46 @@ export function createAgentController(host: AgentHost) {
       case 'approval':
         ask(event.request)
         return
-      case 'stopped':
-        publish({
-          phase: 'error',
-          step: active.step,
-          total: active.total,
-          label: '',
-          actions: rows(),
-          message: event.reason
-        })
+      case 'warning':
+        // The loop guard fired and the run goes on. Recorded because a run that
+        // needed the warning is a run that nearly failed, but it must not touch
+        // `stopped`: that field is the verdict, and a warning is not one.
+        trace('agent.warned', { reason: event.reason, step: active.step })
         return
-      case 'done':
+      case 'stopped':
+        // Recorded, not published. The agent says why it gave up and then ends
+        // the run anyway, so a `done` always follows — and a stop drawn as its
+        // own terminal state would be overwritten a tick later. The reason is
+        // kept for the `done` that is about to arrive.
+        active.stopped = event.reason
+        trace('agent.stopped', { reason: event.reason, step: active.step })
+        return
+      case 'done': {
+        // A run that gave up is not a run that finished. The verdict comes from
+        // the agent, which knows which exit it took; `active.stopped` is the
+        // fallback for the reason, because the stop event carries a more
+        // specific one than "it did not finish".
+        //
+        // The loop's closing sentence on this path is its own diagnostic
+        // ("Stopped after 3 steps without finishing the task"), not the model's,
+        // so it is not the answer — the card says what happened in the user's
+        // language instead.
+        const stopped = event.complete ? null : (active.stopped ?? 'incomplete')
+        if (stopped !== null) {
+          const explanation = stopMessage(stopped, active.total)
+          publish({
+            phase: 'done',
+            completed: false,
+            step: 0,
+            total: 0,
+            label: explanation,
+            actions: rows(),
+            approval: null,
+            message: explanation
+          })
+          finish({ answer: '', actions: rows(), message: explanation, incomplete: true })
+          return
+        }
         publish({
           phase: 'done',
           completed: true,
@@ -413,6 +489,7 @@ export function createAgentController(host: AgentHost) {
         })
         finish({ answer: event.answer, actions: rows() })
         return
+      }
       case 'cancelled':
         publish({
           phase: 'aborted',

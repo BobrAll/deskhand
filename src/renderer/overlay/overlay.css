@@ -495,7 +495,15 @@ button.tag.clear {
   background: var(--danger);
 }
 
-.agent[data-phase='done'] .agent-dot {
+/* A run that ended without finishing is not a quiet finish. It is a phase of
+   `done` — that is the agent's word for "the loop is over" — so the colour has
+   to come from the verdict rather than from the phase, or a failed task would
+   show the same grey dot as a successful one. */
+.agent[data-mark='failed'] .agent-dot {
+  background: var(--danger);
+}
+
+.agent[data-phase='done'][data-mark='progress'] .agent-dot {
   background: var(--text-dim);
 }
 

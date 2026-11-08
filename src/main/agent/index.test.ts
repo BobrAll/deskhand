@@ -198,6 +198,129 @@ describe('a run that is blocked', () => {
   })
 })
 
+describe('a run that gave up', () => {
+  /**
+   * The agent reports a stop and then ends the run anyway, so a `done` always
+   * follows. Reading that `done` as success is what made a run that never sent
+   * the message draw a checkmark over a task it had not done.
+   */
+  it('does not report a run that ran out of steps as completed', async () => {
+    const h = harness()
+    const running = h.run()
+
+    await vi.waitFor(() => expect(state.runs).toHaveLength(1))
+    state.emit({ kind: 'stopped', reason: 'the step budget ran out' })
+    state.emit({ kind: 'done', complete: false, answer: 'Stopped after 3 steps without finishing the task.' })
+
+    const result = await running
+    expect(result.incomplete).toBe(true)
+    expect(result.answer).toBe('')
+    expect(h.last()).toMatchObject({ phase: 'done', completed: false })
+  })
+
+  it('does not put the loop’s own English diagnostic in the answer', async () => {
+    const h = harness()
+    const running = h.run()
+
+    await vi.waitFor(() => expect(state.runs).toHaveLength(1))
+    state.emit({ kind: 'stopped', reason: 'the step budget ran out' })
+    state.emit({ kind: 'done', complete: false, answer: 'Stopped after 3 steps without finishing the task.' })
+
+    const result = await running
+    // The loop's closing line on this path is a diagnostic, not an answer, and
+    // it is written in English. The user asked in Russian for a message to be
+    // sent; they should not be shown a sentence about a step budget.
+    expect(result.answer).not.toContain('Stopped after')
+    expect(result.message).toContain('Не успел')
+    expect(result.message).toContain('задача осталась невыполненной')
+  })
+
+  it('says what happened in Russian, with the ending the number needs', async () => {
+    for (const [total, ending] of [[1, '1 шаг'], [3, '3 шага'], [8, '8 шагов']] as const) {
+      state.maxSteps = total
+      state.runs = []
+      const h = harness()
+      const running = h.run()
+      await vi.waitFor(() => expect(state.runs).toHaveLength(1))
+      state.emit({ kind: 'stopped', reason: 'the step budget ran out' })
+      state.emit({ kind: 'done', complete: false, answer: 'Stopped.' })
+
+      const result = await running
+      expect(result.message).toContain(ending)
+    }
+  })
+
+  it('does not treat a loop-guard warning as a failure', async () => {
+    // The guard warns and the run continues, so a run that recovered from it
+    // finished. Recording the warning as a stop is what made this ambiguous.
+    const h = harness()
+    const running = h.run()
+
+    await vi.waitFor(() => expect(state.runs).toHaveLength(1))
+    state.emit({ kind: 'warning', reason: 'the same call repeated without a change' })
+    state.emit({ kind: 'done', answer: 'Сообщение отправлено.', complete: true })
+
+    const result = await running
+    expect(result.incomplete).toBeUndefined()
+    expect(result.answer).toBe('Сообщение отправлено.')
+    expect(h.last()).toMatchObject({ phase: 'done', completed: true })
+  })
+
+  it('records the warning without turning it into a verdict', async () => {
+    const h = harness()
+    const running = h.run()
+
+    await vi.waitFor(() => expect(state.runs).toHaveLength(1))
+    state.emit({ kind: 'warning', reason: 'the same call repeated without a change' })
+    state.emit({ kind: 'done', answer: 'Готово.', complete: true })
+    await running
+
+    expect(h.trace().find((line) => line.event === 'agent.warned'))
+      .toMatchObject({ reason: 'the same call repeated without a change' })
+    expect(h.trace().some((line) => line.event === 'agent.stopped')).toBe(false)
+  })
+
+  it('names the loop guard when that is what stopped it', async () => {
+    const h = harness()
+    const running = h.run()
+
+    await vi.waitFor(() => expect(state.runs).toHaveLength(1))
+    state.emit({ kind: 'stopped', reason: 'the same call repeated without a change' })
+    state.emit({ kind: 'done', complete: false, answer: 'Stopped.' })
+
+    const result = await running
+    expect(result.incomplete).toBe(true)
+    expect(result.message).toContain('повторялось')
+  })
+
+  it('still reports the model’s own sentence when the run did finish', async () => {
+    const h = harness()
+    const running = h.run()
+
+    await vi.waitFor(() => expect(state.runs).toHaveLength(1))
+    state.emit({ kind: 'done', complete: true, answer: 'Сообщение отправлено.' })
+
+    const result = await running
+    expect(result.incomplete).toBeUndefined()
+    expect(result.answer).toBe('Сообщение отправлено.')
+    expect(h.last()).toMatchObject({ phase: 'done', completed: true })
+  })
+
+  it('records the stop and the step it happened on', async () => {
+    const h = harness()
+    const running = h.run()
+
+    await vi.waitFor(() => expect(state.runs).toHaveLength(1))
+    state.emit({ kind: 'step', step: 3, total: 3 })
+    state.emit({ kind: 'stopped', reason: 'the step budget ran out' })
+    state.emit({ kind: 'done', complete: false, answer: 'Stopped.' })
+    await running
+
+    expect(h.trace().find((line) => line.event === 'agent.stopped'))
+      .toMatchObject({ reason: 'the step budget ran out', step: 3 })
+  })
+})
+
 describe('a run that works', () => {
   it('hands the card the click-through, then gives it back', async () => {
     const h = harness()
@@ -206,7 +329,7 @@ describe('a run that works', () => {
     // The card has to be click-through before the first call: it sits over the
     // window the agent is about to press.
     await vi.waitFor(() => expect(h.passthrough).toEqual([true]))
-    state.emit({ kind: 'done', answer: 'Куплено.' })
+    state.emit({ kind: 'done', complete: true, answer: 'Куплено.' })
     await running
 
     expect(h.passthrough).toEqual([true, false])
@@ -219,7 +342,7 @@ describe('a run that works', () => {
     await vi.waitFor(() => expect(state.runs).toHaveLength(1))
     state.emit({ kind: 'narration', step: 1, text: 'Нажимаю «Купить»' })
     state.emit({ kind: 'result', step: 1, name: 'click', ok: true, text: 'ok', timing: {} })
-    state.emit({ kind: 'done', answer: 'Товар в корзине.' })
+    state.emit({ kind: 'done', complete: true, answer: 'Товар в корзине.' })
 
     const result = await running
     expect(result.answer).toBe('Товар в корзине.')
@@ -233,7 +356,7 @@ describe('a run that works', () => {
     const running = h.run()
 
     await vi.waitFor(() => expect(state.runs).toHaveLength(1))
-    state.emit({ kind: 'done', answer: '' })
+    state.emit({ kind: 'done', complete: true, answer: '' })
     await running
 
     expect(state.runs[0]).toMatchObject({
@@ -264,7 +387,7 @@ describe('the question in the card', () => {
     expect(h.last()).toMatchObject({ phase: 'acting', approval: null })
     expect(h.passthrough).toEqual([true, false, true])
 
-    state.emit({ kind: 'done', answer: 'Готово.' })
+    state.emit({ kind: 'done', complete: true, answer: 'Готово.' })
     await running
   })
 
@@ -289,7 +412,7 @@ describe('the question in the card', () => {
     expect(h.last().phase).toBe('asking')
 
     h.controller.answer('call-3', false, false)
-    state.emit({ kind: 'done', answer: '' })
+    state.emit({ kind: 'done', complete: true, answer: '' })
     await running
   })
 
@@ -321,7 +444,7 @@ describe('the question in the card', () => {
     expect(state.approvals).toEqual([{ id: 'call-1', allow: true }])
     expect(h.passthrough).toEqual([true])
 
-    state.emit({ kind: 'done', answer: '' })
+    state.emit({ kind: 'done', complete: true, answer: '' })
     await running
   })
 
@@ -341,7 +464,7 @@ describe('the question in the card', () => {
     // A refusal that is not the user's decision must not lift the click-through.
     expect(h.passthrough).toEqual([true])
 
-    state.emit({ kind: 'done', answer: '' })
+    state.emit({ kind: 'done', complete: true, answer: '' })
     await running
   })
 
@@ -357,7 +480,7 @@ describe('the question in the card', () => {
 
     expect(state.approvals).toEqual([{ id: 'call-1', allow: true }])
 
-    state.emit({ kind: 'done', answer: '' })
+    state.emit({ kind: 'done', complete: true, answer: '' })
     await running
   })
 })
@@ -442,7 +565,7 @@ describe('the trace a run leaves behind', () => {
       kind: 'runReport',
       report: { steps: 1, calls: 1, failedCalls: 0, totalMs: 1950.4, llmMs: 1432.5, toolMs: 493.02 }
     })
-    state.emit({ kind: 'done', answer: 'Готово.' })
+    state.emit({ kind: 'done', complete: true, answer: 'Готово.' })
     await running
 
     const lines = h.trace()
@@ -483,7 +606,7 @@ describe('the trace a run leaves behind', () => {
       kind: 'runReport',
       report: { steps: 1, calls: 0, failedCalls: 0, totalMs: 10, llmMs: 10, toolMs: 0 }
     })
-    state.emit({ kind: 'done', answer: '' })
+    state.emit({ kind: 'done', complete: true, answer: '' })
     await running
 
     expect(h.trace().some((line) => line.event === 'agent.timings')).toBe(false)
