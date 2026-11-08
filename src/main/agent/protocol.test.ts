@@ -22,6 +22,7 @@ describe('parseAgentLine: marker recognition', () => {
       ['@scroll 0 -420', 'scroll'],
       ['@drag 0.1 0.2 0.3 0.4', 'drag'],
       ['@wait 600', 'wait'],
+      ['@open Telegram', 'open'],
       ['@done «Всё»', 'done'],
       ['@finish', 'done'],
       ['@look', 'look']
@@ -283,6 +284,32 @@ describe('parseAgentLine: @wait', () => {
     expect(parseAgentLine('@wait -5')).toEqual([])
     expect(parseAgentLine('@wait abc')).toEqual([])
     expect(parseAgentLine('@wait')).toEqual([])
+  })
+})
+
+describe('parseAgentLine: @open', () => {
+  /**
+   * "Открой Telegram" used to be reachable only as a click on the Dock icon:
+   * the plan had no way to say "start this application", so the model aimed at
+   * a pixel and the run depended on the icon being visible. `@open` is the
+   * direct form of the request and the system launches the app itself.
+   */
+  it('reads the application name and drops the quotes', () => {
+    expect(parseAgentLine('@open Telegram')).toEqual([
+      { action: { kind: 'open', name: 'Telegram' }, label: 'Открыть: Telegram' }
+    ])
+    expect(parseAgentLine('@open «Google Chrome»')?.[0].action).toEqual({ kind: 'open', name: 'Google Chrome' })
+  })
+
+  it('keeps a multi-word name intact', () => {
+    expect(parseAgentLine('@open Системные настройки')?.[0].action).toEqual({
+      kind: 'open', name: 'Системные настройки'
+    })
+  })
+
+  it('is unusable without a name', () => {
+    expect(parseAgentLine('@open')).toEqual([])
+    expect(parseAgentLine('@open   ')).toEqual([])
   })
 })
 

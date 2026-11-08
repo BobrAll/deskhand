@@ -82,7 +82,7 @@ function readPoint(tokens: string[]): { point: Point01; rest: string[] } | null 
  */
 export function parseAgentLine(line: string): ParsedAction[] | null {
   const trimmed = line.trim()
-  if (!/^@(click|move|type|key|press|navigate|browser|scroll|drag|wait|done|finish|look)\b/i.test(trimmed)) return null
+  if (!/^@(click|move|type|key|press|navigate|browser|open|scroll|drag|wait|done|finish|look)\b/i.test(trimmed)) return null
 
   const match = /^@([A-Za-z]+)\s*([\s\S]*)$/.exec(trimmed)
   if (!match) return null
@@ -104,6 +104,13 @@ export function parseAgentLine(line: string): ParsedAction[] | null {
 
   if (command === 'browser') {
     return body.trim() ? [] : [{ action: { kind: 'browser' }, label: 'Открыть браузер по умолчанию' }]
+  }
+
+  if (command === 'open') {
+    // The application name, as it is written on the icon or in the menu.
+    const name = cleanLabel(body) || body.trim()
+    if (!name || name.length > 128) return []
+    return [{ action: { kind: 'open', name }, label: `Открыть: ${name}` }]
   }
 
   if (command === 'navigate') {

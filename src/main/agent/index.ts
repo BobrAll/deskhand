@@ -43,6 +43,7 @@ import {
   helperClick,
   helperDrag,
   helperMoveMouse,
+  helperLaunch,
   helperOpenBrowser,
   helperPressKey,
   helperFocused,
@@ -411,6 +412,18 @@ export function createAgentController(host: AgentHost) {
         const bundleId = await helperOpenBrowser(target.signal)
         return Boolean(bundleId && await waitFor(async () => (await helperFront())?.bundleId === bundleId, 1800))
       }
+      case 'open': {
+        // Launch, then confirm the screen agrees: success is "that application
+        // is now in front", not "the call returned". A slow cold start gets the
+        // same grace period a browser launch does.
+        const launched = await helperLaunch(action.name, target.signal)
+        if (!launched) return false
+        const want = launched.bundleId || launched.name
+        return waitFor(async () => {
+          const front = await helperFront()
+          return Boolean(front && (front.bundleId === want || front.pid === launched.pid))
+        }, 6000)
+      }
       case 'navigate':
         if (!url) return false
         return shell.openExternal(url).then(() => true, () => false)
@@ -597,7 +610,13 @@ export function createAgentController(host: AgentHost) {
         const beforeAction = await refreshWorking()
         if (token !== run || aborted.reason) break
 
-        const desktopInput = step.action.kind !== 'navigate' && step.action.kind !== 'browser' && step.action.kind !== 'wait'
+        // Actions that name their own target in the system — a URL, the default
+        // browser, an application to launch — do not depend on which window is
+        // in front, so they are not gated on the observation. Everything else
+        // posts events at the screen and must be.
+        const selfTargeted = step.action.kind === 'navigate' || step.action.kind === 'browser' ||
+          step.action.kind === 'open' || step.action.kind === 'wait'
+        const desktopInput = !selfTargeted
         if (!beforeAction && desktopInput) {
           trace('agent.blocked', { reason: 'focus-unknown' })
           const message = 'Не удалось проверить, какое приложение получит клавиши.'
@@ -605,7 +624,7 @@ export function createAgentController(host: AgentHost) {
           return { finished: false, message, recoverable: true, performed }
         }
 
-        if (step.action.kind !== 'navigate' && step.action.kind !== 'browser' && batchPid && working && working.pid !== batchPid) {
+        if (!selfTargeted && batchPid && working && working.pid !== batchPid) {
           trace('agent.blocked', { reason: 'focus-changed', backend: 'desktop' })
           const message = 'Активное приложение сменилось — нужен новый снимок экрана.'
           publish({ phase: 'error', step: index + 1, total, label: step.label, message, recoverable: true })

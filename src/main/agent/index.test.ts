@@ -31,7 +31,9 @@ const state = vi.hoisted(() => ({
     type: true,
     key: true,
     probe: null as null | AxProbe,
-    focused: null as null | Record<string, unknown>
+    focused: null as null | Record<string, unknown>,
+    /** What `helperLaunch` answers; null means the application was not found. */
+    launch: null as null | { pid: number; bundleId: string; name: string }
   },
   calls: [] as Array<{ name: string; args: unknown[] }>,
   abortHandler: null as null | ((reason: 'escape' | 'mousemove') => void),
@@ -68,6 +70,10 @@ vi.mock('../native/helper', () => ({
     state.calls.push({ name: 'open-browser', args: [] })
     state.helper.front = { bundleId: 'com.example.browser', pid: 76 }
     return state.helper.front.bundleId
+  },
+  helperLaunch: async (name: string) => {
+    state.calls.push({ name: 'launch', args: [name] })
+    return state.helper.launch
   },
   helperMoveMouse: async (x: number, y: number) => {
     state.calls.push({ name: 'move', args: [x, y] })
@@ -213,6 +219,7 @@ beforeEach(() => {
   state.helper = {
     activate: true,
     front: { bundleId: 'com.apple.Safari', pid: 42 },
+    launch: null,
     move: true,
     click: true,
     drag: true,
@@ -993,6 +1000,51 @@ it('opens the default browser and checks that it has focus before reporting succ
   expect(ran('open-browser')).toBe(1)
   expect(state.calls.slice(-2).map((call) => call.name)).toEqual(['open-browser', 'front'])
   expect(result.performed).toEqual([{ label: 'Открыть браузер', ok: true }])
+})
+
+describe('opening an application', () => {
+  /**
+   * The system launches the application itself, and the step counts as done only
+   * when that application is actually in front. Reporting success on the launch
+   * call alone would turn "the call returned" into "the task worked".
+   */
+  it('launches by name and confirms the app came forward', async () => {
+    state.helper.launch = { pid: 501, bundleId: 'ru.example.messenger', name: 'Telegram' }
+    state.helper.front = { bundleId: 'ru.example.messenger', pid: 501 }
+    const result = await createAgentController(makeHost()).execute({
+      requestId: 'open', prompt: 'Открой Telegram', finished: false, area,
+      steps: [step({ kind: 'open', name: 'Telegram' }, 'Открыть: Telegram')]
+    })
+
+    expect(ran('launch')).toBe(1)
+    expect(state.calls.find((call) => call.name === 'launch')?.args).toEqual(['Telegram'])
+    // Not a click: nothing was aimed at a pixel, which is the whole point.
+    expect(ran('click') + ran('move')).toBe(0)
+    expect(result.performed).toEqual([{ label: 'Открыть: Telegram', ok: true }])
+  })
+
+  it('reports failure when the application never comes forward', async () => {
+    state.helper.launch = { pid: 501, bundleId: 'ru.example.messenger', name: 'Telegram' }
+    // Something else stays in front: the launch happened, the task did not.
+    state.helper.front = { bundleId: 'com.example.other', pid: 999 }
+    const result = await createAgentController(makeHost()).execute({
+      requestId: 'open', prompt: 'Открой Telegram', finished: false, area,
+      steps: [step({ kind: 'open', name: 'Telegram' }, 'Открыть: Telegram')]
+    })
+
+    expect(result.performed[0]?.ok).toBe(false)
+  })
+
+  it('reports failure when no such application exists', async () => {
+    state.helper.launch = null
+    const result = await createAgentController(makeHost()).execute({
+      requestId: 'open', prompt: 'Открой НетТакого', finished: false, area,
+      steps: [step({ kind: 'open', name: 'НетТакого' }, 'Открыть: НетТакого')]
+    })
+
+    expect(result.performed[0]?.ok).toBe(false)
+    expect(ran('click')).toBe(0)
+  })
 })
 
 it.each([true, false])('clicks a numbered target only if the live hit agrees (same: %s)', async (same) => {

@@ -377,6 +377,16 @@ export type AgentAction =
   | { kind: 'key'; combo: string }
   | { kind: 'navigate'; url: string }
   | { kind: 'browser' }
+  /**
+   * Open an application by name, starting it if it is not running.
+   *
+   * This is what "open Telegram" asks for, and it is not a click: the system
+   * launches and activates the app directly. Reaching for a Dock icon instead
+   * made the outcome depend on the icon being visible, on the Dock not hiding,
+   * and on a pixel landing inside a 40-point square — three ways to fail that
+   * have nothing to do with the request.
+   */
+  | { kind: 'open'; name: string }
   | { kind: 'scroll'; dx: number; dy: number }
   | { kind: 'drag'; from: Point01; to: Point01; label?: string }
   | { kind: 'wait'; ms: number }

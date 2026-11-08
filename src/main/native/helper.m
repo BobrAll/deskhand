@@ -596,6 +596,100 @@ static int commandActivate(NSString *target) {
   return 0;
 }
 
+/**
+ * Opens an application by name, bundle id or path, starting it if needed.
+ *
+ * `activate` only reaches something that is already running, which made "open
+ * Telegram" impossible whenever Telegram was closed: the only route left was to
+ * hunt for its Dock icon and click a pixel. That is the wrong tool for the job —
+ * the system has a first-class answer for "open this application", and it does
+ * not depend on the icon being visible, the Dock being where it was, or the
+ * pointer landing accurately.
+ *
+ * Resolution order is most specific first: an existing path, then a bundle id,
+ * then a display name matched against installed and running applications. The
+ * answer names what actually came forward so the caller can verify the result
+ * against the screen instead of assuming the launch worked.
+ */
+static int commandLaunch(NSString *target) {
+  if ([target length] == 0) {
+    emit(@{@"ok" : @NO, @"error" : @"empty-target"});
+    return 0;
+  }
+  NSWorkspace *workspace = [NSWorkspace sharedWorkspace];
+  NSURL *url = nil;
+
+  if ([target hasPrefix:@"/"]) {
+    url = [NSURL fileURLWithPath:target];
+  }
+  if (!url) {
+    url = [workspace URLForApplicationWithBundleIdentifier:target];
+  }
+  if (!url) {
+    // A display name is what the model reads off the Dock and the screen, so it
+    // is the shape most requests arrive in. Compare case- and diacritic-
+    // insensitively: the label came from a downscaled screenshot.
+    NSString *wanted = [target stringByTrimmingCharactersInSet:
+        [NSCharacterSet whitespaceAndNewlineCharacterSet]];
+    NSMutableArray<NSURL *> *candidates = [NSMutableArray array];
+    NSString *directories = @"/Applications:/Applications/Utilities:/System/Applications:"
+        @"/System/Applications/Utilities:~/Applications";
+    for (NSString *directory in [directories componentsSeparatedByString:@":"]) {
+      NSString *expanded = [directory stringByExpandingTildeInPath];
+      NSArray<NSString *> *entries =
+          [[NSFileManager defaultManager] contentsOfDirectoryAtPath:expanded error:NULL];
+      for (NSString *entry in entries) {
+        if (![[entry pathExtension] isEqualToString:@"app"]) continue;
+        NSString *name = [entry stringByDeletingPathExtension];
+        if ([name compare:wanted options:NSCaseInsensitiveSearch | NSDiacriticInsensitiveSearch] ==
+            NSOrderedSame) {
+          [candidates addObject:[NSURL fileURLWithPath:
+              [expanded stringByAppendingPathComponent:entry]]];
+        }
+      }
+    }
+    if ([candidates count] == 0) {
+      for (NSRunningApplication *candidate in [workspace runningApplications]) {
+        NSString *name = [candidate localizedName];
+        if (name && [name compare:wanted options:NSCaseInsensitiveSearch |
+            NSDiacriticInsensitiveSearch] == NSOrderedSame) {
+          url = [candidate bundleURL];
+          break;
+        }
+      }
+    }
+    if (!url && [candidates count] > 0) url = candidates[0];
+  }
+
+  if (!url) {
+    emit(@{@"ok" : @NO, @"error" : @"app-not-found", @"target" : target});
+    return 0;
+  }
+  if (agentCancelled) { emit(@{@"ok" : @NO, @"error" : @"interrupted"}); return 0; }
+
+  NSRunningApplication *app = [workspace launchApplicationAtURL:url
+    options:NSWorkspaceLaunchDefault configuration:@{} error:NULL];
+  if (!app) {
+    // Already running and simply not launched again is not a failure: fall back
+    // to whatever is running from that bundle so the answer still names a pid.
+    NSArray<NSRunningApplication *> *running =
+        [NSRunningApplication runningApplicationsWithBundleIdentifier:
+            [[NSBundle bundleWithURL:url] bundleIdentifier] ?: @""];
+    if ([running count] > 0) app = running[0];
+  }
+  if (!app) {
+    emit(@{@"ok" : @NO, @"error" : @"launch-failed", @"target" : target});
+    return 0;
+  }
+  if (agentCancelled) { emit(@{@"ok" : @NO, @"error" : @"interrupted"}); return 0; }
+  [app activateWithOptions:NSApplicationActivateIgnoringOtherApps];
+  emit(@{@"ok" : @YES,
+         @"pid" : @([app processIdentifier]),
+         @"bundleId" : [app bundleIdentifier] ?: @"",
+         @"name" : [app localizedName] ?: @""});
+  return 0;
+}
+
 static int commandCursor(void) {
   NSPoint point = [NSEvent mouseLocation];
   NSScreen *screen = nil;
@@ -1378,6 +1472,11 @@ int main(int argc, const char *argv[]) {
     if (strcmp(command, "activate") == 0) {
       NSString *target = argc > 2 ? [NSString stringWithUTF8String:argv[2]] : @"";
       return commandActivate(target);
+    }
+    if (strcmp(command, "launch") == 0) {
+      // launch <name|bundleId|path> — opens the application, starting it if needed.
+      NSString *target = argc > 2 ? [NSString stringWithUTF8String:argv[2]] : @"";
+      return commandLaunch(target);
     }
     if (strcmp(command, "voice") == 0) {
       // voice <keyCode> <flags> [swallow]

@@ -187,6 +187,31 @@ export async function helperSendKey(command: 'copy' | 'paste'): Promise<boolean>
   return result !== null
 }
 
+/** What an application launch reported: enough to verify it against the screen. */
+export interface HelperLaunched {
+  pid: number
+  bundleId: string
+  name: string
+}
+
+/**
+ * Opens an application by name, starting it if it is not already running.
+ *
+ * Returns what came forward, so the caller can check the screen instead of
+ * trusting the call: a launch that reports success but leaves another window in
+ * front is a failed step, not a completed one.
+ */
+export async function helperLaunch(name: string, signal?: AbortSignal): Promise<HelperLaunched | null> {
+  if (!name) return null
+  const payload = await runHelper(['launch', name], 15_000, signal)
+  if (!payload?.ok) return null
+  return {
+    pid: Number(payload.pid) || 0,
+    bundleId: typeof payload.bundleId === 'string' ? payload.bundleId : '',
+    name: typeof payload.name === 'string' ? payload.name : ''
+  }
+}
+
 export async function helperOpenBrowser(signal?: AbortSignal): Promise<string | null> {
   const payload = await runHelper(['open-browser'], 4000, signal)
   return payload?.ok && typeof payload.bundleId === 'string' ? payload.bundleId : null
