@@ -121,7 +121,6 @@ describe('buildTurnRequest: the message list', () => {
       includeScreenshot: true,
       hasImage: true,
       draw: true,
-      act: false,
       actReason: null,
       hasHistory: false,
       outline: null
@@ -168,7 +167,6 @@ describe('buildTurnRequest: refine', () => {
     expect(turn.messages.map((message) => message.role)).toEqual(['system', 'user'])
     expect(turn.useImage).toBe(false)
     expect(turn.canDraw).toBe(false)
-    expect(turn.canAct).toBe(false)
   })
 
   it('uses the refine prompt with the trimmed base answer', async () => {
@@ -218,7 +216,6 @@ describe('buildTurnRequest: tools are a capability', () => {
     )
 
     expect(turn.canDraw).toBe(false)
-    expect(turn.canAct).toBe(false)
     // The rectangle is still reported: it is the frame of the snapshot, and the
     // callers use it for the plan budget. What gates the tools is `canDraw`.
     expect(turn.area).toEqual(AREA)
@@ -229,16 +226,14 @@ describe('buildTurnRequest: tools are a capability', () => {
 
     expect(turn.useImage).toBe(false)
     expect(turn.canDraw).toBe(false)
-    expect(turn.canAct).toBe(false)
   })
 
-  it('offers drawing but not acting when acting is unavailable', async () => {
+  it('draws but names the reason when acting is unavailable', async () => {
     const turn = await buildTurnRequest(
       input({ availability: { ready: false, reason: 'нет доступа' } })
     )
 
     expect(turn.canDraw).toBe(true)
-    expect(turn.canAct).toBe(false)
     expect(turn.area).toEqual(AREA)
   })
 
@@ -262,19 +257,15 @@ describe('buildTurnRequest: tools are a capability', () => {
     expect(instructionOf(noImage)).not.toContain('нет доступа')
   })
 
-  it('holds the prose only for a spoken turn that can act', async () => {
+  it('never holds the prose: an answer streams as it arrives', async () => {
+    // Holding text existed for one reason only — an action turn narrated before
+    // anyone knew it was an action. Actions are their own turn now, so nothing
+    // here can decide that the prose it is producing is the wrong one.
     const spoken = await buildTurnRequest(input({ request: request({ voice: true }) }))
     const typed = await buildTurnRequest(input())
-    const spokenWithoutActing = await buildTurnRequest(
-      input({
-        request: request({ voice: true }),
-        availability: { ready: false, reason: null }
-      })
-    )
 
-    expect(spoken.holdFirstRound).toBe(true)
-    expect(typed.holdFirstRound).toBe(false)
-    expect(spokenWithoutActing.holdFirstRound).toBe(false)
+    expect('holdFirstRound' in spoken).toBe(false)
+    expect('holdFirstRound' in typed).toBe(false)
   })
 })
 
@@ -336,7 +327,7 @@ describe('buildTurnRequest: the two awaits', () => {
 
     expect(describe).toHaveBeenCalledTimes(2)
     expect(describe).toHaveBeenCalledWith(42, AREA, AREA)
-    expect(acting.canAct).toBe(true)
+    expect(acting.canDraw).toBe(true)
   })
 
   it('survives a failing outline: the request goes out without the names', async () => {

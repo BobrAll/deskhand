@@ -88,6 +88,15 @@ export const CH = {
     cursor: 'agent:cursor',
     /** overlay -> main: stop whatever is happening right now (Escape, «Стоп»). */
     stop: 'agent:stop',
+    /**
+     * overlay -> main: the user's answer to the question in the card.
+     *
+     * The agent blocks on this, so the channel is the whole safety mechanism: it
+     * carries a decision about one named call, never a permission to act in
+     * general, and the main process drops it if the id no longer matches the
+     * question on screen.
+     */
+    answer: 'agent:answer',
     clearApprovals: 'agent:clear-approvals',
     /**
      * overlay -> main: may the assistant press and type right now, and if not,

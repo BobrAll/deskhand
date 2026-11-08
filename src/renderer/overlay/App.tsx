@@ -16,6 +16,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 import type { CSSProperties } from 'react'
 import type {
   AgentEvent,
+  AgentToolRequest,
   ContextSnapshot,
   OverlayState,
   RefineDirection,
@@ -728,6 +729,23 @@ export function App() {
     }
   }, [])
 
+  /**
+   * Sends the user's decision about one call back to the run.
+   *
+   * The id comes from the question that is on screen, so a click that arrives
+   * after the run moved on — a double press, a button that was already handled —
+   * is dropped by the main process instead of being applied to the next question.
+   * Nothing is cleared optimistically here: the row keeps showing the question
+   * until the run itself says what happened, which is what keeps the card and the
+   * machine from disagreeing for a frame.
+   */
+  const answerAgent = useCallback(
+    async (request: AgentToolRequest, allow: boolean, remember: boolean) => {
+      await window.smartCursor.agent.answer(request.id, allow, remember)
+    },
+    []
+  )
+
   /** Speech that has already been recognised and put into this bubble. */
   useEffect(() => {
     const off = window.smartCursor.voice.onTranscript(({ text, send: autoSend }) => {
@@ -796,18 +814,6 @@ export function App() {
         ignoredRequestRef.current = id
         requestIdRef.current = null
         setBusy(false)
-        // The row is set here rather than left to the answer: the main process
-        // clears it on its own path, but a check cancelled inside the stream
-        // produces neither a verdict nor a `done`, and a card stuck on
-        // "проверяю" over nothing is the one thing this feature must never show.
-        setAgent({
-          phase: 'aborted',
-          step: 0,
-          total: 0,
-          label: '',
-          plan: [],
-          message: 'Проверка остановлена.'
-        })
         window.smartCursor.overlay.cancel(id)
         return
       }
@@ -1169,10 +1175,11 @@ export function App() {
       )}
 
       {/*
-        What the machine is doing on the user's behalf. It sits above the answer
-        and below the field on purpose: the plan is a sequence of steps in flight,
-        so it belongs where a progress line belongs, not in the answer text — the
-        answer is what will still be there afterwards.
+        What the machine is doing on the user's behalf.
+        It sits above the answer and below the field on purpose: the run is a
+        sequence of calls in flight, so it belongs where a progress line belongs,
+        not in the answer text — the answer is what will still be there
+        afterwards.
       */}
       {agent && (
         <div className="agent" data-phase={agent.phase}>
@@ -1190,48 +1197,72 @@ export function App() {
                 ? 'Нажму через мгновение — Escape отменит'
                 : agent.phase === 'aborted' || agent.phase === 'error'
                   ? (agent.message ?? 'Остановлено')
-                  : /* `done` used to be a hard-coded «Готово» here. It is the
-                       main process's word now: a turn that still has to check its
-                       own result ends its plan on «Проверяю результат», and the
-                       card must not print the verdict before the evidence. The
-                       fallback covers an event that arrived without a label. */
-                    agent.label || 'Готово'}
+                  : agent.label || 'Готово'}
             </span>
-            {agent.total > 0 && agent.phase !== 'done' && (
+            {agent.total > 0 && (agent.phase === 'acting' || agent.phase === 'asking') && (
               <span className="agent-count">
                 {agent.step}/{agent.total}
               </span>
             )}
             {/*
-              Not a button on purpose. While a plan runs the card is click-through
-              — that is the only way the synthetic clicks reach the app behind it —
-              so a "Стоп" here would be a control the user cannot hit, which is
-              worse than no control at all. Escape and a hand on the mouse are the
-              real ones, and this says so. `checking` is included because the
-              verification is another request the user is waiting on and Escape
-              stops it the same way.
+              Not a button on purpose. While the agent runs the card is
+              click-through — that is the only way its synthetic clicks reach the
+              app behind it — so a "Стоп" here would be a control the user cannot
+              hit, which is worse than no control at all. Escape and a hand on the
+              mouse are the real ones, and this says so. The exception is the
+              question below: for as long as it is open the card takes the mouse
+              back, so its buttons do work.
             */}
-            {(agent.phase === 'arming' ||
-              agent.phase === 'acting' ||
-              agent.phase === 'checking') && (
+            {(agent.phase === 'arming' || agent.phase === 'acting') && (
               <span className="agent-hint">Esc — остановить</span>
             )}
           </div>
-          {agent.skipped && agent.skipped.length > 0 && (
-            <div className="agent-skip">
-              Пропущено: {agent.skipped.join(' ')}
+
+          {/*
+            The confirmation, in the flow of the run rather than in a modal.
+            The question is about one named element — "нажать «Экспорт» в Safari" —
+            and a system dialog would cover the window it is asking about. Here it
+            appears where the step it belongs to appears, so the user reads the
+            run and the question as one thing.
+          */}
+          {agent.phase === 'asking' && agent.approval && (
+            <div className="agent-ask" role="group" aria-label="Подтверждение действия">
+              {agent.message && <div className="agent-ask-detail">{agent.message}</div>}
+              <div className="agent-ask-buttons">
+                <button
+                  className="agent-allow"
+                  onClick={() => void answerAgent(agent.approval!, true, false)}
+                >
+                  Разрешить
+                </button>
+                <button
+                  className="agent-always"
+                  onClick={() => void answerAgent(agent.approval!, true, true)}
+                >
+                  Разрешить всегда
+                </button>
+                <button
+                  className="agent-deny"
+                  onClick={() => void answerAgent(agent.approval!, false, false)}
+                >
+                  Отменить
+                </button>
+              </div>
             </div>
           )}
-          {agent.plan.length > 1 && (agent.phase === 'acting' || agent.phase === 'arming') && (
-            <ol className="agent-plan">
-              {agent.plan.map((line, index) => (
-                <li
-                  key={`${index}-${line}`}
-                  data-state={
-                    index + 1 < agent.step ? 'done' : index + 1 === agent.step ? 'now' : 'next'
-                  }
-                >
-                  {line}
+
+          {/*
+            What the run has actually done, newest last.
+            The agent decides its next call after seeing the result of the
+            previous one, so there is no plan to list in advance: this is the log
+            it produced. Failed calls stay in it — a run that changed course is
+            part of what happened.
+          */}
+          {agent.actions && agent.actions.length > 0 && (
+            <ol className="agent-log">
+              {agent.actions.map((row, index) => (
+                <li key={`${index}-${row.tool}-${row.label}`} data-ok={row.ok ? 'true' : 'false'}>
+                  {row.label}
                 </li>
               ))}
             </ol>

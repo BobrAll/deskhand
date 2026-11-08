@@ -15,7 +15,6 @@ import { registerIpc } from './ipc'
 import { createTray, destroyTray, refreshTray } from './tray'
 import { destroyPointer } from './pointer'
 import { destroyAgentCursor } from './agent/cursor'
-import { ensureCuService, stopSpawnedCuService } from './agent/computerUse'
 import { openOnboardingWindow, openSettingsWindow, overlayHost, showActiveWindow } from './windows'
 import { getSettings, patchSettings } from './settings/store'
 import { readPermissions } from './permissions'
@@ -201,14 +200,11 @@ if (!app.requestSingleInstanceLock()) {
     } catch (error) {
       console.error('[app] bootstrap failed:', error)
     }
-    // The semantic backend is started here, as this app's child, because that is
-    // the only way it inherits the Accessibility grant this app already has. It
-    // is started lazily-but-eagerly: a missing binary or a refused spawn leaves
-    // every step on the coordinate path, so nothing waits on it and nothing
-    // fails when it is absent.
-    if (getSettings().agent.semanticActions) {
-      void ensureCuService().catch(() => null)
-    }
+    // The agent's process is *not* started here. It is spawned on the first
+    // action request and then kept alive, because a child that starts at launch
+    // would hold a pipe and a run loop for a feature the user may never use, and
+    // because the Accessibility grant it inherits is only meaningful at the
+    // moment it acts.
   })
 
   app.on('activate', () => {
@@ -229,9 +225,9 @@ if (!app.requestSingleInstanceLock()) {
     // Same reason as the keyboard tap: the helper blocks in a run loop and would
     // outlive the app, keeping the trackpad device open.
     gestures.stop()
-    // Only the service this app started is stopped: one the user launched is
-    // theirs, and killing it would be a surprise with no undo.
-    stopSpawnedCuService()
+    // The agent is a child process that blocks in a run loop; without this it
+    // outlives the app and keeps a pipe open.
+    overlay.disposeAgent()
     destroyTray()
     destroyPointer()
     destroyAgentCursor()

@@ -20,7 +20,12 @@
   {"id":"external-focus","setup":"Focus a different fixture process during the arming period.","pass":"No input reaches the new foreground process from the stale plan."},
   {"id":"stop-mid-input","setup":"Type in a disposable fixture field, then press Stop before typing ends.","pass":"Input stops, no submit follows, and the stop status appears after input has ceased."},
   {"id":"helper-timeout","setup":"Fixture input backend times out after a known partial effect.","pass":"Agent does not replay the change or claim success."},
-  {"id":"stream-eof","setup":"Stub SSE ends after a complete action line without a terminal event.","pass":"No plan action is dispatched."},
-  {"id":"stream-limit","setup":"Stub SSE emits a valid action prefix and a token-limit terminal event.","pass":"No action in the prefix is dispatched."},
-  {"id":"oversize-text","setup":"Model stub proposes more than 600 UTF-16 units followed by Enter.","pass":"Neither truncated text nor Enter is sent; the limit is reported."}
+  {"id":"approval-refuse","setup":"Fixture with a button whose label matches a committing verb, plus a click counter.","pass":"The click is never dispatched, the counter stays at zero, and the card shows the question before it can be answered."},
+  {"id":"approval-allow","setup":"Same fixture; answer the question with «Разрешить».","pass":"Exactly one click is dispatched, the counter reads one, and the card returns to acting."},
+  {"id":"approval-remember","setup":"Same fixture with two identical committing buttons; answer the first question with «Разрешить всегда».","pass":"The second identical call runs without a question; a differently named committing button still asks."},
+  {"id":"secret-refused","setup":"A field whose label names a password.","pass":"No text is typed and no question is shown: the refusal is immediate and the run continues or stops cleanly."},
+  {"id":"agent-stop-question","setup":"A question is open in the card; press Escape.","pass":"The question is answered with a refusal, the agent process reports cancellation, and no input follows."},
+  {"id":"agent-crash","setup":"Kill the agent process while it is acting.","pass":"The card leaves the acting phase and names the failure; the app stays responsive and a later request can start a fresh run."},
+  {"id":"stale-index","setup":"Observe a fixture, change its contents so element indices shift, then act on a remembered index.","pass":"The agent re-observes and retries; no input lands on the wrong element."},
+  {"id":"mouse-takeover","setup":"Move the physical mouse while the agent is acting.","pass":"The run stops before the next call and the card says so."}
 ]

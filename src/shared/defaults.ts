@@ -300,36 +300,28 @@ export const WHISPER_LANGUAGES: Array<{ id: string; label: string }> = [
 ]
 
 /**
- * Mouse-and-keyboard control. Off by default and deliberately unhurried.
+ * Mouse-and-keyboard control. Off by default.
  *
- * The pause before the first action is a safety feature, not padding: it is the
- * stretch in which Escape still wins, and 0.9 s is long enough for someone who
- * has changed their mind to stop a click that was about to happen. The step
- * delay is the same idea between actions — a plan that runs faster than a human
- * can read it is a plan nobody can interrupt.
+ * What is *not* here is as deliberate as what is. There is no per-action delay:
+ * the agent runs at its own pace and the user stops it with Escape or by taking
+ * the mouse, which is a better brake than a sleep between clicks — a sleep is
+ * paid on every run, while the brake is only paid when someone uses it. There is
+ * also no "allow typing" or "allow shortcuts": those are the actions the mode
+ * exists for, and the ones that need permission are asked about individually, at
+ * the moment they happen, in the card.
  */
 export const DEFAULT_AGENT: AgentSettings = {
   rememberedApprovals: [],
   enabled: false,
-  startDelayMs: 900,
-  stepDelayMs: 420,
-  // Multi-stage requests need room to navigate, search, open and observe.
-  // This remains bounded, and Escape/mouse interruption applies throughout.
+  // Multi-stage requests need room to navigate, search, open and observe. This
+  // remains bounded, and Escape/mouse interruption applies throughout.
   maxSteps: 8,
-  allowTyping: true,
-  allowShortcuts: true,
   abortOnMouseMove: true,
   // On by default: the whole point of the mode is that the user asked for the
   // thing to *happen*, and "готово" without a look at the result is a claim the
-  // assistant cannot back up. It costs one extra request per action turn, which
-  // is the honest price — and it is a switch, so a user who counts tokens can
-  // turn it off in the same place where they allowed the clicking.
-  verifyResult: true,
-  // On by default. The service is optional, so this cannot break a machine that
-  // does not have it: a step falls back to the coordinate path, which is what it
-  // did before the backend existed. Turning it off is for a user who wants the
-  // pointer to do the work and nothing else to run.
-  semanticActions: true
+  // assistant cannot back up. It costs a tree diff, not a second model round
+  // trip, so it is cheap enough to be the default.
+  verifyResult: true
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -430,14 +422,9 @@ function sanitizeAgent(input: unknown): AgentSettings {
     enabled: flag(raw.enabled, DEFAULT_AGENT.enabled),
     // The floor is 0 rather than a "sane" minimum: a user who wants no pause is
     // allowed to have none, but the slider cannot go below it by accident.
-    startDelayMs: Math.round(clamp(raw.startDelayMs, 0, 10_000, DEFAULT_AGENT.startDelayMs)),
-    stepDelayMs: Math.round(clamp(raw.stepDelayMs, 0, 5_000, DEFAULT_AGENT.stepDelayMs)),
-    maxSteps: Math.round(clamp(raw.maxSteps, 1, 8, DEFAULT_AGENT.maxSteps)),
-    allowTyping: flag(raw.allowTyping, DEFAULT_AGENT.allowTyping),
-    allowShortcuts: flag(raw.allowShortcuts, DEFAULT_AGENT.allowShortcuts),
+    maxSteps: Math.round(clamp(raw.maxSteps, 1, 20, DEFAULT_AGENT.maxSteps)),
     abortOnMouseMove: flag(raw.abortOnMouseMove, DEFAULT_AGENT.abortOnMouseMove),
-    verifyResult: flag(raw.verifyResult, DEFAULT_AGENT.verifyResult),
-    semanticActions: flag(raw.semanticActions, DEFAULT_AGENT.semanticActions)
+    verifyResult: flag(raw.verifyResult, DEFAULT_AGENT.verifyResult)
   }
 }
 

@@ -111,6 +111,7 @@ vi.mock('./native/helper', () => ({
   helperRunningApps: async () => [],
   helperPermissions: async () => ({ accessibility: false, screenRecording: false, microphone: false }),
   helperFront: async () => null,
+  helperFrontApp: async () => null,
   helperBinary: () => null
 }))
 
@@ -139,9 +140,11 @@ function fakeDeps(): IpcDeps {
       close: vi.fn(),
       copy: vi.fn(async () => undefined),
       paste: vi.fn(async () => ({ ok: true, method: 'paste' })),
-      agentAvailability: vi.fn(() => ({ enabled: false, canAct: false, reason: null })),
-      setAgentEnabled: vi.fn(() => ({ enabled: true, canAct: false, reason: null })),
+      agentAvailability: vi.fn(() => ({ enabled: false, ready: false, reason: null })),
+      setAgentEnabled: vi.fn(() => ({ enabled: true, ready: false, reason: null })),
       stopAgent: vi.fn(),
+      answerAgent: vi.fn(),
+      disposeAgent: vi.fn(),
       open: vi.fn(async () => undefined)
     } as unknown as IpcDeps['overlay'],
     voice: {
@@ -286,11 +289,32 @@ describe('registerIpc: the handlers reach their dependency', () => {
     registerIpc(deps)
 
     const availability = electron.handles.get(CH.agent.availability)!
-    expect(await availability()).toEqual({ enabled: false, canAct: false, reason: null })
+    expect(await availability()).toEqual({ enabled: false, ready: false, reason: null })
 
     const setEnabled = electron.handles.get(CH.agent.setEnabled)!
     await setEnabled({}, true)
     expect(deps.overlay.setAgentEnabled).toHaveBeenCalledWith(true)
+  })
+
+  it('passes one answered question through, and drops a malformed one', async () => {
+    const deps = fakeDeps()
+    electron.reset()
+    registerIpc(deps)
+
+    const answer = electron.handles.get(CH.agent.answer)!
+    await answer({}, 'call-1', true, true)
+    expect(deps.overlay.answerAgent).toHaveBeenCalledWith('call-1', true, true)
+
+    // Anything that is not a real id is ignored: the run compares the id against
+    // the question it is blocked on, and a stray value must not reach it at all.
+    await answer({}, undefined, true, false)
+    await answer({}, '', true, false)
+    expect(deps.overlay.answerAgent).toHaveBeenCalledTimes(1)
+
+    // Non-booleans are coerced to "no", never to "yes": a renderer bug must not
+    // be able to turn an unanswered question into permission.
+    await answer({}, 'call-2', 'yes', 1)
+    expect(deps.overlay.answerAgent).toHaveBeenLastCalledWith('call-2', false, false)
   })
 
   it('reports copy failures instead of throwing into the renderer', async () => {

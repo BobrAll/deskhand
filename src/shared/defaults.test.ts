@@ -414,38 +414,39 @@ describe('normalizeSettings: gestures', () => {
 })
 
 describe('normalizeSettings: agent', () => {
-  it('clamps the delays and the step count', () => {
-    const result = normalizeSettings({
-      agent: { startDelayMs: -1, stepDelayMs: 99999, maxSteps: 0 }
-    })
+  it('clamps the step budget', () => {
+    const result = normalizeSettings({ agent: { maxSteps: 0 } })
 
-    expect(result.agent.startDelayMs).toBe(0)
-    expect(result.agent.stepDelayMs).toBe(5000)
     expect(result.agent.maxSteps).toBe(1)
-    expect(normalizeSettings({ agent: { maxSteps: 99 } }).agent.maxSteps).toBe(8)
+    expect(normalizeSettings({ agent: { maxSteps: 99 } }).agent.maxSteps).toBe(20)
+    expect(normalizeSettings({ agent: { maxSteps: 'много' } }).agent.maxSteps).toBe(DEFAULT_AGENT.maxSteps)
   })
 
   it('keeps the flags and falls back on non-booleans', () => {
     const result = normalizeSettings({
-      agent: { enabled: true, allowTyping: false, allowShortcuts: 'yes', verifyResult: false }
+      agent: { enabled: true, abortOnMouseMove: 'yes', verifyResult: false }
     })
 
     expect(result.agent.enabled).toBe(true)
-    expect(result.agent.allowTyping).toBe(false)
-    expect(result.agent.allowShortcuts).toBe(DEFAULT_AGENT.allowShortcuts)
-    expect(result.agent.verifyResult).toBe(false)
     expect(result.agent.abortOnMouseMove).toBe(DEFAULT_AGENT.abortOnMouseMove)
+    expect(result.agent.verifyResult).toBe(false)
   })
 
-  it('enables the semantic backend for a config written before it existed', () => {
-    // An existing settings file has no `semanticActions` key. Reading it must
-    // not leave the field undefined: the runner checks it before every step, and
-    // an absent value would silently disable the backend for every user who
-    // upgraded rather than installed fresh.
-    expect(normalizeSettings({ agent: { enabled: true } }).agent.semanticActions).toBe(true)
-    expect(normalizeSettings({ agent: { semanticActions: false } }).agent.semanticActions).toBe(false)
-    expect(normalizeSettings({ agent: { semanticActions: 'yes' } }).agent.semanticActions)
-      .toBe(DEFAULT_AGENT.semanticActions)
+  it('drops a settings file written by the old plan runner', () => {
+    // The old shape had per-action delays, a typing switch and a semantic
+    // backend. None of them exist any more; reading them must not leave the
+    // object with keys nothing reads, and must not fail on them either.
+    const result = normalizeSettings({
+      agent: {
+        enabled: true, startDelayMs: 900, stepDelayMs: 420,
+        allowTyping: false, allowShortcuts: false, semanticActions: false
+      }
+    })
+
+    expect(Object.keys(result.agent).sort()).toEqual([
+      'abortOnMouseMove', 'enabled', 'maxSteps', 'rememberedApprovals', 'verifyResult'
+    ])
+    expect(result.agent.enabled).toBe(true)
   })
 
   it('fills a missing block from the defaults', () => {

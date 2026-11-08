@@ -75,9 +75,6 @@ export interface TurnRequest {
   /** The rectangle every returned coordinate refers to, or `null` without an image. */
   area: ScreenRect | null
   canDraw: boolean
-  canAct: boolean
-  /** Prose from the first round has to wait for the plan (spoken turns only). */
-  holdFirstRound: boolean
   /** The request was abandoned while a screenshot was being taken. */
   abandoned: boolean
 }
@@ -116,8 +113,6 @@ export async function buildTurnRequest(input: BuildTurnRequestInput): Promise<Tu
         screenshot: null,
         area: null,
         canDraw: false,
-        canAct: false,
-        holdFirstRound: false,
         abandoned: true
       }
     }
@@ -135,18 +130,17 @@ export async function buildTurnRequest(input: BuildTurnRequestInput): Promise<Tu
   // arrow — or worse, a confident click — aimed at the wrong pixel is worse
   // than a plain answer, so neither tool is offered then.
   const canDraw = useImage && area != null
-  // Acting is a capability, not a mode: the switch, the permission and the
-  // image all have to agree before the tool is even mentioned to the model.
-  const canAct = canDraw && input.availability.ready
   /**
    * Why the assistant may look but not touch.
    *
-   * Only passed on when there is an image, i.e. when the model *will* be offered
-   * the drawing tool: that is exactly the situation where a "нажми" request used
-   * to come back as a circled button with no explanation. With no image at all
-   * there is nothing to confuse, and the note would just be noise.
+   * Acting is a separate turn, handed to the agent (`agent/index.ts`), so this
+   * note only covers the case where that route is closed: the mode is off or
+   * macOS has not granted Accessibility. It is passed on only when there is an
+   * image — that is exactly the situation where «нажми» used to come back as a
+   * circled button with no explanation. Without an image there is nothing to
+   * confuse, and the note would be noise.
    */
-  const actReason = canDraw && !canAct ? input.availability.reason : null
+  const actReason = canDraw && !input.availability.ready ? input.availability.reason : null
 
   /**
    * The exact names of what can be pressed, from the Accessibility API.
@@ -167,18 +161,6 @@ export async function buildTurnRequest(input: BuildTurnRequestInput): Promise<Tu
         .catch(() => null)
     : null
 
-  /**
-   * Whether the first round's prose has to wait for the plan.
-   *
-   * Only a spoken turn is held. Its entire point is "speak, get the thing
-   * done", and the model's "нажимаю…" is not a result the user asked to read.
-   * Typed turns keep streaming: a typed question is read as it arrives, and a
-   * quick action must not lose its stream just because acting is enabled. A
-   * typed action replaces any streamed narration with the final report once
-   * the plan has run.
-   */
-  const holdFirstRound = Boolean(canAct && request.voice)
-
   const { userText, modeInstruction } = refine
     ? buildRefine({
         direction: refine.direction,
@@ -196,7 +178,6 @@ export async function buildTurnRequest(input: BuildTurnRequestInput): Promise<Tu
         includeScreenshot: request.includeScreenshot || useImage,
         hasImage: useImage,
         draw: canDraw,
-        act: canAct,
         actReason,
         hasHistory: history.length > 0 || Boolean(previousCommand),
         outline
@@ -253,8 +234,6 @@ export async function buildTurnRequest(input: BuildTurnRequestInput): Promise<Tu
     screenshot: shot,
     area,
     canDraw,
-    canAct,
-    holdFirstRound,
     abandoned: false
   }
 }

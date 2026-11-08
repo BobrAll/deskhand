@@ -47,8 +47,12 @@ const statistics = (values) => {
 
 const runs = []
 const coverage = Object.fromEntries(cases.map(({ id }) => [id, 0]))
+// The outcomes the turn recorder can write. `screen-confirmed` and `unconfirmed`
+// were the old runner's verdicts on its own plan; the agent now reports what it
+// did and the trace records that instead, so a run that acted ends as
+// `agent-report` and one that only spoke ends as `agent-silent`.
 const outcomes = Object.fromEntries([
-  'answer', 'screen-confirmed', 'unconfirmed', 'interrupted', 'blocked', 'abandoned', 'cancelled', 'timeout', 'error', 'unrecorded'
+  'answer', 'agent-report', 'agent-silent', 'interrupted', 'blocked', 'abandoned', 'cancelled', 'timeout', 'error', 'unrecorded'
 ].map((value) => [value, 0]))
 for (const [id, events] of turns) {
   const end = events.find((e) => e.event === 'turn.end')
@@ -64,10 +68,14 @@ for (const [id, events] of turns) {
   runs.push({
     score, duration: end.durationMs, model,
     usage: events.filter((e) => e.event === 'model.usage'),
-    firstAction: events.find((e) => e.event === 'agent.action.start')?.elapsedMs,
+    firstAction: events.find((e) => e.event === 'agent.call')?.elapsedMs,
     ttft: events.filter((e) => e.event === 'model.firstChunk').map((e) => e.ttftMs),
     capture: events.filter((e) => e.event === 'screen.capture.end').map((e) => e.durationMs),
-    verification: events.filter((e) => e.event === 'agent.verify.end').map((e) => e.durationMs)
+    // How many calls the agent made and how many of them failed. A run that took
+    // five calls to press one button is the interesting number here, not the
+    // duration of a verification round trip that no longer exists.
+    calls: events.filter((e) => e.event === 'agent.call'),
+    approvals: events.filter((e) => e.event === 'agent.approval')
   })
 }
 
@@ -82,7 +90,9 @@ function summarize(group) {
     reportedOutputTokens: statistics(group.flatMap((r) => r.usage.map((e) => e.outputTokens))),
     ttftMs: statistics(group.flatMap((r) => r.ttft)),
     captureMs: statistics(group.flatMap((r) => r.capture)),
-    verificationMs: statistics(group.flatMap((r) => r.verification))
+    callsPerRun: statistics(group.map((r) => r.calls.length)),
+    failedCalls: group.flatMap((r) => r.calls).filter((e) => e.ok === false).length,
+    questionsAsked: group.flatMap((r) => r.approvals).filter((e) => e.outcome === 'asked').length
   }
 }
 const scored = runs.filter((r) => r.score)

@@ -291,9 +291,10 @@ export function registerIpc(deps: IpcDeps): void {
   })
 
   // ---- agent (mouse and keyboard control) --------------------------------
-  // The card can ask whether the assistant may press anything and can stop a run.
-  // It cannot start one: a plan only ever comes from an answer that was already
-  // streamed, so there is no channel here that moves the cursor on demand.
+  // The card can ask whether the assistant may press anything, can stop a run and
+  // can answer the question the run is blocked on. It cannot start one: a run is
+  // only ever started by a request the user typed, so no channel here moves the
+  // cursor on its own.
   ipcMain.handle(CH.agent.availability, () => deps.overlay.agentAvailability())
   // Persisting the switch itself: it cannot start a run and it cannot move the
   // cursor — the settings tab and the card both use it, and nothing else does.
@@ -305,6 +306,13 @@ export function registerIpc(deps: IpcDeps): void {
   })
   ipcMain.handle(CH.agent.stop, () => {
     deps.overlay.stopAgent()
+  })
+  // One answer to one question. The id is checked in the controller, so a stale
+  // click — a button that was already handled, a second press after the run moved
+  // on — is dropped instead of being applied to the next call.
+  ipcMain.handle(CH.agent.answer, (_event, id: unknown, allow: unknown, remember: unknown) => {
+    if (typeof id !== 'string' || !id) return
+    deps.overlay.answerAgent(id, allow === true, remember === true)
   })
 
   app.on('second-instance', () => {

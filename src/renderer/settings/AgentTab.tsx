@@ -5,11 +5,12 @@
  * on it answers one question the user is right to ask before turning it on:
  * "what exactly is it allowed to do to my machine, and how do I stop it?"
  *
- * So the layout is: the switch, then the three gates macOS puts in front of it
- * (each with its own fix), then the limits, then the escape hatches. The limits
- * are sliders rather than text fields because their only job is to be understood
- * at a glance — "0.9 с" means nothing, a slider two thirds along a 0–3 с track
- * means "not instantly".
+ * So the layout is: the switch, then the gates macOS puts in front of it (each
+ * with its own fix), then the one limit that matters, then the escape hatches.
+ * There is deliberately no list of per-action permissions here: the actions that
+ * need one are asked about at the moment they happen, in the card, next to the
+ * element they concern — a checkbox in a settings window is a worse place to
+ * decide whether to send a message than the message itself.
  */
 
 import { useCallback, useEffect, useState } from 'react'
@@ -28,12 +29,6 @@ interface AgentTabProps {
    * like a broken mode — the user has said yes and still gets a drawing back.
    */
   onEnabledChange(enabled: boolean): Promise<AgentAvailability>
-}
-
-function seconds(ms: number): string {
-  if (ms === 0) return 'сразу'
-  if (ms < 1000) return `${ms} мс`
-  return `${(ms / 1000).toFixed(1).replace('.', ',')} с`
 }
 
 export function AgentTab({ agent, onChange, onEnabledChange }: AgentTabProps) {
@@ -135,86 +130,28 @@ export function AgentTab({ agent, onChange, onEnabledChange }: AgentTabProps) {
         <label>Подтверждение действий</label>
         <div className="hint">
           Обычные клики, навигация и ввод текста выполняются самостоятельно.
-          Подтверждение нужно для распознанных критических действий: оплаты, подписки,
-          отправки и публикации, удаления, изменения доступа или защиты аккаунта.
-          Отмена останавливает план. Пароли и секреты вводятся вручную.
+          Подтверждение нужно для того, что нельзя отменить: оплаты, подписки, отправки и
+          публикации, удаления, изменения доступа или защиты аккаунта. Вопрос появляется
+          прямо в карточке, на том шаге, к которому относится, — с кнопками «Разрешить»,
+          «Разрешить всегда» и «Отменить». Пароли и секреты агент не вводит никогда.
         </div>
       </div>
 
       <div className="field">
-        <label>Пауза перед первым действием · {seconds(agent.startDelayMs)}</label>
-        <input
-          type="range"
-          min={0}
-          max={3000}
-          step={100}
-          value={agent.startDelayMs}
-          onChange={(event) => onChange({ startDelayMs: Number(event.target.value) })}
-        />
-        <div className="hint">
-          Время, за которое можно передумать: пока идёт пауза, Escape отменяет всё, и ни один
-          клик ещё не случился.
-        </div>
-      </div>
-
-      <div className="field">
-        <label>Пауза между действиями · {seconds(agent.stepDelayMs)}</label>
-        <input
-          type="range"
-          min={0}
-          max={2000}
-          step={20}
-          value={agent.stepDelayMs}
-          onChange={(event) => onChange({ stepDelayMs: Number(event.target.value) })}
-        />
-        <div className="hint">
-          Слишком быстро — не уследить и не остановить. Слишком медленно — кажется, что
-          зависло.
-        </div>
-      </div>
-
-      <div className="field">
-        <label>Лимит этапов задачи · {agent.maxSteps}</label>
+        <label>Лимит шагов задачи · {agent.maxSteps}</label>
         <input
           type="range"
           min={1}
-          max={8}
+          max={20}
           step={1}
           value={agent.maxSteps}
           onChange={(event) => onChange({ maxSteps: Number(event.target.value) })}
         />
         <div className="hint">
-          После действий ассистент проверяет экран и продолжает к цели. Попытки восстановиться
-          после ошибки имеют отдельный лимит. Escape останавливает задачу.
-        </div>
-      </div>
-
-      <div className="field">
-        <label>
-          <input
-            type="checkbox"
-            checked={agent.allowTyping}
-            onChange={(event) => onChange({ allowTyping: event.target.checked })}
-          />{' '}
-          Разрешить печатать текст
-        </label>
-        <div className="hint">
-          Ввод в поле, которое сейчас в фокусе. Выключите, если не хотите, чтобы ассистент
-          что-то писал за вас, — клики при этом останутся.
-        </div>
-      </div>
-
-      <div className="field">
-        <label>
-          <input
-            type="checkbox"
-            checked={agent.allowShortcuts}
-            onChange={(event) => onChange({ allowShortcuts: event.target.checked })}
-          />{' '}
-          Разрешить горячие клавиши
-        </label>
-        <div className="hint">
-          ⌘S, ⌘W, ⌘Tab и подобные. Выключено — ассистент нажимает только мышью.
+          Сколько раз агент может посмотреть на экран и что-то сделать, прежде чем
+          остановиться. Это потолок, а не план: обычно задача укладывается в два-три шага, а
+          лимит нужен на случай, когда что-то пошло не так и агент начал ходить по кругу.
+          Escape останавливает задачу в любой момент.
         </div>
       </div>
 
@@ -243,37 +180,18 @@ export function AgentTab({ agent, onChange, onEnabledChange }: AgentTabProps) {
           Проверять результат по экрану
         </label>
         <div className="hint">
-          Перед словом «Готово» ассистент делает свежий скриншот и сверяет его с просьбой:
-          нажал — ещё не значит получилось. Если по экрану не видно результата, он скажет об
-          этом, а не отрапортует об успехе. Стоит одного дополнительного запроса на каждую
-          просьбу с действиями; при неудаче — до двух, чтобы успеть исправить.
-        </div>
-      </div>
-
-      <div className="field">
-        <label>
-          <input
-            type="checkbox"
-            checked={agent.semanticActions}
-            onChange={(event) => onChange({ semanticActions: event.target.checked })}
-          />{' '}
-          Нажимать элементы по названию, а не по координатам
-        </label>
-        <div className="hint">
-          Для кнопок и полей с подписью ассистент передаёт действие локальному сервису
-          computer-use: тот находит элемент по роли и названию, нажимает его через
-          Accessibility и ждёт, пока приложение подтвердит изменение. Курсор не двигается, окно
-          не поднимается — можно продолжать печатать в своём. Если сервиса нет или элемент не
-          найден, шаг выполняется по координатам, как раньше. Выключите, чтобы вообще не
-          запускать сервис.
+          После последнего действия агент заново читает состояние окна и сравнивает его с
+          тем, что было до действия: нажал — ещё не значит получилось. Если ничего не
+          изменилось, он видит это и пробует иначе, вместо того чтобы сказать «готово».
         </div>
       </div>
 
       <div className="field">
         <div className="hint">
           Что ассистент не делает никогда: не отправляет формы, не удаляет файлы и не
-          подтверждает покупки без прямой просьбы. Каждое действие видно в карточке, а
-          кнопка «Стоп» и Escape останавливают выполнение мгновенно.
+          подтверждает покупки без вашего ответа. Такие действия он показывает в карточке
+          кнопкой «Разрешить» и ждёт. Всё, что он делает, видно в карточке строкой за
+          строкой, а Escape и рука на мыши останавливают его мгновенно.
         </div>
       </div>
     </section>

@@ -2,6 +2,7 @@
 
 exports[`preload: the exposed bridge > matches the snapshot of the method set 1`] = `
 [
+  "agent.answer",
   "agent.availability",
   "agent.clearApprovals",
   "agent.onEvent",

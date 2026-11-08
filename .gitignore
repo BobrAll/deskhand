@@ -19,6 +19,9 @@ node_modules/
 .yarn/cache
 .yarn/install-state.gz
 
+# ---------- Swift package build output ----------
+native/deskhand/.build/
+
 # ---------- Build output ----------
 out/
 dist/
@@ -46,6 +49,7 @@ resources/whisper-cli
 resources/transcribe-cli
 resources/transcribe-licenses/
 resources/cu-service
+resources/deskhand-agent
 resources/*.dylib
 resources/*.so
 *.o

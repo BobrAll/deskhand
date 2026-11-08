@@ -480,9 +480,14 @@ button.tag.clear {
 }
 
 .agent[data-phase='arming'] .agent-dot,
-.agent[data-phase='acting'] .agent-dot,
-.agent[data-phase='checking'] .agent-dot {
+.agent[data-phase='acting'] .agent-dot {
   animation: agent-pulse 1.1s ease-in-out infinite;
+}
+
+/* A question is not progress: the dot stops pulsing so the card stops claiming
+   that something is happening while it is actually waiting for the user. */
+.agent[data-phase='asking'] .agent-dot {
+  background: var(--warning);
 }
 
 .agent[data-phase='error'] .agent-dot,
@@ -543,7 +548,6 @@ button.tag.clear {
 @media (prefers-reduced-motion: reduce) {
   .agent[data-phase='arming'] .agent-dot,
   .agent[data-phase='acting'] .agent-dot,
-  .agent[data-phase='checking'] .agent-dot,
   .agent-check,
   .agent-check-stroke {
     animation: none;
@@ -557,13 +561,73 @@ button.tag.clear {
   flex: none;
 }
 
-.agent-skip {
-  font-size: 10.5px;
-  line-height: 1.35;
-  color: var(--warning);
+/*
+ * The confirmation.
+ *
+ * It sits inside the run row, in the flow of the steps, because the question is
+ * about the step right above it — "нажать «Экспорт»" — and a dialog would cover
+ * the window that step is in. For as long as it is here the card takes the mouse
+ * back, so these are the only buttons in the app that are clickable during a run.
+ */
+.agent-ask {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 2px;
+  padding-top: 6px;
+  border-top: 1px solid color-mix(in srgb, var(--accent) 22%, transparent);
 }
 
-.agent-plan {
+.agent-ask-detail {
+  font-size: 10.5px;
+  line-height: 1.4;
+  color: var(--text-dim);
+  white-space: pre-wrap;
+  user-select: text;
+}
+
+.agent-ask-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.agent-ask-buttons button {
+  font: inherit;
+  font-size: 10.5px;
+  line-height: 1;
+  padding: 5px 9px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+  /* The window is click-through for the rest of the run; this is the one place
+     the pointer has to reach, so the hit area is explicit. */
+  pointer-events: auto;
+}
+
+.agent-ask-buttons button:hover {
+  background: var(--accent-soft);
+}
+
+.agent-allow {
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+  background: var(--accent-soft);
+}
+
+.agent-deny {
+  color: var(--text-dim);
+}
+
+/*
+ * What the run has done, newest last.
+ *
+ * The agent chooses its next call after seeing the result of the previous one, so
+ * there is no plan to show in advance: this is the log it produced. A failed call
+ * stays in it, dimmed — a run that changed course is part of what happened.
+ */
+.agent-log {
   list-style: none;
   margin: 0;
   padding: 0;
@@ -573,9 +637,12 @@ button.tag.clear {
   font-size: 10.5px;
   line-height: 1.35;
   color: var(--text-dim);
+  max-height: 92px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
-.agent-plan li {
+.agent-log li {
   padding-left: 11px;
   position: relative;
   overflow: hidden;
@@ -583,18 +650,7 @@ button.tag.clear {
   white-space: nowrap;
 }
 
-/* A step that already ran is struck through: the plan is a record of what was
-   asked, and what was asked *and done* should not look like what is still ahead. */
-.agent-plan li[data-state='done'] {
-  text-decoration: line-through;
-  opacity: 0.55;
-}
-
-.agent-plan li[data-state='now'] {
-  color: var(--accent);
-}
-
-.agent-plan li::before {
+.agent-log li::before {
   content: '';
   position: absolute;
   left: 2px;
@@ -606,7 +662,13 @@ button.tag.clear {
   opacity: 0.5;
 }
 
-.agent-plan li[data-state='now']::before {
+.agent-log li[data-ok='false'] {
+  color: var(--warning);
+  opacity: 0.8;
+}
+
+.agent-log li[data-ok='false']::before {
+  background: var(--warning);
   opacity: 1;
 }
 

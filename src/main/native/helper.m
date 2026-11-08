@@ -90,7 +90,17 @@ static NSDictionary *focusedWindowInfo(pid_t pid) {
   return result;
 }
 
-static int commandFront(pid_t target) {
+/**
+ * The frontmost application, optionally with its focused window.
+ *
+ * `withWindow` is false for callers that only need to know *which application*
+ * is in front — the plan's working app, a launch check, a focus guard. Reading
+ * the focused window costs a cold Accessibility round trip of 35-45 ms inside a
+ * freshly spawned helper, and on a measured turn `front` was called 67 times:
+ * the same fact was re-read far more often than it changed, and the window was
+ * needed by a small minority of those calls.
+ */
+static int commandFront(pid_t target, BOOL withWindow) {
   NSRunningApplication *front = target > 0 ? [NSRunningApplication runningApplicationWithProcessIdentifier:target]
                                            : [[NSWorkspace sharedWorkspace] frontmostApplication];
   if (!front) {
@@ -98,13 +108,17 @@ static int commandFront(pid_t target) {
     return 0;
   }
   pid_t pid = [front processIdentifier];
-  NSDictionary *win = focusedWindowInfo(pid);
   NSMutableDictionary *result = [NSMutableDictionary dictionary];
   result[@"ok"] = @YES;
   result[@"bundleId"] = [front bundleIdentifier] ?: @"";
   result[@"name"] = [front localizedName] ?: @"";
   result[@"pid"] = @(pid);
   result[@"accessibility"] = @(AXIsProcessTrusted());
+  if (!withWindow) {
+    emit(result);
+    return 0;
+  }
+  NSDictionary *win = focusedWindowInfo(pid);
   if (win) {
     result[@"windowId"] = win[(id)kCGWindowNumber];
     result[@"bounds"] = win[(id)kCGWindowBounds];
@@ -1314,6 +1328,12 @@ static NSArray<NSDictionary *> *axCollectTargets(pid_t pid, double budgetMs) {
         if (![seen containsObject:key]) {
           [seen addObject:key];
           info[@"depth"] = @(depth);
+          // Every target here was read from this one process, and saying so is
+          // what lets a caller act on the element semantically instead of
+          // guessing that the frontmost app is its owner. The guess is wrong
+          // exactly when it matters: a click aimed at an app that is not in
+          // front, or at a window of ours over the app that is.
+          info[@"pid"] = @(pid);
           [targets addObject:info];
         }
         // Enough with the list: a model's plan has six steps at most, and a
@@ -1464,8 +1484,12 @@ int main(int argc, const char *argv[]) {
     if (strcmp(command, "request-permissions") == 0) return commandPermissions(YES);
     if (strcmp(command, "cursor") == 0) return commandCursor();
     if (strcmp(command, "apps") == 0) return commandApps();
-    if (strcmp(command, "front") == 0) return commandFront(0);
-    if (strcmp(command, "window") == 0 && argc == 3) return commandFront((pid_t)strtol(argv[2], NULL, 10));
+    if (strcmp(command, "front") == 0) return commandFront(0, YES);
+    // front-quick: which application is in front, without reading its window.
+    // The window costs a cold Accessibility round trip and a full on-screen
+    // window enumeration; callers that only need the application pay neither.
+    if (strcmp(command, "front-quick") == 0) return commandFront(0, NO);
+    if (strcmp(command, "window") == 0 && argc == 3) return commandFront((pid_t)strtol(argv[2], NULL, 10), YES);
     if (strcmp(command, "open-browser") == 0) return commandOpenBrowser();
     if (strcmp(command, "copy") == 0) return commandKey("copy");
     if (strcmp(command, "paste") == 0) return commandKey("paste");

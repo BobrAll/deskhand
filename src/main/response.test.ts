@@ -1,22 +1,20 @@
 import { describe, expect, it } from 'vitest'
 
-import type { AgentPlanStep, Annotation } from '@shared/types'
+import type { Annotation } from '@shared/types'
 import { ResponseStream, type ParsedChunk } from './response'
 
 interface Result {
   text: string
   annotations: Annotation[]
-  steps: AgentPlanStep[]
 }
 
 /** Feeds `chunks`, then `finish()`, and concatenates everything the stream emitted. */
 function run(chunks: string[]): Result {
   const stream = new ResponseStream()
-  const out: Result = { text: '', annotations: [], steps: [] }
+  const out: Result = { text: '', annotations: [] }
   const absorb = (chunk: ParsedChunk): void => {
     out.text += chunk.text
     out.annotations.push(...chunk.annotations)
-    out.steps.push(...chunk.steps)
   }
   for (const chunk of chunks) absorb(stream.push(chunk))
   absorb(stream.finish())
@@ -46,39 +44,35 @@ function randomChunks(input: string, seed: number): string[] {
   return chunks
 }
 
-const CLICK_LINE = '@click 0.42 0.31 left «Экспорт»'
+const CIRCLE_LINE = '@point circle 0.42 0.31 0.52 0.41 «Экспорт»'
 const ARROW_LINE = '@point arrow 0.5 0.8 0.82 0.11 «Сюда»'
 
 describe('ResponseStream: a marker cut by a chunk boundary', () => {
   it('holds a tail that starts with @ and completes it on the next chunk', () => {
     const stream = new ResponseStream()
 
-    expect(stream.push('Готово\n@po')).toEqual({ text: 'Готово\n', annotations: [], steps: [] })
+    expect(stream.push('Готово\n@po')).toEqual({ text: 'Готово\n', annotations: [] })
     expect(stream.push(`int arrow 0.5 0.8 0.82 0.11 «Сюда»\n`)).toEqual({
       text: '',
       annotations: [
         { kind: 'arrow', from: { x: 0.5, y: 0.8 }, to: { x: 0.82, y: 0.11 }, label: 'Сюда' }
-      ],
-      steps: []
+      ]
     })
   })
 
-  it('holds a bare @cl and never prints it into the answer', () => {
+  it('holds a bare @po and never prints it into the answer', () => {
     const stream = new ResponseStream()
 
-    expect(stream.push('@cl')).toEqual({ text: '', annotations: [], steps: [] })
-    expect(stream.push('ick 0.42 0.31 left «Экспорт»\n').steps).toEqual([
-      {
-        action: { kind: 'click', at: { x: 0.42, y: 0.31 }, button: 'left', label: 'Экспорт' },
-        label: 'Клик: «Экспорт»'
-      }
+    expect(stream.push('@po')).toEqual({ text: '', annotations: [] })
+    expect(stream.push('int circle 0.4 0.3 0.5 0.4\n').annotations).toEqual([
+      { kind: 'circle', from: { x: 0.4, y: 0.3 }, to: { x: 0.5, y: 0.4 } }
     ])
   })
 
   it('holds a tail whose marker is preceded by whitespace', () => {
     const stream = new ResponseStream()
 
-    expect(stream.push('   @po')).toEqual({ text: '', annotations: [], steps: [] })
+    expect(stream.push('   @po')).toEqual({ text: '', annotations: [] })
     expect(stream.push('int 0.5 0.5\n').annotations).toHaveLength(1)
   })
 
@@ -87,16 +81,16 @@ describe('ResponseStream: a marker cut by a chunk boundary', () => {
 
     expect(stream.push('@po').text).toBe('')
     // The tail never got its newline; `consume()` appends one.
-    expect(stream.finish()).toEqual({ text: '@po\n', annotations: [], steps: [] })
+    expect(stream.finish()).toEqual({ text: '@po\n', annotations: [] })
   })
 
   it('finish() is idempotent and empty when nothing was held', () => {
     const stream = new ResponseStream()
 
-    expect(stream.finish()).toEqual({ text: '', annotations: [], steps: [] })
+    expect(stream.finish()).toEqual({ text: '', annotations: [] })
     stream.push('@po')
     expect(stream.finish().text).toBe('@po\n')
-    expect(stream.finish()).toEqual({ text: '', annotations: [], steps: [] })
+    expect(stream.finish()).toEqual({ text: '', annotations: [] })
   })
 })
 
@@ -104,13 +98,12 @@ describe('ResponseStream: a line with @ that is not a command', () => {
   it('passes @username through as text', () => {
     expect(whole('@username привет\n')).toEqual({
       text: '@username привет\n',
-      annotations: [],
-      steps: []
+      annotations: []
     })
   })
 
   it('passes an @ inside a sentence through as text', () => {
-    expect(whole('пиши на a@b.c')).toEqual({ text: 'пиши на a@b.c', annotations: [], steps: [] })
+    expect(whole('пиши на a@b.c')).toEqual({ text: 'пиши на a@b.c', annotations: [] })
   })
 
   it('passes an unknown @command through as text', () => {
@@ -118,27 +111,32 @@ describe('ResponseStream: a line with @ that is not a command', () => {
   })
 
   it('passes a lone @ through as text', () => {
-    expect(whole('@')).toEqual({ text: '@\n', annotations: [], steps: [] })
+    expect(whole('@')).toEqual({ text: '@\n', annotations: [] })
   })
 })
 
 describe('ResponseStream: unusable markers are swallowed', () => {
   it('drops a marker with no usable coordinates', () => {
-    expect(whole('@point\n')).toEqual({ text: '', annotations: [], steps: [] })
-    expect(whole('@point arrow x y z w\n')).toEqual({ text: '', annotations: [], steps: [] })
-    expect(whole('@click abc\n')).toEqual({ text: '', annotations: [], steps: [] })
+    expect(whole('@point\n')).toEqual({ text: '', annotations: [] })
+    expect(whole('@point arrow x y z w\n')).toEqual({ text: '', annotations: [] })
   })
 
   it('keeps the surrounding text and drops only the bad line', () => {
-    expect(whole('до\n@click тут\nпосле\n').text).toBe('до\nпосле\n')
     expect(whole('до\n@point тут мусор\nпосле\n').text).toBe('до\nпосле\n')
+  })
+
+  it('prints a line that only looks like an old action marker', () => {
+    // Nothing parses `@click` any more. Dropping it would lose text the user is
+    // reading; printing it is the honest outcome of a protocol that no longer
+    // has that line.
+    expect(whole('@click abc\n').text).toBe('@click abc\n')
+    expect(whole('до\n@click тут\nпосле\n').text).toBe('до\n@click тут\nпосле\n')
   })
 
   it('drops a degenerate box but keeps a single-point circle', () => {
     expect(whole('@point box 0.1 0.2 0.1 0.2\n')).toEqual({
       text: '',
-      annotations: [],
-      steps: []
+      annotations: []
     })
     expect(whole('@point circle 0.5 0.5\n').annotations).toEqual([
       { kind: 'circle', from: { x: 0.5, y: 0.5 }, to: { x: 0.53, y: 0.53 } }
@@ -187,30 +185,30 @@ describe('ResponseStream: «» labels', () => {
 })
 
 describe('ResponseStream: accumulated results', () => {
-  it('collects shapes and steps in arrival order', () => {
+  it('collects shapes in arrival order', () => {
     const stream = new ResponseStream()
-    stream.push('@click 0.1 0.1\n@point circle 0.2 0.2\n@wait 100\n@click 0.3 0.3\n')
+    stream.push('@point circle 0.2 0.2 0.3 0.3\n@point arrow 0.1 0.1 0.4 0.4\n')
     stream.finish()
 
-    expect(stream.plan().map((step) => step.action.kind)).toEqual(['click', 'wait', 'click'])
-    expect(stream.collected()).toHaveLength(1)
+    expect(stream.collected().map((shape) => shape.kind)).toEqual(['circle', 'arrow'])
   })
 
-  it('tries an action line before an annotation line', () => {
+  it('prints an action-shaped line as text now that acting is not a marker', () => {
+    // The old protocol had a second line grammar for clicks. Acting is a
+    // separate turn with real tool calling, so a line that looks like one is
+    // just prose — and printing it is better than silently swallowing it.
     const out = whole('@click 0.1 0.1\n')
 
-    expect(out.text).toBe('')
     expect(out.annotations).toEqual([])
-    expect(out.steps).toHaveLength(1)
+    expect(out.text).toBe('@click 0.1 0.1\n')
   })
 
   it('does not double count when finish() has nothing to flush', () => {
     const stream = new ResponseStream()
-    stream.push('@click 0.1 0.1\n')
+    stream.push('@point circle 0.2 0.2 0.3 0.3\n')
     stream.finish()
 
-    expect(stream.plan()).toHaveLength(1)
-    expect(stream.collected()).toEqual([])
+    expect(stream.collected()).toHaveLength(1)
   })
 })
 
@@ -220,15 +218,15 @@ describe('ResponseStream: any chunking gives an identical result', () => {
     'Просто ответ',
     'Строка один\nСтрока два\n',
     `${ARROW_LINE}\nГотово\n`,
-    `Текст\n${CLICK_LINE}\nТекст после\n`,
-    '@click 0.1 0.1\n@move 0.5 0.5\n@type Привет, мир\n@done «Всё»\n',
+    `Текст\n${CIRCLE_LINE}\nТекст после\n`,
+    '@point box 0.1 0.1 0.3 0.3\n@point underline 0.5 0.5 0.7 0.7\n',
     'до\n@point тут мусор\nпосле\n',
     'a\r\nb\r\n@point 0.1 0.2 0.3 0.4\r\n',
     '\n\n\n',
     '@po',
     '@point',
     '@',
-    `${ARROW_LINE}\n${CLICK_LINE}\n@wait 300\n`
+    `${ARROW_LINE}\n${CIRCLE_LINE}\n`
   ]
 
   it('matches the whole-string result for every fixed chunking', () => {
@@ -253,29 +251,24 @@ describe('ResponseStream: any chunking gives an identical result', () => {
     }
   })
 
-  it('is not vacuous: the corpus really produces shapes, steps and text', () => {
+  it('is not vacuous: the corpus really produces shapes and text', () => {
     expect(whole(corpus[2]).annotations).toHaveLength(1)
-    expect(whole(corpus[3]).steps).toHaveLength(1)
+    expect(whole(corpus[3]).annotations).toHaveLength(1)
     expect(whole(corpus[0]).text).toBe('Просто ответ')
-    expect(whole(corpus[4]).steps.map((step) => step.action.kind)).toEqual([
-      'click',
-      'move',
-      'type',
-      'done'
-    ])
+    expect(whole(corpus[4]).annotations.map((shape) => shape.kind)).toEqual(['box', 'underline'])
   })
 
   // KNOWN BUG: characterization — `push()` decides whether to hold the tail by
   // looking at the whole pending string, so a tail that starts with text is
   // flushed before its `@` ever arrives.
   it('differs on a marker that starts mid-line (known bug)', () => {
-    const wholeLine = whole(`x ${CLICK_LINE}\n`)
-    expect(wholeLine.text).toBe(`x ${CLICK_LINE}\n`)
-    expect(wholeLine.steps).toEqual([])
+    const wholeLine = whole(`x ${CIRCLE_LINE}\n`)
+    expect(wholeLine.text).toBe(`x ${CIRCLE_LINE}\n`)
+    expect(wholeLine.annotations).toEqual([])
 
-    const split = run(['x ', `${CLICK_LINE}\n`])
+    const split = run(['x ', `${CIRCLE_LINE}\n`])
     expect(split.text).toBe('x ')
-    expect(split.steps).toHaveLength(1)
+    expect(split.annotations).toHaveLength(1)
   })
 
   // KNOWN BUG: characterization — same root cause: the trailing text tail is

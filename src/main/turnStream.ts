@@ -15,7 +15,7 @@ import { trace } from './agent/trace'
  * turn cancelled mid-stream — all of it is decided here.
  */
 
-import type { AgentPlanStep, Annotation } from '@shared/types'
+import type { Annotation } from '@shared/types'
 import { isDrawable } from './annotations'
 import { ProviderError, type ChatMessage, type LlmProvider, type StreamEnd, type StreamOptions } from './llm/provider'
 import { ResponseStream } from './response'
@@ -41,8 +41,6 @@ export interface TurnStreamOptions {
 }
 
 export interface TurnStreamResult {
-  /** Everything the model asked to do, in the order it said it. */
-  steps: AgentPlanStep[]
   /** The prose this round produced, whether or not it was shown. */
   text: string
   webLookup?: boolean
@@ -95,7 +93,7 @@ export async function consumeTurnStream(options: TurnStreamOptions): Promise<Tur
         break
       }
       const chunk = next.value
-      if (!isAlive()) return { steps: [], text }
+      if (!isAlive()) return { text }
       if (first) {
         first = false
         trace('model.firstChunk', { ttftMs: Math.round(performance.now() - started) })
@@ -107,7 +105,7 @@ export async function consumeTurnStream(options: TurnStreamOptions): Promise<Tur
   } finally {
     await stream.return()
   }
-  if (!isAlive()) return { steps: [], text }
+  if (!isAlive()) return { text }
 
   // Whatever the parser was still holding back: a trailing partial line, or
   // text that never became a marker.
@@ -116,11 +114,12 @@ export async function consumeTurnStream(options: TurnStreamOptions): Promise<Tur
   append(tail.text)
 
   trace('model.termination', { reason: end ?? 'incomplete' })
-  if (parser.invalidAction || (end !== 'complete' && (parser.plan().length || parser.webLookup))) {
-    throw new ProviderError(parser.invalidAction
-      ? 'Модель вернула некорректный план. Действия этого этапа не выполнены.'
-      : 'Ответ модели оборвался. Действия этого этапа не выполнены.', true)
+  // A truncated answer that asked for a web lookup is a lookup nobody can carry
+  // out: the marker arrived, the instruction that justified it may not have. It
+  // is retried rather than silently downgraded to a plain answer.
+  if (end !== 'complete' && parser.webLookup) {
+    throw new ProviderError('Ответ модели оборвался.', true)
   }
 
-  return { steps: parser.plan(), text, ...(parser.webLookup ? { webLookup: true } : {}) }
+  return { text, ...(parser.webLookup ? { webLookup: true } : {}) }
 }

@@ -120,7 +120,6 @@ function event(overrides: Partial<AgentEvent> & { phase: AgentEvent['phase'] }):
     step: 0,
     total: 0,
     label: '',
-    plan: [],
     ...overrides
   }
 }
@@ -247,23 +246,23 @@ describe('updateAgentCursor: following the pointer', () => {
   })
 })
 
-describe('updateAgentCursor: checking and done', () => {
-  it('relabels the glow «Проверяю результат…» while a check runs', async () => {
+describe('updateAgentCursor: asking and done', () => {
+  it('relabels the glow with the question while the run waits for an answer', async () => {
     cursor.updateAgentCursor(event({ phase: 'acting', step: 1, total: 1, label: 'Клик' }))
     await settle()
 
-    cursor.updateAgentCursor(event({ phase: 'checking' }))
+    cursor.updateAgentCursor(event({ phase: 'asking', label: 'Нажать «Экспорт»' }))
 
     expect(win().sent.at(-1)).toMatchObject({
       phase: 'waiting',
-      label: 'Проверяю результат…',
+      label: 'Нажать «Экспорт»',
       step: 0,
       total: 0
     })
   })
 
-  it('ignores a check when no glow is on screen', async () => {
-    cursor.updateAgentCursor(event({ phase: 'checking' }))
+  it('ignores a question when no glow is on screen', async () => {
+    cursor.updateAgentCursor(event({ phase: 'asking' }))
 
     expect(state.windows).toHaveLength(0)
   })
@@ -279,29 +278,28 @@ describe('updateAgentCursor: checking and done', () => {
   })
 })
 
-describe('updateAgentCursor: a turn that spans several plans', () => {
-  it('keeps the frame visible through a rejected target and replanning', async () => {
+describe('updateAgentCursor: a turn that spans several calls', () => {
+  it('keeps the frame visible while the run goes back to look again', async () => {
     const token = cursor.beginAgentTurn()
     cursor.updateAgentCursor(event({ phase: 'arming' }))
     await settle()
-    cursor.updateAgentCursor(event({ phase: 'error', recoverable: true }))
     cursor.hideAgentCursor()
-    cursor.updateAgentCursor(event({ phase: 'checking', label: 'Проверяю экран и меняю способ' }))
+    cursor.updateAgentCursor(event({ phase: 'asking', label: 'Подтверждение' }))
     await vi.advanceTimersByTimeAsync(8_000)
 
     expect(win().hidden).toBe(0)
     expect(win().sent.every((frame) => frame.visible)).toBe(true)
     expect(win().sent.at(-1)).toMatchObject({
-      phase: 'waiting', label: 'Проверяю экран и меняю способ'
+      phase: 'waiting', label: 'Подтверждение'
     })
     cursor.endAgentTurn(token)
     await vi.advanceTimersByTimeAsync(200)
     expect(win().hidden).toBe(1)
   })
 
-  it('shows the frame when a turn starts by looking at the screen', async () => {
+  it('shows the frame when a turn starts by asking a question', async () => {
     cursor.beginAgentTurn()
-    cursor.updateAgentCursor(event({ phase: 'checking' }))
+    cursor.updateAgentCursor(event({ phase: 'asking', label: 'Нажать «ОК»' }))
     await settle()
     expect(win().sent.at(-1)).toMatchObject({ visible: true, phase: 'waiting' })
   })

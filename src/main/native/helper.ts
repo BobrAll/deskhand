@@ -176,6 +176,18 @@ export async function helperFront(): Promise<RawFrontApp | null> {
   }
 }
 
+/**
+ * Which application is in front, without its window.
+ *
+ * The window half of `front` costs a cold Accessibility round trip (35-45 ms)
+ * plus an enumeration of every on-screen window. Callers that only need the
+ * identity of the application — the plan's working app, a launch check, a focus
+ * guard — should not pay for a fact they do not read, and most of them do not.
+ */
+export async function helperFrontApp(): Promise<RawFrontApp | null> {
+  return mapFront(await runHelper(['front-quick']))
+}
+
 /** Synthesizes Cmd+C / Cmd+V into whatever app currently has focus. */
 export async function helperSendKey(command: 'copy' | 'paste'): Promise<boolean> {
   const payload = await runHelper([command])
