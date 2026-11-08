@@ -119,7 +119,7 @@ export function VoiceTab({ voice, savedModel, gestures, onChange, onGestureChang
     <section>
       <h2>Голос</h2>
       <div className="field">
-        <label>
+        <label className="check">
           <input type="checkbox" checked={voice.agentFeedback}
             onChange={(event) => onChange({ agentFeedback: event.target.checked })} />
           Короткие реплики агента
@@ -128,7 +128,7 @@ export function VoiceTab({ voice, savedModel, gestures, onChange, onGestureChang
           Не чаще раза в 45 секунд. Для озвучки нужен русский голос macOS.</p>
       </div>
       <div className="field">
-        <label>
+        <label className="check">
           <input type="checkbox" checked={voice.dialogue}
             onChange={(event) => onChange({ dialogue: event.target.checked })} />
           Голосовой диалог
@@ -142,7 +142,7 @@ export function VoiceTab({ voice, savedModel, gestures, onChange, onGestureChang
       </p>
 
       <div className="field">
-        <label>
+        <label className="check">
           <input
             type="checkbox"
             checked={voice.enabled}
@@ -153,7 +153,7 @@ export function VoiceTab({ voice, savedModel, gestures, onChange, onGestureChang
       </div>
 
       <div className="field">
-        <label>
+        <label className="check">
           <input
             type="checkbox"
             checked={gestures.enabled}
@@ -222,7 +222,7 @@ export function VoiceTab({ voice, savedModel, gestures, onChange, onGestureChang
 
       {voice.action === 'command' && (
         <div className="field">
-          <label>
+          <label className="check">
             <input
               type="checkbox"
               checked={voice.autoSend}

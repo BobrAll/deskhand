@@ -72,7 +72,7 @@ export function PrivacySection({
       </div>
 
       <div className="field">
-        <label>
+        <label className="check">
           <input type="checkbox" checked={draft.rememberConversation}
             onChange={(event) => patch({ rememberConversation: event.target.checked })} />
           Помнить предыдущую команду

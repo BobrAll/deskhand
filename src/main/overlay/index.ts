@@ -225,7 +225,6 @@ export function createOverlayController(host: OverlayHost) {
       context: session.snapshot,
       flags: session.flags,
       defaults: session.defaults,
-      quickActions: settings.quickActions,
       setupNotice: setupNotice(),
       warnings,
       agent: agent.availability()
@@ -922,13 +921,14 @@ export function createOverlayController(host: OverlayHost) {
     const glowTurn = beginAgentTurn(!refine && availability.ready && looksLikeAction(request.prompt)
       ? 'Задача принята · готовлю действия…' : undefined)
     const turnSession = session
+    let agentAcknowledged = false
     let outcome = 'abandoned'
     let reason = 'session-changed'
     let deadline: ReturnType<typeof setTimeout> | undefined
     try {
       if (request.voice) {
-        // Keep the transcript visible before the card gets out of the way of the
-        // answer or the agent. Escape and a new recording can cancel this wait.
+        // Keep the transcript visible before routing the request.
+        // Escape and a new recording can cancel this wait.
         if (host.window()?.isVisible()) {
           voicePreview = abort
           const preview = delay(VOICE_PREVIEW_MS)
@@ -945,13 +945,15 @@ export function createOverlayController(host: OverlayHost) {
           if (voicePreview === abort) voicePreview = null
           if (abort.signal.aborted || session !== turnSession) return
         }
-        host.hide()
       }
 
       deadline = setTimeout(() => abort.abort('deadline'), TURN_DEADLINE_MS)
       const bundleId = turnSession.target?.bundleId || null
       const currentSettings = getSettings()
-      if (isExcluded(turnSession.target, currentSettings.excludedApps)) return
+      if (isExcluded(turnSession.target, currentSettings.excludedApps)) {
+        if (request.voice) host.hide()
+        return
+      }
       const useHistory = settings.rememberConversation && currentSettings.rememberConversation
       const history = turnSession.history.filter(
         (entry) => !entry.bundleId || !currentSettings.excludedApps.includes(entry.bundleId)
@@ -978,6 +980,7 @@ export function createOverlayController(host: OverlayHost) {
        */
       const agentState = agent.availability()
       const useAgent = !refine && agentState.ready && looksLikeAction(request.prompt)
+      if (request.voice && !useAgent) host.hide()
 
       // The drawings belong to the answer currently on screen: a new question
       // replaces that answer, so old arrows must not stay behind as if they
@@ -991,6 +994,7 @@ export function createOverlayController(host: OverlayHost) {
 
       if (useAgent) {
         trace('tool.route', { backend: 'agent', reason: 'action-request' })
+        if (!host.window()?.isVisible()) host.showInactive(INITIAL_HEIGHT)
         // The card shows the screen the agent is about to work on. The agent
         // takes its own captures — this one is for the person watching, and it
         // is not sent to any model.
@@ -1004,27 +1008,23 @@ export function createOverlayController(host: OverlayHost) {
         }))
         if (abort.signal.aborted || session !== turnSession) return
 
-        // The agent's closing sentence is the answer. It is the only text that
-        // knows what actually happened on screen, so nothing here paraphrases it.
-        //
-        // Except when the run gave up: the loop's own closing line on that path
-        // ("Stopped after 3 steps without finishing the task") is a diagnostic,
-        // not an answer, and it is in English. `message` carries what the
-        // controller decided to say instead, so the two never mix.
-        session.answer = run.incomplete
+        const report = run.answer.trim()
+        // The agent uses this exact reply for success without caveats.
+        agentAcknowledged = report === '[[ACTION_DONE]]' && !run.message &&
+          !run.blocked && !run.aborted && !run.incomplete
+        session.answer = agentAcknowledged ? '' : run.incomplete
           ? (run.message ?? '')
-          : run.answer.trim() || (run.message ?? '')
+          : report || (run.message ?? '')
         outcome = run.blocked ? 'blocked'
           : run.aborted ? 'cancelled'
             : run.incomplete ? 'incomplete'
-              : run.answer.trim() ? 'agent-report' : 'agent-silent'
+              : report && !agentAcknowledged ? 'agent-report' : 'agent-silent'
         reason = run.blocked ? 'agent-unavailable'
           : run.aborted ? 'agent-stop'
             : run.incomplete ? 'agent-incomplete'
-              : run.answer.trim() ? 'agent-answer' : 'no-answer'
-        if (run.actions.length === 0 && !run.blocked && !run.incomplete) {
-          // Nothing was touched: this was an answer that happened to be phrased
-          // as a command. The fallback keeps the card from showing an empty body.
+              : agentAcknowledged ? 'agent-acknowledged'
+                : report ? 'agent-answer' : 'no-answer'
+        if (!agentAcknowledged && run.actions.length === 0 && !run.blocked && !run.incomplete) {
           session.answer = emptyAnswerFallback(session.answer, 0) || session.answer
         }
       } else {
@@ -1095,7 +1095,7 @@ export function createOverlayController(host: OverlayHost) {
         reason = webLookup ? 'search-response' : 'plain-response'
       }
 
-      const entry = remember(session, request, session.answer, bundleId)
+      const entry = remember(session, request, agentAcknowledged ? 'Готово.' : session.answer, bundleId)
       const latestSettings = getSettings()
       if (entry && !refine && useHistory && latestSettings.rememberConversation) {
         saveCommand(entry.question, bundleId, latestSettings.excludedApps)
@@ -1108,7 +1108,7 @@ export function createOverlayController(host: OverlayHost) {
         annotations: session.annotations.length
       }
       emit(CH.overlay.stream, done)
-      if (session.answer.trim()) {
+      if (agentAcknowledged || session.answer.trim()) {
         // A voice turn, an agent turn and a card that was hidden while it waited
         // all end with the answer arriving rather than streaming: the card has to
         // be brought back to show it.

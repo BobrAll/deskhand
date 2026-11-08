@@ -34,6 +34,24 @@ final class ScriptedProvider: ChatProvider {
 }
 
 final class AgentLoopTests: XCTestCase {
+    func testATruncatedReplyIsNotMistakenForAFinishedRun() async throws {
+        // The provider cut the answer off at `max_tokens`. The tool call it was
+        // writing never finished, so the reply arrives with no calls and no text
+        // — the exact shape of "the model said it is done". Taking that at face
+        // value ended a real run with an empty answer and threw away every step
+        // already taken, so the task had to be asked for twice.
+        let provider = TruncatingProvider()
+        let loop = AgentLoop(
+            provider: provider,
+            executor: ToolExecutor(),
+            options: .init(verbose: false)
+        )
+        let answer = try await loop.run(task: "do the thing")
+        XCTAssertFalse(loop.finished, "a cut-off reply is not the model finishing")
+        XCTAssertTrue(answer.contains("token limit"), "got: \(answer)")
+        XCTAssertEqual(provider.calls, 1, "there is nothing to retry: the same limit would cut it again")
+    }
+
     func testReturnsFinalAnswerWhenNoToolCalls() async throws {
         let provider = ScriptedProvider(steps: [
             .init(text: "All done.", toolCalls: [])
@@ -307,6 +325,25 @@ final class AgentLoopTests: XCTestCase {
         let trimmed = loop.trim(messages)
         XCTAssertTrue(trimmed.contains { $0.text == "important output" })
         XCTAssertTrue(trimmed.allSatisfy { $0.images.isEmpty })
+    }
+}
+
+/// A provider whose reply was cut off at the token limit.
+///
+/// Both wires report it in `finish_reason`/`stop_reason`, but the half-written
+/// tool call does not survive parsing, so the completion looks like an empty
+/// final answer.
+private final class TruncatingProvider: ChatProvider {
+    let config = ProviderConfig(apiKey: "test")
+    private(set) var calls = 0
+
+    func complete(
+        messages: [ChatMessage],
+        tools: [ToolDefinition],
+        systemPrompt: String
+    ) async throws -> Completion {
+        calls += 1
+        return Completion(text: "", toolCalls: [], stopReason: "length")
     }
 }
 

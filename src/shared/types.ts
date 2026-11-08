@@ -14,14 +14,6 @@ export type ProviderId = 'openrouter' | 'openai' | 'anthropic'
  */
 export type ResponseMode = 'insert' | 'analyze'
 
-export interface QuickAction {
-  id: string
-  label: string
-  prompt: string
-  /** `insert` strips markdown, `analyze` keeps it. */
-  mode: ResponseMode
-}
-
 /** What a finished transcript does: ask the model, or type it into the app. */
 type VoiceAction = 'command' | 'dictate'
 
@@ -348,7 +340,6 @@ export interface AppSettings {
   captureScreenshotByDefault: boolean
   screenshotMaxSide: number
   screenshotQuality: number
-  quickActions: QuickAction[]
   /** Bundle identifiers where Smart Cursor does nothing at all. */
   excludedApps: string[]
   rememberConversation: boolean
@@ -565,7 +556,6 @@ export interface OverlayState {
   context: ContextSnapshot
   flags: ContextFlags
   defaults: ContextFlags
-  quickActions: QuickAction[]
   /** Set when provider/model/key are not ready; the overlay still opens. */
   setupNotice: OverlayNotice | null
   warnings: string[]

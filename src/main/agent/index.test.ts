@@ -13,6 +13,7 @@
  */
 
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { AGENT_MIN_OUTPUT_TOKENS } from '@shared/defaults'
 import type { AgentEvent, AgentToolRequest } from '@shared/types'
 
 const state = vi.hoisted(() => ({
@@ -107,7 +108,7 @@ const PROVIDER = {
   apiKey: 'k', maxTokens: 1024, temperature: 0
 }
 
-function harness() {
+function harness(options: { maxTokens?: number } = {}) {
   const events: AgentEvent[] = []
   const passthrough: boolean[] = []
   const controller = createAgentController({
@@ -123,7 +124,10 @@ function harness() {
     /** Everything this run asked the trace to record. */
     trace: () => state.traceEvents.filter((line) => line.event !== 'agent.start'),
     run: (prompt = 'Нажми «Купить»') => controller.run({
-      prompt, appName: 'Safari', windowTitle: 'Магазин', provider: PROVIDER
+      prompt,
+      appName: 'Safari',
+      windowTitle: 'Магазин',
+      provider: { ...PROVIDER, ...(options.maxTokens ? { maxTokens: options.maxTokens } : {}) }
     })
   }
 }
@@ -293,6 +297,22 @@ describe('a run that gave up', () => {
     expect(result.message).toContain('повторялось')
   })
 
+  it('names the output limit when that is what stopped it', async () => {
+    // A different failure from running out of steps, and a different fix: the
+    // run had budget left, but every reply was cut in half. Telling the user to
+    // raise the step limit would send them to the wrong setting.
+    const h = harness()
+    const running = h.run()
+
+    await vi.waitFor(() => expect(state.runs).toHaveLength(1))
+    state.emit({ kind: 'stopped', reason: "the model's reply was cut off at the token limit" })
+    state.emit({ kind: 'done', complete: false, answer: 'Stopped: the reply was cut off.' })
+
+    const result = await running
+    expect(result.incomplete).toBe(true)
+    expect(result.message).toContain('токенов')
+  })
+
   it('still reports the model’s own sentence when the run did finish', async () => {
     const h = harness()
     const running = h.run()
@@ -366,6 +386,33 @@ describe('a run that works', () => {
       // where to look by calling its own tool.
       task: 'Приложение: Safari\nОкно: Магазин\n\nНажми «Купить»'
     })
+  })
+
+  it('gives an agent step more output room than the writer’s 1024', async () => {
+    // A tool call with nested JSON does not fit in 1024 tokens: the reply is cut
+    // off mid-call, the half-written call parses into nothing, and the step
+    // arrives as an empty answer. The run is then lost with no sign of why.
+    const h = harness()
+    const running = h.run()
+
+    await vi.waitFor(() => expect(state.runs).toHaveLength(1))
+    state.emit({ kind: 'done', complete: true, answer: '' })
+    await running
+
+    const provider = (state.runs[0] as { provider: { maxTokens: number } }).provider
+    expect(provider.maxTokens).toBeGreaterThanOrEqual(AGENT_MIN_OUTPUT_TOKENS)
+  })
+
+  it('keeps a larger budget the user chose instead of lowering it', async () => {
+    const h = harness({ maxTokens: 8192 })
+    const running = h.run()
+
+    await vi.waitFor(() => expect(state.runs).toHaveLength(1))
+    state.emit({ kind: 'done', complete: true, answer: '' })
+    await running
+
+    const provider = (state.runs[0] as { provider: { maxTokens: number } }).provider
+    expect(provider.maxTokens).toBe(8192)
   })
 })
 

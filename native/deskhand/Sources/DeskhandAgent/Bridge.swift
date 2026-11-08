@@ -172,7 +172,16 @@ final class Bridge: @unchecked Sendable {
             var answer: String?
             var failure: String?
             do {
-                answer = try await loop.run(task: task, cancel: handle.cancel)
+                answer = try await loop.run(
+                    task: task,
+                    cancel: handle.cancel,
+                    finalResponseInstruction: """
+                        When the requested action succeeded as requested and there is nothing else the user \
+                        needs to know, reply with exactly [[ACTION_DONE]]. If the user asked for information, \
+                        the outcome is uncertain or partial, or there is a caveat or follow-up the user needs, \
+                        give that information briefly in the user's language. Do not repeat the completed steps.
+                        """
+                )
             } catch is CancellationError {
                 answer = nil
             } catch {
@@ -385,7 +394,7 @@ private final class BridgeObserver: AgentObserver, @unchecked Sendable {
     }
 
     func stepAnswered(_ step: Int, narration: String, calls: [ToolCall]) {
-        guard !narration.isEmpty else { return }
+        guard !calls.isEmpty, !narration.isEmpty else { return }
         bridge.emit(["event": .string("narration"), "params": .object([
             "step": .number(Double(step)),
             "text": .string(narration),

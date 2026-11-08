@@ -39,14 +39,20 @@ export const ANSWER_CHROME = 8 * 2 + 2 + 12
 /** Two buttons' horizontal padding and a small gap between their labels. */
 export const ACTIONS_CHROME = ANSWER_CHROME + 5 * 4 + 8
 
+/** The bubble edge and padding, plus the status icon and gap. */
+export const AGENT_ROW_CHROME = 8 * 2 + 2 + 18
+
+/** The extra margin and padding around the status row after the run. */
+export const AGENT_STATUS_INSET = 12 + 8 * 2
+
 /**
  * Everything on the line that is not the question itself, in points.
  *
- * The bubble's `padding: 6px 8px` and its 1px edge are 18; the bar spends 6 on the
- * presence dot, 6 + 6 on the two gaps and 16 on the chevron — 52 points of chrome
+ * The bubble's `padding: 6px 8px` and its 1px edge are 18; the bar spends 6 on the gap
+ * and 16 on the chevron — 40 points of chrome
  * before the field gets a single point of its own.
  */
-export const CHROME_WIDTH = 8 * 2 + 2 + 6 + 6 + 6 + 16
+export const CHROME_WIDTH = 8 * 2 + 2 + 6 + 16
 
 /**
  * The stop button, which exists only while an answer streams: its own 18 points

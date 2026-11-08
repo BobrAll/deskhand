@@ -38,7 +38,7 @@ export interface ViewState {
 export interface ViewFlags {
   /** The app is in the exclusion list: nothing is sent, and the field is disabled. */
   blocked: boolean
-  /** Everything below the field — tags, suggestions — is folded behind the chevron. */
+  /** Everything below the field — including context tags — is folded behind the chevron. */
   showMeta: boolean
   /** There is a finished answer to paste, and nothing is still writing over it. */
   canPaste: boolean

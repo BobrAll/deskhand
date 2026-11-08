@@ -13,9 +13,39 @@ interface Turn {
 }
 
 const turn = new AsyncLocalStorage<Turn>()
+/**
+ * The turns that are still open.
+ *
+ * `AsyncLocalStorage` binds a context to a callback, and those callbacks outlive
+ * the turn that registered them. The agent sidecar is spawned once and its
+ * stdout listener is attached during the first action request, so every event
+ * the long-lived process emitted afterwards was filed under the turn that
+ * happened to start it: one turn ended up holding three more minutes of another
+ * turn's work, and a single run looked like it repeated every step twice.
+ *
+ * Keeping the open turns is what lets a stale context be recognised as stale
+ * without breaking turns that really do overlap.
+ */
+const open = new Set<Turn>()
 const MAX_BYTES = 2 * 1024 * 1024
 let writes = Promise.resolve()
 let warned = false
+
+/**
+ * The turn an event belongs to, or nothing.
+ *
+ * A live context wins, because overlapping turns each have their own. A context
+ * whose turn has already closed is ignored — it came from a callback that
+ * outlived it — and the single turn still open is the honest answer. When
+ * several are open and none matches, guessing would be worse than dropping the
+ * event.
+ */
+function currentTurn(): Turn | null {
+  const ambient = turn.getStore()
+  if (ambient && open.has(ambient)) return ambient
+  if (open.size === 1) return open.values().next().value ?? null
+  return null
+}
 
 /**
  * Waits for the queued writes to reach the disk.
@@ -30,7 +60,7 @@ export function flushTrace(): Promise<void> {
 }
 
 export function trace(event: string, fields: Fields = {}): void {
-  const current = turn.getStore()
+  const current = currentTurn()
   if (!current) return
   const { id, path, started } = current
   const line = JSON.stringify({
@@ -51,7 +81,7 @@ export function trace(event: string, fields: Fields = {}): void {
 }
 
 export function traceEnd(event: string, fields: Fields = {}): () => void {
-  const current = turn.getStore()
+  const current = currentTurn()
   if (!current) return () => undefined
   const span = ++current.nextSpan
   const start = performance.now()
@@ -81,10 +111,16 @@ export function traceTurn<T>(fields: Fields, work: () => Promise<T>): Promise<T>
   if (enabled === '0' || (process.env.VITEST && enabled !== '1')) return work()
   const path = join(app.getPath('userData'), 'agent-trace.jsonl')
   const revision = process.env.SMART_CURSOR_TRACE_REVISION
-  return turn.run({ id: randomUUID(), path, started: performance.now(), nextSpan: 0 }, () => timed('turn', work, {
+  const store: Turn = { id: randomUUID(), path, started: performance.now(), nextSpan: 0 }
+  open.add(store)
+  return turn.run(store, () => timed('turn', work, {
     ...fields, schema: 2, build: app.getVersion?.() ?? 'unknown',
     revision: revision && /^[a-f0-9]{7,40}$/.test(revision) ? revision : null
-  }))
+  // Closed only after the turn's own end event is written, so the last line is
+  // not the one that loses its turn.
+  })).finally(() => {
+    open.delete(store)
+  })
 }
 
 /**
@@ -99,6 +135,12 @@ export function traceTurn<T>(fields: Fields, work: () => Promise<T>): Promise<T>
  * own when there is not.
  */
 export function traceWithin<T>(fields: Fields, work: () => Promise<T>): Promise<T> {
-  if (turn.getStore()) return work()
+  // A live ambient turn is reused; a stale one is not. The distinction matters
+  // because this is the path the agent controller takes from the card's request
+  // handler, and a handler registered inside an earlier turn carries that dead
+  // turn's context — reusing it would file this run under a turn that ended
+  // minutes ago.
+  const ambient = turn.getStore()
+  if (ambient && open.has(ambient)) return work()
   return traceTurn(fields, work)
 }

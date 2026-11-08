@@ -1,6 +1,6 @@
 /**
- * Settings window (ТЗ §7). Six sections: провайдер и ключи, поведение, голос,
- * агент, быстрые действия, исключения и права.
+ * Settings window (ТЗ §7). Five sections: провайдер и ключи, поведение, голос,
+ * агент, исключения и права.
  *
  * There is no «Сохранить»: every field is written as it is edited. The button was
  * the reason a ticked checkbox could sit in a draft while the rest of the app
@@ -26,17 +26,15 @@ import { AgentTab } from './AgentTab'
 import { VoiceTab } from './VoiceTab'
 import { ProviderSection } from './sections/ProviderSection'
 import { BehaviorSection } from './sections/BehaviorSection'
-import { ActionsSection } from './sections/ActionsSection'
 import { PrivacySection } from './sections/PrivacySection'
 
-type Tab = 'provider' | 'behavior' | 'voice' | 'agent' | 'actions' | 'privacy'
+type Tab = 'provider' | 'behavior' | 'voice' | 'agent' | 'privacy'
 
 const TABS: Array<{ id: Tab; label: string }> = [
   { id: 'provider', label: 'Модель' },
   { id: 'behavior', label: 'Поведение' },
   { id: 'voice', label: 'Голос' },
   { id: 'agent', label: 'Агент' },
-  { id: 'actions', label: 'Быстрые действия' },
   { id: 'privacy', label: 'Приватность' }
 ]
 
@@ -370,77 +368,77 @@ export function App() {
       </aside>
 
       <main className="content">
-        {tab === 'provider' && (
-          <ProviderSection
-            draft={draft}
-            patch={patch}
-            providerKeys={providerKeys}
-            invalidBaseUrls={invalidBaseUrls}
-            keyInput={keyInput}
-            onKeyInput={setKeyInput}
-            testing={testing}
-            onSaveKey={() => void saveKey()}
-            onRemoveKey={() => void removeKey()}
-          />
-        )}
+        <div className="settings-scroll">
+          {tab === 'provider' && (
+            <ProviderSection
+              draft={draft}
+              patch={patch}
+              providerKeys={providerKeys}
+              invalidBaseUrls={invalidBaseUrls}
+              keyInput={keyInput}
+              onKeyInput={setKeyInput}
+              testing={testing}
+              onSaveKey={() => void saveKey()}
+              onRemoveKey={() => void removeKey()}
+            />
+          )}
 
-        {tab === 'behavior' && (
-          <BehaviorSection
-            draft={draft}
-            patch={patch}
-            hotkeyError={hotkeyError}
-            onHotkeyError={setHotkeyError}
-          />
-        )}
+          {tab === 'behavior' && (
+            <BehaviorSection
+              draft={draft}
+              patch={patch}
+              hotkeyError={hotkeyError}
+              onHotkeyError={setHotkeyError}
+            />
+          )}
 
-        {tab === 'voice' && (
-          <VoiceTab
-            voice={draft.voice}
-            savedModel={bundle.settings.voice.model}
-            gestures={draft.gestures}
-            onChange={(changes) => patch({ voice: { ...draft.voice, ...changes } })}
-            onGestureChange={(changes) =>
-              patch({ gestures: { ...draft.gestures, ...changes } })
-            }
-          />
-        )}
+          {tab === 'voice' && (
+            <VoiceTab
+              voice={draft.voice}
+              savedModel={bundle.settings.voice.model}
+              gestures={draft.gestures}
+              onChange={(changes) => patch({ voice: { ...draft.voice, ...changes } })}
+              onGestureChange={(changes) =>
+                patch({ gestures: { ...draft.gestures, ...changes } })
+              }
+            />
+          )}
 
-        {tab === 'agent' && (
-          <AgentTab
-            agent={draft.agent}
-            onChange={(changes) => patch({ agent: { ...draft.agent, ...changes } })}
-            onEnabledChange={async (enabled) => {
-              // Written through the dedicated channel, not the draft: this switch
-              // decides whether the assistant can act at all, and it has to be on
-              // disk before the answer that arrives a second later. The debounced
-              // autosave would also get there, 450 ms too late.
-              const availability = await window.smartCursor.agent.setEnabled(enabled)
-              // The bundle is the "saved" side of the auto-apply comparison;
-              // syncing it keeps the footer from announcing a pending write for a
-              // value that is already on disk.
-              setBundle((prev) =>
-                prev
-                  ? { ...prev, settings: { ...prev.settings, agent: { ...prev.settings.agent, enabled } } }
-                  : prev
-              )
-              return availability
-            }}
-          />
-        )}
+          {tab === 'agent' && (
+            <AgentTab
+              agent={draft.agent}
+              onChange={(changes) => patch({ agent: { ...draft.agent, ...changes } })}
+              onEnabledChange={async (enabled) => {
+                // Written through the dedicated channel, not the draft: this switch
+                // decides whether the assistant can act at all, and it has to be on
+                // disk before the answer that arrives a second later. The debounced
+                // autosave would also get there, 450 ms too late.
+                const availability = await window.smartCursor.agent.setEnabled(enabled)
+                // The bundle is the "saved" side of the auto-apply comparison;
+                // syncing it keeps the footer from announcing a pending write for a
+                // value that is already on disk.
+                setBundle((prev) =>
+                  prev
+                    ? { ...prev, settings: { ...prev.settings, agent: { ...prev.settings.agent, enabled } } }
+                    : prev
+                )
+                return availability
+              }}
+            />
+          )}
 
-        {tab === 'actions' && <ActionsSection draft={draft} patch={patch} />}
-
-        {tab === 'privacy' && (
-          <PrivacySection
-            draft={draft}
-            patch={patch}
-            permissions={permissions}
-            encryptionAvailable={bundle.encryptionAvailable}
-            apps={apps}
-            setBundle={setBundle}
-            onAddExcluded={(picked) => void addExcluded(picked)}
-          />
-        )}
+          {tab === 'privacy' && (
+            <PrivacySection
+              draft={draft}
+              patch={patch}
+              permissions={permissions}
+              encryptionAvailable={bundle.encryptionAvailable}
+              apps={apps}
+              setBundle={setBundle}
+              onAddExcluded={(picked) => void addExcluded(picked)}
+            />
+          )}
+        </div>
 
         <div className="footer">
           {banner ? (

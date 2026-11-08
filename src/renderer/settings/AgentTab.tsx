@@ -77,7 +77,7 @@ export function AgentTab({ agent, onChange, onEnabledChange }: AgentTabProps) {
       </p>
 
       <div className="field">
-        <label>
+        <label className="check">
           <input
             type="checkbox"
             checked={agent.enabled}
@@ -158,7 +158,7 @@ export function AgentTab({ agent, onChange, onEnabledChange }: AgentTabProps) {
       </div>
 
       <div className="field">
-        <label>
+        <label className="check">
           <input
             type="checkbox"
             checked={agent.abortOnMouseMove}
@@ -173,7 +173,7 @@ export function AgentTab({ agent, onChange, onEnabledChange }: AgentTabProps) {
       </div>
 
       <div className="field">
-        <label>
+        <label className="check">
           <input
             type="checkbox"
             checked={agent.verifyResult}

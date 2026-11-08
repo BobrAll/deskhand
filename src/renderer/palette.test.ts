@@ -146,28 +146,17 @@ describe('palette: per-window colours', () => {
   it('gives the overlay a panel that follows the appearance', () => {
     const dark = resolveWindow('overlay', 'dark')
     const light = resolveWindow('overlay', 'light')
-    expect(dark['--panel']).toBe('rgba(21, 23, 29, 0.94)')
-    expect(light['--panel']).toBe('rgba(249, 249, 251, 0.96)')
+    expect(dark['--panel']).toBe('rgba(21, 23, 29, 0.86)')
+    expect(light['--panel']).toBe('rgba(249, 249, 251, 0.88)')
     expect(dark['--panel-drawing']).toBe('rgba(21, 23, 29, 0.40)')
     expect(light['--panel-drawing']).toBe('rgba(249, 249, 251, 0.42)')
   })
 
-  it('keeps the screen glow colours fixed and matches the caption to the overlay', () => {
+  it('keeps the screen glow colours fixed across appearances', () => {
     const dark = resolveWindow('cursor', 'dark')
     const light = resolveWindow('cursor', 'light')
-    const captionTokens = {
-      '--cursor-panel': '--panel',
-      '--cursor-panel-edge': '--panel-edge'
-    }
-    for (const [cursorToken, overlayToken] of Object.entries(captionTokens)) {
-      expect(dark[cursorToken], cursorToken).toBe(resolveWindow('overlay', 'dark')[overlayToken])
-      expect(light[cursorToken], cursorToken).toBe(resolveWindow('overlay', 'light')[overlayToken])
-    }
-
-    const fixedTokens = Object.keys(dark).filter(
-      (name) => name.startsWith('--cursor-') && !Object.hasOwn(captionTokens, name)
-    )
-    expect(fixedTokens.length).toBeGreaterThan(3)
+    const fixedTokens = Object.keys(dark).filter((name) => name.startsWith('--cursor-'))
+    expect(fixedTokens).toEqual(expect.arrayContaining(['--cursor-accent', '--cursor-text']))
     for (const name of fixedTokens) {
       expect(light[name], name).toBe(dark[name])
     }

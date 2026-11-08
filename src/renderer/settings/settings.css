@@ -75,9 +75,15 @@ body.window {
 .content {
   display: flex;
   flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.settings-scroll {
+  flex: 1;
+  min-height: 0;
   padding: 44px 26px 16px;
   overflow-y: auto;
-  min-width: 0;
 }
 
 .content section {
@@ -181,8 +187,11 @@ h2 {
   color: var(--text);
 }
 
-.check input {
+.check input[type="checkbox"] {
+  flex: none;
   width: auto;
+  margin: 0;
+  padding: 0;
 }
 
 .hotkey-field {
@@ -256,41 +265,6 @@ h2 {
   color: var(--text-dim);
 }
 
-.quick-actions {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.quick-action {
-  display: grid;
-  grid-template-columns: 1fr 108px auto;
-  grid-template-areas:
-    'label mode del'
-    'prompt prompt prompt';
-  gap: 6px;
-  padding: 9px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-}
-
-.qa-label {
-  grid-area: label;
-}
-
-.qa-mode {
-  grid-area: mode;
-}
-
-.qa-prompt {
-  grid-area: prompt;
-}
-
-.quick-action > button.ghost {
-  grid-area: del;
-}
-
 .notice {
   padding: 9px 11px;
   border-radius: var(--radius-sm);
@@ -307,11 +281,9 @@ h2 {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-top: auto;
-  padding-top: 18px;
-  position: sticky;
-  bottom: 0;
-  background: linear-gradient(to top, var(--bg-solid) 62%, transparent);
+  flex: none;
+  padding: 10px 26px 12px;
+  background: var(--bg-solid);
 }
 
 .spacer {

@@ -29,15 +29,13 @@ export const MAX_TOKENS_MAX = 8192
  *
  * These are not "invalid input" warnings in the usual sense — they are the cases
  * where the normaliser on the other side would silently replace what is on screen
- * (an empty prompt becomes the default one, a half-typed token count is clamped,
- * a quick action without a prompt is dropped). Writing those through would fight
- * the user's keyboard, so the write waits until the field is finished.
+ * (an empty prompt becomes the default one, a half-typed token count is clamped).
+ * The write waits until the user finishes editing the field.
  */
 export const HOLD_REASON = {
   baseUrl: 'Проверьте адрес API — изменения не применены.',
   maxTokens: `Максимум токенов: от ${MAX_TOKENS_MIN} до ${MAX_TOKENS_MAX}.`,
   prompt: 'Пустой системный промпт оставлен прежним.',
-  quickAction: 'У быстрого действия не хватает названия или промпта.',
   hotkey: 'Горячая клавиша не задана.'
 } as const
 
@@ -70,9 +68,6 @@ export function holdReasonFor(draft: AppSettings, invalidBaseUrls: ProviderId[])
   if (!tokensInRange(draft.maxTokens)) return HOLD_REASON.maxTokens
   if (!draft.systemPrompt.trim()) return HOLD_REASON.prompt
   if (!draft.hotkey.trim()) return HOLD_REASON.hotkey
-  if (draft.quickActions.some((action) => !action.label.trim() || !action.prompt.trim())) {
-    return HOLD_REASON.quickAction
-  }
   return null
 }
 
@@ -90,28 +85,15 @@ export function hasUnsaved(
 /**
  * The draft as it can actually be written, for the explicit paths (⌘S, closing).
  *
- * Two kinds of values cannot go through as they stand, and they are handled
- * differently on purpose:
- *
- * - a quick action row that was just added and is still empty is simply not a
- *   quick action yet; the store drops it anyway, so dropping it here lets the
- *   rest of the write proceed;
- * - a field that is mid-edit (a half-typed token count, an address that is not
- *   a URL yet) is *reverted to what is on disk* instead. Writing it would make
- *   the store replace it silently — 0 becomes the floor, junk becomes "" — and
- *   the window would then show a value that is not the one being used.
+ * Revert incomplete fields to their saved values so normalization does not
+ * silently replace a half-typed value with a default.
  */
 export function writableSettings(
   value: AppSettings,
   bundle: { settings: AppSettings } | null,
   invalidBaseUrls: ProviderId[]
 ): AppSettings {
-  const next: AppSettings = {
-    ...value,
-    quickActions: value.quickActions.filter(
-      (action) => action.label.trim() && action.prompt.trim()
-    )
-  }
+  const next = { ...value }
   if (!bundle) return next
 
   const onDisk = bundle.settings

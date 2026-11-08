@@ -78,6 +78,43 @@ it('opens a turn when there is none, so a run from an untraced path still record
   }
 })
 
+it('files a late callback under the turn that is open, not the one it came from', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'smart-cursor-trace-stale-'))
+  getPath.mockReturnValue(directory)
+  vi.stubEnv('SMART_CURSOR_AGENT_TRACE', '1')
+  try {
+    // The sidecar is spawned inside the first turn that asks for it, so the
+    // socket under its stdout is an async resource created in that turn — and
+    // every chunk it delivers afterwards, for every later request, arrives in
+    // that closed turn's context. Without a guard the next run's steps were
+    // filed under the turn that had already ended, and one pipeline appeared to
+    // contain a second, later run: the same task doing its work twice.
+    let releaseFirst: () => void = () => undefined
+    const firstDone = traceTurn({ name: 'first' }, async () => {
+      // Created here, in this turn, and never cleared: exactly the shape of the
+      // sidecar's stdout listener.
+      setTimeout(() => trace('agent.step', { step: 1 }), 120)
+      await new Promise<void>((resolve) => { releaseFirst = resolve })
+    })
+    await traceTurn({ name: 'second' }, async () => {
+      releaseFirst()
+      // The stale timer fires while this turn is the only one open.
+      await new Promise<void>((resolve) => setTimeout(resolve, 200))
+    })
+    await firstDone
+    await flushTrace()
+    const events = (await readFile(join(directory, 'agent-trace.jsonl'), 'utf8'))
+      .trim().split('\n').map((line) => JSON.parse(line))
+    const steps = events.filter((event) => event.event === 'agent.step')
+    expect(steps).toHaveLength(1)
+    const second = events.find((event) => event.event === 'turn.start' && event.name === 'second')
+    expect(steps[0].turn).toBe(second?.turn)
+  } finally {
+    vi.unstubAllEnvs()
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
 it('reuses the enclosing turn instead of starting a second one', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'smart-cursor-trace-nested-'))
   getPath.mockReturnValue(directory)

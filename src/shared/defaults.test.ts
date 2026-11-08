@@ -4,7 +4,6 @@ import {
   DEFAULT_AGENT,
   DEFAULT_EXCLUDED_APPS,
   DEFAULT_GESTURES,
-  DEFAULT_QUICK_ACTIONS,
   DEFAULT_SETTINGS,
   DEFAULT_SYSTEM_PROMPT,
   DEFAULT_VOICE,
@@ -53,7 +52,6 @@ describe('normalizeSettings: partial data', () => {
     expect(result.maxTokens).toBe(2048)
     expect(result.hotkey).toBe('Ctrl+K')
     expect(result.provider).toBe(DEFAULT_SETTINGS.provider)
-    expect(result.quickActions).toEqual(DEFAULT_QUICK_ACTIONS)
     expect(result.voice).toEqual(DEFAULT_VOICE)
   })
 
@@ -240,89 +238,15 @@ describe('normalizeSettings: booleans', () => {
   })
 })
 
-describe('normalizeSettings: quickActions', () => {
-  it('keeps a valid list', () => {
+describe('normalizeSettings: legacy settings', () => {
+  it('ignores saved quick actions and keeps other preferences', () => {
     const result = normalizeSettings({
-      quickActions: [
-        { id: 'a', label: 'A', prompt: 'сделай A', mode: 'insert' },
-        { id: 'b', label: 'B', prompt: 'сделай B', mode: 'analyze' }
-      ]
+      quickActions: [{ id: 'a', label: 'A', prompt: 'P', mode: 'insert' }],
+      temperature: 1.2
     })
 
-    expect(result.quickActions).toEqual([
-      { id: 'a', label: 'A', prompt: 'сделай A', mode: 'insert' },
-      { id: 'b', label: 'B', prompt: 'сделай B', mode: 'analyze' }
-    ])
-  })
-
-  it('falls back to the defaults when the value is not an array', () => {
-    for (const value of [undefined, null, 'x', 42, { id: 'a' }]) {
-      expect(normalizeSettings({ quickActions: value }).quickActions, String(value)).toEqual(
-        DEFAULT_QUICK_ACTIONS
-      )
-    }
-  })
-
-  it('falls back to the defaults when every entry is unusable', () => {
-    expect(normalizeSettings({ quickActions: [] }).quickActions).toEqual(DEFAULT_QUICK_ACTIONS)
-    expect(
-      normalizeSettings({ quickActions: [{ label: '', prompt: '' }, null, 42, 'x'] }).quickActions
-    ).toEqual(DEFAULT_QUICK_ACTIONS)
-  })
-
-  it('drops entries without a label or without a prompt', () => {
-    const result = normalizeSettings({
-      quickActions: [
-        { id: 'a', label: 'A', prompt: 'P' },
-        { id: 'b', label: '  ', prompt: 'P' },
-        { id: 'c', label: 'C', prompt: '   ' }
-      ]
-    })
-
-    expect(result.quickActions.map((action) => action.id)).toEqual(['a'])
-  })
-
-  it('generates an id from the position when it is missing', () => {
-    const result = normalizeSettings({
-      quickActions: [
-        { id: '  ', label: 'A', prompt: 'P' },
-        { label: 'B', prompt: 'P' }
-      ]
-    })
-
-    expect(result.quickActions.map((action) => action.id)).toEqual(['action-1', 'action-2'])
-  })
-
-  it('truncates a label at 40 characters', () => {
-    const result = normalizeSettings({
-      quickActions: [{ id: 'a', label: 'я'.repeat(60), prompt: 'P' }]
-    })
-
-    expect(result.quickActions[0].label).toHaveLength(40)
-  })
-
-  it('treats any mode other than analyze as insert', () => {
-    const result = normalizeSettings({
-      quickActions: [
-        { id: 'a', label: 'A', prompt: 'P', mode: 'analyze' },
-        { id: 'b', label: 'B', prompt: 'P', mode: 'что-то' },
-        { id: 'c', label: 'C', prompt: 'P' }
-      ]
-    })
-
-    expect(result.quickActions.map((action) => action.mode)).toEqual(['analyze', 'insert', 'insert'])
-  })
-
-  it('replaces non-string labels and prompts with empty strings, dropping the entry', () => {
-    const result = normalizeSettings({
-      quickActions: [
-        { id: 'a', label: 42, prompt: 'P' },
-        { id: 'b', label: 'B', prompt: { text: 'P' } },
-        { id: 'c', label: 'C', prompt: 'P' }
-      ]
-    })
-
-    expect(result.quickActions.map((action) => action.id)).toEqual(['c'])
+    expect(result).not.toHaveProperty('quickActions')
+    expect(result.temperature).toBe(1.2)
   })
 })
 

@@ -61,6 +61,18 @@ public struct Completion: Sendable {
     }
 
     public var wantsToolCalls: Bool { !toolCalls.isEmpty }
+
+    /// Whether the provider cut the answer off at the token limit.
+    ///
+    /// The two wires spell it differently — OpenAI says `length`, Anthropic says
+    /// `max_tokens` — and the loop has to recognise it, because a truncated
+    /// answer is not a finished one. A tool call that was cut in half does not
+    /// parse, so it arrives as no calls at all, and a loop that only asks "did
+    /// the model call a tool?" reads a cut-off step as the model saying it is
+    /// done: the run ends with an empty answer and every step behind it is lost.
+    public var truncated: Bool {
+        stopReason == "length" || stopReason == "max_tokens"
+    }
 }
 
 public struct Usage: Sendable, Equatable {

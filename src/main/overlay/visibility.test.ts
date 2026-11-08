@@ -34,6 +34,7 @@ const state = vi.hoisted(() => ({
   afterChunk: () => {},
   webLookup: false,
   agentReady: false,
+  onAgentRun: () => {},
   agentResult: { answer: '', actions: [] } as AgentRunResult,
   agentCalls: [] as { prompt: string }[]
 }))
@@ -64,6 +65,7 @@ vi.mock('../agent', () => ({
     availability: () => ({ enabled: true, ready: state.agentReady, reason: state.agentReady ? null : 'нет доступа' }),
     run: async (input: { prompt: string }) => {
       state.agentCalls.push(input)
+      state.onAgentRun()
       return state.agentResult
     },
     stop: vi.fn(),
@@ -105,6 +107,7 @@ beforeEach(() => {
   state.afterChunk = () => {}
   state.webLookup = false
   state.agentReady = false
+  state.onAgentRun = () => {}
   state.agentResult = { answer: '', actions: [] }
   state.agentCalls = []
   applyHistorySettings(false, [])
@@ -137,7 +140,7 @@ async function harness() {
 describe('routing: the agent or the writer', () => {
   it('sends an action request to the agent when the mode is ready', async () => {
     state.agentReady = true
-    state.agentResult = { answer: 'Экспорт сохранён.', actions: [{ tool: 'click', label: 'Нажал «Экспорт»', ok: true }] }
+    state.agentResult = { answer: 'Экспорт сохранён без вложений.', actions: [{ tool: 'click', label: 'Нажал «Экспорт»', ok: true }] }
     const h = await harness()
 
     await h.controller.send({ ...h.request, voice: false, prompt: 'Нажми «Экспорт»' })
@@ -147,8 +150,21 @@ describe('routing: the agent or the writer', () => {
     // only job would be to guess what the agent is about to do anyway.
     expect(buildTurnRequest).not.toHaveBeenCalled()
     expect(h.send).toHaveBeenCalledWith('overlay:stream', expect.objectContaining({
-      type: 'done', text: 'Экспорт сохранён.'
+      type: 'done', text: 'Экспорт сохранён без вложений.'
     }))
+  })
+
+  it('brings back the card for a successful action without a written report', async () => {
+    state.agentReady = true
+    state.agentResult = { answer: '[[ACTION_DONE]]', actions: [] }
+    const h = await harness()
+
+    await h.controller.send({ ...h.request, voice: false, prompt: 'Открой новую вкладку' })
+
+    expect(h.send).toHaveBeenCalledWith('overlay:stream', expect.objectContaining({
+      type: 'done', text: ''
+    }))
+    expect(h.host.showInactive).toHaveBeenCalled()
   })
 
   it('keeps a question on the writer even when the agent is ready', async () => {
@@ -224,6 +240,17 @@ describe('background web lookup', () => {
 describe('the agent turn on the card', () => {
   beforeEach(() => {
     state.agentReady = true
+  })
+
+  it('keeps the card visible while a spoken action is running', async () => {
+    const h = await harness()
+    state.onAgentRun = vi.fn(() => expect(h.visible()).toBe(true))
+    state.agentResult = { answer: '[[ACTION_DONE]]', actions: [] }
+
+    await h.controller.send({ ...h.request, prompt: 'Открой вкладку' })
+
+    expect(state.onAgentRun).toHaveBeenCalledOnce()
+    expect(h.host.hide).not.toHaveBeenCalled()
   })
 
   it('brings the card back when the agent finishes with an answer', async () => {

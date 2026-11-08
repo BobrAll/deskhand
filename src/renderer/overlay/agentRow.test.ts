@@ -9,7 +9,7 @@
 
 import { describe, expect, it } from 'vitest'
 import type { AgentEvent } from '@shared/types'
-import { agentLabel, agentMark, agentShowsCount } from './agentRow'
+import { agentLabel, agentMark } from './agentRow'
 
 function event(overrides: Partial<AgentEvent> = {}): AgentEvent {
   return { phase: 'acting', step: 1, total: 3, label: '', ...overrides }
@@ -53,37 +53,30 @@ describe('the agent row’s label', () => {
     expect(label).toBe('Задача осталась невыполненной')
   })
 
-  it('keeps the agent’s own closing sentence when the run did finish', () => {
+  it('leaves the closing sentence to the answer', () => {
     expect(agentLabel(event({ phase: 'done', completed: true, label: 'Сообщение отправлено.' })))
-      .toBe('Сообщение отправлено.')
+      .toBeNull()
   })
 
-  it('says "Готово" for a finished run with nothing to add', () => {
-    expect(agentLabel(event({ phase: 'done', completed: true }))).toBe('Готово')
+  it('shows a short startup label', () => {
+    expect(agentLabel(event({ phase: 'arming' }))).toBe('Подготовка')
   })
 
-  it('warns about Escape before the first call', () => {
-    expect(agentLabel(event({ phase: 'arming' }))).toContain('Escape')
+  it('shows the current action after earlier steps have finished', () => {
+    const actions = [{ tool: 'click', label: 'Нажимаю', ok: true }]
+    expect(agentLabel(event({ actions, label: 'Печатаю текст' }))).toBe('Печатаю текст')
+    expect(agentLabel(event({ actions }))).toBe('Работаю…')
+  })
+
+  it('leaves a repeated terminal message in the answer only', () => {
+    const message = 'Остановлено: вы взяли мышь.'
+    const aborted = event({ phase: 'aborted', message })
+    expect(agentLabel(aborted, ` ${message} `)).toBeNull()
+    expect(agentLabel(aborted, 'Другой ответ')).toBe(message)
   })
 
   it('shows the stop reason on an aborted run', () => {
     expect(agentLabel(event({ phase: 'aborted', message: 'Остановлено: вы взяли мышь.' })))
       .toBe('Остановлено: вы взяли мышь.')
-  })
-})
-
-describe('the agent row’s step counter', () => {
-  it('counts while the agent is working', () => {
-    expect(agentShowsCount(event({ phase: 'acting', step: 2, total: 3 }))).toBe(true)
-  })
-
-  it('counts while a question is open, because the run is still going', () => {
-    expect(agentShowsCount(event({ phase: 'asking', step: 2, total: 3 }))).toBe(true)
-  })
-
-  it('stops counting once the run is over', () => {
-    // "3/3" after a failure reads as a completion badge.
-    expect(agentShowsCount(event({ phase: 'done', completed: false, step: 3, total: 3 }))).toBe(false)
-    expect(agentShowsCount(event({ phase: 'done', completed: true }))).toBe(false)
   })
 })

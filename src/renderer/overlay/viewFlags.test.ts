@@ -26,7 +26,6 @@ function session(overrides: Partial<OverlayState> = {}): OverlayState {
     },
     flags: { includeSelection: false, includeScreenshot: false },
     defaults: { includeSelection: false, includeScreenshot: false },
-    quickActions: [],
     setupNotice: null,
     warnings: [],
     agent: { enabled: false, ready: false, reason: null },

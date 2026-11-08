@@ -4,7 +4,6 @@ import type {
   GestureSettings,
   ProviderId,
   ProviderInfo,
-  QuickAction,
   VoiceSettings
 } from './types'
 
@@ -13,39 +12,6 @@ export const DEFAULT_SYSTEM_PROMPT =
   'Отвечай только результатом, без вступлений и пояснений, на том же языке, что и контекст, ' +
   'если пользователь не попросил иначе. Если просят написать ответ на сообщение, пиши готовый ' +
   'текст, который можно отправить как есть.'
-
-export const DEFAULT_QUICK_ACTIONS: QuickAction[] = [
-  {
-    id: 'reply',
-    label: 'Ответить',
-    prompt: 'Напиши ответ на последнее сообщение в контексте. Готовый текст без пояснений.',
-    mode: 'insert'
-  },
-  {
-    id: 'summary',
-    label: 'Саммари',
-    prompt: 'Сделай краткое саммари содержимого: 3–5 пунктов, только суть.',
-    mode: 'analyze'
-  },
-  {
-    id: 'translate',
-    label: 'Перевести',
-    prompt: 'Переведи текст на английский язык. Верни только перевод.',
-    mode: 'insert'
-  },
-  {
-    id: 'fix',
-    label: 'Исправить',
-    prompt: 'Исправь орфографию, пунктуацию и стиль. Верни только исправленный текст.',
-    mode: 'insert'
-  },
-  {
-    id: 'explain',
-    label: 'Объяснить',
-    prompt: 'Объясни смысл содержимого простыми словами.',
-    mode: 'analyze'
-  }
-]
 
 /** Password managers and banking apps must never be sent anywhere. */
 export const DEFAULT_EXCLUDED_APPS = [
@@ -324,6 +290,19 @@ export const DEFAULT_AGENT: AgentSettings = {
   verifyResult: true
 }
 
+/**
+ * The least output room an agent step is given, whatever `maxTokens` says.
+ *
+ * `maxTokens` was tuned for the writer, where an answer is a paragraph. An agent
+ * step is a different shape: a sentence of reasoning wrapped around one tool call
+ * whose arguments are nested JSON. At 1024 a step runs out mid-call, the
+ * half-written call parses into no calls at all, and the loop sees an empty
+ * reply — a run that did nothing and said nothing. A floor is a blunt instrument,
+ * but the alternative is a silent failure that looks like the model refusing to
+ * work.
+ */
+export const AGENT_MIN_OUTPUT_TOKENS = 4096
+
 export const DEFAULT_SETTINGS: AppSettings = {
   provider: 'openrouter',
   models: {
@@ -338,13 +317,15 @@ export const DEFAULT_SETTINGS: AppSettings = {
     anthropic: ''
   },
   temperature: 0.3,
+  // Sized for the writer's answer, which is a paragraph. The agent is given more
+  // than this on purpose — see AGENT_MIN_OUTPUT_TOKENS — because an agent step
+  // is not a paragraph.
   maxTokens: 1024,
   systemPrompt: DEFAULT_SYSTEM_PROMPT,
   hotkey: 'Alt+Space',
   captureScreenshotByDefault: true,
   screenshotMaxSide: 1600,
   screenshotQuality: 70,
-  quickActions: DEFAULT_QUICK_ACTIONS,
   excludedApps: DEFAULT_EXCLUDED_APPS,
   rememberConversation: true,
   launchAtLogin: false,
@@ -360,20 +341,6 @@ const MAX_SIDE = 2400
 function clamp(value: unknown, min: number, max: number, fallback: number): number {
   const num = typeof value === 'number' && Number.isFinite(value) ? value : fallback
   return Math.min(max, Math.max(min, num))
-}
-
-function sanitizeQuickActions(input: unknown): QuickAction[] {
-  if (!Array.isArray(input)) return DEFAULT_QUICK_ACTIONS
-  const actions = input
-    .filter((raw): raw is Partial<QuickAction> => typeof raw === 'object' && raw !== null)
-    .map((raw, index) => ({
-      id: typeof raw.id === 'string' && raw.id.trim() ? raw.id : `action-${index + 1}`,
-      label: typeof raw.label === 'string' ? raw.label.slice(0, 40) : '',
-      prompt: typeof raw.prompt === 'string' ? raw.prompt : '',
-      mode: raw.mode === 'analyze' ? ('analyze' as const) : ('insert' as const)
-    }))
-    .filter((action) => action.label.trim() && action.prompt.trim())
-  return actions.length > 0 ? actions : DEFAULT_QUICK_ACTIONS
 }
 
 function sanitizeStringList(input: unknown, fallback: string[]): string[] {
@@ -474,7 +441,6 @@ export function normalizeSettings(input: unknown): AppSettings {
       clamp(raw.screenshotMaxSide, MIN_SIDE, MAX_SIDE, DEFAULT_SETTINGS.screenshotMaxSide)
     ),
     screenshotQuality: Math.round(clamp(raw.screenshotQuality, 30, 95, DEFAULT_SETTINGS.screenshotQuality)),
-    quickActions: sanitizeQuickActions(raw.quickActions),
     excludedApps: sanitizeStringList(raw.excludedApps, DEFAULT_EXCLUDED_APPS),
     rememberConversation: typeof raw.rememberConversation === 'boolean'
       ? raw.rememberConversation

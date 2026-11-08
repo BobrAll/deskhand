@@ -169,8 +169,6 @@ public final class AgentLoop {
         Do not narrate what you have not done yet, and do not explain your reasoning — the tool \
         calls already show it. Say nothing at all rather than padding the line.
 
-        When you have no more tools to call, reply with a short summary of what you did, in the \
-        user's language. Two or three lines at most: what you did and what came of it.
         """
 
     /// Runs one task to completion.
@@ -180,7 +178,11 @@ public final class AgentLoop {
     /// tool call, a capture — so "Стоп" takes effect within one step rather than
     /// at the end of the run. Cancellation is reported as a thrown
     /// `CancellationError`, never as an answer.
-    public func run(task: String, cancel: CancelToken? = nil) async throws -> String {
+    public func run(
+        task: String,
+        cancel: CancelToken? = nil,
+        finalResponseInstruction: String = "When you have no more tools to call, briefly summarize what you did and the outcome in the user's language."
+    ) async throws -> String {
         var messages: [ChatMessage] = [ChatMessage(role: .user, text: task)]
         var lastCallSignature: String?
         var repeatCount = 0
@@ -197,7 +199,7 @@ public final class AgentLoop {
         // matching on English text.
         finished = false
 
-        let systemPrompt = Self.systemPrompt + "\n\n" + environmentSummary()
+        let systemPrompt = Self.systemPrompt + "\n\n" + finalResponseInstruction + "\n\n" + environmentSummary()
 
         for step in 1...options.maxSteps {
             try Task.checkCancellation()
@@ -247,6 +249,20 @@ public final class AgentLoop {
             }
 
             try cancel?.check()
+            // A reply cut off at the token limit is not a decision to stop. The
+            // tool call it was in the middle of did not parse, so it arrives
+            // here with no calls and often no text — and the branch below would
+            // read that as "the model finished" and end the run with an empty
+            // answer, silently throwing away every step already taken. Stopping
+            // as unfinished is the honest outcome: the host can say so, and the
+            // fix on the user's side is one number in the settings.
+            if completion.truncated {
+                log("reply truncated at the token limit")
+                timings.record("run total", milliseconds: runClock.milliseconds)
+                observer?.loopStopped("the model's reply was cut off at the token limit")
+                reportRun(steps: stepsRun, calls: callsRun, failed: callsFailed, clock: runClock)
+                return "Stopped: the model's reply was cut off at the token limit."
+            }
             if !completion.wantsToolCalls {
                 try Task.checkCancellation()
                 timings.record("run total", milliseconds: runClock.milliseconds)

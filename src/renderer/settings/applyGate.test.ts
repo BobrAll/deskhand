@@ -34,7 +34,6 @@ function settings(overrides: Partial<AppSettings> = {}): AppSettings {
     systemPrompt: 'Ты помощник.',
     hotkey: 'Alt+Space',
     baseUrls,
-    quickActions: [],
     ...overrides
   } as AppSettings
 }
@@ -116,14 +115,6 @@ describe('applyGate: why a write is held', () => {
     expect(holdReasonFor(settings({ systemPrompt: '   ' }), [])).toBe(HOLD_REASON.prompt)
   })
 
-  it('holds a quick action that is missing a label or a prompt', () => {
-    const noLabel = settings({ quickActions: [{ id: 'a', label: ' ', prompt: 'x', mode: 'insert' }] })
-    const noPrompt = settings({ quickActions: [{ id: 'a', label: 'A', prompt: ' ', mode: 'insert' }] })
-
-    expect(holdReasonFor(noLabel as AppSettings, [])).toBe(HOLD_REASON.quickAction)
-    expect(holdReasonFor(noPrompt as AppSettings, [])).toBe(HOLD_REASON.quickAction)
-  })
-
   it('holds a missing hotkey', () => {
     expect(holdReasonFor(settings({ hotkey: '  ' }), [])).toBe(HOLD_REASON.hotkey)
   })
@@ -154,19 +145,6 @@ describe('applyGate: is there anything to write', () => {
 })
 
 describe('applyGate: the draft as it can be written', () => {
-  it('drops a quick action that is still empty', () => {
-    const draft = settings({
-      quickActions: [
-        { id: 'a', label: '', prompt: '', mode: 'insert' },
-        { id: 'b', label: 'Перевести', prompt: 'Переведи', mode: 'insert' }
-      ]
-    })
-
-    const written = writableSettings(draft, null, [])
-
-    expect(written.quickActions.map((action) => action.id)).toEqual(['b'])
-  })
-
   it('reverts a token count out of range to what is on disk', () => {
     const onDisk = settings({ maxTokens: 1024 })
     const draft = settings({ maxTokens: 0 })

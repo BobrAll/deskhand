@@ -19,21 +19,7 @@ body,
 :root {
   /* The same blue as `--accent` in `base.css` / the overlay's accent. */
   --cursor-accent: #5b78ff;
-  --cursor-accent-soft: rgba(123, 149, 255, 0.22);
   --cursor-text: #f4f5f7;
-  --cursor-surface: rgba(26, 27, 33, 0.86);
-  --cursor-edge: rgba(255, 255, 255, 0.15);
-  --cursor-shadow: 0 4px 14px rgba(0, 0, 0, 0.32), 0 1px 3px rgba(0, 0, 0, 0.24);
-  /* Match the chat surface. */
-  --cursor-panel: rgba(21, 23, 29, 0.94);
-  --cursor-panel-edge: rgba(255, 255, 255, 0.10);
-}
-
-@media (prefers-color-scheme: light) {
-  :root {
-    --cursor-panel: rgba(249, 249, 251, 0.96);
-    --cursor-panel-edge: rgba(0, 0, 0, 0.10);
-  }
 }
 
 .screen-glow {
@@ -88,60 +74,22 @@ body,
   position: absolute;
   left: 0;
   top: 0;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  max-width: 340px;
-  padding: 6px 8px;
-  border-radius: 9px;
-  border: 1px solid var(--cursor-panel-edge);
-  background: var(--cursor-panel);
-  box-shadow: inset 0 1px 0 var(--glass-sheen), 0 1px 2px rgba(0, 0, 0, 0.18);
-  color: var(--text);
-  font: 12px/1.25 var(--font, -apple-system, BlinkMacSystemFont, 'SF Pro Text', sans-serif);
-  white-space: nowrap;
+  display: none;
+  padding: 2px;
   opacity: 0;
-  scale: 0.99;
-  transform-origin: top left;
-  transition:
-    opacity 120ms ease,
-    scale 150ms cubic-bezier(0.2, 0.9, 0.3, 1),
-    translate 16ms linear;
-  will-change: translate, opacity, scale;
+  transition: opacity 120ms ease, translate 16ms linear;
+}
+
+#root[data-phase='success'] .tag {
+  display: block;
 }
 
 #root[data-visible='true'] .tag {
   opacity: 1;
-  scale: 1;
-}
-
-.tag-count {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 22px;
-  height: 18px;
-  padding: 0 5px;
-  border-radius: 5px;
-  background: var(--accent-soft);
-  color: var(--accent);
-  font-size: 11px;
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-}
-
-.tag-count[hidden] {
-  display: none;
-}
-
-.tag-label {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 .completion-check {
-  display: none;
+  display: block;
   width: 20px;
   height: 20px;
   flex: none;
@@ -157,21 +105,7 @@ body,
   stroke-width: 3.5;
 }
 
-#root[data-phase='success'] .tag {
-  padding: 2px;
-  gap: 0;
-  border: 0;
-  background: none;
-  box-shadow: none;
-}
-
-#root[data-phase='success'] .tag-label,
-#root[data-phase='success'] .tag-count {
-  display: none;
-}
-
 #root[data-phase='success'] .completion-check {
-  display: block;
   animation: completion-pop 180ms cubic-bezier(0.2, 0.9, 0.3, 1) both;
 }
 

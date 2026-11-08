@@ -35,6 +35,7 @@ import type {
 } from '@shared/types'
 import { helperBinary, watchForAbort, type AbortWatcher } from '../native/helper'
 import { getSettings, patchSettings } from '../settings/store'
+import { AGENT_MIN_OUTPUT_TOKENS } from '@shared/defaults'
 import { classifyCall, describeCall, rememberKey } from './approval'
 import { agentBinary, AgentSidecar, type AgentProvider, type AgentSidecarEvent } from './sidecar'
 import { trace, traceWithin } from './trace'
@@ -113,11 +114,37 @@ function stopMessage(reason: string, total: number): string {
     return `Не успел за ${total} ${plural(total, 'шаг', 'шага', 'шагов')} — задача осталась ` +
       'невыполненной. Увеличьте лимит шагов в настройках или уточните запрос.'
   }
+  if (reason.includes('token limit')) {
+    // Not the same problem as running out of steps: the run had budget left, but
+    // every answer was cut in half, so the model never got to say what it wanted
+    // to do. Raising the step limit would not help — the fix is the output
+    // length.
+    return 'Остановился: ответ модели обрывался по лимиту длины. Увеличьте максимум ' +
+      'токенов в настройках — задача осталась невыполненной.'
+  }
   if (reason.includes('repeated')) {
     return 'Остановился: одно и то же действие повторялось без изменений. ' +
       'Задача осталась невыполненной.'
   }
   return 'Задача осталась невыполненной.'
+}
+
+/**
+ * The provider settings, with enough output room for an agent step.
+ *
+ * `maxTokens` is the writer's number: it was picked for prose, where 1024 is a
+ * generous answer. An agent step is a different shape — a sentence of reasoning
+ * wrapped around a tool call whose arguments are nested JSON — and at 1024 the
+ * reply gets cut off mid-call. The half-written call parses into no calls at all,
+ * so the step arrives as an empty message and the run is thrown away.
+ *
+ * The floor is applied here rather than by changing the setting, so the writer
+ * keeps its own budget and an existing 1024 in the user's settings cannot
+ * resurrect the failure.
+ */
+function withAgentBudget(provider: AgentProvider): AgentProvider {
+  if (provider.maxTokens >= AGENT_MIN_OUTPUT_TOKENS) return provider
+  return { ...provider, maxTokens: AGENT_MIN_OUTPUT_TOKENS }
 }
 
 /** The same rounding, applied to the phases a tool call may have reported. */
@@ -273,6 +300,7 @@ export function createAgentController(host: AgentHost) {
     running = true
     const actions: AgentActionRow[] = []
     const total = settings.agent.maxSteps
+    const provider = withAgentBudget(input.provider)
     let settled = false
     const done = new Promise<AgentRunResult>((resolve) => {
       current = {
@@ -290,7 +318,14 @@ export function createAgentController(host: AgentHost) {
     })
 
     publish({ phase: 'arming', step: 0, total, label: 'Приготовился', actions: [], approval: null })
-    trace('agent.start', { maxSteps: total, verify: settings.agent.verifyResult, hasApp: Boolean(input.appName) })
+    trace('agent.start', {
+      maxSteps: total,
+      verify: settings.agent.verifyResult,
+      hasApp: Boolean(input.appName),
+      // The ceiling on one step's answer. Without it a run that died because a
+      // reply was cut in half leaves nothing in the trace but an empty step.
+      maxTokens: provider.maxTokens
+    })
     // The card must not eat the agent's clicks from here on. It is lifted again
     // for each question and put back after the answer.
     host.setPassthrough(true)
@@ -311,7 +346,7 @@ export function createAgentController(host: AgentHost) {
     try {
       await sidecar.run({
         task: taskText(input),
-        provider: input.provider,
+        provider,
         maxSteps: total,
         verifyActions: settings.agent.verifyResult
       })
