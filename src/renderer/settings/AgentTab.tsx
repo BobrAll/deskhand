@@ -142,7 +142,7 @@ export function AgentTab({ agent, onChange, onEnabledChange }: AgentTabProps) {
         <input
           type="range"
           min={1}
-          max={20}
+          max={50}
           step={1}
           value={agent.maxSteps}
           onChange={(event) => onChange({ maxSteps: Number(event.target.value) })}

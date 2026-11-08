@@ -315,7 +315,7 @@ export const DEFAULT_AGENT: AgentSettings = {
   enabled: false,
   // Multi-stage requests need room to navigate, search, open and observe. This
   // remains bounded, and Escape/mouse interruption applies throughout.
-  maxSteps: 8,
+  maxSteps: 50,
   abortOnMouseMove: true,
   // On by default: the whole point of the mode is that the user asked for the
   // thing to *happen*, and "готово" without a look at the result is a claim the
@@ -422,7 +422,7 @@ function sanitizeAgent(input: unknown): AgentSettings {
     enabled: flag(raw.enabled, DEFAULT_AGENT.enabled),
     // The floor is 0 rather than a "sane" minimum: a user who wants no pause is
     // allowed to have none, but the slider cannot go below it by accident.
-    maxSteps: Math.round(clamp(raw.maxSteps, 1, 20, DEFAULT_AGENT.maxSteps)),
+    maxSteps: Math.round(clamp(raw.maxSteps, 1, 50, DEFAULT_AGENT.maxSteps)),
     abortOnMouseMove: flag(raw.abortOnMouseMove, DEFAULT_AGENT.abortOnMouseMove),
     verifyResult: flag(raw.verifyResult, DEFAULT_AGENT.verifyResult)
   }
