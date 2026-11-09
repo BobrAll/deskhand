@@ -175,6 +175,13 @@ export interface VoiceModelMeta extends WhisperModelMeta {
   engine: 'whisper' | 'transcribe'
   url: string
   language?: string
+  /**
+   * The one the app points at when it has to choose for the user.
+   *
+   * It is a badge, not a filter: every model stays selectable, and the list is
+   * ordered by size rather than by preference.
+   */
+  recommended?: boolean
 }
 
 const gigaamFile = 'gigaam-v3-e2e-rnnt-Q4_K_M.gguf'
@@ -193,6 +200,7 @@ export const VOICE_MODELS: VoiceModelMeta[] = [
     note: 'Русская речь с пунктуацией и нормализацией чисел.',
     engine: 'transcribe',
     language: 'ru',
+    recommended: true,
     url: `https://huggingface.co/handy-computer/gigaam-v3-e2e-rnnt-gguf/resolve/main/${gigaamFile}`
   }
 ]

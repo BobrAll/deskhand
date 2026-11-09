@@ -194,7 +194,10 @@ export function VoiceTab({ voice, savedModel, onChange }: VoiceTabProps) {
               return (
                 <div key={model.id} className="model-row" data-active={voice.model === model.id}>
                   <button className="model-pick" onClick={() => onChange({ model: model.id })}>
-                    <span className="model-name">{model.label}</span>
+                    <span className="model-name">
+                      {model.label}
+                      {model.recommended && <span className="badge">рекомендовано</span>}
+                    </span>
                     <span className="model-meta">
                       {model.mb} МБ · {model.note}
                     </span>

@@ -102,6 +102,13 @@ describe('the settings panes', () => {
     expect(privacy()).toContain('Исключённые приложения')
   })
 
+  it('marks the recommended recognition model without hiding the others', () => {
+    const html = voice()
+    expect(html).toContain('рекомендовано')
+    // One badge, on one model: the list is ordered by size, not by preference.
+    expect(html.match(/рекомендовано/g)).toHaveLength(1)
+  })
+
   it('survives an empty exclusion list instead of rendering nothing', () => {
     expect(privacy([])).toContain('Список пуст')
     expect(privacy(['com.example.app'])).toContain('com.example.app')
