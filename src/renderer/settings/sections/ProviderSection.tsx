@@ -1,19 +1,25 @@
 /**
- * The «Модель» tab: provider, model, base URL override, key, sampling.
+ * The «Модель» tab: who answers, what it is given, and how it is reached.
  *
- * Moved out of `App.tsx` verbatim. The only thing that changed is where the
- * derived values are computed: `info`, `status` and `baseUrlError` were already
- * read by nothing outside this section, so they are computed here instead of
- * being threaded through as props.
+ * Four cards, in the order the questions come up when the app is set up for the
+ * first time: which service, which model, the key, then the network override.
+ * Sampling and the system prompt are folded into «Дополнительно» — they are the
+ * two things almost nobody changes, and leaving them open pushed the key field
+ * below the fold on a laptop screen.
+ *
+ * The screenshot controls are here rather than on a tab of their own because
+ * they answer the same question as the model picker: what does the model get to
+ * look at.
  *
  * The key field's own state stays in the window, not here: switching tabs
  * unmounts this section, and a half-typed key must not be thrown away by a
- * glance at «Поведение».
+ * glance at «Голос».
  */
 
 import type { AppSettings, KeyStatus, ProviderId } from '@shared/types'
 import { DEFAULT_SYSTEM_PROMPT, PROVIDERS, defaultSearchModel, normalizeBaseUrl, providerInfo } from '@shared/defaults'
 import { MAX_TOKENS_MAX, MAX_TOKENS_MIN } from '../applyGate'
+import { Disclosure, Group, Row, Toggle } from '../Row'
 
 interface ProviderSectionProps {
   draft: AppSettings
@@ -50,187 +56,237 @@ export function ProviderSection({
     : null
 
   return (
-    <section>
-      <h2>Модель и ключ</h2>
-      <p className="hint">
-        Ключ хранится в связке ключей macOS (Keychain) и никогда не показывается целиком.
-      </p>
+    <div className="pane">
+      <Group title="Подключение">
+        <Row stacked title="Сервис">
+          <div className="segmented">
+            {PROVIDERS.map((provider) => (
+              <button
+                key={provider.id}
+                className={draft.provider === provider.id ? 'active' : ''}
+                onClick={() => patch({ provider: provider.id })}
+              >
+                {provider.label}
+                {providerKeys[provider.id]?.configured && <span className="badge">ключ</span>}
+              </button>
+            ))}
+          </div>
+        </Row>
 
-      <div className="field">
-        <label>Провайдер</label>
-        <div className="segmented">
-          {PROVIDERS.map((provider) => (
-            <button
-              key={provider.id}
-              className={draft.provider === provider.id ? 'active' : ''}
-              onClick={() => patch({ provider: provider.id })}
-            >
-              {provider.label}
-              {providerKeys[provider.id]?.configured && <span className="badge">ключ</span>}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      <div className="field">
-        <label>Модель</label>
-        <input
-          value={draft.models[draft.provider]}
-          onChange={(event) =>
-            patch({ models: { ...draft.models, [draft.provider]: event.target.value } })
+        <Row
+          stacked
+          title="Модель"
+          hint={
+            info
+              ? `ID модели ${info.label}. Пусто — ${info.defaultModel}.`
+              : 'ID модели провайдера.'
           }
-          placeholder={info?.defaultModel}
-        />
-        <div className="chips">
-          {info?.popularModels.map((model) => (
-            <button
-              key={model}
-              className="chip"
-              onClick={() => patch({ models: { ...draft.models, [draft.provider]: model } })}
-            >
-              {model}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      <div className="field">
-        <label htmlFor="search-model">Модель веб-поиска</label>
-        <div className="key-row">
+        >
           <input
-            id="search-model"
-            value={searchModel}
+            value={draft.models[draft.provider]}
             onChange={(event) =>
-              patch({ searchModels: { ...draft.searchModels, [draft.provider]: event.target.value } })
+              patch({ models: { ...draft.models, [draft.provider]: event.target.value } })
             }
-            placeholder={fallbackSearchModel}
+            placeholder={info?.defaultModel}
             spellCheck={false}
           />
-          <button
-            className="ghost"
-            disabled={!searchModel}
-            onClick={() => patch({ searchModels: { ...draft.searchModels, [draft.provider]: '' } })}
-          >
-            Сбросить
-          </button>
-        </div>
-        <p className="hint">
-          Укажите ID модели {info?.label} с поддержкой веб-поиска. Пустое поле — {fallbackSearchModel}.
-        </p>
-      </div>
+        </Row>
 
-      <div className="field">
-        <label>Base URL · {info?.label}</label>
-        <div className="key-row">
-          <input
-            value={draft.baseUrls[draft.provider]}
-            onChange={(event) =>
-              patch({ baseUrls: { ...draft.baseUrls, [draft.provider]: event.target.value } })
-            }
-            placeholder={info?.defaultBaseUrl}
-            spellCheck={false}
-          />
-          <button
-            className="ghost"
-            disabled={!draft.baseUrls[draft.provider]}
-            onClick={() => patch({ baseUrls: { ...draft.baseUrls, [draft.provider]: '' } })}
-          >
-            Сбросить
-          </button>
-        </div>
-        {baseUrlError ? (
-          <div className="hint err">{baseUrlError}</div>
-        ) : (
-          <div className="hint">
-            {draft.baseUrls[draft.provider]
-              ? `Запросы пойдут на ${normalizeBaseUrl(draft.baseUrls[draft.provider])}. Пустое поле — ${info?.defaultBaseUrl}.`
-              : `Корень API, без /chat/completions. По умолчанию: ${info?.defaultBaseUrl}.`}
-          </div>
-        )}
-      </div>
+        <Row
+          stacked
+          title={`Ключ API ${info?.label ?? ''}`.trim()}
+          hint={
+            status?.configured
+              ? 'Ключ лежит в Keychain и никогда не показывается целиком.'
+              : undefined
+          }
+        >
+          {status?.configured ? (
+            <div className="row-actions">
+              <span className="permission-state ok">● Ключ сохранён</span>
+              <button className="ghost" onClick={onRemoveKey}>
+                Удалить
+              </button>
+            </div>
+          ) : (
+            <div className="row-actions">
+              <input
+                type="password"
+                value={keyInput}
+                onChange={(event) => onKeyInput(event.target.value)}
+                placeholder="sk-…"
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') onSaveKey()
+                }}
+              />
+              <button
+                className="primary"
+                disabled={testing || !keyInput.trim()}
+                onClick={onSaveKey}
+              >
+                {testing ? 'Проверка…' : 'Проверить и сохранить'}
+              </button>
+            </div>
+          )}
+          {info && (
+            <div className="row-hint">
+              Получить:{' '}
+              <a href={info.keyUrl} target="_blank" rel="noreferrer">
+                {info.keyUrl}
+              </a>
+            </div>
+          )}
+        </Row>
+      </Group>
 
-      <div className="field">
-        <label>Ключ API {info?.label}</label>
-        {status?.configured ? (
-          <div className="key-row">
-            <span className="ok">Ключ сохранён</span>
-            <button onClick={onRemoveKey}>Удалить</button>
-          </div>
-        ) : (
-          <div className="key-row">
+      <Group title="Поиск в интернете">
+        <Row
+          stacked
+          title="Модель веб-поиска"
+          hint={`Пустое поле — ${fallbackSearchModel}.`}
+        >
+          <div className="row-actions">
             <input
-              type="password"
-              value={keyInput}
-              onChange={(event) => onKeyInput(event.target.value)}
-              placeholder="sk-…"
-              onKeyDown={(event) => {
-                if (event.key === 'Enter') onSaveKey()
-              }}
+              id="search-model"
+              value={searchModel}
+              onChange={(event) =>
+                patch({ searchModels: { ...draft.searchModels, [draft.provider]: event.target.value } })
+              }
+              placeholder={fallbackSearchModel}
+              spellCheck={false}
             />
             <button
-              className="primary"
-              disabled={testing || !keyInput.trim()}
-              onClick={onSaveKey}
+              className="ghost"
+              disabled={!searchModel}
+              onClick={() => patch({ searchModels: { ...draft.searchModels, [draft.provider]: '' } })}
             >
-              {testing ? 'Проверка…' : 'Проверить и сохранить'}
+              Сбросить
             </button>
           </div>
-        )}
-        {info && (
-          <div className="hint">
-            Получить ключ:{' '}
-            <a href={info.keyUrl} target="_blank" rel="noreferrer">
-              {info.keyUrl}
-            </a>
+        </Row>
+      </Group>
+
+      <Group title="Сеть">
+        <Row
+          stacked
+          title={`Base URL · ${info?.label ?? ''}`}
+          hint={
+            draft.baseUrls[draft.provider]
+              ? `Запросы идут на ${normalizeBaseUrl(draft.baseUrls[draft.provider])}.`
+              : `Корень API без /chat/completions. По умолчанию: ${info?.defaultBaseUrl}.`
+          }
+        >
+          <div className="row-actions">
+            <input
+              value={draft.baseUrls[draft.provider]}
+              onChange={(event) =>
+                patch({ baseUrls: { ...draft.baseUrls, [draft.provider]: event.target.value } })
+              }
+              placeholder={info?.defaultBaseUrl}
+              spellCheck={false}
+            />
+            <button
+              className="ghost"
+              disabled={!draft.baseUrls[draft.provider]}
+              onClick={() => patch({ baseUrls: { ...draft.baseUrls, [draft.provider]: '' } })}
+            >
+              Сбросить
+            </button>
           </div>
-        )}
-      </div>
+          {baseUrlError && <div className="row-hint err">{baseUrlError}</div>}
+        </Row>
+      </Group>
 
-      <div className="row-grid">
-        <div className="field">
-          <label>Температура · {draft.temperature.toFixed(1)}</label>
-          <input
-            type="range"
-            min={0}
-            max={2}
-            step={0.1}
-            value={draft.temperature}
-            onChange={(event) => patch({ temperature: Number(event.target.value) })}
+      <Group title="Скриншот">
+        <Row
+          title="Снимать экран, когда нет выделения"
+          hint="Ассистент сам решит, что обвести и куда показать стрелкой."
+        >
+          <Toggle
+            checked={draft.captureScreenshotByDefault}
+            label="Снимать экран, когда нет выделения"
+            onChange={(captureScreenshotByDefault) => patch({ captureScreenshotByDefault })}
           />
-        </div>
-        <div className="field">
-          <label>Максимум токенов</label>
-          <input
-            type="number"
-            min={MAX_TOKENS_MIN}
-            max={MAX_TOKENS_MAX}
-            step={MAX_TOKENS_MIN}
-            value={draft.maxTokens}
-            onChange={(event) => patch({ maxTokens: Number(event.target.value) })}
-          />
-        </div>
-      </div>
+        </Row>
 
-      <div className="field">
-        <label>Системный промпт</label>
-        <textarea
-          rows={4}
-          value={draft.systemPrompt}
-          onChange={(event) => patch({ systemPrompt: event.target.value })}
-        />
-        <div className="key-row">
-          <span className="hint">
-            Пустое поле не применяется: стереть промпт нельзя, только заменить.
-          </span>
-          <button
-            className="ghost"
-            disabled={draft.systemPrompt === DEFAULT_SYSTEM_PROMPT}
-            onClick={() => patch({ systemPrompt: DEFAULT_SYSTEM_PROMPT })}
-          >
-            Вернуть стандартный
-          </button>
+        <Row stacked title="Размер и качество" hint="Меньше — быстрее ответ и дешевле.">
+          <div className="row-grid">
+            <div>
+              <div className="row-hint">Длинная сторона · {draft.screenshotMaxSide}px</div>
+              <input
+                type="range"
+                min={480}
+                max={2400}
+                step={80}
+                value={draft.screenshotMaxSide}
+                aria-label="Длинная сторона скриншота"
+                onChange={(event) => patch({ screenshotMaxSide: Number(event.target.value) })}
+              />
+            </div>
+            <div>
+              <div className="row-hint">Качество JPEG · {draft.screenshotQuality}</div>
+              <input
+                type="range"
+                min={30}
+                max={95}
+                step={5}
+                value={draft.screenshotQuality}
+                aria-label="Качество JPEG"
+                onChange={(event) => patch({ screenshotQuality: Number(event.target.value) })}
+              />
+            </div>
+          </div>
+        </Row>
+      </Group>
+
+      <Disclosure title="Дополнительно">
+        <div className="row-grid">
+          <div>
+            <div className="row-hint">Температура · {draft.temperature.toFixed(1)}</div>
+            <input
+              type="range"
+              min={0}
+              max={2}
+              step={0.1}
+              value={draft.temperature}
+              aria-label="Температура"
+              onChange={(event) => patch({ temperature: Number(event.target.value) })}
+            />
+          </div>
+          <div>
+            <div className="row-hint">Максимум токенов</div>
+            <input
+              type="number"
+              min={MAX_TOKENS_MIN}
+              max={MAX_TOKENS_MAX}
+              step={MAX_TOKENS_MIN}
+              value={draft.maxTokens}
+              aria-label="Максимум токенов"
+              onChange={(event) => patch({ maxTokens: Number(event.target.value) })}
+            />
+          </div>
         </div>
-      </div>
-    </section>
+
+        <div>
+          <div className="row-hint">Системный промпт</div>
+          <textarea
+            rows={4}
+            value={draft.systemPrompt}
+            aria-label="Системный промпт"
+            onChange={(event) => patch({ systemPrompt: event.target.value })}
+          />
+          <div className="row-actions">
+            <span className="row-hint">Пустой промпт не применяется.</span>
+            <button
+              className="ghost"
+              disabled={draft.systemPrompt === DEFAULT_SYSTEM_PROMPT}
+              onClick={() => patch({ systemPrompt: DEFAULT_SYSTEM_PROMPT })}
+            >
+              Вернуть стандартный
+            </button>
+          </div>
+        </div>
+      </Disclosure>
+    </div>
   )
 }

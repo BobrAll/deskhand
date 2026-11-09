@@ -58,6 +58,8 @@ const api: SmartCursorApi = {
     setEnabled: (enabled: boolean) =>
       ipcRenderer.invoke(CH.agent.setEnabled, enabled) as Promise<AgentAvailability>,
     stop: () => ipcRenderer.invoke(CH.agent.stop),
+    answer: (id: string, allow: boolean, remember: boolean) =>
+      ipcRenderer.invoke(CH.agent.answer, id, allow, remember),
     clearApprovals: () => ipcRenderer.invoke(CH.agent.clearApprovals)
   },
   agentCursor: {
@@ -75,7 +77,8 @@ const api: SmartCursorApi = {
     pickApp: () => ipcRenderer.invoke(CH.settings.pickApp),
     open: () => ipcRenderer.send(CH.settings.open),
     close: () => ipcRenderer.send(CH.settings.close),
-    hold: (busy: boolean) => ipcRenderer.send(CH.settings.hold, busy)
+    hold: (busy: boolean) => ipcRenderer.send(CH.settings.hold, busy),
+    recording: (active: boolean) => ipcRenderer.send(CH.settings.recording, active)
   },
   onboarding: {
     complete: () => ipcRenderer.invoke(CH.onboarding.complete),

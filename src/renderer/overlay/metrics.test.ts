@@ -54,9 +54,9 @@ describe('metrics: the widths come from @shared/metrics', () => {
 })
 
 describe('metrics: the chrome the CSS spends', () => {
-  it('sums the padding, the edge, the dot, both gaps and the chevron', () => {
-    // 8px padding on both sides + 1px edge + 6 dot + 6 + 6 gaps + 16 chevron.
-    expect(CHROME_WIDTH).toBe(52)
+  it('sums the padding, the edge, the gap and the chevron', () => {
+    // 8px padding on both sides + 2px edge + 6 gap + 16 chevron.
+    expect(CHROME_WIDTH).toBe(40)
   })
 
   it('counts the stop button and its gap', () => {

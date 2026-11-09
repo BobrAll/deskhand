@@ -6,10 +6,9 @@
 //   * activate     - bring an application back to the front
 //   * permissions  - accessibility + screen recording state (optionally prompting)
 //   * voice        - long-lived push-to-talk listener (CGEventTap, JSON lines)
-//   * gesture      - long-lived trackpad listener (tap / hold, JSON lines)
 //   * ping         - liveness probe
-// One-shot commands write a single JSON object on stdout; `voice` and `gesture`
-// stream one JSON object per line until they are killed.
+// One-shot commands write a single JSON object on stdout; `voice` streams one
+// JSON object per line until it is killed.
 
 #import <Cocoa/Cocoa.h>
 #import <ApplicationServices/ApplicationServices.h>
@@ -20,7 +19,6 @@
 #import <unistd.h>
 #import <signal.h>
 
-#import "gesture.h"
 
 static void emit(NSDictionary *payload) {
   NSError *error = nil;
@@ -90,7 +88,17 @@ static NSDictionary *focusedWindowInfo(pid_t pid) {
   return result;
 }
 
-static int commandFront(pid_t target) {
+/**
+ * The frontmost application, optionally with its focused window.
+ *
+ * `withWindow` is false for callers that only need to know *which application*
+ * is in front — the plan's working app, a launch check, a focus guard. Reading
+ * the focused window costs a cold Accessibility round trip of 35-45 ms inside a
+ * freshly spawned helper, and on a measured turn `front` was called 67 times:
+ * the same fact was re-read far more often than it changed, and the window was
+ * needed by a small minority of those calls.
+ */
+static int commandFront(pid_t target, BOOL withWindow) {
   NSRunningApplication *front = target > 0 ? [NSRunningApplication runningApplicationWithProcessIdentifier:target]
                                            : [[NSWorkspace sharedWorkspace] frontmostApplication];
   if (!front) {
@@ -98,13 +106,17 @@ static int commandFront(pid_t target) {
     return 0;
   }
   pid_t pid = [front processIdentifier];
-  NSDictionary *win = focusedWindowInfo(pid);
   NSMutableDictionary *result = [NSMutableDictionary dictionary];
   result[@"ok"] = @YES;
   result[@"bundleId"] = [front bundleIdentifier] ?: @"";
   result[@"name"] = [front localizedName] ?: @"";
   result[@"pid"] = @(pid);
   result[@"accessibility"] = @(AXIsProcessTrusted());
+  if (!withWindow) {
+    emit(result);
+    return 0;
+  }
+  NSDictionary *win = focusedWindowInfo(pid);
   if (win) {
     result[@"windowId"] = win[(id)kCGWindowNumber];
     result[@"bounds"] = win[(id)kCGWindowBounds];
@@ -181,8 +193,19 @@ static BOOL agentTargetMatches(void) {
   if (!agentCanPost()) return NO;
   if (!agentExpectedPid) return YES;
   NSDictionary *focused = focusedWindowInfo(agentExpectedPid);
-  NSNumber *actual = focused[(id)kCGWindowNumber];
-  if (agentExpectedWindow > 0 ? actual.longValue != agentExpectedWindow : focused != nil) return NO;
+  // Only compare the window number when one was actually named.
+  //
+  // This used to read `: focused != nil`, which rejected the action whenever the
+  // application *had* a focused window — the exact opposite of a match. The
+  // caller passes 0 when it could not determine the number, and that is the
+  // normal case for any app whose window the CGWindowList cannot single out
+  // (Chrome among them, where the on-screen list holds several windows with the
+  // same bounds). So every addressed click and keystroke into such an app was
+  // refused as `target-changed` before a single event was posted.
+  if (agentExpectedWindow > 0) {
+    NSNumber *actual = focused[(id)kCGWindowNumber];
+    if (!actual || actual.longValue != agentExpectedWindow) return NO;
+  }
   if (agentHasExpectedBounds) {
     NSDictionary *bounds = focused[(id)kCGWindowBounds];
     CGRect rect;
@@ -585,6 +608,100 @@ static int commandActivate(NSString *target) {
   return 0;
 }
 
+/**
+ * Opens an application by name, bundle id or path, starting it if needed.
+ *
+ * `activate` only reaches something that is already running, which made "open
+ * Telegram" impossible whenever Telegram was closed: the only route left was to
+ * hunt for its Dock icon and click a pixel. That is the wrong tool for the job —
+ * the system has a first-class answer for "open this application", and it does
+ * not depend on the icon being visible, the Dock being where it was, or the
+ * pointer landing accurately.
+ *
+ * Resolution order is most specific first: an existing path, then a bundle id,
+ * then a display name matched against installed and running applications. The
+ * answer names what actually came forward so the caller can verify the result
+ * against the screen instead of assuming the launch worked.
+ */
+static int commandLaunch(NSString *target) {
+  if ([target length] == 0) {
+    emit(@{@"ok" : @NO, @"error" : @"empty-target"});
+    return 0;
+  }
+  NSWorkspace *workspace = [NSWorkspace sharedWorkspace];
+  NSURL *url = nil;
+
+  if ([target hasPrefix:@"/"]) {
+    url = [NSURL fileURLWithPath:target];
+  }
+  if (!url) {
+    url = [workspace URLForApplicationWithBundleIdentifier:target];
+  }
+  if (!url) {
+    // A display name is what the model reads off the Dock and the screen, so it
+    // is the shape most requests arrive in. Compare case- and diacritic-
+    // insensitively: the label came from a downscaled screenshot.
+    NSString *wanted = [target stringByTrimmingCharactersInSet:
+        [NSCharacterSet whitespaceAndNewlineCharacterSet]];
+    NSMutableArray<NSURL *> *candidates = [NSMutableArray array];
+    NSString *directories = @"/Applications:/Applications/Utilities:/System/Applications:"
+        @"/System/Applications/Utilities:~/Applications";
+    for (NSString *directory in [directories componentsSeparatedByString:@":"]) {
+      NSString *expanded = [directory stringByExpandingTildeInPath];
+      NSArray<NSString *> *entries =
+          [[NSFileManager defaultManager] contentsOfDirectoryAtPath:expanded error:NULL];
+      for (NSString *entry in entries) {
+        if (![[entry pathExtension] isEqualToString:@"app"]) continue;
+        NSString *name = [entry stringByDeletingPathExtension];
+        if ([name compare:wanted options:NSCaseInsensitiveSearch | NSDiacriticInsensitiveSearch] ==
+            NSOrderedSame) {
+          [candidates addObject:[NSURL fileURLWithPath:
+              [expanded stringByAppendingPathComponent:entry]]];
+        }
+      }
+    }
+    if ([candidates count] == 0) {
+      for (NSRunningApplication *candidate in [workspace runningApplications]) {
+        NSString *name = [candidate localizedName];
+        if (name && [name compare:wanted options:NSCaseInsensitiveSearch |
+            NSDiacriticInsensitiveSearch] == NSOrderedSame) {
+          url = [candidate bundleURL];
+          break;
+        }
+      }
+    }
+    if (!url && [candidates count] > 0) url = candidates[0];
+  }
+
+  if (!url) {
+    emit(@{@"ok" : @NO, @"error" : @"app-not-found", @"target" : target});
+    return 0;
+  }
+  if (agentCancelled) { emit(@{@"ok" : @NO, @"error" : @"interrupted"}); return 0; }
+
+  NSRunningApplication *app = [workspace launchApplicationAtURL:url
+    options:NSWorkspaceLaunchDefault configuration:@{} error:NULL];
+  if (!app) {
+    // Already running and simply not launched again is not a failure: fall back
+    // to whatever is running from that bundle so the answer still names a pid.
+    NSArray<NSRunningApplication *> *running =
+        [NSRunningApplication runningApplicationsWithBundleIdentifier:
+            [[NSBundle bundleWithURL:url] bundleIdentifier] ?: @""];
+    if ([running count] > 0) app = running[0];
+  }
+  if (!app) {
+    emit(@{@"ok" : @NO, @"error" : @"launch-failed", @"target" : target});
+    return 0;
+  }
+  if (agentCancelled) { emit(@{@"ok" : @NO, @"error" : @"interrupted"}); return 0; }
+  [app activateWithOptions:NSApplicationActivateIgnoringOtherApps];
+  emit(@{@"ok" : @YES,
+         @"pid" : @([app processIdentifier]),
+         @"bundleId" : [app bundleIdentifier] ?: @"",
+         @"name" : [app localizedName] ?: @""});
+  return 0;
+}
+
 static int commandCursor(void) {
   NSPoint point = [NSEvent mouseLocation];
   NSScreen *screen = nil;
@@ -738,150 +855,6 @@ static int commandVoice(int64_t keyCode, CGEventFlags flags, BOOL swallow) {
 
   CFRelease(source);
   CFRelease(tap);
-  return 0;
-}
-
-// MARK: - Trackpad gestures
-
-// Three fingers on the trackpad are two different actions, and the difference is
-// time: a short contact is a tap (it opens the card), a longer one is a hold (it
-// records). macOS has no public API for "what is the trackpad doing right now",
-// so the raw contact stream comes from MultitouchSupport. It is a private
-// framework, hence `dlopen`: the helper must start even on a machine where the
-// framework has moved or is missing, and just report that gestures are off.
-//
-// The framework prints its own banner to stdout ("*** Recognized ... family***")
-// the moment the device is opened, which would corrupt the line protocol, so the
-// protocol is written to a saved duplicate of the original stdout and fd 1 is
-// pointed at /dev/null before the framework is touched.
-
-// The classification lives in `gesture.h`: it is the part worth replaying against
-// recorded contact frames (`scripts/gesture.test.c`, run with
-// `npm run test:gesture`), and it has no business knowing about JSON, processes
-// or the framework.
-/** Set by `SMARTCURSOR_GESTURE_DEBUG`: every edge carries the contact age. */
-static BOOL gGestureDebug = NO;
-static int gGestureJsonFd = -1;
-
-static void emitGesture(NSDictionary *payload) {
-  if (gGestureJsonFd < 0) return;
-  NSError *error = nil;
-  NSData *data = [NSJSONSerialization dataWithJSONObject:payload options:0 error:&error];
-  if (error || !data) return;
-  const char *bytes = [data bytes];
-  size_t length = [data length];
-  size_t written = 0;
-  while (written < length) {
-    ssize_t chunk = write(gGestureJsonFd, bytes + written, length - written);
-    if (chunk <= 0) return;
-    written += (size_t)chunk;
-  }
-  write(gGestureJsonFd, "\n", 1);
-}
-
-static void emitGestureEvent(GestureEventKind kind, double heldMs, void *context) {
-  (void)context;
-  const char *name = NULL;
-  switch (kind) {
-    case kGestureEventTap:
-      name = "tap";
-      break;
-    case kGestureEventPress:
-      name = "press";
-      break;
-    case kGestureEventRelease:
-      name = "release";
-      break;
-    case kGestureEventCancel:
-      name = "cancel";
-      break;
-    default:
-      return;
-  }
-  if (gGestureDebug && heldMs >= 0) {
-    emitGesture(@{@"event" : [NSString stringWithUTF8String:name], @"heldMs" : @(heldMs)});
-  } else {
-    emitGesture(@{@"event" : [NSString stringWithUTF8String:name]});
-  }
-}
-
-static GestureState gGestureState;
-
-// The device handle and the callback signature come from the framework, not from
-// `gesture.h`: that header only knows about contacts.
-typedef void *MTDeviceRef;
-typedef int (*MTContactCallback)(MTDeviceRef device, MTTouch *touches, int count, double timestamp,
-                                 int frame);
-typedef CFArrayRef (*MTDeviceCreateListFn)(void);
-typedef void (*MTRegisterContactFrameCallbackFn)(MTDeviceRef device, MTContactCallback callback);
-typedef void (*MTDeviceStartFn)(MTDeviceRef device, int mode);
-
-static int gestureContactCallback(MTDeviceRef device, MTTouch *touches, int count, double timestamp,
-                                  int frame) {
-  // Monotonic, and unaffected by the wall clock, which may jump mid-gesture.
-  double now = [NSProcessInfo processInfo].systemUptime;
-  gestureHandleFrame(&gGestureState, touches, count, now);
-  return 0;
-}
-
-static int commandGesture(int fingers, double holdMs) {
-  // The protocol keeps its own channel before the framework can write to fd 1.
-  gGestureJsonFd = dup(STDOUT_FILENO);
-  int devnull = open("/dev/null", O_WRONLY);
-  if (devnull >= 0) {
-    dup2(devnull, STDOUT_FILENO);
-    close(devnull);
-  }
-
-  // 6% of the pad is roughly 5 mm: past that the fingers are going somewhere,
-  // which is a swipe (Mission Control, an app switch), not a tap or a hold.
-  gestureInit(&gGestureState, fingers, holdMs, 0.06, emitGestureEvent, NULL);
-  gGestureDebug = getenv("SMARTCURSOR_GESTURE_DEBUG") != NULL;
-
-  void *handle = dlopen(
-      "/System/Library/PrivateFrameworks/MultitouchSupport.framework/MultitouchSupport", RTLD_LAZY);
-  if (!handle) {
-    emitGesture(@{@"ok" : @NO, @"error" : @"multitouch-unavailable"});
-    return 0;
-  }
-  MTDeviceCreateListFn list = (MTDeviceCreateListFn)dlsym(handle, "MTDeviceCreateList");
-  MTRegisterContactFrameCallbackFn registerCallback =
-      (MTRegisterContactFrameCallbackFn)dlsym(handle, "MTRegisterContactFrameCallback");
-  MTDeviceStartFn start = (MTDeviceStartFn)dlsym(handle, "MTDeviceStart");
-  if (!list || !registerCallback || !start) {
-    emitGesture(@{@"ok" : @NO, @"error" : @"multitouch-unavailable"});
-    return 0;
-  }
-
-  CFArrayRef devices = list();
-  if (!devices || CFArrayGetCount(devices) == 0) {
-    if (devices) CFRelease(devices);
-    // No trackpad: a desktop Mac with a mouse only. Not an error to shout about,
-    // but the caller has to know gestures will never fire.
-    emitGesture(@{@"ok" : @NO, @"error" : @"no-trackpad"});
-    return 0;
-  }
-
-  for (CFIndex i = 0; i < CFArrayGetCount(devices); i++) {
-    MTDeviceRef device = (MTDeviceRef)CFArrayGetValueAtIndex(devices, i);
-    registerCallback(device, gestureContactCallback);
-    start(device, 0);
-  }
-  emitGesture(@{@"ok" : @YES, @"event" : @"ready", @"fingers" : @(fingers)});
-
-  // The contact frames arrive on the framework's own thread, so the main thread
-  // has nothing to service — and a run loop with no sources returns immediately,
-  // which would end the process right after `ready`. A far-future timer is the
-  // cheapest way to keep it parked here until the process is killed.
-  CFRunLoopTimerRef keepAlive =
-      CFRunLoopTimerCreate(kCFAllocatorDefault, CFAbsoluteTimeGetCurrent() + 3600, 3600, 0, 0, NULL,
-                           NULL);
-  if (keepAlive) CFRunLoopAddTimer(CFRunLoopGetCurrent(), keepAlive, kCFRunLoopDefaultMode);
-  CFRunLoopRun();
-  if (keepAlive) CFRelease(keepAlive);
-
-  CFRelease(devices);
-  dlclose(handle);
   return 0;
 }
 
@@ -1209,6 +1182,12 @@ static NSArray<NSDictionary *> *axCollectTargets(pid_t pid, double budgetMs) {
         if (![seen containsObject:key]) {
           [seen addObject:key];
           info[@"depth"] = @(depth);
+          // Every target here was read from this one process, and saying so is
+          // what lets a caller act on the element semantically instead of
+          // guessing that the frontmost app is its owner. The guess is wrong
+          // exactly when it matters: a click aimed at an app that is not in
+          // front, or at a window of ours over the app that is.
+          info[@"pid"] = @(pid);
           [targets addObject:info];
         }
         // Enough with the list: a model's plan has six steps at most, and a
@@ -1359,14 +1338,23 @@ int main(int argc, const char *argv[]) {
     if (strcmp(command, "request-permissions") == 0) return commandPermissions(YES);
     if (strcmp(command, "cursor") == 0) return commandCursor();
     if (strcmp(command, "apps") == 0) return commandApps();
-    if (strcmp(command, "front") == 0) return commandFront(0);
-    if (strcmp(command, "window") == 0 && argc == 3) return commandFront((pid_t)strtol(argv[2], NULL, 10));
+    if (strcmp(command, "front") == 0) return commandFront(0, YES);
+    // front-quick: which application is in front, without reading its window.
+    // The window costs a cold Accessibility round trip and a full on-screen
+    // window enumeration; callers that only need the application pay neither.
+    if (strcmp(command, "front-quick") == 0) return commandFront(0, NO);
+    if (strcmp(command, "window") == 0 && argc == 3) return commandFront((pid_t)strtol(argv[2], NULL, 10), YES);
     if (strcmp(command, "open-browser") == 0) return commandOpenBrowser();
     if (strcmp(command, "copy") == 0) return commandKey("copy");
     if (strcmp(command, "paste") == 0) return commandKey("paste");
     if (strcmp(command, "activate") == 0) {
       NSString *target = argc > 2 ? [NSString stringWithUTF8String:argv[2]] : @"";
       return commandActivate(target);
+    }
+    if (strcmp(command, "launch") == 0) {
+      // launch <name|bundleId|path> — opens the application, starting it if needed.
+      NSString *target = argc > 2 ? [NSString stringWithUTF8String:argv[2]] : @"";
+      return commandLaunch(target);
     }
     if (strcmp(command, "voice") == 0) {
       // voice <keyCode> <flags> [swallow]
@@ -1378,20 +1366,6 @@ int main(int argc, const char *argv[]) {
       CGEventFlags flags = (CGEventFlags)strtoull(argv[3], NULL, 10);
       BOOL swallow = argc > 4 && strcmp(argv[4], "swallow") == 0;
       return commandVoice(keyCode, flags, swallow);
-    }
-    if (strcmp(command, "gesture") == 0) {
-      // gesture <fingers> <holdMs>
-      if (argc < 4) {
-        emit(@{@"ok" : @NO, @"error" : @"missing-arguments"});
-        return 1;
-      }
-      int fingers = (int)strtol(argv[2], NULL, 10);
-      double holdMs = strtod(argv[3], NULL);
-      if (fingers < 2 || fingers > 4 || holdMs < 100 || holdMs > 2000) {
-        emit(@{@"ok" : @NO, @"error" : @"bad-arguments"});
-        return 1;
-      }
-      return commandGesture(fingers, holdMs);
     }
     if (strcmp(command, "move") == 0) {
       // move <x> <y>

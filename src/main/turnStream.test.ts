@@ -91,7 +91,7 @@ describe('consumeTurnStream: prose', () => {
       onText: out.onText
     })
 
-    expect(result).toEqual({ text: '', steps: [], webLookup: true })
+    expect(result).toEqual({ text: '', webLookup: true })
     expect(out.text).toEqual([])
   })
 
@@ -213,15 +213,12 @@ describe('consumeTurnStream: shapes', () => {
   })
 })
 
-describe('consumeTurnStream: steps', () => {
-  it('returns the plan in the order the model said it', async () => {
+describe('consumeTurnStream: markers are drawing only', () => {
+  it('keeps an action-shaped line out of the plan and in the prose', async () => {
+    // Acting is its own turn with real tool calling. A line the old protocol
+    // would have read as a click is now just text, and the parser says so.
     const result = await consumeTurnStream({
-      provider: fakeProvider([
-        '@look\n',
-        '@click 0.3 0.4\n',
-        '@type «Экспорт»\n',
-        'Готово.\n'
-      ]),
+      provider: fakeProvider(['@click 0.3 0.4\n', 'Готово.\n']),
       messages: MESSAGES,
       apiKey: '',
       streamOptions: STREAM_OPTIONS,
@@ -230,22 +227,7 @@ describe('consumeTurnStream: steps', () => {
       onText: () => undefined
     })
 
-    expect(result.steps.map((step) => step.action.kind)).toEqual(['look', 'click', 'type'])
-    expect(result.text).toBe('Готово.\n')
-  })
-
-  it('returns no steps when the answer was only prose', async () => {
-    const result = await consumeTurnStream({
-      provider: fakeProvider(['Просто ответ.\n']),
-      messages: MESSAGES,
-      apiKey: '',
-      streamOptions: STREAM_OPTIONS,
-      isAlive: () => true,
-      onShapes: () => undefined,
-      onText: () => undefined
-    })
-
-    expect(result.steps).toEqual([])
+    expect(result.text).toBe('@click 0.3 0.4\nГотово.\n')
   })
 })
 
@@ -268,7 +250,6 @@ describe('consumeTurnStream: a round that is no longer wanted', () => {
 
     expect(out.text).toEqual(['Первое. '])
     expect(result.text).toBe('Первое. ')
-    expect(result.steps).toEqual([])
   })
 
   it('checks `isAlive` before the first delta, so a closed card consumes nothing', async () => {
@@ -285,7 +266,7 @@ describe('consumeTurnStream: a round that is no longer wanted', () => {
 
     expect(out.text).toEqual([])
     expect(out.shapes).toEqual([])
-    expect(result).toEqual({ steps: [], text: '' })
+    expect(result).toEqual({ text: '' })
   })
 
   it('drops the tail when the round was cancelled during the last delta', async () => {
@@ -369,19 +350,23 @@ describe('consumeTurnStream: a round that is no longer wanted', () => {
 })
 
 describe('consumeTurnStream: execution integrity', () => {
-  it.each(['incomplete', 'limit'] as const)('rejects a partial batch on %s', async (end) => {
+  it.each(['incomplete', 'limit'] as const)('rejects a truncated web lookup on %s', async (end) => {
+    // A search marker that arrived in a stream nobody finished is a lookup the
+    // answer no longer justifies: retrying is honest, answering is not.
     await expect(consumeTurnStream({
-      provider: fakeProvider(['@click 0.4 0.5\n@type Привет🙂'], undefined, end),
+      provider: fakeProvider(['@web\nИщу'], undefined, end),
       messages: MESSAGES, apiKey: '', streamOptions: STREAM_OPTIONS, isAlive: () => true,
       onShapes: () => undefined, onText: () => undefined
     })).rejects.toThrow('Ответ модели оборвался')
   })
 
-  it('rejects a malformed action followed by a valid submission', async () => {
-    await expect(consumeTurnStream({
-      provider: fakeProvider(['@type\n@key enter\n']),
+  it('keeps a truncated plain answer: it is still readable prose', async () => {
+    const result = await consumeTurnStream({
+      provider: fakeProvider(['Первое предложение. Второе предло'], undefined, 'incomplete'),
       messages: MESSAGES, apiKey: '', streamOptions: STREAM_OPTIONS, isAlive: () => true,
       onShapes: () => undefined, onText: () => undefined
-    })).rejects.toThrow('некорректный план')
+    })
+
+    expect(result.text).toBe('Первое предложение. Второе предло')
   })
 })

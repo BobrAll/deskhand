@@ -3,8 +3,7 @@
  *
  * A bubble, not a window: one line for the question, the answer printed directly
  * underneath it. It appears next to the cursor (the main process owns the
- * placement) as *only* that line plus one small chevron; context tags, quick
- * actions and the answer's secondary commands stay folded behind the chevron, so
+ * placement) as *only* that line plus one small chevron; context tags and the answer's secondary commands stay folded behind the chevron, so
  * the common case — ask, read, paste — is a small rectangle that never covers the
  * screen.
  *
@@ -16,6 +15,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 import type { CSSProperties } from 'react'
 import type {
   AgentEvent,
+  AgentToolRequest,
   ContextSnapshot,
   OverlayState,
   RefineDirection,
@@ -25,6 +25,8 @@ import type {
 import {
   ANSWER_CHROME,
   ACTIONS_CHROME,
+  AGENT_STATUS_INSET,
+  AGENT_ROW_CHROME,
   CARET_SLACK,
   CHROME_WIDTH,
   FIELD_FONT,
@@ -41,6 +43,7 @@ import { useWaiting } from './useWaiting'
 import { waitingStage } from './waiting'
 import { useVoice } from './useVoice'
 import { deriveView } from './viewFlags'
+import { agentLabel, agentMark } from './agentRow'
 import { keyPolicy, type KeyAction } from './keyPolicy'
 import { routeStream } from './streamRouting'
 
@@ -126,7 +129,6 @@ export function App() {
   speechRef.current = speech
   const [state, setState] = useState<OverlayState | null>(null)
   const [prompt, setPrompt] = useState('')
-  const [mode, setMode] = useState<ResponseMode>('insert')
   const [answer, setAnswer] = useState('')
   const [busy, setBusy] = useState(false)
   const [failure, setFailure] = useState<Failure | null>(null)
@@ -144,7 +146,7 @@ export function App() {
   const [typing, setTyping] = useState(false)
   /**
    * The bubble opens as a single small field. Everything else — context tags,
-   * suggestions, status rows and the answer's action strip — lives behind the
+   * status rows and the answer's action strip — lives behind the
    * small chevron, so the common "ask and paste" case stays one line tall.
    */
   const [expanded, setExpanded] = useState(false)
@@ -179,7 +181,6 @@ export function App() {
   /** Latest agent phase, so the key handler does not resubscribe on every tick. */
   const agentRef = useRef<AgentEvent | null>(null)
   const busyRef = useRef(false)
-  const modeRef = useRef<ResponseMode>('insert')
   const requestIdRef = useRef<string | null>(null)
   /**
    * A request that was abandoned when a voice turn started.
@@ -246,7 +247,6 @@ export function App() {
   stateRef.current = state
   promptRef.current = prompt
   busyRef.current = busy
-  modeRef.current = mode
   agentRef.current = agent
 
   /**
@@ -484,18 +484,21 @@ export function App() {
    */
   const textWidth = prompt ? measureLine(prompt, fontRef.current) : 0
 
-  // Drawers and status details need the full panel; an answer earns only the
-  // space its text and action row actually occupy.
+  // Drawers and confirmations need room for controls. Progress and answers
+  // size to their content.
   const waiting = useWaiting(requestIdRef.current, busy && !failure && !listening)
   const waitStage = waitingStage(waiting.elapsed)
-  const showWaiting = waitStage !== 'quiet' && ((!hasAnswer && !agent) ||
-    (Boolean(agent) && (waitStage === 'tip' || waitStage === 'long')))
-  const wantsWide = expanded || Boolean(failure) || Boolean(agent) || showWaiting
+  const agentRunning = busy && agent !== null
+  const agentStatus = agent && agentLabel(agent, answer)
+  const agentDone = !busy && !hasAnswer && agent?.phase === 'done' && agent.completed === true
+  const showWaiting = waitStage !== 'quiet' && !hasAnswer && !agent
+  const wantsWide = (expanded && !agentRunning) || Boolean(failure) ||
+    agent?.phase === 'asking' || showWaiting
 
   /**
    * Everything on the line that is not the question, in points.
    *
-   * The bubble's padding and edge, the presence dot, both gaps and the chevron —
+   * The bubble's padding and edge, the gap and the chevron —
    * plus the stop button, which is on screen exactly while a request is running.
    */
   const chromeWidth = CHROME_WIDTH + (busy ? STOP_CHROME : 0)
@@ -526,7 +529,12 @@ export function App() {
         FIELD_FONT.replace('13px', '11px')
       )) + ACTIONS_CHROME
     : 0
-  const contentWidth = clamp(Math.max(composedWidth, answerWidth, actionsWidth), NARROW_WIDTH, FULL_WIDTH)
+  const agentWidth = agentStatus
+    ? Math.ceil(measureLine(agentStatus, FIELD_FONT.replace('13px', '11.5px'))) +
+      AGENT_ROW_CHROME + (agentRunning ? 0 : AGENT_STATUS_INSET) + CARET_SLACK
+    : 0
+  const inputWidth = agentRunning ? NARROW_WIDTH : composedWidth
+  const contentWidth = clamp(Math.max(inputWidth, answerWidth, actionsWidth, agentWidth), NARROW_WIDTH, FULL_WIDTH)
   const cardWidth = listening ? VOICE_WIDTH : wantsWide ? FULL_WIDTH : contentWidth
 
   // Keep a single line throughout the sideways motion. Wrapping before there is
@@ -597,7 +605,7 @@ export function App() {
       setBusy(false)
       if (previous) window.smartCursor.overlay.cancel(previous)
     }
-    const usedMode = sendMode ?? modeRef.current
+    const usedMode = sendMode ?? 'insert'
     const requestId = newRequestId()
     requestIdRef.current = requestId
     speechRef.current.begin(requestId, value, voice)
@@ -663,7 +671,7 @@ export function App() {
       setNotice(null)
       setLast({
         prompt: last?.prompt ?? '',
-        mode: last?.mode ?? modeRef.current,
+        mode: last?.mode ?? 'insert',
         refine: direction,
         base: baseAnswer,
         voice: false
@@ -671,7 +679,7 @@ export function App() {
       window.smartCursor.overlay.send({
         requestId,
         prompt: last?.prompt ?? '',
-        mode: last?.mode ?? modeRef.current,
+        mode: last?.mode ?? 'insert',
         includeSelection: current.flags.includeSelection,
         includeScreenshot: current.flags.includeScreenshot,
         refine: { direction, baseAnswer }
@@ -727,6 +735,23 @@ export function App() {
       setNotice('Управление включено. Повторите просьбу — теперь я её выполню.')
     }
   }, [])
+
+  /**
+   * Sends the user's decision about one call back to the run.
+   *
+   * The id comes from the question that is on screen, so a click that arrives
+   * after the run moved on — a double press, a button that was already handled —
+   * is dropped by the main process instead of being applied to the next question.
+   * Nothing is cleared optimistically here: the row keeps showing the question
+   * until the run itself says what happened, which is what keeps the card and the
+   * machine from disagreeing for a frame.
+   */
+  const answerAgent = useCallback(
+    async (request: AgentToolRequest, allow: boolean, remember: boolean) => {
+      await window.smartCursor.agent.answer(request.id, allow, remember)
+    },
+    []
+  )
 
   /** Speech that has already been recognised and put into this bubble. */
   useEffect(() => {
@@ -796,18 +821,6 @@ export function App() {
         ignoredRequestRef.current = id
         requestIdRef.current = null
         setBusy(false)
-        // The row is set here rather than left to the answer: the main process
-        // clears it on its own path, but a check cancelled inside the stream
-        // produces neither a verdict nor a `done`, and a card stuck on
-        // "проверяю" over nothing is the one thing this feature must never show.
-        setAgent({
-          phase: 'aborted',
-          step: 0,
-          total: 0,
-          label: '',
-          plan: [],
-          message: 'Проверка остановлена.'
-        })
         window.smartCursor.overlay.cancel(id)
         return
       }
@@ -880,7 +893,7 @@ export function App() {
    *
    * The window comes up on the key press, and the context — frontmost app,
    * selection, screenshot — lands a few hundred milliseconds later. That gap is
-   * rendered as the card itself: the same spark, the same field, the same
+   * rendered as the card itself: the same field and the same
    * placeholder. Announcing the wait ("Подготовка контекста…") turned the first
    * beat of every press into a status line nobody asked to read, and made the
    * panel change shape and contents right after it appeared. Collecting the
@@ -890,54 +903,51 @@ export function App() {
   const showingTranscript = busy && last?.voice && Boolean(prompt)
 
   /**
-   * The one line the bubble is: the presence dot and the field.
+   * The field is shared by the provisional and ready card.
    *
    * Held as an expression because the card renders it in two states — while the
    * context is still being collected, and once the session is there with the
    * chevron and the stop button beside it.
    */
   const composer = (
-    <>
-      <span className="spark" data-live={busy} aria-hidden />
-      <textarea
-        ref={fieldRef}
-        className="prompt"
-        rows={1}
-        spellCheck
-        placeholder="Пиши…"
-        data-wrap={wrapped || undefined}
-        value={prompt}
-        disabled={blocked}
-        readOnly={showingTranscript}
-        onChange={(event) => {
-          setPrompt(event.target.value)
-          setTyping(true)
-        }}
-        /*
-          The field's own Enter, kept separate from the window handler on purpose
-          (A1.7). Both ask `keyPolicy` — the same decision — but they are two call
-          sites because the textarea sees the keystroke first and swallows it: the
-          window handler is the fallback for Enter pressed anywhere else. Merging
-          them would change which element consumes the key.
-        */
-        onKeyDown={(event) => {
-          if (keyPolicy({
-            key: event.key,
-            meta: event.metaKey || event.ctrlKey,
-            shift: event.shiftKey,
-            tagName: 'TEXTAREA',
-            agentPhase: null,
-            hasRequestId: false,
-            hasSelection: false,
-            hasAnswer: Boolean(answer.trim())
-          }) !== 'send') {
-            return
-          }
-          event.preventDefault()
-          send(prompt)
-        }}
-      />
-    </>
+    <textarea
+      ref={fieldRef}
+      className="prompt"
+      rows={1}
+      spellCheck
+      placeholder="Слушаю"
+      data-wrap={wrapped || undefined}
+      value={prompt}
+      disabled={blocked}
+      readOnly={showingTranscript}
+      onChange={(event) => {
+        setPrompt(event.target.value)
+        setTyping(true)
+      }}
+      /*
+        The field's own Enter, kept separate from the window handler on purpose
+        (A1.7). Both ask `keyPolicy` — the same decision — but they are two call
+        sites because the textarea sees the keystroke first and swallows it: the
+        window handler is the fallback for Enter pressed anywhere else. Merging
+        them would change which element consumes the key.
+      */
+      onKeyDown={(event) => {
+        if (keyPolicy({
+          key: event.key,
+          meta: event.metaKey || event.ctrlKey,
+          shift: event.shiftKey,
+          tagName: 'TEXTAREA',
+          agentPhase: null,
+          hasRequestId: false,
+          hasSelection: false,
+          hasAnswer: Boolean(answer.trim())
+        }) !== 'send') {
+          return
+        }
+        event.preventDefault()
+        send(prompt)
+      }}
+    />
   )
 
   if (!state) {
@@ -967,7 +977,7 @@ export function App() {
     )
   }
 
-  const { context, flags, quickActions, setupNotice } = state
+  const { context, flags, setupNotice } = state
   const selection = context.selection
   const screenshot = context.screenshot
   /**
@@ -1005,41 +1015,43 @@ export function App() {
       data-busy={busy || undefined}
       data-drawing={(drawn > 0 && !typing) || undefined}
     >
-      {showingTranscript && <div className="line">Распознано</div>}
-      <div className="bar">
-        {composer}
-        {busy && (
+      {!agentRunning && showingTranscript && <div className="line">Распознано</div>}
+      {!agentRunning && (
+        <div className="bar">
+          {composer}
+          {busy && (
+            <button
+              className="stop"
+              title="Остановить ответ"
+              onClick={() => {
+                const id = requestIdRef.current
+                // The main process stops writing as soon as it is aborted and emits
+                // nothing more, so the "busy" state has to be cleared here.
+                speechRef.current.stop()
+                ignoredRequestRef.current = id
+                requestIdRef.current = null
+                setBusy(false)
+                if (id) window.smartCursor.overlay.cancel(id)
+              }}
+            >
+              <span aria-hidden />
+            </button>
+          )}
           <button
-            className="stop"
-            title="Остановить ответ"
-            onClick={() => {
-              const id = requestIdRef.current
-              // The main process stops writing as soon as it is aborted and emits
-              // nothing more, so the "busy" state has to be cleared here.
-              speechRef.current.stop()
-              ignoredRequestRef.current = id
-              requestIdRef.current = null
-              setBusy(false)
-              if (id) window.smartCursor.overlay.cancel(id)
-            }}
+            className="toggle"
+            data-open={expanded || undefined}
+            data-alert={!expanded && alert ? true : undefined}
+            aria-expanded={expanded}
+            aria-label={expanded ? 'Свернуть' : 'Развернуть'}
+            title={expanded ? 'Свернуть' : 'Контекст, подсказки и действия'}
+            onClick={() => setExpanded((value) => !value)}
           >
-            <span aria-hidden />
+            <svg viewBox="0 0 10 6" aria-hidden>
+              <path d="M1 1l4 4 4-4" />
+            </svg>
           </button>
-        )}
-        <button
-          className="toggle"
-          data-open={expanded || undefined}
-          data-alert={!expanded && alert ? true : undefined}
-          aria-expanded={expanded}
-          aria-label={expanded ? 'Свернуть' : 'Развернуть'}
-          title={expanded ? 'Свернуть' : 'Контекст, подсказки и действия'}
-          onClick={() => setExpanded((value) => !value)}
-        >
-          <svg viewBox="0 0 10 6" aria-hidden>
-            <path d="M1 1l4 4 4-4" />
-          </svg>
-        </button>
-      </div>
+        </div>
+      )}
 
       {/* The turn is the bars above; only a failure is worth a line here. A
           successful transcript is already in the field (and the answer replaces
@@ -1050,7 +1062,7 @@ export function App() {
         </div>
       )}
 
-      {showMeta && (
+      {showMeta && !agentRunning && (
         <div className="drawer">
           <div className="meta">
             <span className="app" title={context.activeApp?.bundleId ?? ''}>
@@ -1093,25 +1105,6 @@ export function App() {
               </button>
             )}
           </div>
-
-          {!busy && !prompt && quickActions.length > 0 && !blocked && (
-            <div className="suggestions">
-              {quickActions.map((action) => (
-                <button
-                  key={action.id}
-                  className="tag"
-                  onClick={() => {
-                    setPrompt(action.prompt)
-                    setMode(action.mode)
-                    send(action.prompt, action.mode)
-                  }}
-                  title={action.prompt}
-                >
-                  {action.label}
-                </button>
-              ))}
-            </div>
-          )}
         </div>
       )}
 
@@ -1168,76 +1161,61 @@ export function App() {
         </div>
       )}
 
-      {/*
-        What the machine is doing on the user's behalf. It sits above the answer
-        and below the field on purpose: the plan is a sequence of steps in flight,
-        so it belongs where a progress line belongs, not in the answer text — the
-        answer is what will still be there afterwards.
-      */}
-      {agent && (
-        <div className="agent" data-phase={agent.phase}>
-          <div className="agent-head">
-            {agent.phase === 'done' && agent.completed ? (
-              <svg className="agent-check" viewBox="0 0 20 20" aria-hidden="true">
-                <circle className="agent-check-disc" cx="10" cy="10" r="9" />
-                <path className="agent-check-stroke" d="m5.5 10 3 3 6-6" pathLength="1" />
-              </svg>
-            ) : (
+      {agentDone ? (
+        <div className="agent-head agent-done" role="status">
+          <svg className="agent-check" viewBox="0 0 20 20" aria-hidden="true">
+            <path d="m3 10 4.5 4.5 9-9" />
+          </svg>
+          <span className="agent-label">Готово</span>
+        </div>
+      ) : agent && (agentStatus || agent.approval) ? (
+        <div
+          className="agent"
+          data-phase={agent.phase}
+          data-mark={agentMark(agent)}
+          data-running={agentRunning || undefined}
+        >
+          {agentStatus && (
+            <div className="agent-head" role="status">
               <span className="agent-dot" aria-hidden />
-            )}
-            <span className="agent-label">
-              {agent.phase === 'arming'
-                ? 'Нажму через мгновение — Escape отменит'
-                : agent.phase === 'aborted' || agent.phase === 'error'
-                  ? (agent.message ?? 'Остановлено')
-                  : /* `done` used to be a hard-coded «Готово» here. It is the
-                       main process's word now: a turn that still has to check its
-                       own result ends its plan on «Проверяю результат», and the
-                       card must not print the verdict before the evidence. The
-                       fallback covers an event that arrived without a label. */
-                    agent.label || 'Готово'}
-            </span>
-            {agent.total > 0 && agent.phase !== 'done' && (
-              <span className="agent-count">
-                {agent.step}/{agent.total}
-              </span>
-            )}
-            {/*
-              Not a button on purpose. While a plan runs the card is click-through
-              — that is the only way the synthetic clicks reach the app behind it —
-              so a "Стоп" here would be a control the user cannot hit, which is
-              worse than no control at all. Escape and a hand on the mouse are the
-              real ones, and this says so. `checking` is included because the
-              verification is another request the user is waiting on and Escape
-              stops it the same way.
-            */}
-            {(agent.phase === 'arming' ||
-              agent.phase === 'acting' ||
-              agent.phase === 'checking') && (
-              <span className="agent-hint">Esc — остановить</span>
-            )}
-          </div>
-          {agent.skipped && agent.skipped.length > 0 && (
-            <div className="agent-skip">
-              Пропущено: {agent.skipped.join(' ')}
+              <span className="agent-label" key={agentStatus}>{agentStatus}</span>
             </div>
           )}
-          {agent.plan.length > 1 && (agent.phase === 'acting' || agent.phase === 'arming') && (
-            <ol className="agent-plan">
-              {agent.plan.map((line, index) => (
-                <li
-                  key={`${index}-${line}`}
-                  data-state={
-                    index + 1 < agent.step ? 'done' : index + 1 === agent.step ? 'now' : 'next'
-                  }
+
+          {/*
+            The confirmation, in the flow of the run rather than in a modal.
+            The question is about one named element — "нажать «Экспорт» в Safari" —
+            and a system dialog would cover the window it is asking about. Here it
+            appears where the step it belongs to appears, so the user reads the
+            run and the question as one thing.
+          */}
+          {agent.phase === 'asking' && agent.approval && (
+            <div className="agent-ask" role="group" aria-label="Подтверждение действия">
+              {agent.message && <div className="agent-ask-detail">{agent.message}</div>}
+              <div className="agent-ask-buttons">
+                <button
+                  className="agent-allow"
+                  onClick={() => void answerAgent(agent.approval!, true, false)}
                 >
-                  {line}
-                </li>
-              ))}
-            </ol>
+                  Разрешить
+                </button>
+                <button
+                  className="agent-always"
+                  onClick={() => void answerAgent(agent.approval!, true, true)}
+                >
+                  Разрешить всегда
+                </button>
+                <button
+                  className="agent-deny"
+                  onClick={() => void answerAgent(agent.approval!, false, false)}
+                >
+                  Отменить
+                </button>
+              </div>
+            </div>
           )}
         </div>
-      )}
+      ) : null}
 
       {showWaiting && (
         <div className="waiting" role="status" aria-live="polite">

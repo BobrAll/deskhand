@@ -1,6 +1,7 @@
 /**
- * Settings window (ТЗ §7). Six sections: провайдер и ключи, поведение, голос,
- * агент, быстрые действия, исключения и права.
+ * Settings window (ТЗ §7). Four sections: провайдер и ключи, голос, агент,
+ * исключения и права. The hotkey and launch-at-login controls live in the
+ * sidebar: they are two values, and a tab for two values is a tab nobody opens.
  *
  * There is no «Сохранить»: every field is written as it is edited. The button was
  * the reason a ticked checkbox could sit in a draft while the rest of the app
@@ -14,7 +15,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { AppSettings, KeyStatus, PermissionState, ProviderId } from '@shared/types'
 import { PROVIDERS } from '@shared/defaults'
 import type { AppPickResult, RunningAppInfo, SettingsBundle } from '@shared/api'
-import { prettyHotkey } from './HotkeyField'
+import { HotkeyField } from './HotkeyField'
 import {
   hasUnsaved,
   holdReasonFor,
@@ -24,21 +25,87 @@ import {
 import { ApplyStatus, type ApplyState } from './ApplyStatus'
 import { AgentTab } from './AgentTab'
 import { VoiceTab } from './VoiceTab'
+import { Toggle } from './Row'
 import { ProviderSection } from './sections/ProviderSection'
-import { BehaviorSection } from './sections/BehaviorSection'
-import { ActionsSection } from './sections/ActionsSection'
 import { PrivacySection } from './sections/PrivacySection'
 
-type Tab = 'provider' | 'behavior' | 'voice' | 'agent' | 'actions' | 'privacy'
+type Tab = 'provider' | 'voice' | 'agent' | 'privacy'
 
 const TABS: Array<{ id: Tab; label: string }> = [
   { id: 'provider', label: 'Модель' },
-  { id: 'behavior', label: 'Поведение' },
   { id: 'voice', label: 'Голос' },
   { id: 'agent', label: 'Агент' },
-  { id: 'actions', label: 'Быстрые действия' },
   { id: 'privacy', label: 'Приватность' }
 ]
+
+/** The heading above each pane: what it is, in one line, without repeating the rows. */
+const PANE: Record<Tab, { title: string; subtitle: string }> = {
+  provider: {
+    title: 'Модель',
+    subtitle: 'Кто отвечает на вопрос и что именно он получает на вход.'
+  },
+  voice: {
+    title: 'Голос',
+    subtitle: 'Речь распознаётся на этом Mac и никуда не отправляется.'
+  },
+  agent: {
+    title: 'Агент',
+    subtitle: 'Что ассистент может делать сам, а где останавливается и спрашивает.'
+  },
+  privacy: {
+    title: 'Приватность',
+    subtitle: 'Разрешения macOS, приложения-исключения и что хранится на диске.'
+  }
+}
+
+/**
+ * A 16 px line icon per pane.
+ *
+ * Drawn rather than pulled from a font: a stray glyph from a system font renders
+ * at a different weight on every macOS version, and these sit next to 13 px text
+ * where the difference is visible.
+ */
+function NavIcon({ tab }: { tab: Tab }) {
+  const common = {
+    width: 16,
+    height: 16,
+    viewBox: '0 0 16 16',
+    fill: 'none',
+    stroke: 'currentColor',
+    strokeWidth: 1.4,
+    strokeLinecap: 'round' as const,
+    strokeLinejoin: 'round' as const,
+    'aria-hidden': true
+  }
+  if (tab === 'provider') {
+    return (
+      <svg {...common}>
+        <path d="M8 1.9 9.6 6.4 14 8l-4.4 1.6L8 14.1 6.4 9.6 2 8l4.4-1.6Z" />
+      </svg>
+    )
+  }
+  if (tab === 'voice') {
+    return (
+      <svg {...common}>
+        <rect x="6" y="1.8" width="4" height="7" rx="2" />
+        <path d="M3.6 7.4a4.4 4.4 0 0 0 8.8 0M8 11.8v2.4" />
+      </svg>
+    )
+  }
+  if (tab === 'agent') {
+    return (
+      <svg {...common}>
+        <path d="M3.2 2.4v9.2l2.5-2.4 1.7 3.4 1.9-.9-1.7-3.3 3.4-.2Z" />
+      </svg>
+    )
+  }
+  return (
+    <svg {...common}>
+      <path d="M8 1.9 13 3.9v4.2c0 3-2.1 5-5 6-2.9-1-5-3-5-6V3.9Z" />
+      <path d="m5.9 7.8 1.5 1.5 2.8-3" />
+    </svg>
+  )
+}
 
 interface Banner {
   kind: 'ok' | 'err'
@@ -67,6 +134,19 @@ export function App() {
   const [apps, setApps] = useState<RunningAppInfo[]>([])
   const [hotkeyError, setHotkeyError] = useState<string | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
+
+  /**
+   * The scrolling pane, so switching tabs starts at the top.
+   *
+   * All four panes share one scroll container, so without this a glance at the
+   * long «Голос» pane leaves «Агент» scrolled to its second card — the new pane
+   * opens in the middle of itself, which reads as a missing heading.
+   */
+  const scrollRef = useRef<HTMLDivElement | null>(null)
+
+  useEffect(() => {
+    scrollRef.current?.scrollTo(0, 0)
+  }, [tab])
 
   useEffect(() => {
     // A rejected `load()` used to leave the window spinning on "Загрузка…"
@@ -345,102 +425,120 @@ export function App() {
   return (
     <div className="shell">
       <aside className="sidebar">
-        <div className="brand">Smart Cursor</div>
+        <div className="brand">
+          <div className="brand-name">Smart Cursor</div>
+          <div className="brand-sub">Настройки</div>
+        </div>
         {TABS.map((item) => (
           <button
             key={item.id}
             className={`nav ${tab === item.id ? 'active' : ''}`}
+            aria-current={tab === item.id ? 'page' : undefined}
             onClick={() => setTab(item.id)}
           >
+            <NavIcon tab={item.id} />
             {item.label}
           </button>
         ))}
         <div className="sidebar-foot">
-          <div className="hint">Карточка</div>
-          <div className="hotkey-badge">{prettyHotkey(draft.hotkey)}</div>
-          {draft.voice.enabled && (
-            <>
-              <div className="hint" style={{ marginTop: 8 }}>
-                Голос
-              </div>
-              <div className="hotkey-badge">{prettyHotkey(draft.voice.hotkey)}</div>
-            </>
-          )}
+          <div className="side-key">
+            <div className="sidebar-label">Карточка</div>
+            <HotkeyField
+              value={draft.hotkey}
+              onChange={(accelerator) => {
+                setHotkeyError(null)
+                patch({ hotkey: accelerator })
+              }}
+            />
+            {hotkeyError && <div className="hint err">{hotkeyError}</div>}
+          </div>
+
+          <div className="side-key">
+            <div className="sidebar-label">
+              Голос
+              {!draft.voice.enabled && <span className="sidebar-off">выключен</span>}
+            </div>
+            <HotkeyField
+              value={draft.voice.hotkey}
+              onChange={(hotkey) => patch({ voice: { ...draft.voice, hotkey } })}
+            />
+          </div>
+
+          <div className="side-toggle">
+            <span>Запускать при входе</span>
+            <Toggle
+              checked={draft.launchAtLogin}
+              label="Запускать при входе в систему"
+              onChange={(launchAtLogin) => patch({ launchAtLogin })}
+            />
+          </div>
         </div>
       </aside>
 
       <main className="content">
-        {tab === 'provider' && (
-          <ProviderSection
-            draft={draft}
-            patch={patch}
-            providerKeys={providerKeys}
-            invalidBaseUrls={invalidBaseUrls}
-            keyInput={keyInput}
-            onKeyInput={setKeyInput}
-            testing={testing}
-            onSaveKey={() => void saveKey()}
-            onRemoveKey={() => void removeKey()}
-          />
-        )}
+        <header className="pane-head">
+          <h1>{PANE[tab].title}</h1>
+          <p className="pane-sub">{PANE[tab].subtitle}</p>
+        </header>
 
-        {tab === 'behavior' && (
-          <BehaviorSection
-            draft={draft}
-            patch={patch}
-            hotkeyError={hotkeyError}
-            onHotkeyError={setHotkeyError}
-          />
-        )}
+        <div className="settings-scroll" ref={scrollRef}>
+          {tab === 'provider' && (
+            <ProviderSection
+              draft={draft}
+              patch={patch}
+              providerKeys={providerKeys}
+              invalidBaseUrls={invalidBaseUrls}
+              keyInput={keyInput}
+              onKeyInput={setKeyInput}
+              testing={testing}
+              onSaveKey={() => void saveKey()}
+              onRemoveKey={() => void removeKey()}
+            />
+          )}
 
-        {tab === 'voice' && (
-          <VoiceTab
-            voice={draft.voice}
-            savedModel={bundle.settings.voice.model}
-            gestures={draft.gestures}
-            onChange={(changes) => patch({ voice: { ...draft.voice, ...changes } })}
-            onGestureChange={(changes) =>
-              patch({ gestures: { ...draft.gestures, ...changes } })
-            }
-          />
-        )}
+          {tab === 'voice' && (
+            <VoiceTab
+              voice={draft.voice}
+              savedModel={bundle.settings.voice.model}
+              onChange={(changes) => patch({ voice: { ...draft.voice, ...changes } })}
+            />
+          )}
 
-        {tab === 'agent' && (
-          <AgentTab
-            agent={draft.agent}
-            onChange={(changes) => patch({ agent: { ...draft.agent, ...changes } })}
-            onEnabledChange={async (enabled) => {
-              // Written through the dedicated channel, not the draft: this switch
-              // decides whether the assistant can act at all, and it has to be on
-              // disk before the answer that arrives a second later. The debounced
-              // autosave would also get there, 450 ms too late.
-              const availability = await window.smartCursor.agent.setEnabled(enabled)
-              // The bundle is the "saved" side of the auto-apply comparison;
-              // syncing it keeps the footer from announcing a pending write for a
-              // value that is already on disk.
-              setBundle((prev) =>
-                prev
-                  ? { ...prev, settings: { ...prev.settings, agent: { ...prev.settings.agent, enabled } } }
-                  : prev
-              )
-              return availability
-            }}
-          />
-        )}
+          {tab === 'agent' && (
+            <AgentTab
+              agent={draft.agent}
+              onChange={(changes) => patch({ agent: { ...draft.agent, ...changes } })}
+              onEnabledChange={async (enabled) => {
+                // Written through the dedicated channel, not the draft: this switch
+                // decides whether the assistant can act at all, and it has to be on
+                // disk before the answer that arrives a second later. The debounced
+                // autosave would also get there, 450 ms too late.
+                const availability = await window.smartCursor.agent.setEnabled(enabled)
+                // The bundle is the "saved" side of the auto-apply comparison;
+                // syncing it keeps the footer from announcing a pending write for a
+                // value that is already on disk.
+                setBundle((prev) =>
+                  prev
+                    ? { ...prev, settings: { ...prev.settings, agent: { ...prev.settings.agent, enabled } } }
+                    : prev
+                )
+                return availability
+              }}
+            />
+          )}
 
-        {tab === 'actions' && <ActionsSection draft={draft} patch={patch} />}
-
-        {tab === 'privacy' && (
-          <PrivacySection
-            draft={draft}
-            patch={patch}
-            permissions={permissions}
-            encryptionAvailable={bundle.encryptionAvailable}
-            apps={apps}
-            setBundle={setBundle}
-            onAddExcluded={(picked) => void addExcluded(picked)}
-          />
-        )}
+          {tab === 'privacy' && (
+            <PrivacySection
+              draft={draft}
+              patch={patch}
+              permissions={permissions}
+              encryptionAvailable={bundle.encryptionAvailable}
+              apps={apps}
+              setBundle={setBundle}
+              onAddExcluded={(picked) => void addExcluded(picked)}
+            />
+          )}
+        </div>
 
         <div className="footer">
           {banner ? (
@@ -449,7 +547,9 @@ export function App() {
             <ApplyStatus state={applyState} holdReason={holdReason} />
           )}
           <div className="spacer" />
-          <button onClick={() => void closeWindow()}>Закрыть</button>
+          <button className="ghost" onClick={() => void closeWindow()}>
+            Закрыть
+          </button>
         </div>
       </main>
     </div>

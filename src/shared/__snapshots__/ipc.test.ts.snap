@@ -2,12 +2,12 @@
 
 exports[`CH: the channel set is a wire protocol > keeps the size of every namespace 1`] = `
 {
-  "agent": 6,
+  "agent": 7,
   "onboarding": 2,
   "overlay": 15,
   "permissions": 4,
   "pointer": 1,
-  "settings": 10,
+  "settings": 11,
   "voice": 14,
 }
 `;
@@ -119,6 +119,10 @@ exports[`CH: the channel set is a wire protocol > matches the snapshot 1`] = `
     "settings:hold",
   ],
   [
+    "settings.recording",
+    "settings:recording",
+  ],
+  [
     "permissions.status",
     "permissions:status",
   ],
@@ -153,6 +157,10 @@ exports[`CH: the channel set is a wire protocol > matches the snapshot 1`] = `
   [
     "agent.stop",
     "agent:stop",
+  ],
+  [
+    "agent.answer",
+    "agent:answer",
   ],
   [
     "agent.clearApprovals",

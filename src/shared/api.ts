@@ -130,6 +130,14 @@ export interface SmartCursorApi {
      * instead of discarding the last keystroke.
      */
     hold(busy: boolean): void
+    /**
+     * Tells the main process that a hotkey recorder is armed.
+     *
+     * While it is `true` the app's own global listeners are unregistered: the
+     * old binding would otherwise swallow the combination being typed, and the
+     * voice tap would start recording instead of letting the key through.
+     */
+    recording(active: boolean): void
   }
   onboarding: {
     complete(): Promise<void>
@@ -163,6 +171,16 @@ export interface SmartCursorApi {
     setEnabled(enabled: boolean): Promise<AgentAvailability>
     /** Stops the run in flight. Resolves once nothing is moving the cursor. */
     stop(): Promise<void>
+    /**
+     * Answers the confirmation the card is showing.
+     *
+     * `id` identifies the exact call that was asked about: an answer that arrives
+     * after the run moved on is ignored rather than applied to the next question,
+     * which is what makes a slow click harmless. `remember` persists the decision
+     * for that one fingerprint and nothing broader.
+     */
+    answer(id: string, allow: boolean, remember: boolean): Promise<void>
+    /** Forgets every "разрешить всегда", so the questions come back. */
     clearApprovals(): Promise<void>
   }
   /**

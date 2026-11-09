@@ -20,7 +20,25 @@
 
 import type { AxElementInfo, AxProbe, ScreenRect } from '@shared/types'
 import { helperProbe } from '../native/helper'
-import { nameTexts } from './targeting'
+
+/**
+ * The texts that can name an element.
+ *
+ * `AXValue` is either text or the state of a toggle, and only the first can name
+ * a target: a checkbox whose value is "1" is not called "1". A generic role name
+ * may help matching but must never contradict a real name, so it is not in this
+ * list — it is only consulted as a last resort by the caller.
+ */
+function nameTexts(element: AxElementInfo): string[] {
+  const value = element.value?.trim()
+  const stateValue =
+    /^(?:AXButton|AXToolbarButton|AXCheckBox|AXRadioButton|AXSlider|AXSwitch)$/.test(element.role) &&
+    /^(?:[+-]?\d+(?:[.,]\d+)?|true|false)$/i.test(value ?? '')
+  const textValue = element.editable || stateValue ? null : value
+  return [element.title, element.description, element.help, textValue].filter(
+    (text): text is string => Boolean(text?.trim())
+  )
+}
 
 const MAX_ITEMS = 70
 const MAX_NAME = 46

@@ -1,9 +1,13 @@
 /**
- * One permission, as a row with a request button and a way to the system pane.
+ * One permission, as a row: what it is, whether it is granted, and the two ways
+ * to get it.
  *
- * Moved here unchanged from `App.tsx` (R17): the props are the same, the markup is
- * the same, the words are the same. What is left in `App.tsx` is the wiring.
+ * The state is a word, not a tick: "Разрешено" / "Не разрешено" survives a
+ * colour-blind glance and a screenshot in a bug report, where a green check and
+ * an amber dash are two blobs of similar shape.
  */
+
+import { Row } from './Row'
 
 export interface PermissionRowProps {
   title: string
@@ -15,22 +19,24 @@ export interface PermissionRowProps {
 
 export function PermissionRow(props: PermissionRowProps) {
   return (
-    <div className="permission">
-      <div>
-        <div className="permission-title">
-          {props.title}{' '}
-          {props.granted ? <span className="ok">✓</span> : <span className="warn">—</span>}
-        </div>
-        <div className="hint">{props.description}</div>
-      </div>
-      <div className="permission-actions">
+    <Row
+      title={props.title}
+      hint={props.description}
+      stacked={!props.granted}
+    >
+      <div className="row-actions">
+        <span className={props.granted ? 'permission-state ok' : 'permission-state warn'}>
+          {props.granted ? '● Разрешено' : '● Не разрешено'}
+        </span>
         {!props.granted && (
           <button className="primary" onClick={() => void props.onRequest()}>
             Запросить
           </button>
         )}
-        <button onClick={props.onOpen}>Системные настройки</button>
+        <button className="ghost" onClick={props.onOpen}>
+          Системные настройки
+        </button>
       </div>
-    </div>
+    </Row>
   )
 }

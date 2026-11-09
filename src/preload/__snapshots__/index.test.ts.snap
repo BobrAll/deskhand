@@ -2,6 +2,7 @@
 
 exports[`preload: the exposed bridge > matches the snapshot of the method set 1`] = `
 [
+  "agent.answer",
   "agent.availability",
   "agent.clearApprovals",
   "agent.onEvent",
@@ -36,6 +37,7 @@ exports[`preload: the exposed bridge > matches the snapshot of the method set 1`
   "settings.load",
   "settings.open",
   "settings.pickApp",
+  "settings.recording",
   "settings.runningApps",
   "settings.save",
   "settings.setKey",

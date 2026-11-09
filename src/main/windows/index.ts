@@ -146,6 +146,7 @@ function createOverlayWindow(): BrowserWindow {
   win.on('closed', () => {
     overlayWindow = null
     overlayReady = false
+    overlayVisible = false
     // The window is gone and nothing is painted or spoken through it any more.
     // Keeping `voice`/`drawing` would make the *next* creation bare before any
     // turn asked for it; the next session starts from the resting card state.
@@ -226,11 +227,14 @@ function performShow(height: number, width: number, activate: boolean): void {
    * the renderer lays itself out, and 112 wide until the user types something. The
    * renderer reports the real size a frame later and resizes the window itself, so
    * re-applying a guess over a card that is already being typed into would shrink
-   * it back to the empty pill between two keystrokes. Placement is still re-run —
-   * a second press should bring the card to wherever the pointer is now.
+   * it back to the empty pill between two keystrokes. Keep the position when the
+   * visible card takes focus after context collection.
    */
   const current = overlayVisible ? win.getBounds() : null
-  positionOverlay(win, current?.height ?? height, current?.width ?? width)
+  const focusExisting = activate && current && win.isVisible()
+  if (!focusExisting) {
+    positionOverlay(win, current?.height ?? height, current?.width ?? width)
+  }
   // An inactive show is also used to reveal voice bars and a completed answer.
   // A logically visible window may be behind another app, or the app itself may
   // have been hidden while returning focus. Raise it without taking the keyboard.

@@ -346,8 +346,11 @@ export function updateAgentCursor(event: AgentEvent): void {
     void paint()
     return
   }
-  const recovering = event.phase === 'error' && event.recoverable && held !== null
-  if (event.phase === 'checking' || recovering) {
+  // A run that is waiting for the user to answer is not progress and not a
+  // failure: the pointer glow parks with the question, so the eye goes to the
+  // card instead of following a caption that says nothing new.
+  const asking = event.phase === 'asking'
+  if (asking) {
     if (!frame && held === null) return
     cancelWait()
     const waiting: AgentCursorFrame = {
@@ -355,11 +358,11 @@ export function updateAgentCursor(event: AgentEvent): void {
       anchor: frame?.anchor ?? { x: 0, y: 0 },
       side: frame?.side ?? 'above',
       phase: 'waiting',
-      label: recovering ? event.message || 'Проверяю экран…' : event.label || 'Проверяю результат…',
+      label: event.label || 'Нужно подтверждение',
       step: 0,
       total: 0
     }
-    trace('cursor.waiting', { recovering: Boolean(recovering) })
+    trace('cursor.waiting', { asking: true })
     if (visible && win && !win.isDestroyed()) send(win, waiting)
     else {
       frame = waiting

@@ -1,30 +1,20 @@
 /**
  * The process half of a long-lived native listener.
  *
- * Both `voice/listen.ts` and `gesture/listen.ts` wrap a helper command that owns
- * a macOS event source, prints one JSON line per edge, and blocks in a run loop
- * until it is signalled. The keep-alive logic around that was the same in both
- * files, line for line: spawn with piped stdio, parse JSON lines, remember
- * whether the child ever reported `ready`, restart on an unexpected exit with a
- * capped exponential backoff, and refuse to spin when the failure is one that
- * will not fix itself in a second.
+ * `voice/listen.ts` wraps a helper command that owns a macOS event source,
+ * prints one JSON line per edge, and blocks in a run loop until it is signalled.
+ * This class is the keep-alive around that: spawn with piped stdio, parse JSON
+ * lines, remember whether the child ever reported `ready`, restart on an
+ * unexpected exit with a capped exponential backoff, and refuse to spin when the
+ * failure is one that will not fix itself in a second.
  *
- * What is *not* shared is everything the two commands disagree about, and those
- * disagreements are preserved verbatim rather than smoothed over:
+ * What the subclass supplies is everything the command decides for itself:
+ * `args()`, `describeError()`, what to do when the child dies before `ready`,
+ * and whether `stop()` should forget the combination it was started with.
  *
- * - `args()` — `voice <keyCode> <flags> [swallow]` versus `gesture <fingers> <holdMs>`.
- * - `describeError()` — the voice texts mention «Универсальный доступ», the
- *   gesture texts mention the trackpad; the generic tail differs too.
- * - `onExitWithoutReady()` — the voice reports a missing permission, the gesture
- *   listener exits silently (a missing trackpad is not an error to shout about).
- * - `onSpawnThrown()` — the gesture listener also stores the message in
- *   `lastError`; the voice listener only reports it.
- * - `stop()` — only the voice listener forgets its accelerator.
- *
- * The known backoff defect (`failures` is reset by every `ready`, so
- * the cap is unreachable in practice) lives here now and therefore reproduces in
- * both listeners exactly as before; the characterization tests in both
- * `listen.test.ts` files pin it.
+ * The known backoff defect (`failures` is reset by every `ready`, so the cap is
+ * unreachable in practice) lives here; the characterization tests in
+ * `listen.test.ts` pin it.
  */
 
 import { spawn, type ChildProcess } from 'node:child_process'
@@ -49,10 +39,19 @@ export abstract class TapListener<Event extends string> {
   lastError: string | null = null
 
   protected constructor(
-    private readonly binary: string,
+    /**
+     * The helper binary. A function for the callers that can only resolve it
+     * after the app has been built, and because a missing binary is a normal
+     * state on a fresh checkout rather than a crash.
+     */
+    private readonly binary: string | (() => string),
     private readonly onEvent: (event: Event) => void,
     private readonly onError: (message: string) => void
   ) {}
+
+  private binaryPath(): string {
+    return typeof this.binary === 'function' ? this.binary() : this.binary
+  }
 
   /** True while the helper process is up. */
   get listening(): boolean {
@@ -85,9 +84,14 @@ export abstract class TapListener<Event extends string> {
   }
 
   protected launch(): void {
+    const binary = this.binaryPath()
+    if (!binary) {
+      this.onSpawnThrown(this.spawnFailure)
+      return
+    }
     let child: ChildProcess
     try {
-      child = spawn(this.binary, this.args(), { stdio: ['ignore', 'pipe', 'pipe'] })
+      child = spawn(binary, this.args(), { stdio: ['ignore', 'pipe', 'pipe'] })
     } catch (error) {
       this.onSpawnThrown(error instanceof Error ? error.message : this.spawnFailure)
       return

@@ -1,14 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import type { ActiveAppInfo, ContextSnapshot, ResponseMode } from '@shared/types'
-import {
-  MAX_ANSWER_CHARS,
-  MAX_SELECTION_CHARS,
-  buildContinue,
-  buildRefine,
-  buildRequest,
-  buildVerify
-} from './prompt'
+import { MAX_ANSWER_CHARS, MAX_SELECTION_CHARS, buildRefine, buildRequest } from './prompt'
 
 const activeApp: ActiveAppInfo = {
   bundleId: 'com.apple.Safari',
@@ -48,7 +41,6 @@ interface RequestOverrides {
   includeScreenshot?: boolean
   hasImage?: boolean
   draw?: boolean
-  act?: boolean
   actReason?: string | null
   hasHistory?: boolean
   outline?: string | null
@@ -63,7 +55,6 @@ function request(overrides: RequestOverrides = {}) {
     includeScreenshot: true,
     hasImage: true,
     draw: false,
-    act: false,
     ...overrides
   })
 }
@@ -75,7 +66,6 @@ describe('buildRequest: golden matrix', () => {
   // The provider is not part of the prompt — the model name lives in the request
   // headers, not in the text. "Язык" is the language of the user's own prompt.
   const modes: ResponseMode[] = ['analyze', 'insert']
-  const acts = [false, true]
   const images = [true, false]
   const prompts = [
     ['ru', RU_QUICK_ACTION],
@@ -83,17 +73,15 @@ describe('buildRequest: golden matrix', () => {
   ] as const
 
   for (const mode of modes) {
-    for (const act of acts) {
-      for (const hasImage of images) {
-        for (const [language, prompt] of prompts) {
-          const name = `${mode} · act=${act} · image=${hasImage} · ${language}`
+    for (const hasImage of images) {
+      for (const [language, prompt] of prompts) {
+        const name = `${mode} · image=${hasImage} · ${language}`
 
-          it(name, () => {
-            const built = request({ mode, act, hasImage, prompt, draw: hasImage })
+        it(name, () => {
+          const built = request({ mode, hasImage, prompt, draw: hasImage })
 
-            expect(built).toMatchSnapshot()
-          })
-        }
+          expect(built).toMatchSnapshot()
+        })
       }
     }
   }
@@ -186,21 +174,22 @@ describe('buildRequest: context block', () => {
 
   it('explains the coordinate system only when a tool needs it', () => {
     const withTools = request({ draw: true, hasImage: true }).userText
-    const withoutTools = request({ draw: false, act: false, hasImage: true }).userText
+    const withoutTools = request({ draw: false, hasImage: true }).userText
 
     expect(withTools).toContain('(0,0) — его')
     expect(withTools).toContain('@point')
     expect(withoutTools).not.toContain('(0,0)')
   })
 
-  it('lists both markers when drawing and acting are available', () => {
-    const { userText } = request({ draw: true, act: true })
+  it('names only the drawing marker: acting is not a marker any more', () => {
+    const { userText } = request({ draw: true })
 
-    expect(userText).toContain('@point и @click')
+    expect(userText).toContain('Все координаты @point')
+    expect(userText).not.toContain('@click')
   })
 
   it('puts the outline after the screenshot note', () => {
-    const { userText } = request({ act: true, outline: 'Кнопки: Экспорт (0.4, 0.3)' })
+    const { userText } = request({ draw: true, outline: 'Кнопки: Экспорт (0.4, 0.3)' })
 
     const screenshotAt = userText.indexOf('Приложен скриншот')
     const outlineAt = userText.indexOf('Кнопки: Экспорт')
@@ -208,8 +197,8 @@ describe('buildRequest: context block', () => {
     expect(outlineAt).toBeGreaterThan(screenshotAt)
   })
 
-  it('ignores the outline when acting is off', () => {
-    expect(request({ act: false, outline: 'Кнопки: Экспорт' }).userText).not.toContain('Кнопки')
+  it('ignores the outline when there is no drawing to aim', () => {
+    expect(request({ draw: false, outline: 'Кнопки: Экспорт' }).userText).not.toContain('Кнопки')
   })
 
   it('always ends with the trimmed user prompt', () => {
@@ -238,15 +227,14 @@ describe('buildRequest: mode instruction', () => {
     )
   })
 
-  it('adds the agent tool before the drawing tool', () => {
-    const { modeInstruction } = request({ draw: true, act: true })
+  it('appends the drawing tool after the answer format', () => {
+    const { modeInstruction } = request({ draw: true })
 
-    expect(modeInstruction.indexOf('@click')).toBeLessThan(modeInstruction.indexOf('@point'))
+    expect(modeInstruction.indexOf('Формат ответа')).toBeLessThan(modeInstruction.indexOf('@point'))
   })
 
   it('explains why acting is unavailable when the request looks like an action', () => {
     const { modeInstruction } = request({
-      act: false,
       actReason: 'Управление выключено в настройках',
       prompt: 'нажми на Экспорт'
     })
@@ -257,12 +245,10 @@ describe('buildRequest: mode instruction', () => {
 
   it('marks the request as an action only when it reads like one', () => {
     const asQuestion = request({
-      act: false,
       actReason: 'Управление выключено в настройках',
       prompt: 'что здесь написано?'
     }).modeInstruction
     const asAction = request({
-      act: false,
       actReason: 'Управление выключено в настройках',
       prompt: 'нажми на Экспорт'
     }).modeInstruction
@@ -282,121 +268,6 @@ describe('buildRequest: mode instruction', () => {
 
   it('leaves the history note out of a standalone request', () => {
     expect(request({ hasHistory: false }).modeInstruction).not.toContain('[Разговор]')
-  })
-})
-
-describe('buildContinue', () => {
-  it('lists what was performed', () => {
-    const { userText } = buildContinue({
-      performed: ['Клик по «Экспорт»', 'Пауза'],
-      prompt: 'нажми экспорт',
-      round: 1,
-      canContinue: true,
-      act: true
-    })
-
-    expect(userText).toContain('• Клик по «Экспорт»')
-    expect(userText).toContain('• Пауза')
-    expect(userText).toContain('[Исходная просьба]\nнажми экспорт')
-  })
-
-  it('says nothing was done when the list is empty', () => {
-    const { userText } = buildContinue({
-      performed: [],
-      prompt: '',
-      round: 0,
-      canContinue: true,
-      act: false
-    })
-
-    expect(userText).toContain('(ничего)')
-    expect(userText).not.toContain('[Исходная просьба]')
-  })
-
-  it('asks to finish when the step budget is spent', () => {
-    const { userText } = buildContinue({
-      performed: ['Клик'],
-      prompt: 'нажми',
-      round: 3,
-      canContinue: false,
-      act: true
-    })
-
-    expect(userText).toContain('Продолжать уже нельзя')
-  })
-
-  it('keeps the agent tool only while another round is allowed', () => {
-    const canContinue = buildContinue({
-      performed: [],
-      prompt: 'нажми',
-      round: 1,
-      canContinue: true,
-      act: true
-    })
-    const finished = buildContinue({
-      performed: [],
-      prompt: 'нажми',
-      round: 3,
-      canContinue: false,
-      act: true
-    })
-
-    expect(canContinue.modeInstruction).toContain('@click')
-    expect(finished.modeInstruction).not.toContain('@click')
-  })
-
-  it('matches the golden snapshot', () => {
-    expect(
-      buildContinue({
-        performed: ['Клик по «Экспорт»'],
-        prompt: 'нажми экспорт',
-        round: 2,
-        canContinue: true,
-        act: true
-      })
-    ).toMatchSnapshot()
-  })
-})
-
-describe('buildVerify', () => {
-  it('warns that the actions are not evidence', () => {
-    const { userText } = buildVerify({
-      performed: ['Клик по «Экспорт»'],
-      prompt: 'нажми экспорт',
-      canFix: true
-    })
-
-    expect(userText).toContain('Это список действий, а не результат')
-  })
-
-  it('offers @done and a retry when a fix is still possible', () => {
-    const { userText, modeInstruction } = buildVerify({
-      performed: ['Клик'],
-      prompt: 'нажми',
-      canFix: true
-    })
-
-    expect(userText).toContain('@done')
-    expect(modeInstruction).toContain('@click')
-  })
-
-  it('forbids acting when this is the final look', () => {
-    const { userText, modeInstruction } = buildVerify({
-      performed: ['Клик'],
-      prompt: 'нажми',
-      canFix: false
-    })
-
-    expect(userText).toContain('@done')
-    // The final look may report but not act: the retry branch is absent.
-    expect(userText).not.toContain('строки действий, которые исправят')
-    expect(modeInstruction).not.toContain('@click')
-  })
-
-  it('matches the golden snapshot', () => {
-    expect(
-      buildVerify({ performed: ['Клик по «Экспорт»'], prompt: 'нажми экспорт', canFix: true })
-    ).toMatchSnapshot()
   })
 })
 

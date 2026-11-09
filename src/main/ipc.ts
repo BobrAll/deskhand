@@ -21,7 +21,6 @@ import type { ActionResult, AppPickResult, SettingsBundle } from '@shared/api'
 import type { OverlayController } from './overlay'
 import { applyHistorySettings } from './overlay/history'
 import type { VoiceController } from './voice'
-import type { GestureController } from './gesture'
 import { testApiKey } from './llm/testKey'
 import { helperRunningApps, type RunningApp } from './native/helper'
 import {
@@ -90,11 +89,11 @@ export interface IpcDeps {
   overlay: OverlayController
   /** Push-to-talk: the keyboard tap and the whisper pipeline. */
   voice: VoiceController
-  /** Three-finger trackpad gestures: tap opens the card, hold records. */
-  gestures: GestureController
   /** Re-registers the global hotkey; false means the combination is taken. */
   applyHotkey(accelerator: string): boolean
   applyLaunchAtLogin(enabled: boolean): void
+  /** Silences (or restores) the global listeners while a hotkey is recorded. */
+  setRecording(active: boolean): void
   quit(): void
 }
 
@@ -160,12 +159,6 @@ export function registerIpc(deps: IpcDeps): void {
     if (JSON.stringify(next.voice) !== JSON.stringify(previous.voice)) {
       deps.voice.applySettings()
     }
-    // Same reasoning for the trackpad listener: it is a child process whose
-    // finger count and hold threshold are launch arguments, so only a real change
-    // is worth restarting it for.
-    if (JSON.stringify(next.gestures) !== JSON.stringify(previous.gestures)) {
-      deps.gestures.applySettings()
-    }
     return bundle()
   })
 
@@ -195,6 +188,7 @@ export function registerIpc(deps: IpcDeps): void {
   // clears the flag once the last write has landed. Without it, ⌘W during the
   // 450 ms debounce would destroy the window and take the edit with it.
   ipcMain.on(CH.settings.hold, (_event, busy: boolean) => markSettingsBusy(Boolean(busy)))
+  ipcMain.on(CH.settings.recording, (_event, active: boolean) => deps.setRecording(Boolean(active)))
 
   // ---- permissions -------------------------------------------------------
   ipcMain.handle(CH.permissions.status, () => readPermissions())
@@ -219,10 +213,7 @@ export function registerIpc(deps: IpcDeps): void {
 
   // ---- voice (push-to-talk) ----------------------------------------------
   ipcMain.handle(CH.voice.status, async () => {
-    // The trackpad error rides along with the voice status: both describe "is the
-    // voice path usable right now", and the settings tab shows them together.
-    const status = await deps.voice.status()
-    return { ...status, gestureError: deps.gestures.status().gestureError }
+    return deps.voice.status()
   })
 
   // The card is opened *by* the key press, so it asks what it missed on mount.
@@ -257,8 +248,7 @@ export function registerIpc(deps: IpcDeps): void {
 
   ipcMain.handle(CH.voice.deleteModel, async (_event, model: string) => {
     await deleteModel(String(model ?? ''))
-    const status = await deps.voice.status()
-    return { ...status, gestureError: deps.gestures.status().gestureError }
+    return deps.voice.status()
   })
 
   ipcMain.handle(CH.voice.importModel, async () => {
@@ -291,9 +281,10 @@ export function registerIpc(deps: IpcDeps): void {
   })
 
   // ---- agent (mouse and keyboard control) --------------------------------
-  // The card can ask whether the assistant may press anything and can stop a run.
-  // It cannot start one: a plan only ever comes from an answer that was already
-  // streamed, so there is no channel here that moves the cursor on demand.
+  // The card can ask whether the assistant may press anything, can stop a run and
+  // can answer the question the run is blocked on. It cannot start one: a run is
+  // only ever started by a request the user typed, so no channel here moves the
+  // cursor on its own.
   ipcMain.handle(CH.agent.availability, () => deps.overlay.agentAvailability())
   // Persisting the switch itself: it cannot start a run and it cannot move the
   // cursor — the settings tab and the card both use it, and nothing else does.
@@ -305,6 +296,13 @@ export function registerIpc(deps: IpcDeps): void {
   })
   ipcMain.handle(CH.agent.stop, () => {
     deps.overlay.stopAgent()
+  })
+  // One answer to one question. The id is checked in the controller, so a stale
+  // click — a button that was already handled, a second press after the run moved
+  // on — is dropped instead of being applied to the next call.
+  ipcMain.handle(CH.agent.answer, (_event, id: unknown, allow: unknown, remember: unknown) => {
+    if (typeof id !== 'string' || !id) return
+    deps.overlay.answerAgent(id, allow === true, remember === true)
   })
 
   app.on('second-instance', () => {

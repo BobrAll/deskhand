@@ -27,17 +27,15 @@ function key(overrides: Partial<KeyInput> = {}): KeyInput {
 }
 
 describe('keyPolicy: Escape while a run owns the card', () => {
-  it('cancels the request while the result is being checked', () => {
-    // Nothing is moving during a check, so there is no run to stop — the request
-    // in flight is the thing that has to be cancelled.
-    expect(keyPolicy(key({ key: 'Escape', agentPhase: 'checking', hasRequestId: true }))).toBe('cancel')
+  it('refuses the question while the run is waiting for an answer', () => {
+    // The agent is blocked on this answer, so Escape has to *be* an answer. If it
+    // closed the card instead, the run would stay blocked on a question that is
+    // no longer on screen — the one state the card must never reach.
+    expect(keyPolicy(key({ key: 'Escape', agentPhase: 'asking', hasRequestId: true }))).toBe('stopAgent')
+    expect(keyPolicy(key({ key: 'Escape', agentPhase: 'asking', hasRequestId: false }))).toBe('stopAgent')
   })
 
-  it('closes when it is checking but there is no request to cancel', () => {
-    expect(keyPolicy(key({ key: 'Escape', agentPhase: 'checking', hasRequestId: false }))).toBe('close')
-  })
-
-  it('stops the run while a plan is arming or acting', () => {
+  it('stops the run while it is arming or acting', () => {
     expect(keyPolicy(key({ key: 'Escape', agentPhase: 'arming' }))).toBe('stopAgent')
     expect(keyPolicy(key({ key: 'Escape', agentPhase: 'acting' }))).toBe('stopAgent')
   })

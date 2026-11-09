@@ -18,14 +18,17 @@
  * refactor.
  */
 
+import type { AgentPhase } from '@shared/types'
+
 /**
- * The agent row's phase, spelled out here rather than imported.
+ * The agent row's phase.
  *
- * `AgentPhase` is declared in `@shared/types` but not exported — it is an
- * implementation detail of `AgentEvent`. The three phases this file cares about
- * are the ones with a key of their own; the rest behave like "nothing running".
+ * Re-exported under a local name so the key policy stays readable: this file
+ * asks "what is the run doing" and the answer is the same union the card gets.
+ * The phases it distinguishes are the ones with a key of their own; the rest
+ * behave like "nothing running".
  */
-export type RunPhase = 'idle' | 'arming' | 'acting' | 'checking' | 'done' | 'aborted' | 'error'
+export type RunPhase = AgentPhase
 
 /** What the card should do about the key press. */
 export type KeyAction =
@@ -66,13 +69,12 @@ export function keyPolicy(input: KeyInput): KeyAction {
     // While a plan runs, Escape is "стоп", not "закрыть": the card closing would
     // hide the very row that reports what was interrupted, and the user pressing
     // Escape is watching the screen, not the bubble.
-    if (input.agentPhase === 'checking') {
-      // `checking` belongs to the run as much as the plan does — the user is
-      // waiting on a request they can still stop — but it stops differently:
-      // nothing is moving, so there is no run to stop, and the request in flight
-      // is what has to be cancelled. With no request to cancel, there is nothing
-      // left to stop and the card closes as usual.
-      return input.hasRequestId ? 'cancel' : 'close'
+    if (input.agentPhase === 'asking') {
+      // A question is a stop point like any other: Escape refuses it. It is not
+      // `cancel` — the card has no request of its own to abort here — and it is
+      // not `close` either, because closing the card would leave the agent
+      // blocked on a question nobody can see any more.
+      return 'stopAgent'
     }
     if (input.agentPhase === 'arming' || input.agentPhase === 'acting') return 'stopAgent'
     return 'close'

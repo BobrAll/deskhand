@@ -114,7 +114,7 @@ describe('createTray: the menu', () => {
     const { createTray } = await loadTray()
     createTray(actions())
 
-    expect(item('Открыть ассистента (Alt+Space)')).toBeDefined()
+    expect(item('Открыть ассистента (⌥ Space)')).toBeDefined()
   })
 
   it('follows a hotkey change on refresh', async () => {
@@ -124,8 +124,8 @@ describe('createTray: the menu', () => {
     env.hotkey = 'Cmd+Shift+Space'
     refreshTray()
 
-    expect(item('Открыть ассистента (Cmd+Shift+Space)')).toBeDefined()
-    expect(item('Открыть ассистента (Alt+Space)')).toBeUndefined()
+    expect(item('Открыть ассистента (⌘ ⇧ Space)')).toBeDefined()
+    expect(item('Открыть ассистента (⌥ Space)')).toBeUndefined()
   })
 
   it('keeps the four app commands and the two separators', async () => {
@@ -158,7 +158,7 @@ describe('createTray: every item reaches its action', () => {
     const handlers = actions()
     createTray(handlers)
 
-    ;(item('Открыть ассистента (Alt+Space)')?.click as () => void)()
+    ;(item('Открыть ассистента (⌥ Space)')?.click as () => void)()
     ;(item('Настройки…')?.click as () => void)()
     ;(item('Права доступа и первый запуск…')?.click as () => void)()
     ;(item('Выйти из Smart Cursor')?.click as () => void)()

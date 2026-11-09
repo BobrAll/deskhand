@@ -3,8 +3,6 @@ import { describe, expect, it } from 'vitest'
 import {
   DEFAULT_AGENT,
   DEFAULT_EXCLUDED_APPS,
-  DEFAULT_GESTURES,
-  DEFAULT_QUICK_ACTIONS,
   DEFAULT_SETTINGS,
   DEFAULT_SYSTEM_PROMPT,
   DEFAULT_VOICE,
@@ -53,7 +51,6 @@ describe('normalizeSettings: partial data', () => {
     expect(result.maxTokens).toBe(2048)
     expect(result.hotkey).toBe('Ctrl+K')
     expect(result.provider).toBe(DEFAULT_SETTINGS.provider)
-    expect(result.quickActions).toEqual(DEFAULT_QUICK_ACTIONS)
     expect(result.voice).toEqual(DEFAULT_VOICE)
   })
 
@@ -91,13 +88,11 @@ describe('normalizeSettings: extra keys are dropped', () => {
   it('drops unknown keys inside nested objects', () => {
     const result = normalizeSettings({
       voice: { ...DEFAULT_VOICE, extra: 1 },
-      agent: { ...DEFAULT_AGENT, extra: 2 },
-      gestures: { ...DEFAULT_GESTURES, extra: 3 }
+      agent: { ...DEFAULT_AGENT, extra: 2 }
     })
 
     expect(result.voice).not.toHaveProperty('extra')
     expect(result.agent).not.toHaveProperty('extra')
-    expect(result.gestures).not.toHaveProperty('extra')
   })
 })
 
@@ -240,89 +235,15 @@ describe('normalizeSettings: booleans', () => {
   })
 })
 
-describe('normalizeSettings: quickActions', () => {
-  it('keeps a valid list', () => {
+describe('normalizeSettings: legacy settings', () => {
+  it('ignores saved quick actions and keeps other preferences', () => {
     const result = normalizeSettings({
-      quickActions: [
-        { id: 'a', label: 'A', prompt: 'сделай A', mode: 'insert' },
-        { id: 'b', label: 'B', prompt: 'сделай B', mode: 'analyze' }
-      ]
+      quickActions: [{ id: 'a', label: 'A', prompt: 'P', mode: 'insert' }],
+      temperature: 1.2
     })
 
-    expect(result.quickActions).toEqual([
-      { id: 'a', label: 'A', prompt: 'сделай A', mode: 'insert' },
-      { id: 'b', label: 'B', prompt: 'сделай B', mode: 'analyze' }
-    ])
-  })
-
-  it('falls back to the defaults when the value is not an array', () => {
-    for (const value of [undefined, null, 'x', 42, { id: 'a' }]) {
-      expect(normalizeSettings({ quickActions: value }).quickActions, String(value)).toEqual(
-        DEFAULT_QUICK_ACTIONS
-      )
-    }
-  })
-
-  it('falls back to the defaults when every entry is unusable', () => {
-    expect(normalizeSettings({ quickActions: [] }).quickActions).toEqual(DEFAULT_QUICK_ACTIONS)
-    expect(
-      normalizeSettings({ quickActions: [{ label: '', prompt: '' }, null, 42, 'x'] }).quickActions
-    ).toEqual(DEFAULT_QUICK_ACTIONS)
-  })
-
-  it('drops entries without a label or without a prompt', () => {
-    const result = normalizeSettings({
-      quickActions: [
-        { id: 'a', label: 'A', prompt: 'P' },
-        { id: 'b', label: '  ', prompt: 'P' },
-        { id: 'c', label: 'C', prompt: '   ' }
-      ]
-    })
-
-    expect(result.quickActions.map((action) => action.id)).toEqual(['a'])
-  })
-
-  it('generates an id from the position when it is missing', () => {
-    const result = normalizeSettings({
-      quickActions: [
-        { id: '  ', label: 'A', prompt: 'P' },
-        { label: 'B', prompt: 'P' }
-      ]
-    })
-
-    expect(result.quickActions.map((action) => action.id)).toEqual(['action-1', 'action-2'])
-  })
-
-  it('truncates a label at 40 characters', () => {
-    const result = normalizeSettings({
-      quickActions: [{ id: 'a', label: 'я'.repeat(60), prompt: 'P' }]
-    })
-
-    expect(result.quickActions[0].label).toHaveLength(40)
-  })
-
-  it('treats any mode other than analyze as insert', () => {
-    const result = normalizeSettings({
-      quickActions: [
-        { id: 'a', label: 'A', prompt: 'P', mode: 'analyze' },
-        { id: 'b', label: 'B', prompt: 'P', mode: 'что-то' },
-        { id: 'c', label: 'C', prompt: 'P' }
-      ]
-    })
-
-    expect(result.quickActions.map((action) => action.mode)).toEqual(['analyze', 'insert', 'insert'])
-  })
-
-  it('replaces non-string labels and prompts with empty strings, dropping the entry', () => {
-    const result = normalizeSettings({
-      quickActions: [
-        { id: 'a', label: 42, prompt: 'P' },
-        { id: 'b', label: 'B', prompt: { text: 'P' } },
-        { id: 'c', label: 'C', prompt: 'P' }
-      ]
-    })
-
-    expect(result.quickActions.map((action) => action.id)).toEqual(['c'])
+    expect(result).not.toHaveProperty('quickActions')
+    expect(result.temperature).toBe(1.2)
   })
 })
 
@@ -396,45 +317,42 @@ describe('normalizeSettings: voice', () => {
   })
 })
 
-describe('normalizeSettings: gestures', () => {
-  it('always forces three fingers', () => {
-    expect(normalizeSettings({ gestures: { fingers: 2 } }).gestures.fingers).toBe(3)
-    expect(normalizeSettings({ gestures: { fingers: 4 } }).gestures.fingers).toBe(3)
-  })
-
-  it('clamps holdMs to 250..900', () => {
-    expect(normalizeSettings({ gestures: { holdMs: 10 } }).gestures.holdMs).toBe(250)
-    expect(normalizeSettings({ gestures: { holdMs: 5000 } }).gestures.holdMs).toBe(900)
-    expect(normalizeSettings({ gestures: { holdMs: 500.4 } }).gestures.holdMs).toBe(500)
-  })
-
-  it('fills a missing block from the defaults', () => {
-    expect(normalizeSettings({ gestures: null }).gestures).toEqual(DEFAULT_GESTURES)
-  })
-})
-
 describe('normalizeSettings: agent', () => {
-  it('clamps the delays and the step count', () => {
-    const result = normalizeSettings({
-      agent: { startDelayMs: -1, stepDelayMs: 99999, maxSteps: 0 }
-    })
+  it('keeps the step budget the user typed, with a floor of one', () => {
+    const result = normalizeSettings({ agent: { maxSteps: 0 } })
 
-    expect(result.agent.startDelayMs).toBe(0)
-    expect(result.agent.stepDelayMs).toBe(5000)
     expect(result.agent.maxSteps).toBe(1)
-    expect(normalizeSettings({ agent: { maxSteps: 99 } }).agent.maxSteps).toBe(8)
+    expect(normalizeSettings({ agent: { maxSteps: 99 } }).agent.maxSteps).toBe(99)
+    expect(normalizeSettings({ agent: { maxSteps: 500 } }).agent.maxSteps).toBe(500)
+    expect(normalizeSettings({ agent: { maxSteps: 'много' } }).agent.maxSteps).toBe(DEFAULT_AGENT.maxSteps)
+    expect(DEFAULT_AGENT.maxSteps).toBe(100)
   })
 
   it('keeps the flags and falls back on non-booleans', () => {
     const result = normalizeSettings({
-      agent: { enabled: true, allowTyping: false, allowShortcuts: 'yes', verifyResult: false }
+      agent: { enabled: true, abortOnMouseMove: 'yes', verifyResult: false }
     })
 
     expect(result.agent.enabled).toBe(true)
-    expect(result.agent.allowTyping).toBe(false)
-    expect(result.agent.allowShortcuts).toBe(DEFAULT_AGENT.allowShortcuts)
-    expect(result.agent.verifyResult).toBe(false)
     expect(result.agent.abortOnMouseMove).toBe(DEFAULT_AGENT.abortOnMouseMove)
+    expect(result.agent.verifyResult).toBe(false)
+  })
+
+  it('drops a settings file written by the old plan runner', () => {
+    // The old shape had per-action delays, a typing switch and a semantic
+    // backend. None of them exist any more; reading them must not leave the
+    // object with keys nothing reads, and must not fail on them either.
+    const result = normalizeSettings({
+      agent: {
+        enabled: true, startDelayMs: 900, stepDelayMs: 420,
+        allowTyping: false, allowShortcuts: false, semanticActions: false
+      }
+    })
+
+    expect(Object.keys(result.agent).sort()).toEqual([
+      'abortOnMouseMove', 'enabled', 'maxSteps', 'rememberedApprovals', 'verifyResult'
+    ])
+    expect(result.agent.enabled).toBe(true)
   })
 
   it('fills a missing block from the defaults', () => {
@@ -451,7 +369,6 @@ describe('normalizeSettings: idempotence', () => {
       hotkey: ' Cmd+J ',
       excludedApps: ['com.a', ' com.a '],
       voice: { model: 'small', language: 'EN', minDurationMs: 100 },
-      gestures: { holdMs: 400 },
       agent: { maxSteps: 5 }
     })
 

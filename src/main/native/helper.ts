@@ -176,6 +176,18 @@ export async function helperFront(): Promise<RawFrontApp | null> {
   }
 }
 
+/**
+ * Which application is in front, without its window.
+ *
+ * The window half of `front` costs a cold Accessibility round trip (35-45 ms)
+ * plus an enumeration of every on-screen window. Callers that only need the
+ * identity of the application — the plan's working app, a launch check, a focus
+ * guard — should not pay for a fact they do not read, and most of them do not.
+ */
+export async function helperFrontApp(): Promise<RawFrontApp | null> {
+  return mapFront(await runHelper(['front-quick']))
+}
+
 /** Synthesizes Cmd+C / Cmd+V into whatever app currently has focus. */
 export async function helperSendKey(command: 'copy' | 'paste'): Promise<boolean> {
   const payload = await runHelper([command])
@@ -185,6 +197,31 @@ export async function helperSendKey(command: 'copy' | 'paste'): Promise<boolean>
     `tell application "System Events" to keystroke "${key}" using command down`
   ])
   return result !== null
+}
+
+/** What an application launch reported: enough to verify it against the screen. */
+export interface HelperLaunched {
+  pid: number
+  bundleId: string
+  name: string
+}
+
+/**
+ * Opens an application by name, starting it if it is not already running.
+ *
+ * Returns what came forward, so the caller can check the screen instead of
+ * trusting the call: a launch that reports success but leaves another window in
+ * front is a failed step, not a completed one.
+ */
+export async function helperLaunch(name: string, signal?: AbortSignal): Promise<HelperLaunched | null> {
+  if (!name) return null
+  const payload = await runHelper(['launch', name], 15_000, signal)
+  if (!payload?.ok) return null
+  return {
+    pid: Number(payload.pid) || 0,
+    bundleId: typeof payload.bundleId === 'string' ? payload.bundleId : '',
+    name: typeof payload.name === 'string' ? payload.name : ''
+  }
 }
 
 export async function helperOpenBrowser(signal?: AbortSignal): Promise<string | null> {

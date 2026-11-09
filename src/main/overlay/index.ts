@@ -19,7 +19,6 @@ import type {
   AxElementInfo,
   ContextFlags,
   ContextSnapshot,
-  AgentPlanStep,
   OverlayState,
   PasteResult,
   ScreenshotInfo,
@@ -29,7 +28,7 @@ import type {
 } from '@shared/types'
 import { createAgentController } from '../agent'
 import { beginAgentTurn, endAgentTurn, updateAgentCursor } from '../agent/cursor'
-import { bindMarkedClicks, markClickTargets } from '../agent/clickMarks'
+import type { AgentProvider } from '../agent/sidecar'
 import { describeScreen } from '../agent/outline'
 import { collectContext } from '../context/collect'
 import { isExcluded } from '../context/activeApp'
@@ -42,14 +41,12 @@ import { hideAnnotations, showAnnotations } from '../pointer'
 import { buildTurnRequest, type Exchange } from './request'
 import { readPreviousCommand, saveCommand } from './history'
 import { timed, trace, traceTurn } from '../agent/trace'
-import { shouldVerify, verifyResult, VERIFY_SETTLE_MS } from './verify'
-import { runAgentRounds } from './rounds'
 import { emptyAnswerFallback } from './emptyAnswer'
 import { groundAnnotation } from '../annotationGrounding'
 import type { OverlayHost } from './host'
 import { consumeTurnStream } from '../turnStream'
 import { sameObservedWindow } from '../agent/observation'
-import { helperActivate, helperFront, helperWindow, type RawFrontApp } from '../native/helper'
+import { helperActivate, helperFront, helperFrontApp, helperWindow, type RawFrontApp } from '../native/helper'
 import { getApiKey } from '../settings/secrets'
 import { getSettings, patchSettings } from '../settings/store'
 import { delay } from '../util'
@@ -163,19 +160,13 @@ export function createOverlayController(host: OverlayHost) {
    * same object that started it.
    */
   const agent = createAgentController({
-    confirmationWindow: () => host.window(),
     setPassthrough: (active) => host.setPassthrough(active),
-    emit: (event: AgentEvent) => publishAgent(event),
-    target: () => {
-      const target = session?.target
-      if (!target) return null
-      return { bundleId: target.bundleId, pid: target.pid }
-    }
+    emit: (event: AgentEvent) => publishAgent(event)
   })
 
   /** Keeps the card and the display layer in sync with the agent's state. */
   function publishAgent(event: AgentEvent): void {
-    trace('agent.phase', { phase: event.phase, step: event.step, total: event.total, completed: event.completed === true, recoverable: event.recoverable === true })
+    trace('agent.phase', { phase: event.phase, step: event.step, total: event.total, completed: event.completed === true, calls: event.actions?.length ?? 0 })
     emit(CH.agent.event, event)
     updateAgentCursor(event)
   }
@@ -234,7 +225,6 @@ export function createOverlayController(host: OverlayHost) {
       context: session.snapshot,
       flags: session.flags,
       defaults: session.defaults,
-      quickActions: settings.quickActions,
       setupNotice: setupNotice(),
       warnings,
       agent: agent.availability()
@@ -303,11 +293,52 @@ export function createOverlayController(host: OverlayHost) {
   const observedApps = new WeakMap<ScreenshotInfo, RawFrontApp>()
   const overlayShots = new WeakSet<ScreenshotInfo>()
 
-  async function windowStillMatches(observed: RawFrontApp, underOverlay: boolean): Promise<boolean> {
-    const front = await helperFront()
-    if (front?.pid !== process.pid || !underOverlay) return sameObservedWindow(observed, front)
-    const background = await helperWindow(observed.pid)
-    return sameObservedWindow(observed, background) && (await helperFront())?.pid === process.pid
+  /**
+   * Is the window that was observed still the same window?
+   *
+   * The question is asked about the *observed* application, and it has to be
+   * asked that way round. Whether this app's own card happened to be frontmost
+   * when the shutter opened is irrelevant: the card is shown by the app that is
+   * taking the picture, it is never the window being acted on, and it takes
+   * focus somewhere between the capture and this check. Comparing the observed
+   * app against "whatever is frontmost now" therefore compared Chrome against
+   * the overlay and reported a window change on every single run — which is
+   * exactly the bug that made «открой телеграм» fail five times in a row.
+   *
+   * So: if the front is this app, read the background window of the observed
+   * process and compare that. If the front is the observed app, compare the
+   * front. Anything else is a genuine change and is rejected.
+   */
+  async function windowStillMatches(observed: RawFrontApp): Promise<boolean> {
+    // Only the identity of the frontmost app is needed to choose a branch; its
+    // window is read below only when that branch needs one. Reading the full
+    // `front` here cost a cold Accessibility round trip on every comparison, and
+    // a comparison happens several times per capture.
+    const front = await helperFrontApp()
+    const background = front?.pid === process.pid ? await helperWindow(observed.pid) : front
+    const same = sameObservedWindow(observed, background)
+    // Which field disagreed, without recording what was on screen: a window
+    // title is the name of the user's own document, so the trace keeps the
+    // verdict and the pids and leaves the text out.
+    const b = background?.bounds
+    const o = observed.bounds
+    trace('screen.compare', {
+      same,
+      frontPid: front?.pid ?? null,
+      observedPid: observed.pid,
+      backgroundPid: background?.pid ?? null,
+      observedHasWindowId: observed.windowId !== null,
+      backgroundHasWindowId: (background?.windowId ?? null) !== null,
+      titleMatches: (observed.windowTitle ?? null) === (background?.windowTitle ?? null),
+      boundsMatch: Boolean(o) && Boolean(b) &&
+        o!.x === b!.x && o!.y === b!.y && o!.width === b!.width && o!.height === b!.height,
+      selfPid: process.pid
+    })
+    if (!same) return false
+    // Nothing may steal focus while the tree is read: a window that came forward
+    // between the two reads is a screen that no longer matches the picture.
+    const after = await helperFrontApp()
+    return after?.pid === process.pid || after?.pid === observed.pid
   }
 
   function captureFor(target: Session, fresh = false): Promise<ScreenshotInfo | null> {
@@ -352,10 +383,12 @@ export function createOverlayController(host: OverlayHost) {
           { maxSide: settings.screenshotMaxSide, quality: settings.screenshotQuality }
         ))
         if (shot && observed) {
-          if (await windowStillMatches(observed, underOverlay)) {
+          if (await windowStillMatches(observed)) {
             observedApps.set(shot, observed)
             if (underOverlay) overlayShots.add(shot)
           }
+          // The comparison above already recorded which field disagreed; this
+          // line records only that the shot was dropped, without the window text.
           else trace('screen.observationRejected', { reason: 'window-changed-during-capture' })
         }
         if (session === target) {
@@ -506,7 +539,7 @@ export function createOverlayController(host: OverlayHost) {
       //
       // The context has to be read before the focus is taken: our own card is
       // what the frontmost app becomes a moment later.
-      const front = await helperFront()
+      const front = await helperFrontApp()
       const elsewhere = front && front.pid > 0 && front.pid !== process.pid
       if (elsewhere) {
         const settings = getSettings()
@@ -743,10 +776,11 @@ export function createOverlayController(host: OverlayHost) {
   /**
    * One request, streamed into the card.
    *
-   * Split out of `send` because an agent turn is not one request: after a plan
-   * runs, the screen has changed and the model has to look again. Both the first
-   * round and the continuations need exactly this — stream, paint, collect — and
-   * the only difference is which messages they start from.
+   * This is the writer's half of the app: a question goes to the model, the
+   * answer streams in, and any shapes it asked for are painted as they arrive.
+   * The agent does not go through here — it owns its own loop and its own
+   * captures — so there is exactly one caller shape to keep working, and the
+   * drawing tool is the only thing the parser has to survive.
    */
   async function streamRound(options: {
     messages: ChatMessage[]
@@ -756,22 +790,11 @@ export function createOverlayController(host: OverlayHost) {
     canDraw: boolean
     area: ScreenRect | null
     apiKey: string
-    /**
-     * Collect the prose without showing it yet.
-     *
-     * An action turn is narrated ("нажимаю «Экспорт»…") before anything knows
-     * that a plan is coming, and a card that prints the sentence while the click
-     * happens behind it is noise. The caller decides once the round is parsed:
-     * flush the held text for an answer, drop it for an action.
-     */
-    holdText: boolean
     /** Reveal a spoken answer as soon as its first text arrives. */
     revealText?: boolean
     drawingTargets?: AxElementInfo[]
-    actionTargets?: AxElementInfo[]
-  }): Promise<{ steps: AgentPlanStep[]; text: string; webLookup?: boolean }> {
-    const { messages, requestId, maxTokens, signal, canDraw, area, apiKey, holdText } = options
-    const marked = area && options.actionTargets?.length ? markClickTargets(messages, area, options.actionTargets) : null
+  }): Promise<{ text: string; webLookup?: boolean }> {
+    const { messages, requestId, maxTokens, signal, canDraw, area, apiKey } = options
     const settings = getSettings()
 
     /**
@@ -801,7 +824,6 @@ export function createOverlayController(host: OverlayHost) {
 
     const append = (delta: string): void => {
       if (!delta || !session) return
-      if (holdText) return
       const hadAnswer = session.answer.trim().length > 0
       session.answer += delta
       const event: StreamEvent = { type: 'chunk', requestId, delta }
@@ -815,7 +837,7 @@ export function createOverlayController(host: OverlayHost) {
     // lives in `consumeTurnStream`, so it can be driven by a fake provider.
     const result = await timed('model.round', () => consumeTurnStream({
       provider: getProvider(settings.provider),
-      messages: marked?.messages ?? messages,
+      messages,
       apiKey,
       streamOptions: {
         model: resolveModel(settings) ?? '',
@@ -830,19 +852,19 @@ export function createOverlayController(host: OverlayHost) {
     }), { provider: settings.provider, model: resolveModel(settings) ?? '', withImage: Boolean(area),
       imageBase64Bytes: messages.reduce((size, message) => size + message.parts.reduce(
         (total, part) => total + (part.type === 'image' ? part.base64.length : 0), 0), 0) })
-    trace('model.plan', { actions: result.steps.map((step) => step.action.kind).join(','), aborted: signal.aborted,
-      marks: marked?.marks.length ?? 0 })
-    return { ...result, steps: bindMarkedClicks(result.steps, marked?.marks ?? [], area) }
+    return result
   }
 
   function send(request: SendRequest): Promise<void> {
     if (!session || request.refine) return sendTurn(request)
     const settings = getSettings()
+    // A short digest of everything that changes what a run does, so the trace can
+    // group runs by configuration without recording any of the values — a model
+    // name and a temperature are the user's business, not the log's.
     const config = createHash('sha256').update(JSON.stringify([
       settings.provider, resolveModel(settings), settings.temperature, settings.maxTokens,
-      settings.agent.enabled, settings.agent.allowTyping, settings.agent.allowShortcuts,
-      settings.agent.maxSteps, settings.agent.verifyResult, settings.agent.abortOnMouseMove,
-      settings.agent.startDelayMs, settings.agent.stepDelayMs,
+      settings.agent.enabled, settings.agent.maxSteps, settings.agent.verifyResult,
+      settings.agent.abortOnMouseMove,
       settings.screenshotMaxSide, settings.screenshotQuality
     ])).digest('hex').slice(0, 12)
     return traceTurn({ voice: request.voice === true, provider: settings.provider, config }, () => sendTurn(request))
@@ -899,13 +921,14 @@ export function createOverlayController(host: OverlayHost) {
     const glowTurn = beginAgentTurn(!refine && availability.ready && looksLikeAction(request.prompt)
       ? 'Задача принята · готовлю действия…' : undefined)
     const turnSession = session
+    let agentAcknowledged = false
     let outcome = 'abandoned'
     let reason = 'session-changed'
     let deadline: ReturnType<typeof setTimeout> | undefined
     try {
       if (request.voice) {
-        // Keep the transcript visible before the card gets out of the way of the
-        // answer or the agent. Escape and a new recording can cancel this wait.
+        // Keep the transcript visible before routing the request.
+        // Escape and a new recording can cancel this wait.
         if (host.window()?.isVisible()) {
           voicePreview = abort
           const preview = delay(VOICE_PREVIEW_MS)
@@ -922,13 +945,15 @@ export function createOverlayController(host: OverlayHost) {
           if (voicePreview === abort) voicePreview = null
           if (abort.signal.aborted || session !== turnSession) return
         }
-        host.hide()
       }
 
       deadline = setTimeout(() => abort.abort('deadline'), TURN_DEADLINE_MS)
       const bundleId = turnSession.target?.bundleId || null
       const currentSettings = getSettings()
-      if (isExcluded(turnSession.target, currentSettings.excludedApps)) return
+      if (isExcluded(turnSession.target, currentSettings.excludedApps)) {
+        if (request.voice) host.hide()
+        return
+      }
       const useHistory = settings.rememberConversation && currentSettings.rememberConversation
       const history = turnSession.history.filter(
         (entry) => !entry.bundleId || !currentSettings.excludedApps.includes(entry.bundleId)
@@ -937,44 +962,25 @@ export function createOverlayController(host: OverlayHost) {
         ? readPreviousCommand(currentSettings.excludedApps)
         : undefined
 
-      let observedApp: RawFrontApp | undefined
-      let observedUnderOverlay = false
-      let drawingTargets: AxElementInfo[] = []
-      const turn = await buildTurnRequest({
-        request,
-        session: turnSession,
-        history,
-        previousCommand,
-        settings,
-        visionSupported,
-        availability: agent.availability(),
-        ensureFreshScreenshot: async () => {
-          const shot = await ensureFreshScreenshot(turnSession, settings.agent.enabled)
-          observedApp = shot ? observedApps.get(shot) : undefined
-          observedUnderOverlay = Boolean(shot && overlayShots.has(shot))
-          return shot
-        },
-        describeScreen: async (pid, bounds, area) => {
-          if (observedApp && !(await windowStillMatches(observedApp, observedUnderOverlay))) {
-            observedApp = undefined
-            return null
-          }
-          const outline = await describeScreen(observedApp?.pid ?? pid, observedApp?.bounds ?? bounds, area, (targets) => {
-            drawingTargets = targets
-          })
-          if (observedApp) {
-            if (!(await windowStillMatches(observedApp, observedUnderOverlay))) {
-              observedApp = undefined
-              drawingTargets = []
-              return null
-            }
-          }
-          return observedApp ? [`Активное приложение на свежем снимке: ${observedApp.name}`, outline].filter(Boolean).join('\n') : outline
-        },
-        aborted: () => abort.signal.aborted || session !== turnSession
-      })
-      if (turn.abandoned || abort.signal.aborted || session !== turnSession) return
-      const historyMessages = turn.messages.slice(1, -1)
+      /**
+       * Whether this turn is for the agent rather than for the writer.
+       *
+       * This is the one routing decision in the turn, and it is made before any
+       * model is called: an action request must not pay for a text round first,
+       * because that round's only job would be to guess what the agent is about
+       * to do anyway.
+       *
+       * The rule is the verb, not the mode. `looksLikeAction` is the same gate
+       * that already decides whether the pointer glow promises an action, so the
+       * card and the routing cannot disagree: if the glow said "готовлю
+       * действия", the agent runs. When the agent cannot run — mode off, no
+       * Accessibility — the turn falls through to the writer with `actReason`
+       * set, which is what produces the honest "я не могу нажать, вот почему"
+       * answer instead of a silent arrow.
+       */
+      const agentState = agent.availability()
+      const useAgent = !refine && agentState.ready && looksLikeAction(request.prompt)
+      if (request.voice && !useAgent) host.hide()
 
       // The drawings belong to the answer currently on screen: a new question
       // replaces that answer, so old arrows must not stay behind as if they
@@ -986,193 +992,114 @@ export function createOverlayController(host: OverlayHost) {
         emitAnnotations()
       }
 
-      const round = await streamRound({
-        messages: turn.messages,
-        requestId: request.requestId,
-        maxTokens: turn.maxTokens,
-        signal: abort.signal,
-        canDraw: turn.canDraw,
-        area: turn.area,
-        apiKey,
-        holdText: turn.holdFirstRound,
-        drawingTargets,
-        actionTargets: turn.canAct ? drawingTargets : undefined,
-        revealText: request.voice
-      })
-      if (abort.signal.aborted || session !== turnSession) return
+      if (useAgent) {
+        trace('tool.route', { backend: 'agent', reason: 'action-request' })
+        if (!host.window()?.isVisible()) host.showInactive(INITIAL_HEIGHT)
+        // The card shows the screen the agent is about to work on. The agent
+        // takes its own captures — this one is for the person watching, and it
+        // is not sent to any model.
+        void ensureFreshScreenshot(turnSession).catch(() => null)
 
-      const webLookup = !refine && round.webLookup && allowsWebLookup(request.prompt)
-      trace('tool.route', { backend: webLookup ? 'web-search' : round.steps.length ? 'desktop' : 'text',
-        reason: webLookup ? 'search-marker' : round.steps.length ? 'action-plan' : 'plain-response' })
-      const webAnswer = webLookup
-        ? await timed('web.search', () => searchWeb(request.prompt, settings, apiKey, abort.signal))
-        : ''
-      if (abort.signal.aborted || session !== turnSession) return
-
-      let armed = false
-      const execute: typeof agent.execute = async (plan) => {
-        const stop = (): void => agent.stop()
-        abort.signal.addEventListener('abort', stop, { once: true })
-        try {
-          const result = await agent.execute({ ...plan, continuing: armed, observedPid: observedApp?.pid,
-            observedWindow: observedApp, requireObservation: true })
-          if (result.performed.length > 0 || result.recoverable) armed = true
-          return result
-        } finally {
-          abort.signal.removeEventListener('abort', stop)
-        }
-      }
-
-      const describeObservedScreen = async (area: ScreenRect, onTargets?: (elements: AxElementInfo[]) => void) => {
-        const front = observedApp
-        if (!front || !(await windowStillMatches(front, observedUnderOverlay))) {
-          observedApp = undefined
-          return null
-        }
-        let targets: AxElementInfo[] = []
-        const outline = await describeScreen(front.pid, front.bounds, area, (elements) => { targets = elements })
-        if (!(await windowStillMatches(front, observedUnderOverlay))) {
-          observedApp = undefined
-          return null
-        }
-        onTargets?.(targets)
-        return [`Активное приложение: ${front.name}`, outline].filter(Boolean).join('\n')
-      }
-
-      // A web turn cannot execute screen actions, even if its first model round
-      // included both a search marker and a plan.
-      const rounds = !webLookup ? await timed('agent.rounds', () => runAgentRounds({
-        get session() { return session },
-        abort, request, settings, area: turn.area, canAct: turn.canAct, canDraw: turn.canDraw,
-        apiKey, maxTokens: turn.maxTokens,
-        initialShot: turn.screenshot, round, held: turn.holdFirstRound ? round.text : '',
-        agent: { execute, availability: agent.availability }, publishAgent, streamRound, historyMessages, previousCommand,
-        capture: async (current) => {
-          await delay(VERIFY_SETTLE_MS)
-          if (abort.signal.aborted || session !== current) return null
-          const shot = await captureFor(current as Session, true)
-          observedApp = shot ? observedApps.get(shot) : undefined
-          observedUnderOverlay = Boolean(shot && overlayShots.has(shot))
-          return shot
-        },
-        describeScreen: describeObservedScreen
-      })) : null
-      if ((!webLookup && !rounds) || abort.signal.aborted || session !== turnSession) return
-      let held = rounds?.held ?? webAnswer
-      let suppressed = rounds?.suppressed ?? false
-      const performedLines = rounds?.performedLines ?? []
-      const claimedDone = rounds?.claimedDone ?? false
-      let confirmed = rounds?.confirmedOnScreen ?? false
-      if (confirmed) {
-        publishAgent({ phase: 'done', completed: true, step: 0, total: 0, label: 'Готово', plan: [] })
-      } else if (
-        rounds && shouldVerify({
-          willVerify: rounds.willVerify,
-          interrupted: rounds.interrupted,
-          performed: performedLines.length,
-          claimedDone
-        })
-      ) {
-        const stepsBeforeCheck = performedLines.length
-        const finalRoundText = held
-        suppressed = true
-        held = ''
-        // Said before the request, not after: the runner has just announced the
-        // end of its plan, and the caller's turn is not over. From here until the
-        // check returns, the row says what is really going on.
-        publishAgent({
-          phase: 'checking',
-          step: 0,
-          total: 0,
-          label: 'Проверяю по экрану, выполнена ли просьба',
-          plan: []
-        })
-
-        const check = await timed('agent.verify', () => verifyResult({
-          settings,
-          requestId: request.requestId,
+        const run = await timed('agent.run', () => agent.run({
           prompt: request.prompt,
-          apiKey,
-          maxTokens: turn.maxTokens,
-          performedLines,
-          historyMessages,
+          appName: turnSession.target?.name ?? null,
+          windowTitle: turnSession.target?.windowTitle ?? null,
+          provider: agentProvider(settings, apiKey)
+        }))
+        if (abort.signal.aborted || session !== turnSession) return
+
+        const report = run.answer.trim()
+        // The agent uses this exact reply for success without caveats.
+        agentAcknowledged = report === '[[ACTION_DONE]]' && !run.message &&
+          !run.blocked && !run.aborted && !run.incomplete
+        session.answer = agentAcknowledged ? '' : run.incomplete
+          ? (run.message ?? '')
+          : report || (run.message ?? '')
+        outcome = run.blocked ? 'blocked'
+          : run.aborted ? 'cancelled'
+            : run.incomplete ? 'incomplete'
+              : report && !agentAcknowledged ? 'agent-report' : 'agent-silent'
+        reason = run.blocked ? 'agent-unavailable'
+          : run.aborted ? 'agent-stop'
+            : run.incomplete ? 'agent-incomplete'
+              : agentAcknowledged ? 'agent-acknowledged'
+                : report ? 'agent-answer' : 'no-answer'
+        if (!agentAcknowledged && run.actions.length === 0 && !run.blocked && !run.incomplete) {
+          session.answer = emptyAnswerFallback(session.answer, 0) || session.answer
+        }
+      } else {
+        let observedApp: RawFrontApp | undefined
+        let drawingTargets: AxElementInfo[] = []
+        const turn = await buildTurnRequest({
+          request,
+          session: turnSession,
+          history,
           previousCommand,
-          progress: rounds.progress,
-          signal: abort.signal,
-          isAlive: () => Boolean(session),
-          publishAgent,
-          capture: async () => {
-            const shot = await captureFor(turnSession, true)
+          settings,
+          visionSupported,
+          availability: agentState,
+          ensureFreshScreenshot: async () => {
+            const shot = await ensureFreshScreenshot(turnSession, settings.agent.enabled)
             observedApp = shot ? observedApps.get(shot) : undefined
-            observedUnderOverlay = Boolean(shot && overlayShots.has(shot))
             return shot
           },
-          describeScreen: describeObservedScreen,
-          streamRound,
-          execute,
-          lastPhase: () => agent.last().phase,
-          delay
-        }))
-        if (abort.signal.aborted || !session) return
+          describeScreen: async (pid, bounds, area) => {
+            if (observedApp && !(await windowStillMatches(observedApp))) {
+              observedApp = undefined
+              return null
+            }
+            const outline = await describeScreen(observedApp?.pid ?? pid, observedApp?.bounds ?? bounds, area, (targets) => {
+              drawingTargets = targets
+            })
+            if (observedApp) {
+              if (!(await windowStillMatches(observedApp))) {
+                observedApp = undefined
+                drawingTargets = []
+                return null
+              }
+            }
+            return observedApp ? [`Активное приложение на свежем снимке: ${observedApp.name}`, outline].filter(Boolean).join('\n') : outline
+          },
+          aborted: () => abort.signal.aborted || session !== turnSession
+        })
+        if (turn.abandoned || abort.signal.aborted || session !== turnSession) return
 
-        if (check.outcome === 'confirmed') {
-          confirmed = true
-          // If the check only returned a marker, the prior report is still
-          // current as long as the check did not change the screen.
-          held = check.evidence.trim() ||
-            (performedLines.length === stepsBeforeCheck ? finalRoundText : '')
-          suppressed = !held.trim()
-          publishAgent({ phase: 'done', completed: true, step: 0, total: 0, label: 'Готово', plan: [] })
-        } else if (check.outcome === 'pending') {
-          held = check.evidence
-          suppressed = false
-          publishAgent({ phase: 'done', completed: false, step: 0, total: 0,
-            label: 'Результат пока не подтверждён', plan: [] })
-        } else if (check.outcome === 'unconfirmed') {
-          // Looked, and the request is not fulfilled. The row must not claim
-          // success, and the model's own words — what it actually sees — are the
-          // answer, because a screenshot is a better explanation than a status.
-          publishAgent({
-            phase: 'error',
-            step: 0,
-            total: 0,
-            label: '',
-            plan: [],
-            message: 'По экрану не видно, что просьба выполнена.'
-          })
-          // The check's words are the answer: what is on the screen, described by
-          // the model that just looked at it, instead of a status word about a
-          // claim nobody could confirm. Whatever the turn narrated earlier stays
-          // dropped — a plan ran, so those sentences came before it.
-          suppressed = false
-          held = check.evidence
-        }
-        // `not-run` means it never got to look (no screenshot): the check has
-        // already said why, and the honest "не подтверждено" stands.
-      }
+        const round = await streamRound({
+          messages: turn.messages,
+          requestId: request.requestId,
+          maxTokens: turn.maxTokens,
+          signal: abort.signal,
+          canDraw: turn.canDraw,
+          area: turn.area,
+          apiKey,
+          drawingTargets,
+          revealText: request.voice
+        })
+        if (abort.signal.aborted || session !== turnSession) return
 
-      // The final report replaces any narration streamed during a typed turn.
-      if (suppressed) session.answer = ''
-      else {
-        if (held.trim() || session.rounds > 0) session.answer = held
+        const webLookup = !refine && round.webLookup && allowsWebLookup(request.prompt)
+        trace('tool.route', { backend: webLookup ? 'web-search' : 'text',
+          reason: webLookup ? 'search-marker' : 'plain-response' })
+        const webAnswer = webLookup
+          ? await timed('web.search', () => searchWeb(request.prompt, settings, apiKey, abort.signal))
+          : ''
+        if (abort.signal.aborted || session !== turnSession) return
+
+        // The round's prose is taken from the round, not from what the stream
+        // happened to append: the parser is the authority on what the answer is,
+        // and a delta dropped because the card closed mid-stream must not leave a
+        // half-sentence behind as if it were the whole answer.
+        session.answer = webLookup ? webAnswer : round.text
         session.answer = emptyAnswerFallback(session.answer, session.annotations.length) || session.answer
+        outcome = 'answer'
+        reason = webLookup ? 'search-response' : 'plain-response'
       }
 
-      // Keep the previous request even when the agent showed only a status row.
-      // Record confirmation only when the result was verified on screen.
-      const rememberedAnswer = suppressed
-        ? confirmed ? 'Выполнение подтверждено по экрану.' : 'Выполнение просьбы не подтверждено.'
-        : session.answer
-      const entry = remember(session, request, rememberedAnswer, bundleId)
+      const entry = remember(session, request, agentAcknowledged ? 'Готово.' : session.answer, bundleId)
       const latestSettings = getSettings()
       if (entry && !refine && useHistory && latestSettings.rememberConversation) {
         saveCommand(entry.question, bundleId, latestSettings.excludedApps)
       }
-
-      outcome = confirmed ? 'screen-confirmed' : webLookup ? 'answer'
-        : rounds?.interrupted ? 'interrupted' : performedLines.length || claimedDone ? 'unconfirmed' : 'answer'
-      reason = confirmed ? 'model-screen-verdict' : webLookup ? 'search-response'
-        : rounds?.interrupted ? 'runner-stopped' : outcome === 'unconfirmed' ? 'no-evidence' : 'plain-response'
 
       const done: StreamEvent = {
         type: 'done',
@@ -1181,8 +1108,11 @@ export function createOverlayController(host: OverlayHost) {
         annotations: session.annotations.length
       }
       emit(CH.overlay.stream, done)
-      if (session.answer.trim()) {
-        if (request.voice || performedLines.length || claimedDone || !host.window()?.isVisible()) {
+      if (agentAcknowledged || session.answer.trim()) {
+        // A voice turn, an agent turn and a card that was hidden while it waited
+        // all end with the answer arriving rather than streaming: the card has to
+        // be brought back to show it.
+        if (request.voice || useAgent || !host.window()?.isVisible()) {
           host.showInactive(INITIAL_HEIGHT)
         }
       } else if (request.voice) {
@@ -1208,7 +1138,7 @@ export function createOverlayController(host: OverlayHost) {
           if (outcome === 'timeout') fail('Время выполнения истекло. Результат не подтверждён.', true)
           else if (abort.signal.reason === STOP_AGENT) {
             if (agent.last().phase !== 'aborted') publishAgent({
-              phase: 'aborted', step: 0, total: 0, label: '', plan: [], message: 'Остановлено.'
+              phase: 'aborted', step: 0, total: 0, label: '', message: 'Остановлено.'
             })
             emit(CH.overlay.stream, { type: 'done', requestId: request.requestId, text: '', annotations: 0 } satisfies StreamEvent)
           }
@@ -1218,6 +1148,31 @@ export function createOverlayController(host: OverlayHost) {
       trace('turn.finished', { aborted: abort.signal.aborted, rounds: turnSession.rounds })
       if (turnSession.abort === abort) turnSession.abort = null
       endAgentTurn(glowTurn)
+    }
+  }
+
+  /**
+   * The provider configuration, in the shape the agent's process expects.
+   *
+   * The key is handed over per run and never written anywhere the agent could
+   * keep it: the agent is a child process of this app, and the app already owns
+   * the keychain entry. Duplicating it into the agent's own config file would be
+   * a second copy of a secret, with a second lifetime to get wrong.
+   */
+  function agentProvider(settings: ReturnType<typeof getSettings>, apiKey: string): AgentProvider {
+    return {
+      wire: settings.provider === 'anthropic' ? 'anthropic' : 'openai',
+      baseUrl: resolveBaseUrl(settings.provider, settings.baseUrls[settings.provider]),
+      model: resolveModel(settings) ?? '',
+      apiKey,
+      maxTokens: settings.maxTokens,
+      temperature: settings.temperature,
+      // OpenRouter asks for attribution headers on every request, and the agent
+      // builds its own HTTP client — it has no idea which gateway this is. The
+      // writer's provider carries them; the agent's has to be told.
+      headers: settings.provider === 'openrouter'
+        ? { 'HTTP-Referer': 'https://github.com/smart-cursor', 'X-Title': 'Smart Cursor' }
+        : undefined
     }
   }
 
@@ -1313,9 +1268,16 @@ export function createOverlayController(host: OverlayHost) {
     emit,
     agentAvailability: () => agent.availability(),
     setAgentEnabled,
+    /** Answers the question the card is showing, if it is still the same one. */
+    answerAgent: (id: string, allow: boolean, remember: boolean) => agent.answer(id, allow, remember),
+    /** Ends the agent process; called on quit so none outlives the window. */
+    disposeAgent: () => agent.dispose(),
     stopAgent: () => {
+      // Both halves are stopped, always: the writer's stream and the agent's run
+      // are exclusive per turn, so a stop that only reached one of them would
+      // look like a stop that did nothing.
+      agent.stop()
       if (session?.abort) session.abort.abort(STOP_AGENT)
-      else agent.stop()
     },
     target: (): ActiveAppInfo | null => session?.target ?? null,
     isOpen: (): boolean => Boolean(session && host.window()?.isVisible()),

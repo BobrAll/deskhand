@@ -14,14 +14,6 @@ export type ProviderId = 'openrouter' | 'openai' | 'anthropic'
  */
 export type ResponseMode = 'insert' | 'analyze'
 
-export interface QuickAction {
-  id: string
-  label: string
-  prompt: string
-  /** `insert` strips markdown, `analyze` keeps it. */
-  mode: ResponseMode
-}
-
 /** What a finished transcript does: ask the model, or type it into the app. */
 type VoiceAction = 'command' | 'dictate'
 
@@ -49,67 +41,42 @@ export interface VoiceSettings {
 }
 
 /**
- * Trackpad gestures: three fingers are the whole interface.
- *
- * One contact, two actions, and only time tells them apart — a short touch opens
- * the card, a longer one records. `holdMs` is that boundary, and it is a setting
- * because "short" is a personal threshold: a firm tap is 80 ms, a deliberate one
- * can be 250 ms, and someone who talks with their hands needs more room before a
- * brush of the pad becomes a recording.
- *
- * Gestures are additive: the keyboard shortcuts keep working exactly as before,
- * so a Mac without a trackpad loses nothing.
- */
-export interface GestureSettings {
-  enabled: boolean
-  /**
-   * How many fingers the gesture uses. Fixed at three: two are scroll and
-   * right-click territory and four belong to Mission Control, so a configurable
-   * count would only offer ways to break the system's own gestures.
-   */
-  fingers: number
-  /** How long the fingers must stay down before a tap becomes a hold, in ms. */
-  holdMs: number
-}
-
-/**
  * Agent mode: the assistant may take over the mouse and the keyboard.
  *
  * It is off by default and gated on three things at once — this switch, the
  * Accessibility permission (macOS only lets a trusted process post events into
- * another app) and an image of the screen to aim at. Every one of them can be
- * missing, so "enabled" here means "may", not "will".
+ * another app) and the agent binary itself. Every one of them can be missing, so
+ * "enabled" here means "may", not "will", and the card names whichever one is
+ * actually blocking.
  *
- * The numbers are deliberately slow by default. A machine that clicks four
- * times a second cannot be stopped by a human, and the point of the mode is that
- * the user keeps the last word: `startDelayMs` is the window in which Escape
- * still works before anything happens at all.
+ * The user keeps the last word in three ways, none of which is a setting: Escape,
+ * a hand on the physical mouse, and the question the agent asks before anything
+ * that commits — sending, paying, deleting, granting access.
  */
 export interface AgentSettings {
-  /** Fingerprints of actions explicitly approved in the native dialog. */
+  /** Fingerprints of actions the user allowed forever, from the card's button. */
   rememberedApprovals: string[]
   /** Master switch. Off unless the user turned it on in the settings. */
   enabled: boolean
-  /** Pause before the first action of a request, so Escape can win. */
-  startDelayMs: number
-  /** Pause between two actions; macOS needs a beat to deliver each event. */
-  stepDelayMs: number
-  /** Maximum plan rounds, including the initial plan; final verification is separate. */
+  /**
+   * How many model turns one task may take.
+   *
+   * The agent decides its next call from the previous result, so this is a
+   * budget rather than a plan length: one turn can hold several calls, and a run
+   * that reaches the ceiling stops with what it has instead of looping. The
+   * ceiling is set by the user; only a floor of one is enforced.
+   */
   maxSteps: number
-  /** Let the assistant type text into the focused field. */
-  allowTyping: boolean
-  /** Let the assistant press shortcuts (⌘S, ⌘W, ⌘Tab…). */
-  allowShortcuts: boolean
   /** Moving the physical mouse takes control back immediately. */
   abortOnMouseMove: boolean
   /**
-   * Look at the screen once more before saying the request is done.
+   * Check the accessibility tree once more after the last call of a batch.
    *
-   * `@done` is the model's opinion about a frame that no longer exists: the plan
-   * has clicked, typed and pressed since the picture it reasoned about was
-   * taken. Without this the assistant reports success it has never seen, and the
-   * first thing the user notices is that the thing did not happen. One extra
-   * round is the price of the word «Готово» meaning something.
+   * The model's "готово" is an opinion about a frame that no longer exists: the
+   * agent has clicked and typed since the picture it reasoned about was taken.
+   * With this on, the last call of each batch is followed by a diff of the tree,
+   * and the model sees whether anything actually changed before it claims
+   * success. Off, the agent takes its own word for it.
    */
   verifyResult: boolean
 }
@@ -117,18 +84,22 @@ export interface AgentSettings {
 /**
  * Lifecycle of one agent run, mirrored into the overlay.
  *
- * `checking` is the turn after the last action and before "Готово": the plan has
- * run, and the assistant is looking at a fresh screenshot to decide whether the
- * request it was given is actually fulfilled. It is its own phase because
- * nothing is being pressed during it and the card must not say "Готово" while
- * the result is still unverified — that word is the whole claim the user is
- * checking against the screen.
+ * The card renders the phase, not a guess about it: `asking` is the run stopped
+ * on a question, `acting` is a call in flight, and `done` is the agent's own
+ * closing word rather than the host's optimism.
  */
-type AgentPhase =
+export type AgentPhase =
   | 'idle'
   | 'arming'
   | 'acting'
-  | 'checking'
+  /**
+   * The run is stopped in front of one call until the user allows or refuses it.
+   *
+   * Its own phase rather than a flag on `acting` because everything about the
+   * card changes with it: it becomes clickable, it stops counting steps, and the
+   * question is what it is showing.
+   */
+  | 'asking'
   | 'done'
   | 'aborted'
   | 'error'
@@ -148,30 +119,111 @@ export interface AgentAvailability {
   reason: string | null
 }
 
-/** One step of a plan, as it is shown in the card while it runs. */
+/**
+ * One thing the agent wants to do to the machine, as it asks for permission.
+ *
+ * The agent is the Swift process in `native/deskhand`; it asks before every
+ * mutating tool call and waits for the answer. The card is where that question
+ * is shown, because the question is about the window the user is looking at —
+ * a modal sheet from the main process would cover the very element the agent
+ * named, and a dialog that hides its own evidence is worse than no dialog.
+ */
+export interface AgentToolRequest {
+  /** Matches the answer back to the question that is waiting for it. */
+  id: string
+  /** The tool's own name: `click`, `type_text`, `press_key`, `set_value`… */
+  tool: string
+  /** Raw tool arguments, so the card can name the target without guessing. */
+  arguments: Record<string, unknown>
+  /**
+   * A stable fingerprint of what this call would do, computed by the agent.
+   *
+   * "Разрешить всегда" stores this, not the sentence around it: the same button
+   * in the same app is the same decision, while the same word in another app is
+   * a different one. Typed text is deliberately not part of it.
+   */
+  fingerprint: string
+  app?: string
+  bundleId?: string
+  role?: string
+  title?: string
+  label?: string
+  /** Typing into a field prepares text and commits nothing. */
+  textField?: boolean
+  /** What the model said it was doing, when it said anything. */
+  narration?: string
+}
+
+/** What the run is doing, as the card shows it while it happens. */
 export interface AgentEvent {
   phase: AgentPhase
-  /** The whole task succeeded, rather than just one intermediate plan. */
+  /** The whole task succeeded, rather than just one intermediate call. */
   completed?: boolean
-  /** The turn can recover from this error by observing the screen again. */
-  recoverable?: boolean
-  /** 1-based index of the action being performed; 0 while arming. */
+  /** 1-based model turn, and the budget it is counted against. */
   step: number
   total: number
-  /** What is happening, in the user's language ("Клик по «Экспорт»"). */
+  /** What is happening, in the user's language ("Нажимаю «Экспорт»"). */
   label: string
-  /** Every step of the plan, so the card can list what is still ahead. */
-  plan: string[]
   /**
-   * Steps that were dropped before running them, with the reason.
+   * Set while the run is waiting for the user to allow one call.
    *
-   * A plan is a suggestion, and the parts of it that were refused are as much
-   * the user's business as the parts that ran: silently doing five of six
-   * actions would leave them believing the sixth happened.
+   * Its presence is the whole state: the card renders the buttons from it and
+   * lifts its click-through while it is there. It is cleared by the answer, so a
+   * stale question can never outlive the run that asked it.
    */
-  skipped?: string[]
+  approval?: AgentToolRequest | null
+  /**
+   * What the agent has done so far, newest last.
+   *
+   * The plan is not known in advance any more — the agent decides its next call
+   * after seeing the result of the previous one — so the card shows the log it
+   * actually produced instead of a list it was handed at the start.
+   */
+  actions?: AgentActionRow[]
   /** Set on `error` / `aborted`: why the run stopped. */
   message?: string
+}
+
+/** One finished agent call, as the card lists it. */
+export interface AgentActionRow {
+  /** The tool the agent used, in its own words ("click", "type_text"). */
+  tool: string
+  /** What that meant for the user, in their language ("Клик по «Экспорт»"). */
+  label: string
+  /** `false` when the call failed and the agent had to change course. */
+  ok: boolean
+}
+
+/**
+ * How a run ended.
+ *
+ * The four cases the card has to tell apart are all here, and they are not
+ * variations of each other: an answer (something happened and the agent can say
+ * what), a stop (the user interrupted), a refusal (nothing was attempted) and a
+ * failure (something went wrong). Collapsing them into "empty answer" is how a
+ * blocked run used to look identical to a run that quietly did nothing.
+ */
+export interface AgentRunResult {
+  /** The agent's final answer, in the user's language. */
+  answer: string
+  /** What actually happened, one row per call, for the card and the history. */
+  actions: AgentActionRow[]
+  /** Set when the run stopped early, or when it could not start. */
+  message?: string
+  /** The user pressed Escape, or took the mouse. */
+  aborted?: boolean
+  /** Nothing was attempted: the mode is off or a permission is missing. */
+  blocked?: boolean
+  /**
+   * The run ended without finishing the task: it ran out of steps, or the loop
+   * guard caught it repeating itself.
+   *
+   * Distinct from `blocked`, which means the run never started, and from
+   * `aborted`, which means the user stopped it. This is the agent's own failure,
+   * and the one case where an answer exists but the task does not — so the card
+   * has to say so rather than show a checkmark over a task it did not finish.
+   */
+  incomplete?: boolean
 }
 
 /** State of the agent’s screen glow and its caption at the pointer. */
@@ -223,8 +275,6 @@ export interface VoiceStatus {
   installed: string[]
   /** Set when the keyboard listener could not be started. */
   listenerError: string | null
-  /** Set when the trackpad listener could not be started. */
-  gestureError: string | null
 }
 
 export interface DownloadProgress {
@@ -263,7 +313,6 @@ export interface AppSettings {
   captureScreenshotByDefault: boolean
   screenshotMaxSide: number
   screenshotQuality: number
-  quickActions: QuickAction[]
   /** Bundle identifiers where Smart Cursor does nothing at all. */
   excludedApps: string[]
   rememberConversation: boolean
@@ -271,8 +320,6 @@ export interface AppSettings {
   onboardingCompleted: boolean
   /** Push-to-talk voice input (local whisper). */
   voice: VoiceSettings
-  /** Three-finger trackpad gestures: tap opens the card, hold records. */
-  gestures: GestureSettings
   /** Mouse-and-keyboard control ("агент"). Off by default. */
   agent: AgentSettings
 }
@@ -337,56 +384,6 @@ export interface PointerPayload {
   /** `false` drives the fade-out before the window is hidden. */
   visible: boolean
   shapes: PointerShape[]
-}
-
-/**
- * One physical thing the assistant asked the machine to do.
- *
- * Coordinates are normalised against the screenshot the model was shown, exactly
- * like annotations, so they survive Retina scaling and a downscaled image: the
- * runner maps them onto `ScreenshotInfo.area` once, in points, and the helper
- * only ever sees screen points.
- */
-export type AgentClickButton = 'left' | 'right' | 'double'
-
-export type AgentAction =
-  | {
-      kind: 'click'
-      at: Point01
-      button: AgentClickButton
-      /** What the model thinks it is clicking — shown in the card, never typed. */
-      label?: string
-      /** Local observation behind a numbered mark, checked again before input. */
-      observedTarget?: AxElementInfo
-    }
-  | { kind: 'click-marker'; marker: number; button: AgentClickButton; label?: string }
-  | { kind: 'move'; at: Point01; label?: string }
-  /** `text` is typed as-is into whatever field has focus. */
-  | { kind: 'type'; text: string }
-  /** A shortcut such as `cmd+s` or `enter`, parsed by `keys.ts`. */
-  | { kind: 'key'; combo: string }
-  | { kind: 'navigate'; url: string }
-  | { kind: 'browser' }
-  | { kind: 'scroll'; dx: number; dy: number }
-  | { kind: 'drag'; from: Point01; to: Point01; label?: string }
-  | { kind: 'wait'; ms: number }
-  /** The model says the task is finished; nothing is executed. */
-  | { kind: 'done'; label?: string }
-  /**
-   * The model asks to look at the screen again before deciding what is next.
-   *
-   * It exists so a continuation is a decision the model makes rather than
-   * something every turn pays for: an answer that clicks one button and stops
-   * costs one request, and only a plan that genuinely cannot finish without
-   * seeing the result spends a second one.
-   */
-  | { kind: 'look' }
-
-/** One action as it is about to run, with everything resolved. */
-export interface AgentPlanStep {
-  action: AgentAction
-  /** Human-readable line for the card ("Клик по «Экспорт»"). */
-  label: string
 }
 
 /**
@@ -530,7 +527,6 @@ export interface OverlayState {
   context: ContextSnapshot
   flags: ContextFlags
   defaults: ContextFlags
-  quickActions: QuickAction[]
   /** Set when provider/model/key are not ready; the overlay still opens. */
   setupNotice: OverlayNotice | null
   warnings: string[]
@@ -550,38 +546,6 @@ export type StreamEvent =
   | { type: 'done'; requestId: string; text: string; annotations: number }
   | { type: 'error'; requestId: string; message: string; retryable: boolean }
 
-/**
- * A completed plan waiting for the runner: what the model asked to do and the
- * frame its coordinates were measured against.
- */
-export interface AgentRunRequest {
-  requestId: string
-  /** Prompt that produced the plan, so a continuation keeps the same intent. */
-  prompt: string
-  steps: AgentPlanStep[]
-  /** Screen rectangle the normalised coordinates refer to, in points. */
-  area: ScreenRect | null
-  /** `true` when the plan ended with `@done` — nothing left to look at. */
-  finished: boolean
-  /** A previous batch in this request has already had an arming pause. */
-  continuing?: boolean
-  /** Foreground process associated with the current observation, if known. */
-  observedPid?: number
-  observedWindow?: Pick<ActiveAppInfo, 'pid' | 'windowId' | 'windowTitle' | 'bounds'>
-  /** The caller requires a coherent observation before sending desktop input. */
-  requireObservation?: boolean
-  /**
-   * `true` when the caller is going to check the result on a fresh screenshot
-   * before it says anything about success.
-   *
-   * The runner would otherwise announce «Готово» the moment the last step
-   * returned, and that word is precisely the claim under test: it must not appear
-   * for a single frame and then be taken back. With this flag the run ends on a
-   * neutral "смотрю, что получилось", and the caller owns the verdict.
-   */
-  verify?: boolean
-}
-
 /** Sent to the overlay whenever the drawing layer gained or lost shapes. */
 export interface AnnotationsEvent {
   count: number
@@ -594,7 +558,6 @@ export interface ProviderInfo {
   defaultModel: string
   /** Used when the user leaves the base URL field empty. */
   defaultBaseUrl: string
-  popularModels: string[]
   supportsVision: boolean
   keyUrl: string
 }

@@ -1,981 +1,661 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+/**
+ * The agent controller: the three questions it answers for the card.
+ *
+ * Whether the run may start at all, whether it may do *this one thing*, and how
+ * to stop it. Everything else — coordinates, element indices, batching, checking
+ * its own clicks — belongs to the Swift agent and is deliberately not tested
+ * here: re-asserting it in TypeScript would only prove that a mock agrees with
+ * itself.
+ *
+ * The sidecar is faked at its own seam (a stream of `AgentSidecarEvent`s), so
+ * what these tests pin down is the mapping from the agent's events to what the
+ * user sees, and the handshake that a blocked run depends on.
+ */
 
-import type { AgentEvent, AgentPlanStep, AppSettings, AxProbe, ScreenRect } from '@shared/types'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { AGENT_MIN_OUTPUT_TOKENS } from '@shared/defaults'
+import type { AgentEvent, AgentToolRequest } from '@shared/types'
 
 const state = vi.hoisted(() => ({
-  settings: {
-    agent: {
-      enabled: true,
-      startDelayMs: 0,
-      stepDelayMs: 0,
-      maxSteps: 6,
-      allowTyping: true,
-      allowShortcuts: true,
-      abortOnMouseMove: true,
-      verifyResult: false,
-      rememberedApprovals: []
-    }
-  },
-  binary: '/bin/helper' as string | null,
+  enabled: true,
+  binary: '/tmp/deskhand-agent' as string | null,
+  helper: '/tmp/helper' as string | null,
   trusted: true,
-  openExternal: vi.fn(async (_url: string) => undefined),
-  confirm: vi.fn(async () => ({ response: 1 })),
-  helper: {
-    activate: true,
-    front: null as null | { bundleId: string; pid: number; windowId?: number; bounds?: ScreenRect | null; windowTitle?: string | null },
-    move: true,
-    click: true,
-    drag: true,
-    scroll: true,
-    type: true,
-    key: true,
-    probe: null as null | AxProbe,
-    focused: null as null | Record<string, unknown>
-  },
-  calls: [] as Array<{ name: string; args: unknown[] }>,
-  abortHandler: null as null | ((reason: 'escape' | 'mousemove') => void),
-  watcherStopped: 0,
-  hideCursor: 0,
-  cursorPoint: { x: 10, y: 20 },
-  typeOperation: null as null | ((signal: AbortSignal) => Promise<boolean>)
+  remembered: [] as string[],
+  maxSteps: 8,
+  abortOnMouseMove: true,
+  verifyResult: true,
+  /** Events the controller will receive, pushed by each test. */
+  emit: (_event: unknown) => {},
+  runRejects: null as Error | null,
+  approvals: [] as { id: string; allow: boolean; reason?: string }[],
+  cancels: 0,
+  runs: [] as unknown[],
+  /** Everything the controller asked the trace to record. */
+  traceEvents: [] as Record<string, unknown>[]
 }))
 
+vi.mock('./trace', () => ({
+  trace: (event: string, fields: Record<string, unknown> = {}) => {
+    state.traceEvents.push({ event, ...fields })
+  },
+  // The controller runs inside a turn of its own when the caller did not open
+  // one; in these tests the turn is irrelevant, so it just runs the work.
+  traceWithin: (_fields: unknown, work: () => Promise<unknown>) => work()
+}))
 vi.mock('electron', () => ({
-  dialog: { showMessageBox: state.confirm },
-  shell: { openExternal: state.openExternal },
-  screen: { getCursorScreenPoint: () => state.cursorPoint },
-  systemPreferences: { isTrustedAccessibilityClient: () => state.trusted }
+  systemPreferences: { isTrustedAccessibilityClient: () => state.trusted },
+  app: { getPath: () => '/tmp', getVersion: () => '0.0.0' }
 }))
-
 vi.mock('../native/helper', () => ({
-  helperBinary: () => state.binary,
-  helperActivate: async (target: unknown) => {
-    state.calls.push({ name: 'activate', args: [target] })
-    return state.helper.activate
-  },
-  helperFront: async () => {
-    state.calls.push({ name: 'front', args: [] })
-    return state.helper.front
-  },
-  helperOpenBrowser: async () => {
-    state.calls.push({ name: 'open-browser', args: [] })
-    state.helper.front = { bundleId: 'com.example.browser', pid: 76 }
-    return state.helper.front.bundleId
-  },
-  helperMoveMouse: async (x: number, y: number) => {
-    state.calls.push({ name: 'move', args: [x, y] })
-    return state.helper.move
-  },
-  helperClick: async (x: number, y: number, button: string) => {
-    state.calls.push({ name: 'click', args: [x, y, button] })
-    return state.helper.click
-  },
-  helperDrag: async (from: unknown, to: unknown) => {
-    state.calls.push({ name: 'drag', args: [from, to] })
-    return state.helper.drag
-  },
-  helperScroll: async (dx: number, dy: number) => {
-    state.calls.push({ name: 'scroll', args: [dx, dy] })
-    return state.helper.scroll
-  },
-  helperTypeText: async (text: string, target: { signal: AbortSignal }) => {
-    state.calls.push({ name: 'type', args: [text] })
-    return state.typeOperation?.(target.signal) ?? state.helper.type
-  },
-  helperPressKey: async (keyCode: number, flags: number) => {
-    state.calls.push({ name: 'key', args: [keyCode, flags] })
-    return state.helper.key
-  },
-  helperProbe: async (pid: number | null, point: unknown) => {
-    state.calls.push({ name: 'probe', args: [pid, point] })
-    return state.helper.probe
-  },
-  helperFocused: async (pid: number | null) => {
-    state.calls.push({ name: 'focused', args: [pid] })
-    return state.helper.focused
-  },
-  watchForAbort: (_options: unknown, onAbort: (reason: 'escape' | 'mousemove') => void) => {
-    state.abortHandler = onAbort
-    return {
-      stop: () => {
-        state.watcherStopped += 1
+  helperBinary: () => state.helper,
+  watchForAbort: () => ({ stop: vi.fn() })
+}))
+vi.mock('../settings/store', () => ({
+  getSettings: () => ({
+    agent: {
+      enabled: state.enabled,
+      maxSteps: state.maxSteps,
+      abortOnMouseMove: state.abortOnMouseMove,
+      verifyResult: state.verifyResult,
+      rememberedApprovals: state.remembered
+    }
+  }),
+  patchSettings: (patch: { agent: { rememberedApprovals: string[] } }) => {
+    state.remembered = patch.agent.rememberedApprovals
+  }
+}))
+vi.mock('./sidecar', () => ({
+  agentBinary: () => state.binary,
+  AgentSidecar: class {
+    onEvent(handler: (event: unknown) => void) {
+      state.emit = handler
+      return () => {
+        state.emit = () => {}
       }
     }
+    async run(options: unknown) {
+      state.runs.push(options)
+      if (state.runRejects) throw state.runRejects
+    }
+    approve(id: string, allow: boolean, reason?: string) {
+      state.approvals.push({ id, allow, ...(reason ? { reason } : {}) })
+    }
+    cancel() {
+      state.cancels += 1
+    }
+    dispose() {}
   }
 }))
 
-vi.mock('../settings/store', () => ({
-  getSettings: () => state.settings,
-  patchSettings: (patch: Partial<AppSettings>) => Object.assign(state.settings, patch)
-}))
+const { createAgentController } = await import('./index')
 
-vi.mock('../util', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../util')>()
+/** A confirmation request, with the shape the agent really sends. */
+function call(overrides: Partial<AgentToolRequest> = {}): AgentToolRequest {
   return {
-    ...actual,
-    delay: async () => undefined,
-    waitFor: async (check: () => Promise<boolean> | boolean) => Boolean(await check())
+    id: 'call-1',
+    tool: 'click',
+    arguments: {},
+    fingerprint: 'a'.repeat(64),
+    app: 'Safari',
+    title: 'Купить',
+    ...overrides
   }
-})
+}
 
-vi.mock('./cursor', () => ({
-  hideAgentCursor: () => {
-    state.hideCursor += 1
+const PROVIDER = {
+  wire: 'openai' as const, baseUrl: 'https://example.test', model: 'm',
+  apiKey: 'k', maxTokens: 1024, temperature: 0
+}
+
+function harness(options: { maxTokens?: number } = {}) {
+  const events: AgentEvent[] = []
+  const passthrough: boolean[] = []
+  const controller = createAgentController({
+    emit: (event) => events.push(event),
+    setPassthrough: (active) => passthrough.push(active)
+  })
+  return {
+    controller,
+    events,
+    passthrough,
+    /** The last thing the card was told. */
+    last: () => events.at(-1)!,
+    /** Everything this run asked the trace to record. */
+    trace: () => state.traceEvents.filter((line) => line.event !== 'agent.start'),
+    run: (prompt = 'Нажми «Купить»') => controller.run({
+      prompt,
+      appName: 'Safari',
+      windowTitle: 'Магазин',
+      provider: { ...PROVIDER, ...(options.maxTokens ? { maxTokens: options.maxTokens } : {}) }
+    })
   }
-}))
-
-import { createAgentController } from './index'
-
-const area: ScreenRect = { x: 0, y: 0, width: 1000, height: 1000 }
-
-function probe(targets: AxProbe['targets'] = []): AxProbe {
-  return { pid: 42, app: 'Safari', chain: [], targets, focused: null, elapsedMs: 3 }
-}
-
-function step(action: AgentPlanStep['action'], label = 'шаг'): AgentPlanStep {
-  return { action, label }
-}
-
-function makeHost() {
-  const host = {
-    confirmationWindow: () => ({ isDestroyed: () => false }) as never,
-    events: [] as AgentEvent[],
-    passthrough: [] as boolean[],
-    targetValue: { bundleId: 'com.apple.Safari', pid: 42 } as { bundleId: string; pid: number } | null,
-    setPassthrough: (active: boolean) => {
-      host.passthrough.push(active)
-    },
-    emit: (event: AgentEvent) => {
-      host.events.push(event)
-    },
-    target: () => host.targetValue
-  }
-  return host
-}
-
-type Host = ReturnType<typeof makeHost>
-
-function last(host: Host): AgentEvent {
-  return host.events[host.events.length - 1]
-}
-
-function ran(name: string): number {
-  return state.calls.filter((call) => call.name === name).length
 }
 
 beforeEach(() => {
-  state.confirm.mockReset().mockResolvedValue({ response: 1 })
-  state.settings = {
-    agent: {
-      enabled: true,
-      startDelayMs: 0,
-      stepDelayMs: 0,
-      maxSteps: 6,
-      allowTyping: true,
-      allowShortcuts: true,
-      abortOnMouseMove: true,
-      verifyResult: false,
-      rememberedApprovals: []
-    }
-  }
-  state.binary = '/bin/helper'
+  state.enabled = true
+  state.binary = '/tmp/deskhand-agent'
+  state.helper = '/tmp/helper'
   state.trusted = true
-  state.helper = {
-    activate: true,
-    front: { bundleId: 'com.apple.Safari', pid: 42 },
-    move: true,
-    click: true,
-    drag: true,
-    scroll: true,
-    type: true,
-    key: true,
-    probe: null,
-    focused: null
-  }
-  state.calls = []
-  state.abortHandler = null
-  state.watcherStopped = 0
-  state.hideCursor = 0
-  state.cursorPoint = { x: 10, y: 20 }
-  vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+  state.remembered = []
+  state.maxSteps = 8
+  state.abortOnMouseMove = true
+  state.verifyResult = true
+  state.emit = () => {}
+  state.runRejects = null
+  state.approvals = []
+  state.cancels = 0
+  state.runs = []
+  state.traceEvents = []
 })
 
-afterEach(() => {
-  vi.restoreAllMocks()
-})
+describe('availability: three separate reasons, three separate fixes', () => {
+  it('names the switch when the mode is off', () => {
+    state.enabled = false
+    const { controller } = harness()
 
-describe('availability: the three reasons a plan cannot run', () => {
-  it('is ready when the mode, the helper and the grant are all there', () => {
-    const agent = createAgentController(makeHost())
-
-    expect(agent.availability()).toEqual({ enabled: true, ready: true, reason: null })
-  })
-
-  it('names a disabled mode first', () => {
-    state.settings.agent.enabled = false
-    state.binary = null
-    const agent = createAgentController(makeHost())
-
-    expect(agent.availability()).toEqual({
-      enabled: false,
-      ready: false,
-      reason: 'Агентный режим выключен в настройках.'
+    expect(controller.availability()).toEqual({
+      enabled: false, ready: false, reason: 'Агентный режим выключен в настройках.'
     })
   })
 
-  it('names a missing helper', () => {
+  it('names the build when the binary is missing', () => {
     state.binary = null
-    const agent = createAgentController(makeHost())
+    const { controller } = harness()
 
-    expect(agent.availability()).toEqual({
-      enabled: true,
-      ready: false,
-      reason: 'Нативный helper не собран — управлять мышью нечем.'
-    })
+    expect(controller.availability().reason).toContain('npm run build:agent')
   })
 
-  it('names a missing Accessibility grant', () => {
+  it('names the grant when Accessibility was never given', () => {
     state.trusted = false
-    const agent = createAgentController(makeHost())
+    const { controller } = harness()
 
-    expect(agent.availability()).toEqual({
-      enabled: true,
-      ready: false,
-      reason: 'Нужен доступ «Универсальный доступ», иначе macOS не даст нажимать за вас.'
-    })
+    expect(controller.availability()).toMatchObject({ enabled: true, ready: false })
+    expect(controller.availability().reason).toContain('Универсальный доступ')
+  })
+
+  it('is ready when all three agree', () => {
+    expect(harness().controller.availability()).toEqual({ enabled: true, ready: true, reason: null })
   })
 })
 
-describe('execute: what stops a plan before it starts', () => {
-  it('refuses to run while the mode is off', async () => {
-    state.settings.agent.enabled = false
-    const host = makeHost()
-    const agent = createAgentController(host)
+describe('a run that is blocked', () => {
+  it('refuses without starting the agent, and says why', async () => {
+    state.enabled = false
+    const h = harness()
 
-    const result = await agent.execute({ steps: [step({ kind: 'done' })], area } as never)
+    const result = await h.run()
 
-    expect(result).toMatchObject({ finished: false, message: 'Агентный режим выключен в настройках.' })
-    expect(last(host).phase).toBe('error')
-    expect(state.calls).toHaveLength(0)
+    expect(result.blocked).toBe(true)
+    expect(result.message).toBe('Агентный режим выключен в настройках.')
+    expect(state.runs).toHaveLength(0)
+    expect(h.last().phase).toBe('error')
   })
 
-  it('refuses to run without a screen area', async () => {
-    const host = makeHost()
-    const agent = createAgentController(host)
+  it('does not make the card click-through for a run that never starts', async () => {
+    state.trusted = false
+    const h = harness()
 
-    const result = await agent.execute({ steps: [step({ kind: 'done' })], area: null } as never)
+    await h.run()
 
-    expect(result.message).toBe('Неизвестно, где на экране цель — нажимать некуда.')
-    expect(last(host).phase).toBe('error')
-  })
-
-  it('does nothing for an empty plan', async () => {
-    const host = makeHost()
-    const agent = createAgentController(host)
-
-    const result = await agent.execute({ steps: [], area } as never)
-
-    expect(result).toEqual({ finished: false, performed: [] })
-    expect(host.events).toHaveLength(0)
+    expect(h.passthrough).toEqual([])
   })
 })
 
-describe('execute: the shape of a run', () => {
-  it('makes the card click-through, arms, and restores the window afterwards', async () => {
-    const host = makeHost()
-    const agent = createAgentController(host)
+describe('a run that gave up', () => {
+  /**
+   * The agent reports a stop and then ends the run anyway, so a `done` always
+   * follows. Reading that `done` as success is what made a run that never sent
+   * the message draw a checkmark over a task it had not done.
+   */
+  it('does not report a run that ran out of steps as completed', async () => {
+    const h = harness()
+    const running = h.run()
 
-    await agent.execute({ steps: [step({ kind: 'move', at: { x: 0.5, y: 0.5 } })], area } as never)
+    await vi.waitFor(() => expect(state.runs).toHaveLength(1))
+    state.emit({ kind: 'stopped', reason: 'the step budget ran out' })
+    state.emit({ kind: 'done', complete: false, answer: 'Stopped after 3 steps without finishing the task.' })
 
-    expect(host.passthrough).toEqual([true, false])
-    expect(host.events[0]).toMatchObject({ phase: 'arming', step: 0, total: 1, label: 'Приготовился' })
+    const result = await running
+    expect(result.incomplete).toBe(true)
+    expect(result.answer).toBe('')
+    expect(h.last()).toMatchObject({ phase: 'done', completed: false })
   })
 
-  it('publishes the plan labels once, so the card can list the steps', async () => {
-    const host = makeHost()
-    const agent = createAgentController(host)
+  it('does not put the loop’s own English diagnostic in the answer', async () => {
+    const h = harness()
+    const running = h.run()
 
-    await agent.execute(
-      {
-        steps: [step({ kind: 'move', at: { x: 0.1, y: 0.1 } }, 'первый'), step({ kind: 'done' })],
-        area
-      } as never
-    )
+    await vi.waitFor(() => expect(state.runs).toHaveLength(1))
+    state.emit({ kind: 'stopped', reason: 'the step budget ran out' })
+    state.emit({ kind: 'done', complete: false, answer: 'Stopped after 3 steps without finishing the task.' })
 
-    expect(last(host).plan).toEqual(['первый', 'шаг'])
+    const result = await running
+    // The loop's closing line on this path is a diagnostic, not an answer, and
+    // it is written in English. The user asked in Russian for a message to be
+    // sent; they should not be shown a sentence about a step budget.
+    expect(result.answer).not.toContain('Stopped after')
+    expect(result.message).toContain('Не успел')
+    expect(result.message).toContain('задача осталась невыполненной')
   })
 
-  it('maps a fraction onto the captured area before moving the pointer', async () => {
-    const host = makeHost()
-    const agent = createAgentController(host)
-
-    await agent.execute({ steps: [step({ kind: 'move', at: { x: 0.5, y: 0.25 } })], area } as never)
-
-    const move = state.calls.find((call) => call.name === 'move')
-    expect(move?.args).toEqual([500, 250])
-  })
-
-  it('passes the click button through', async () => {
-    const host = makeHost()
-    const agent = createAgentController(host)
-
-    await agent.execute(
-      { steps: [step({ kind: 'click', at: { x: 0.5, y: 0.5 }, button: 'right' })], area } as never
-    )
-
-    expect(state.calls.find((call) => call.name === 'click')?.args).toEqual([500, 500, 'right'])
-  })
-
-  it('runs drag, scroll, type and key steps', async () => {
-    const host = makeHost()
-    const agent = createAgentController(host)
-
-    await agent.execute(
-      {
-        steps: [
-          step({ kind: 'drag', from: { x: 0, y: 0 }, to: { x: 1, y: 1 } }),
-          step({ kind: 'scroll', dx: 0, dy: -120 }),
-          step({ kind: 'type', text: 'привет' }),
-          step({ kind: 'key', combo: 'cmd+s' })
-        ],
-        area
-      } as never
-    )
-
-    expect(state.calls.find((call) => call.name === 'drag')?.args).toEqual([
-      { x: 0, y: 0 },
-      { x: 1000, y: 1000 }
-    ])
-    expect(state.calls.find((call) => call.name === 'scroll')?.args).toEqual([0, 120])
-    expect(state.calls.find((call) => call.name === 'type')?.args).toEqual(['привет'])
-    expect(state.calls.find((call) => call.name === 'key')?.args).toEqual([1, 0x00100000])
-  })
-
-  it('caps a wait step at ten seconds', async () => {
-    const host = makeHost()
-    const agent = createAgentController(host)
-    const delays: number[] = []
-    const util = await import('../util')
-    vi.spyOn(util, 'delay').mockImplementation(async (ms: number) => {
-      delays.push(ms)
-    })
-
-    await agent.execute({ steps: [step({ kind: 'wait', ms: 60_000 })], area } as never)
-
-    expect(delays).toEqual([10_000])
-  })
-
-  it('reports a finished plan on @done with «Готово»', async () => {
-    state.settings.agent.stepDelayMs = 420
-    const host = makeHost()
-    const agent = createAgentController(host)
-    const delay = vi.spyOn(await import('../util'), 'delay')
-
-    const result = await agent.execute(
-      { steps: [step({ kind: 'move', at: { x: 0.5, y: 0.5 } }), step({ kind: 'done' })], area } as never
-    )
-
-    expect(result).toMatchObject({ finished: true })
-    expect(last(host)).toMatchObject({ phase: 'done', label: 'Готово', step: 2, total: 2 })
-    expect(delay).not.toHaveBeenCalled()
-  })
-
-  it('says «Выполнено» when the steps ran out without a claim', async () => {
-    const host = makeHost()
-    const agent = createAgentController(host)
-
-    const result = await agent.execute(
-      { steps: [step({ kind: 'move', at: { x: 0.5, y: 0.5 } })], area } as never
-    )
-
-    expect(result.finished).toBe(false)
-    expect(last(host)).toMatchObject({ phase: 'done', label: 'Выполнено' })
-  })
-
-  it('withholds «Готово» when the caller is going to verify the result', async () => {
-    const host = makeHost()
-    const agent = createAgentController(host)
-
-    await agent.execute(
-      {
-        steps: [step({ kind: 'move', at: { x: 0.5, y: 0.5 } }), step({ kind: 'done' })],
-        area,
-        verify: true
-      } as never
-    )
-
-    expect(last(host).label).toBe('Проверяю результат')
-  })
-
-  it('stops at a failing step and names it', async () => {
-    state.helper.click = false
-    const host = makeHost()
-    const agent = createAgentController(host)
-
-    const result = await agent.execute(
-      {
-        steps: [step({ kind: 'click', at: { x: 0.5, y: 0.5 }, button: 'left' }, 'нажать')],
-        area
-      } as never
-    )
-
-    expect(result).toMatchObject({ finished: false, message: 'Не удалось выполнить: нажать' })
-    expect(result.performed).toEqual([{ label: 'нажать', ok: false }])
-    expect(last(host)).toMatchObject({ phase: 'error', label: 'нажать' })
-  })
-
-  it('always restores the window and hides the ring, even after a failure', async () => {
-    state.helper.move = false
-    const host = makeHost()
-    const agent = createAgentController(host)
-
-    await agent.execute({ steps: [step({ kind: 'move', at: { x: 0.5, y: 0.5 } })], area } as never)
-
-    expect(host.passthrough.at(-1)).toBe(false)
-    expect(state.hideCursor).toBeGreaterThan(0)
-    expect(state.watcherStopped).toBe(1)
-    expect(agent.isRunning()).toBe(false)
-  })
-})
-
-describe('execute: the guard on each step', () => {
-  it('refuses to type when typing is switched off', async () => {
-    state.settings.agent.allowTyping = false
-    const host = makeHost()
-    const agent = createAgentController(host)
-
-    const result = await agent.execute({ steps: [step({ kind: 'type', text: 'x' })], area } as never)
-
-    expect(result.message).toBe('Печать отключена в настройках агента.')
-    expect(ran('type')).toBe(0)
-  })
-
-  it('refuses a shortcut when shortcuts are switched off', async () => {
-    state.settings.agent.allowShortcuts = false
-    const host = makeHost()
-    const agent = createAgentController(host)
-
-    const result = await agent.execute({ steps: [step({ kind: 'key', combo: 'cmd+s' })], area } as never)
-
-    expect(result.message).toBe('Горячие клавиши отключены в настройках агента.')
-    expect(ran('key')).toBe(0)
-  })
-
-  it('refuses a combination it cannot press', async () => {
-    const host = makeHost()
-    const agent = createAgentController(host)
-
-    const result = await agent.execute({ steps: [step({ kind: 'key', combo: 'cmd+foo' })], area } as never)
-
-    expect(result.message).toBe('Неизвестная комбинация: cmd+foo')
-    expect(ran('key')).toBe(0)
-  })
-
-  it('refuses to type into a focused button', async () => {
-    state.helper.focused = { role: 'AXButton', pressable: true, title: 'Экспорт', pid: 42 }
-    const host = makeHost()
-    const agent = createAgentController(host)
-
-    const result = await agent.execute({ steps: [step({ kind: 'type', text: 'x' })], area } as never)
-
-    expect(result.message).toBe(
-      'Поле ввода не в фокусе (сейчас в фокусе «Экспорт») — текст не введён.'
-    )
-    expect(ran('type')).toBe(0)
-  })
-
-  it('types into a focused text field', async () => {
-    state.helper.focused = { role: 'AXTextField', editable: true, pid: 42 }
-    const host = makeHost()
-    const agent = createAgentController(host)
-
-    await agent.execute({ steps: [step({ kind: 'type', text: 'x' })], area } as never)
-
-    expect(ran('type')).toBe(1)
-  })
-
-  it('gives an app that reports no focus the benefit of the doubt', async () => {
-    state.helper.focused = null
-    const host = makeHost()
-    const agent = createAgentController(host)
-
-    await agent.execute({ steps: [step({ kind: 'type', text: 'x' })], area } as never)
-
-    expect(ran('type')).toBe(1)
-  })
-
-  it('ignores a focus that belongs to another app', async () => {
-    state.helper.focused = { role: 'AXButton', pressable: true, pid: 999 }
-    const host = makeHost()
-    const agent = createAgentController(host)
-
-    await agent.execute({ steps: [step({ kind: 'type', text: 'x' })], area } as never)
-
-    expect(ran('type')).toBe(1)
-  })
-})
-
-describe('execute: aiming through the Accessibility tree', () => {
-  it('clicks the centre of the element the model named', async () => {
-    state.helper.probe = probe([
-      {
-        role: 'AXButton',
-        title: 'Экспорт',
-        frame: { x: 400, y: 400, width: 100, height: 40 },
-        pressable: true
-      }
-    ])
-    const host = makeHost()
-    const agent = createAgentController(host)
-
-    await agent.execute(
-      {
-        steps: [
-          step({ kind: 'click', at: { x: 0.45, y: 0.42 }, button: 'left', label: 'Экспорт' })
-        ],
-        area
-      } as never
-    )
-
-    expect(state.calls.find((call) => call.name === 'click')?.args).toEqual([450, 420, 'left'])
-  })
-
-  it('marks a click that had to fall back on the model point', async () => {
-    state.helper.probe = null
-    const host = makeHost()
-    const agent = createAgentController(host)
-
-    await agent.execute(
-      { steps: [step({ kind: 'click', at: { x: 0.5, y: 0.5 }, button: 'left' }, 'Клик')], area } as never
-    )
-
-    const acting = host.events.find((event) => event.phase === 'acting')
-    expect(acting?.label).toBe('Клик · на глаз')
-  })
-
-  it('refuses a click that is known to be on another control', async () => {
-    state.helper.probe = probe([
-      {
-        role: 'AXButton',
-        title: 'Клавиатура',
-        frame: { x: 400, y: 400, width: 100, height: 40 },
-        pressable: true
-      }
-    ])
-    const host = makeHost()
-    const agent = createAgentController(host)
-
-    const result = await agent.execute(
-      {
-        steps: [
-          step({ kind: 'click', at: { x: 0.45, y: 0.42 }, button: 'left', label: 'Мышь' }, 'Мышь')
-        ],
-        area
-      } as never
-    )
-
-    expect(result.message).toBe('Под точкой «Клавиатура», а не «Мышь» — не нажимаю.')
-    expect(ran('click')).toBe(0)
-  })
-
-  it('reuses one tree for two steps that ask the same place', async () => {
-    state.helper.probe = probe([])
-    const host = makeHost()
-    const agent = createAgentController(host)
-
-    await agent.execute(
-      {
-        steps: [
-          step({ kind: 'move', at: { x: 0.5, y: 0.5 } }),
-          step({ kind: 'move', at: { x: 0.5, y: 0.5 } })
-        ],
-        area
-      } as never
-    )
-
-    // A move drops the cache (the screen changed), so both steps probe once each.
-    expect(ran('probe')).toBeGreaterThanOrEqual(1)
-  })
-})
-
-describe('execute: stopping a run', () => {
-  it('skips arming on a continuation and still stops on Escape between actions', async () => {
-    state.settings.agent.startDelayMs = 900
-    state.settings.agent.stepDelayMs = 420
-    const host = makeHost()
-    const agent = createAgentController(host)
-    const delay = vi.spyOn(await import('../util'), 'delay').mockImplementation(async () => {
-      state.abortHandler?.('escape')
-    })
-    const move = step({ kind: 'move', at: { x: 0.5, y: 0.5 } })
-    const result = await agent.execute({
-      requestId: 'continued', prompt: 'test', finished: false, continuing: true,
-      steps: [move, move], area
-    })
-
-    expect(delay).not.toHaveBeenCalledWith(900)
-    expect(result.message).toBe('Остановлено по Escape.')
-    expect(ran('move')).toBe(1)
-  })
-
-  it('aborts on Escape and says so', async () => {
-    state.settings.agent.startDelayMs = 50
-    const host = makeHost()
-    const agent = createAgentController(host)
-    const util = await import('../util')
-    vi.spyOn(util, 'delay').mockImplementation(async () => {
-      state.abortHandler?.('escape')
-    })
-
-    const result = await agent.execute(
-      { steps: [step({ kind: 'move', at: { x: 0.5, y: 0.5 } })], area } as never
-    )
-
-    expect(result.message).toBe('Остановлено по Escape.')
-    expect(last(host).phase).toBe('aborted')
-    expect(ran('move')).toBe(0)
-  })
-
-  it('aborts when the user takes the mouse', async () => {
-    state.settings.agent.startDelayMs = 50
-    const host = makeHost()
-    const agent = createAgentController(host)
-    const util = await import('../util')
-    vi.spyOn(util, 'delay').mockImplementation(async () => {
-      state.abortHandler?.('mousemove')
-    })
-
-    const result = await agent.execute(
-      { steps: [step({ kind: 'move', at: { x: 0.5, y: 0.5 } })], area } as never
-    )
-
-    expect(result.message).toBe('Остановлено: вы взяли мышь.')
-  })
-
-  it('reports a stop before the first action as cancelled', async () => {
-    state.settings.agent.startDelayMs = 50
-    const host = makeHost()
-    const agent = createAgentController(host)
-    const util = await import('../util')
-    vi.spyOn(util, 'delay').mockImplementation(async () => {
-      agent.stop()
-    })
-
-    const result = await agent.execute(
-      { steps: [step({ kind: 'move', at: { x: 0.5, y: 0.5 } })], area } as never
-    )
-
-    expect(result.message).toBe('Остановлено.')
-    expect(ran('move')).toBe(0)
-  })
-
-  it('stop() publishes «Остановлено» only while a run is in flight', async () => {
-    const host = makeHost()
-    const agent = createAgentController(host)
-
-    agent.stop()
-    expect(host.events).toHaveLength(0)
-
-    state.settings.agent.startDelayMs = 50
-    const util = await import('../util')
-    vi.spyOn(util, 'delay').mockImplementation(async () => {
-      expect(agent.isRunning()).toBe(true)
-      agent.stop()
-    })
-    await agent.execute({ steps: [step({ kind: 'move', at: { x: 0.5, y: 0.5 } })], area } as never)
-
-    expect(host.events.some((event) => event.phase === 'aborted')).toBe(true)
-  })
-
-  it('stops the watcher and restores the window on stop()', () => {
-    const host = makeHost()
-    const agent = createAgentController(host)
-
-    agent.stop()
-
-    expect(host.passthrough).toContain(false)
-  })
-})
-
-describe('execute: bringing the target app to the front', () => {
-  it('requires a new observation when an action switches apps inside one plan', async () => {
-    state.helper.front = { bundleId: 'com.apple.Safari', pid: 42 }
-    state.helper.probe = probe([])
-    const host = makeHost()
-    const emit = host.emit
-    host.emit = (event) => {
-      emit(event)
-      if (event.phase === 'acting' && event.label === 'Launch') {
-        state.helper.front = { bundleId: 'com.apple.Keynote', pid: 777 }
-      }
-    }
-    const agent = createAgentController(host)
-    const result = await agent.execute({ steps: [
-      step({ kind: 'key', combo: 'enter' }, 'Launch'),
-      step({ kind: 'type', text: 'Title' }),
-      step({ kind: 'move', at: { x: 0.5, y: 0.5 } })
-    ], area } as never)
-    expect(result).toMatchObject({ recoverable: true, performed: [{ label: 'Launch', ok: true }] })
-    expect(ran('type') + ran('move')).toBe(0)
-  })
-
-  it('blocks input when the observed app is already gone before the first action', async () => {
-    state.helper.front = { bundleId: 'com.apple.Terminal', pid: 55 }
-    const result = await createAgentController(makeHost()).execute({
-      requestId: 'stale', prompt: 'Впиши заголовок', finished: false, area, observedPid: 42,
-      steps: [step({ kind: 'type', text: 'Title' })]
-    })
-    expect(result).toMatchObject({ recoverable: true, performed: [] })
-    expect(ran('type')).toBe(0)
-  })
-
-  it('rejects a different window of the same process', async () => {
-    const observedWindow = { pid: 42, windowId: 11, bounds: area, windowTitle: 'Document' }
-    state.helper.front = { ...observedWindow, bundleId: 'com.example.fixture', windowId: 12 }
-    const result = await createAgentController(makeHost()).execute({
-      requestId: 'changed-window', prompt: 'Впиши заголовок', finished: false, area, observedPid: 42,
-      observedWindow, requireObservation: true, steps: [step({ kind: 'type', text: 'Title' })]
-    })
-    expect(result).toMatchObject({ recoverable: true, performed: [] })
-    expect(ran('type')).toBe(0)
-  })
-
-  it('cancels native input and waits for the helper before announcing a stop', async () => {
-    const host = makeHost()
-    const agent = createAgentController(host)
-    let finish!: (ok: boolean) => void
-    let started!: (signal: AbortSignal) => void
-    const signalReady = new Promise<AbortSignal>((resolve) => { started = resolve })
-    state.typeOperation = (signal) => {
-      started(signal)
-      return new Promise((resolve) => { finish = resolve })
-    }
-    try {
-      const run = agent.execute({ steps: [
-        step({ kind: 'type', text: 'Привет🙂' }), step({ kind: 'key', combo: 'enter' })
-      ], area } as never)
-      const signal = await signalReady
-      agent.stop()
-      expect(signal.aborted).toBe(true)
-      expect(last(host).phase).not.toBe('aborted')
-      finish(false)
-      await expect(run).resolves.toMatchObject({ message: 'Остановлено.' })
-      expect(last(host).phase).toBe('aborted')
-      expect(ran('key')).toBe(0)
-    } finally {
-      state.typeOperation = null
+  it('says what happened in Russian, with the ending the number needs', async () => {
+    for (const [total, ending] of [[1, '1 шаг'], [3, '3 шага'], [8, '8 шагов']] as const) {
+      state.maxSteps = total
+      state.runs = []
+      const h = harness()
+      const running = h.run()
+      await vi.waitFor(() => expect(state.runs).toHaveLength(1))
+      state.emit({ kind: 'stopped', reason: 'the step budget ran out' })
+      state.emit({ kind: 'done', complete: false, answer: 'Stopped.' })
+
+      const result = await running
+      expect(result.message).toContain(ending)
     }
   })
 
-  it('activates the target when the card itself is frontmost', async () => {
-    state.helper.front = null
-    const host = makeHost()
-    const agent = createAgentController(host)
+  it('does not treat a loop-guard warning as a failure', async () => {
+    // The guard warns and the run continues, so a run that recovered from it
+    // finished. Recording the warning as a stop is what made this ambiguous.
+    const h = harness()
+    const running = h.run()
 
-    await agent.execute({ steps: [step({ kind: 'done' })], area } as never)
+    await vi.waitFor(() => expect(state.runs).toHaveLength(1))
+    state.emit({ kind: 'warning', reason: 'the same call repeated without a change' })
+    state.emit({ kind: 'done', answer: 'Сообщение отправлено.', complete: true })
 
-    expect(ran('activate')).toBe(1)
+    const result = await running
+    expect(result.incomplete).toBeUndefined()
+    expect(result.answer).toBe('Сообщение отправлено.')
+    expect(h.last()).toMatchObject({ phase: 'done', completed: true })
   })
 
-  it('restores the app from the observation when the overlay is frontmost', async () => {
-    state.helper.front = null
-    const host = makeHost()
-    await createAgentController(host).execute({
-      requestId: 'observed', prompt: 'Проверь окно', finished: false, area, observedPid: 77,
-      steps: [step({ kind: 'done' })]
+  it('records the warning without turning it into a verdict', async () => {
+    const h = harness()
+    const running = h.run()
+
+    await vi.waitFor(() => expect(state.runs).toHaveLength(1))
+    state.emit({ kind: 'warning', reason: 'the same call repeated without a change' })
+    state.emit({ kind: 'done', answer: 'Готово.', complete: true })
+    await running
+
+    expect(h.trace().find((line) => line.event === 'agent.warned'))
+      .toMatchObject({ reason: 'the same call repeated without a change' })
+    expect(h.trace().some((line) => line.event === 'agent.stopped')).toBe(false)
+  })
+
+  it('names the loop guard when that is what stopped it', async () => {
+    const h = harness()
+    const running = h.run()
+
+    await vi.waitFor(() => expect(state.runs).toHaveLength(1))
+    state.emit({ kind: 'stopped', reason: 'the same call repeated without a change' })
+    state.emit({ kind: 'done', complete: false, answer: 'Stopped.' })
+
+    const result = await running
+    expect(result.incomplete).toBe(true)
+    expect(result.message).toContain('повторялось')
+  })
+
+  it('names the output limit when that is what stopped it', async () => {
+    // A different failure from running out of steps, and a different fix: the
+    // run had budget left, but every reply was cut in half. Telling the user to
+    // raise the step limit would send them to the wrong setting.
+    const h = harness()
+    const running = h.run()
+
+    await vi.waitFor(() => expect(state.runs).toHaveLength(1))
+    state.emit({ kind: 'stopped', reason: "the model's reply was cut off at the token limit" })
+    state.emit({ kind: 'done', complete: false, answer: 'Stopped: the reply was cut off.' })
+
+    const result = await running
+    expect(result.incomplete).toBe(true)
+    expect(result.message).toContain('токенов')
+  })
+
+  it('still reports the model’s own sentence when the run did finish', async () => {
+    const h = harness()
+    const running = h.run()
+
+    await vi.waitFor(() => expect(state.runs).toHaveLength(1))
+    state.emit({ kind: 'done', complete: true, answer: 'Сообщение отправлено.' })
+
+    const result = await running
+    expect(result.incomplete).toBeUndefined()
+    expect(result.answer).toBe('Сообщение отправлено.')
+    expect(h.last()).toMatchObject({ phase: 'done', completed: true })
+  })
+
+  it('records the stop and the step it happened on', async () => {
+    const h = harness()
+    const running = h.run()
+
+    await vi.waitFor(() => expect(state.runs).toHaveLength(1))
+    state.emit({ kind: 'step', step: 3, total: 3 })
+    state.emit({ kind: 'stopped', reason: 'the step budget ran out' })
+    state.emit({ kind: 'done', complete: false, answer: 'Stopped.' })
+    await running
+
+    expect(h.trace().find((line) => line.event === 'agent.stopped'))
+      .toMatchObject({ reason: 'the step budget ran out', step: 3 })
+  })
+})
+
+describe('a run that works', () => {
+  it('hands the card the click-through, then gives it back', async () => {
+    const h = harness()
+    const running = h.run()
+
+    // The card has to be click-through before the first call: it sits over the
+    // window the agent is about to press.
+    await vi.waitFor(() => expect(h.passthrough).toEqual([true]))
+    state.emit({ kind: 'done', complete: true, answer: 'Куплено.' })
+    await running
+
+    expect(h.passthrough).toEqual([true, false])
+  })
+
+  it('reports the agent’s own closing sentence as the answer', async () => {
+    const h = harness()
+    const running = h.run()
+
+    await vi.waitFor(() => expect(state.runs).toHaveLength(1))
+    state.emit({ kind: 'narration', step: 1, text: 'Нажимаю «Купить»' })
+    state.emit({ kind: 'result', step: 1, name: 'click', ok: true, text: 'ok', timing: {} })
+    state.emit({ kind: 'done', complete: true, answer: 'Товар в корзине.' })
+
+    const result = await running
+    expect(result.answer).toBe('Товар в корзине.')
+    expect(result.actions).toEqual([{ tool: 'click', label: 'Нажимаю «Купить»', ok: true }])
+  })
+
+  it('passes the task, the step budget and the verification flag through', async () => {
+    state.maxSteps = 5
+    state.verifyResult = false
+    const h = harness()
+    const running = h.run()
+
+    await vi.waitFor(() => expect(state.runs).toHaveLength(1))
+    state.emit({ kind: 'done', complete: true, answer: '' })
+    await running
+
+    expect(state.runs[0]).toMatchObject({
+      maxSteps: 5,
+      verifyActions: false,
+      // The app and the window are context, not instructions: the agent decides
+      // where to look by calling its own tool.
+      task: 'Приложение: Safari\nОкно: Магазин\n\nНажми «Купить»'
     })
-    expect(state.calls.find((call) => call.name === 'activate')?.args).toEqual([{ bundleId: '', pid: 77 }])
   })
 
-  it('reuses the frontmost app without activating it again', async () => {
-    const host = makeHost()
-    const agent = createAgentController(host)
+  it('gives an agent step more output room than the writer’s 1024', async () => {
+    // A tool call with nested JSON does not fit in 1024 tokens: the reply is cut
+    // off mid-call, the half-written call parses into nothing, and the step
+    // arrives as an empty answer. The run is then lost with no sign of why.
+    const h = harness()
+    const running = h.run()
 
-    await agent.execute({ steps: [step({ kind: 'done' })], area } as never)
+    await vi.waitFor(() => expect(state.runs).toHaveLength(1))
+    state.emit({ kind: 'done', complete: true, answer: '' })
+    await running
 
-    expect(ran('activate')).toBe(0)
-    expect(ran('front')).toBe(1)
+    const provider = (state.runs[0] as { provider: { maxTokens: number } }).provider
+    expect(provider.maxTokens).toBeGreaterThanOrEqual(AGENT_MIN_OUTPUT_TOKENS)
   })
 
-  it('leaves a third app in front, because the plan was written against it', async () => {
-    state.helper.front = { bundleId: 'com.apple.systempreferences', pid: 777 }
-    const host = makeHost()
-    const agent = createAgentController(host)
+  it('keeps a larger budget the user chose instead of lowering it', async () => {
+    const h = harness({ maxTokens: 8192 })
+    const running = h.run()
 
-    await agent.execute({ steps: [step({ kind: 'done' })], area } as never)
+    await vi.waitFor(() => expect(state.runs).toHaveLength(1))
+    state.emit({ kind: 'done', complete: true, answer: '' })
+    await running
 
-    expect(ran('activate')).toBe(0)
-  })
-
-  it('aims at the app that is in front now, not at the one the card was opened in', async () => {
-    state.helper.front = { bundleId: 'com.apple.systempreferences', pid: 777 }
-    state.helper.probe = probe([])
-    const host = makeHost()
-    const agent = createAgentController(host)
-
-    await agent.execute(
-      { steps: [step({ kind: 'move', at: { x: 0.5, y: 0.5 } })], area } as never
-    )
-
-    const probeCall = state.calls.find((call) => call.name === 'probe')
-    expect(probeCall?.args[0]).toBe(777)
+    const provider = (state.runs[0] as { provider: { maxTokens: number } }).provider
+    expect(provider.maxTokens).toBe(8192)
   })
 })
 
-describe('pointer and describe', () => {
-  it('reports the rounded pointer position', () => {
-    state.cursorPoint = { x: 10.4, y: 20.6 }
-    const agent = createAgentController(makeHost())
+describe('the question in the card', () => {
+  it('lifts the click-through, asks, and puts it back on "да"', async () => {
+    const h = harness()
+    const running = h.run()
+    await vi.waitFor(() => expect(h.passthrough).toEqual([true]))
 
-    expect(agent.pointer()).toEqual({ x: 10, y: 21 })
+    state.emit({ kind: 'approval', request: call() })
+
+    expect(h.last()).toMatchObject({ phase: 'asking', approval: expect.objectContaining({ id: 'call-1' }) })
+    // The card takes the mouse back for exactly as long as the question is open.
+    expect(h.passthrough).toEqual([true, false])
+
+    h.controller.answer('call-1', true, false)
+
+    expect(state.approvals).toEqual([{ id: 'call-1', allow: true }])
+    expect(h.last()).toMatchObject({ phase: 'acting', approval: null })
+    expect(h.passthrough).toEqual([true, false, true])
+
+    state.emit({ kind: 'done', complete: true, answer: 'Готово.' })
+    await running
   })
 
-  it('describes a shortcut as the card prints it', () => {
-    const agent = createAgentController(makeHost())
+  it('remembers a "разрешить всегда" by fingerprint, and nothing else', async () => {
+    const h = harness()
+    const running = h.run()
+    await vi.waitFor(() => expect(h.passthrough).toEqual([true]))
 
-    expect(agent.describe('cmd+s')).toBe('⌘S')
+    state.emit({ kind: 'approval', request: call() })
+    h.controller.answer('call-1', true, true)
+
+    expect(state.remembered).toHaveLength(1)
+    expect(state.remembered[0]).toMatch(/^[a-f0-9]{64}$/)
+
+    // The same fingerprint is no longer asked about…
+    state.emit({ kind: 'approval', request: call({ id: 'call-2' }) })
+    expect(h.last().phase).toBe('acting')
+    expect(state.approvals.at(-1)).toEqual({ id: 'call-2', allow: true })
+
+    // …but a different one still is.
+    state.emit({ kind: 'approval', request: call({ id: 'call-3', fingerprint: 'b'.repeat(64) }) })
+    expect(h.last().phase).toBe('asking')
+
+    h.controller.answer('call-3', false, false)
+    state.emit({ kind: 'done', complete: true, answer: '' })
+    await running
   })
 
-  it('starts with an idle event', () => {
-    const agent = createAgentController(makeHost())
+  it('turns a refusal into a stop, with the reason on the card', async () => {
+    const h = harness()
+    const running = h.run()
+    await vi.waitFor(() => expect(h.passthrough).toEqual([true]))
 
-    expect(agent.last()).toEqual({ phase: 'idle', step: 0, total: 0, label: '', plan: [] })
-  })
-})
+    state.emit({ kind: 'approval', request: call() })
+    h.controller.answer('call-1', false, false)
 
-describe('execute: one-action approval', () => {
-  const click = () => step({ kind: 'click', at: { x: 0.5, y: 0.5 }, button: 'left', label: 'Оплатить' })
+    expect(state.approvals).toEqual([{ id: 'call-1', allow: false, reason: 'Пользователь отклонил действие.' }])
+    expect(h.last()).toMatchObject({ phase: 'aborted', approval: null, message: 'Действие отклонено.' })
 
-  it('runs navigation and typing without a confirmation dialog', async () => {
-    await createAgentController(makeHost()).execute({ requestId: 'ordinary', prompt: 'test', finished: false, area,
-      steps: [step({ kind: 'click', at: { x: 0.5, y: 0.5 }, button: 'left' }),
-        step({ kind: 'type', text: 'поисковый запрос' }), step({ kind: 'key', combo: 'enter' })] })
-    expect(ran('click')).toBe(1)
-    expect(ran('type')).toBe(1)
-    expect(ran('key')).toBe(1)
-    expect(state.confirm).not.toHaveBeenCalled()
+    state.emit({ kind: 'cancelled' })
+    const result = await running
+    expect(result.aborted).toBe(true)
   })
 
-  it('cancels the entire plan without delivering input', async () => {
-    state.confirm.mockResolvedValue({ response: 0 })
-    const result = await createAgentController(makeHost()).execute({ requestId: 'safety-test', prompt: 'test', finished: false, steps: [click(), click()], area })
-    expect(result.finished).toBe(false)
-    expect(result.recoverable).not.toBe(true)
-    expect(ran('click')).toBe(0)
-    expect(state.confirm).toHaveBeenCalledTimes(1)
+  it('answers harmless calls itself, without troubling the user', async () => {
+    const h = harness()
+    const running = h.run()
+    await vi.waitFor(() => expect(h.passthrough).toEqual([true]))
+
+    // Scrolling is what the mode is for; asking about it would train the user to
+    // click "разрешить" without reading.
+    state.emit({ kind: 'approval', request: call({ id: 'call-1', tool: 'scroll', title: undefined }) })
+
+    expect(state.approvals).toEqual([{ id: 'call-1', allow: true }])
+    expect(h.passthrough).toEqual([true])
+
+    state.emit({ kind: 'done', complete: true, answer: '' })
+    await running
   })
 
-  it('does not reuse approval for the next step', async () => {
-    state.confirm.mockResolvedValueOnce({ response: 1 }).mockResolvedValueOnce({ response: 0 })
-    await createAgentController(makeHost()).execute({ requestId: 'safety-test', prompt: 'test', finished: false, steps: [click(), click()], area })
-    expect(ran('click')).toBe(1)
-    expect(state.confirm).toHaveBeenCalledTimes(2)
-  })
+  it('never lets a password be typed, and does not ask about it', async () => {
+    const h = harness()
+    const running = h.run()
+    await vi.waitFor(() => expect(h.passthrough).toEqual([true]))
 
-  it('remembers an explicit permanent approval across runs, only for the same action', async () => {
-    const request = { requestId: 'remembered', prompt: 'test', finished: false, area, steps: [click()] }
-    state.confirm.mockResolvedValueOnce({ response: 2 }).mockResolvedValue({ response: 0 })
-    await createAgentController(makeHost()).execute(request)
-    expect(state.confirm).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
-      buttons: ['Отменить', 'Разрешить один раз', 'Разрешить всегда']
-    }))
-    await createAgentController(makeHost()).execute(request)
-    expect(state.confirm).toHaveBeenCalledOnce()
-    expect(ran('click')).toBe(2)
-
-    await createAgentController(makeHost()).execute({ ...request,
-      steps: [step({ kind: 'click', at: { x: 0.5, y: 0.5 }, button: 'left', label: 'Удалить' })] })
-    expect(state.confirm).toHaveBeenCalledTimes(2)
-    expect(ran('click')).toBe(2)
-
-    state.settings.agent.rememberedApprovals = []
-    await createAgentController(makeHost()).execute(request)
-    expect(state.confirm).toHaveBeenCalledTimes(3)
-    expect(ran('click')).toBe(2)
-  })
-
-  it('fails closed when the dialog fails', async () => {
-    state.confirm.mockRejectedValue(new Error('dialog unavailable'))
-    await createAgentController(makeHost()).execute({ requestId: 'safety-test', prompt: 'test', finished: false, steps: [click()], area })
-    expect(ran('click')).toBe(0)
-  })
-
-  it('does not execute a late approval after stop or allow a concurrent run', async () => {
-    const agent = createAgentController(makeHost())
-    state.confirm.mockImplementationOnce(async () => {
-      agent.stop()
-      const other = await agent.execute({ requestId: 'safety-test', prompt: 'test', finished: false, steps: [click()], area })
-      expect(other.message).toContain('уже выполняет')
-      return { response: 1 }
+    state.emit({
+      kind: 'approval',
+      request: call({ id: 'call-1', tool: 'type_text', title: 'Пароль', fingerprint: '' })
     })
-    await agent.execute({ requestId: 'safety-test', prompt: 'test', finished: false, steps: [click()], area })
-    expect(ran('click')).toBe(0)
-    expect(agent.isRunning()).toBe(false)
+
+    expect(state.approvals).toEqual([
+      { id: 'call-1', allow: false, reason: 'Секреты и пароли введите вручную.' }
+    ])
+    // A refusal that is not the user's decision must not lift the click-through.
+    expect(h.passthrough).toEqual([true])
+
+    state.emit({ kind: 'done', complete: true, answer: '' })
+    await running
   })
 
-  it('rejects a changed target after approval', async () => {
-    state.confirm.mockImplementationOnce(async () => {
-      state.helper.probe = probe([{ role: 'AXButton', title: 'Оплатить',
-        frame: { x: 450, y: 450, width: 100, height: 100 }, pressable: true }])
-      return { response: 2 }
+  it('ignores an answer for a question that is no longer open', async () => {
+    const h = harness()
+    const running = h.run()
+    await vi.waitFor(() => expect(h.passthrough).toEqual([true]))
+
+    state.emit({ kind: 'approval', request: call() })
+    h.controller.answer('call-1', true, false)
+    // A second press, or a stale button: the run has already moved on.
+    h.controller.answer('call-1', false, false)
+
+    expect(state.approvals).toEqual([{ id: 'call-1', allow: true }])
+
+    state.emit({ kind: 'done', complete: true, answer: '' })
+    await running
+  })
+})
+
+describe('stopping', () => {
+  it('refuses the open question, cancels the agent and settles the run', async () => {
+    const h = harness()
+    const running = h.run()
+    await vi.waitFor(() => expect(h.passthrough).toEqual([true]))
+    state.emit({ kind: 'approval', request: call() })
+
+    h.controller.stop('Остановлено: вы взяли мышь.')
+
+    // A stop that did not answer the question would be a stop that never lands:
+    // the agent is blocked on it.
+    expect(state.approvals).toEqual([{ id: 'call-1', allow: false, reason: 'Отменено.' }])
+    expect(state.cancels).toBe(1)
+    expect(h.last()).toMatchObject({ phase: 'aborted', message: 'Остановлено: вы взяли мышь.' })
+
+    const result = await running
+    expect(result.aborted).toBe(true)
+    expect(h.passthrough).toEqual([true, false, false])
+  })
+
+  it('is safe with nothing running', () => {
+    const h = harness()
+    h.controller.stop()
+    expect(state.cancels).toBe(1)
+    expect(h.events).toHaveLength(0)
+  })
+})
+
+describe('the agent dying mid-run', () => {
+  it('reports the failure on the card instead of hanging in "acting"', async () => {
+    const h = harness()
+    const running = h.run()
+    await vi.waitFor(() => expect(h.passthrough).toEqual([true]))
+
+    state.emit({ kind: 'error', message: 'Агент остановился (SIGKILL).' })
+
+    const result = await running
+    expect(result.message).toBe('Агент остановился (SIGKILL).')
+    expect(h.last()).toMatchObject({ phase: 'error', message: 'Агент остановился (SIGKILL).' })
+    expect(h.passthrough).toEqual([true, false])
+  })
+
+  it('reports a failure to start as a blocked run', async () => {
+    state.runRejects = new Error('Компонент агента не собран.')
+    const h = harness()
+
+    const result = await h.run()
+
+    expect(result).toMatchObject({ blocked: true, message: 'Компонент агента не собран.' })
+    expect(h.passthrough).toEqual([true, false])
+  })
+})
+
+describe('the trace a run leaves behind', () => {
+  /**
+   * The trace is the only place a slow run can be diagnosed after the fact, so
+   * what it records is part of the contract: a step without its cost, or a call
+   * without its phases, would leave the one question the trace exists to answer
+   * — "what took the time" — unanswerable.
+   */
+  it('records each step, its round trip, and each call with its phases', async () => {
+    const h = harness()
+    const running = h.run()
+    await vi.waitFor(() => expect(state.runs).toHaveLength(1))
+
+    state.emit({ kind: 'step', step: 1, total: 3 })
+    state.emit({
+      kind: 'stepTiming',
+      step: 1,
+      timing: { llmMs: 1432.5, promptBytes: 20823, history: 4, calls: 1, inputTokens: 900, outputTokens: 40 }
     })
-    const result = await createAgentController(makeHost()).execute({ requestId: 'safety-test', prompt: 'test', finished: false, steps: [click()], area })
-    expect(ran('click')).toBe(0)
-    expect(state.settings.agent.rememberedApprovals).toEqual([])
-    expect(result.message).toContain('Цель изменилась')
-  })
-
-  it('honours disabling the agent while approval is pending', async () => {
-    state.confirm.mockImplementationOnce(async () => {
-      state.settings.agent.enabled = false
-      return { response: 1 }
+    state.emit({ kind: 'tool', step: 1, name: 'get_app_state', args: { app: 'Finder' } })
+    state.emit({
+      kind: 'result', step: 1, name: 'get_app_state', ok: true, text: 'tree',
+      timing: { wallMs: 493.02, treeMs: 476.35, captureMs: 12.1, imageBytes: 151812 }
     })
-    await createAgentController(makeHost()).execute({ requestId: 'safety-test', prompt: 'test', finished: false, steps: [click()], area })
-    expect(ran('click')).toBe(0)
+    state.emit({
+      kind: 'runReport',
+      report: { steps: 1, calls: 1, failedCalls: 0, totalMs: 1950.4, llmMs: 1432.5, toolMs: 493.02 }
+    })
+    state.emit({ kind: 'done', complete: true, answer: 'Готово.' })
+    await running
+
+    const lines = h.trace()
+    const events = lines.map((line) => line.event)
+    expect(events).toContain('agent.step')
+    expect(events).toContain('agent.llm')
+    expect(events).toContain('agent.tool')
+    expect(events).toContain('agent.call')
+    expect(events).toContain('agent.report')
+
+    const llm = lines.find((line) => line.event === 'agent.llm')!
+    expect(llm).toMatchObject({
+      step: 1, llmMs: 1432.5, promptBytes: 20823, history: 4, calls: 1,
+      inputTokens: 900, outputTokens: 40
+    })
+
+    // The phases are what makes a 493 ms call diagnosable: without the split it
+    // is indistinguishable from a slow model, and the fix is in a different file.
+    const call = lines.find((line) => line.event === 'agent.call')!
+    expect(call).toMatchObject({
+      step: 1, tool: 'get_app_state', ok: true,
+      wallMs: 493, treeMs: 476.4, captureMs: 12.1, imageBytes: 151812
+    })
+    // A phase that did not run is absent, not zero.
+    expect('encodeMs' in call).toBe(false)
+
+    const report = lines.find((line) => line.event === 'agent.report')!
+    expect(report).toMatchObject({ steps: 1, calls: 1, failedCalls: 0, totalMs: 1950.4 })
+    expect(report.modelShare).toBe(73)
   })
 
-  it('blocks a secure field without offering approval', async () => {
-    state.helper.focused = { role: 'AXTextField', subrole: 'AXSecureTextField' }
-    await createAgentController(makeHost()).execute({ requestId: 'safety-test', prompt: 'test', finished: false, steps: [step({ kind: 'type', text: 'secret' })], area })
-    expect(ran('type')).toBe(0)
-    expect(state.confirm).not.toHaveBeenCalled()
-  })
-})
+  it('keeps the timings table out of the trace when the agent did not build one', async () => {
+    const h = harness()
+    const running = h.run()
+    await vi.waitFor(() => expect(state.runs).toHaveLength(1))
 
-it('opens an explicit web destination without typing in the foreground app', async () => {
-  state.helper.front = { bundleId: 'ru.keepcoder.Telegram', pid: 55 }
-  const url = 'https://example.org/catalog?q=cats'
-  const result = await createAgentController(makeHost()).execute({
-    requestId: 'web', prompt: 'Открой ' + url, finished: false, area,
-    steps: [step({ kind: 'navigate', url }, 'Открыть страницу в браузере')]
-  })
-  expect(state.openExternal).toHaveBeenCalledWith(url)
-  expect(result.performed[0]?.ok).toBe(true)
-  expect(ran('key') + ran('type') + ran('click')).toBe(0)
-})
+    state.emit({
+      kind: 'runReport',
+      report: { steps: 1, calls: 0, failedCalls: 0, totalMs: 10, llmMs: 10, toolMs: 0 }
+    })
+    state.emit({ kind: 'done', complete: true, answer: '' })
+    await running
 
-it('opens the default browser and checks that it has focus before reporting success', async () => {
-  const agent = createAgentController(makeHost())
-  const result = await agent.execute({
-    requestId: 'browser', prompt: 'Открой браузер', finished: false, area,
-    steps: [step({ kind: 'browser' }, 'Открыть браузер')]
+    expect(h.trace().some((line) => line.event === 'agent.timings')).toBe(false)
   })
-  expect(ran('open-browser')).toBe(1)
-  expect(state.calls.slice(-2).map((call) => call.name)).toEqual(['open-browser', 'front'])
-  expect(result.performed).toEqual([{ label: 'Открыть браузер', ok: true }])
-})
-
-it.each([true, false])('clicks a numbered target only if the live hit agrees (same: %s)', async (same) => {
-  const observedTarget = {
-    role: 'AXButton', pid: 42, title: 'Apply', pressable: true,
-    frame: { x: 485, y: 488, width: 30, height: 24 }
-  }
-  state.helper.probe = { ...probe([observedTarget]), chain: [{ ...observedTarget, title: same ? 'Apply' : 'Cancel' }] }
-  const result = await createAgentController(makeHost()).execute({
-    requestId: 'marked', prompt: 'Apply', finished: false, area,
-    steps: [step({ kind: 'click', at: { x: 0.5, y: 0.5 }, button: 'left', observedTarget })]
-  })
-  expect(ran('click')).toBe(same ? 1 : 0)
-  if (same) expect(state.calls.find((call) => call.name === 'click')?.args).toEqual([500, 500, 'left'])
-  else expect(result).toMatchObject({ recoverable: true, performed: [] })
 })

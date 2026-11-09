@@ -61,7 +61,16 @@ export const CH = {
      * close, and the main process gives it a moment instead of destroying a
      * window whose last keystrokes have not been written yet.
      */
-    hold: 'settings:hold'
+    hold: 'settings:hold',
+    /**
+     * "A hotkey is being recorded — stop listening for the old one."
+     *
+     * The app owns two global listeners (Electron's `globalShortcut` for the
+     * card and the native tap for voice), and both fire on the combination the
+     * user is trying to type into the recorder. Silencing them while the field
+     * is armed is what makes re-assigning a shortcut possible at all.
+     */
+    recording: 'settings:recording'
   },
   permissions: {
     status: 'permissions:status',
@@ -88,6 +97,15 @@ export const CH = {
     cursor: 'agent:cursor',
     /** overlay -> main: stop whatever is happening right now (Escape, «Стоп»). */
     stop: 'agent:stop',
+    /**
+     * overlay -> main: the user's answer to the question in the card.
+     *
+     * The agent blocks on this, so the channel is the whole safety mechanism: it
+     * carries a decision about one named call, never a permission to act in
+     * general, and the main process drops it if the id no longer matches the
+     * question on screen.
+     */
+    answer: 'agent:answer',
     clearApprovals: 'agent:clear-approvals',
     /**
      * overlay -> main: may the assistant press and type right now, and if not,
