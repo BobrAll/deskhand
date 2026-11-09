@@ -499,8 +499,10 @@ export function App() {
           {tab === 'voice' && (
             <VoiceTab
               voice={draft.voice}
+              tts={draft.tts}
               savedModel={bundle.settings.voice.model}
               onChange={(changes) => patch({ voice: { ...draft.voice, ...changes } })}
+              onTtsChange={(changes) => patch({ tts: { ...draft.tts, ...changes } })}
             />
           )}
 

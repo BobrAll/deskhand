@@ -36,7 +36,8 @@ export const HOLD_REASON = {
   baseUrl: 'Проверьте адрес API — изменения не применены.',
   maxTokens: `Максимум токенов: от ${MAX_TOKENS_MIN} до ${MAX_TOKENS_MAX}.`,
   prompt: 'Пустой системный промпт оставлен прежним.',
-  hotkey: 'Горячая клавиша не задана.'
+  hotkey: 'Горячая клавиша не задана.',
+  ttsBaseUrl: 'Проверьте адрес сервиса синтеза — изменения не применены.'
 } as const
 
 /** The providers whose base URL override is not an address, and so cannot be stored. */
@@ -46,6 +47,20 @@ export function invalidBaseUrlProviders(draft: AppSettings): ProviderId[] {
     // Empty is not invalid: it means "use the official host".
     return value.trim() !== '' && normalizeBaseUrl(value) === ''
   }).map((provider) => provider.id)
+}
+
+/**
+ * Whether the synthesis endpoint is half-typed.
+ *
+ * Same rule as a provider URL: an empty field means "not configured", but text
+ * that is not an address would be silently dropped by the store, and a field
+ * that clears itself while it is being typed is worse than a held write.
+ */
+export function ttsBaseUrlInvalid(draft: AppSettings): boolean {
+  // The block may be absent in a draft built before it existed, or in a test
+  // fixture; "no block" means "not configured", not "invalid".
+  const value = draft.tts?.baseUrl?.trim() ?? ''
+  return value !== '' && normalizeBaseUrl(value) === ''
 }
 
 /** Whether a token count is one the store will keep as it is. */
@@ -63,6 +78,7 @@ export function tokensInRange(value: number): boolean {
  */
 export function holdReasonFor(draft: AppSettings, invalidBaseUrls: ProviderId[]): string | null {
   if (invalidBaseUrls.length > 0) return HOLD_REASON.baseUrl
+  if (ttsBaseUrlInvalid(draft)) return HOLD_REASON.ttsBaseUrl
   // Out of range, not merely odd: a cleared number field reads as 0 while the
   // user is retyping it, and clamping that would rewrite the field under them.
   if (!tokensInRange(draft.maxTokens)) return HOLD_REASON.maxTokens
@@ -98,6 +114,7 @@ export function writableSettings(
 
   const onDisk = bundle.settings
   if (invalidBaseUrls.length > 0) next.baseUrls = onDisk.baseUrls
+  if (ttsBaseUrlInvalid(next)) next.tts = { ...next.tts, baseUrl: onDisk.tts?.baseUrl ?? '' }
   if (!tokensInRange(next.maxTokens)) next.maxTokens = onDisk.maxTokens
   if (!next.systemPrompt.trim()) next.systemPrompt = onDisk.systemPrompt
   if (!next.hotkey.trim()) next.hotkey = onDisk.hotkey

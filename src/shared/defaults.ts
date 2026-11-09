@@ -1,8 +1,10 @@
 import type {
   AgentSettings,
+  AnswerVoice,
   AppSettings,
   ProviderId,
   ProviderInfo,
+  TtsSettings,
   VoiceSettings
 } from './types'
 
@@ -83,7 +85,7 @@ export function normalizeBaseUrl(input: unknown): string {
   if (!value) return ''
   value = value.replace(/\/+$/, '')
   // Users often paste the full endpoint instead of the API root.
-  value = value.replace(/\/(chat\/completions|messages|responses|models|key)$/i, '')
+  value = value.replace(/\/(chat\/completions|messages|responses|audio\/speech|models|key)$/i, '')
   if (!/^https?:\/\/[^\s/]+/i.test(value)) return ''
   try {
     // Throws on things like "https://" with no host.
@@ -221,10 +223,32 @@ export const DEFAULT_VOICE: VoiceSettings = {
   language: 'ru',
   action: 'command',
   autoSend: true,
-  dialogue: false,
+  // Off, deliberately. The card already shows the answer, so reading it aloud
+  // duplicates what the user is looking at, and on a long answer the voice
+  // becomes the slowest part of the turn. The hands-free case is real but
+  // narrower than the "every voice question is spoken back" default suggests,
+  // so it is opt-in. `system` is what the toggle turns on, because it always
+  // works: no key, no network, no cost.
+  answerVoice: 'off',
   agentFeedback: true,
   minDurationMs: 300,
   maxDurationMs: 120_000
+}
+
+/**
+ * Live synthesis: off, and empty.
+ *
+ * Empty is not a placeholder for a default voice — there is none. A voice, an
+ * endpoint and a key are the user's decision, and shipping a guess would spend
+ * their credit on a service they never chose. The shipped recordings are what
+ * makes the assistant audible without any of this.
+ */
+export const DEFAULT_TTS: TtsSettings = {
+  enabled: false,
+  baseUrl: '',
+  model: '',
+  voice: '',
+  style: ''
 }
 
 export const WHISPER_LANGUAGES: Array<{ id: string; label: string }> = [
@@ -308,6 +332,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   launchAtLogin: false,
   onboardingCompleted: false,
   voice: DEFAULT_VOICE,
+  tts: DEFAULT_TTS,
   agent: DEFAULT_AGENT
 }
 
@@ -329,7 +354,7 @@ function sanitizeStringList(input: unknown, fallback: string[]): string[] {
 }
 
 function sanitizeVoice(input: unknown): VoiceSettings {
-  const raw = (typeof input === 'object' && input !== null ? input : {}) as Partial<VoiceSettings>
+  const raw = (typeof input === 'object' && input !== null ? input : {}) as Partial<VoiceSettings> & { dialogue?: unknown }
   const model = voiceModel(String(raw.model ?? ''))?.id ?? DEFAULT_VOICE.model
   const language =
     typeof raw.language === 'string' && raw.language.trim()
@@ -344,13 +369,41 @@ function sanitizeVoice(input: unknown): VoiceSettings {
     model,
     language,
     action: raw.action === 'dictate' ? 'dictate' : 'command',
-    dialogue: raw.dialogue === true,
+    answerVoice: sanitizeAnswerVoice(raw),
     agentFeedback: raw.agentFeedback !== false,
     autoSend: typeof raw.autoSend === 'boolean' ? raw.autoSend : DEFAULT_VOICE.autoSend,
     minDurationMs: Math.round(clamp(raw.minDurationMs, 0, 5_000, DEFAULT_VOICE.minDurationMs)),
     maxDurationMs: Math.round(
       clamp(raw.maxDurationMs, 1_000, 10 * 60_000, DEFAULT_VOICE.maxDurationMs)
     )
+  }
+}
+
+/**
+ * Which voice reads the answer, including the old boolean.
+ *
+ * `dialogue: true` was "speak the answer"; that is now `system`, because the
+ * macOS voice is what it used to mean and it needs no configuration. An unknown
+ * value falls back to off, never to a paid path.
+ */
+function sanitizeAnswerVoice(raw: { answerVoice?: unknown; dialogue?: unknown }): AnswerVoice {
+  if (raw.answerVoice === 'system' || raw.answerVoice === 'neural' || raw.answerVoice === 'off') {
+    return raw.answerVoice
+  }
+  return raw.dialogue === true ? 'system' : DEFAULT_VOICE.answerVoice
+}
+
+function sanitizeTts(input: unknown): TtsSettings {
+  const raw = (typeof input === 'object' && input !== null ? input : {}) as Partial<TtsSettings>
+  const text = (value: unknown): string => (typeof value === 'string' ? value.trim() : '')
+  return {
+    enabled: raw.enabled === true,
+    // A base URL is normalised the same way provider URLs are, so a pasted
+    // `.../v1/audio/speech` becomes the root instead of a doubled path.
+    baseUrl: normalizeBaseUrl(raw.baseUrl),
+    model: text(raw.model).slice(0, 120),
+    voice: text(raw.voice).slice(0, 60),
+    style: text(raw.style).slice(0, 300)
   }
 }
 
@@ -419,6 +472,7 @@ export function normalizeSettings(input: unknown): AppSettings {
         ? raw.onboardingCompleted
         : DEFAULT_SETTINGS.onboardingCompleted,
     voice: sanitizeVoice(raw.voice),
+    tts: sanitizeTts(raw.tts),
     agent: sanitizeAgent(raw.agent)
   }
 }

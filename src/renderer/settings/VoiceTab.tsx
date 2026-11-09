@@ -10,15 +10,17 @@
  * with the words, and whether the machine is ready to do either.
  */
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
-import type { DownloadProgress, VoiceSettings, VoiceStatus } from '@shared/types'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import type { DownloadProgress, TtsSettings, TtsStatus, VoiceSettings, VoiceStatus } from '@shared/types'
 import { WHISPER_LANGUAGES, VOICE_MODELS, voiceModel } from '@shared/defaults'
 import { Group, Row, ToggleRow } from './Row'
 
 interface VoiceTabProps {
   voice: VoiceSettings
+  tts: TtsSettings
   savedModel: string
   onChange(changes: Partial<VoiceSettings>): void
+  onTtsChange(changes: Partial<TtsSettings>): void
 }
 
 function megabytes(bytes: number): string {
@@ -26,8 +28,13 @@ function megabytes(bytes: number): string {
   return `${Math.round(bytes / (1024 * 1024))} МБ`
 }
 
-export function VoiceTab({ voice, savedModel, onChange }: VoiceTabProps) {
+export function VoiceTab({ voice, tts, savedModel, onChange, onTtsChange }: VoiceTabProps) {
   const [status, setStatus] = useState<VoiceStatus | null>(null)
+  const [speech, setSpeech] = useState<TtsStatus | null>(null)
+  const [ttsKey, setTtsKeyInput] = useState('')
+  const [previewing, setPreviewing] = useState(false)
+  const [previewError, setPreviewError] = useState<string | null>(null)
+  const previewAudio = useRef<HTMLAudioElement | null>(null)
   const [deleting, setDeleting] = useState<string | null>(null)
   const [progress, setProgress] = useState<DownloadProgress | null>(null)
   const [downloadError, setDownloadError] = useState<string | null>(null)
@@ -44,6 +51,16 @@ export function VoiceTab({ voice, savedModel, onChange }: VoiceTabProps) {
   useEffect(() => {
     refresh()
   }, [refresh, savedModel])
+
+  // Whether live synthesis is configured. Re-read when the endpoint changes, so
+  // the pane never claims a voice it no longer has.
+  const refreshSpeech = useCallback(() => {
+    void window.smartCursor.tts.status().then(setSpeech).catch(() => setSpeech(null))
+  }, [])
+
+  useEffect(() => {
+    refreshSpeech()
+  }, [refreshSpeech, tts.enabled, tts.baseUrl, tts.model, tts.voice])
 
   useEffect(() => window.smartCursor.voice.onDownloadProgress((event) => {
     if (event.error) setDownloadError(event.error)
@@ -111,6 +128,46 @@ export function VoiceTab({ voice, savedModel, onChange }: VoiceTabProps) {
 
   const selected = voiceModel(voice.model)
   const ready = status?.ready ?? false
+
+  /** Stores the synthesis key; the value never comes back from the main process. */
+  const saveTtsKey = useCallback(async () => {
+    if (!ttsKey.trim()) return
+    setSpeech(await window.smartCursor.tts.setKey(ttsKey.trim()))
+    setTtsKeyInput('')
+  }, [ttsKey])
+
+  const removeTtsKey = useCallback(async () => {
+    setSpeech(await window.smartCursor.tts.deleteKey())
+  }, [])
+
+  /** Plays one fixed line in the configured voice, so the choice can be judged. */
+  const preview = useCallback(async () => {
+    setPreviewing(true)
+    setPreviewError(null)
+    try {
+      const result = await window.smartCursor.tts.preview()
+      if (!result.ok) {
+        setPreviewError(result.message)
+        return
+      }
+      previewAudio.current?.pause()
+      const element = new Audio(`data:audio/mpeg;base64,${result.audio}`)
+      previewAudio.current = element
+      element.onended = () => setPreviewing(false)
+      element.onerror = () => {
+        setPreviewing(false)
+        setPreviewError('Не удалось воспроизвести пример.')
+      }
+      await element.play()
+    } catch (error) {
+      setPreviewing(false)
+      setPreviewError(error instanceof Error ? error.message : 'Не удалось получить пример.')
+    } finally {
+      refreshSpeech()
+    }
+  }, [refreshSpeech])
+
+  useEffect(() => () => previewAudio.current?.pause(), [])
 
   return (
     <div className="pane">
@@ -255,16 +312,151 @@ export function VoiceTab({ voice, savedModel, onChange }: VoiceTabProps) {
       <Group title="Озвучка">
         <ToggleRow
           title="Короткие реплики агента"
-          hint="Системным голосом подтверждать долгую обработку. Не чаще раза в 45 секунд."
+          hint="Подтверждать долгую обработку голосом. Не чаще раза в 45 секунд."
           checked={voice.agentFeedback}
           onChange={(agentFeedback) => onChange({ agentFeedback })}
         />
+        <Row
+          stacked
+          title="Голосом ответа"
+          hint={
+            voice.answerVoice === 'off'
+              ? 'Ответ читается на карточке. Кнопка «Прослушать» остаётся.'
+              : voice.answerVoice === 'system'
+                ? 'Системный голос macOS: бесплатно, офлайн, без ключа.'
+                : speech?.configured
+                  ? `Нейроголос «${speech.voice || tts.voice}». Один запрос на ответ, дальше из кэша.`
+                  : 'Нейроголос не настроен — ответ прочитает системный голос.'
+          }
+        >
+          <div className="segmented">
+            <button
+              className={voice.answerVoice === 'off' ? 'active' : ''}
+              onClick={() => onChange({ answerVoice: 'off' })}
+            >
+              Не читать
+            </button>
+            <button
+              className={voice.answerVoice === 'system' ? 'active' : ''}
+              onClick={() => onChange({ answerVoice: 'system' })}
+            >
+              Системный
+            </button>
+            <button
+              className={voice.answerVoice === 'neural' ? 'active' : ''}
+              onClick={() => onChange({ answerVoice: 'neural' })}
+            >
+              Нейроголос
+            </button>
+          </div>
+        </Row>
+      </Group>
+
+      <Group
+        title="Синтез речи"
+        footnote={
+          speech?.recordedVoice
+            ? `Короткие фразы записаны заранее голосом «${speech.recordedVoice}» и звучат мгновенно без ключа и сети. Синтез ниже нужен только для ответов и для фраз, которых нет в записи.`
+            : 'Короткие фразы записаны заранее и звучат мгновенно без ключа и сети. Синтез ниже нужен только для ответов и для фраз, которых нет в записи.'
+        }
+      >
         <ToggleRow
-          title="Голосовой диалог"
-          hint="Озвучивать ответы на голосовые вопросы. Текстовые — кнопкой «Прослушать»."
-          checked={voice.dialogue}
-          onChange={(dialogue) => onChange({ dialogue })}
+          title="Включить синтез"
+          hint="Endpoint, модель, голос и стиль — ваши. Ключ хранится в Keychain и не показывается."
+          checked={tts.enabled}
+          onChange={(enabled) => onTtsChange({ enabled })}
         />
+        <Row
+          stacked
+          title="Адрес сервиса"
+          hint="Корень API без завершающего слэша, например https://host/v1."
+        >
+          <input
+            value={tts.baseUrl}
+            onChange={(event) => onTtsChange({ baseUrl: event.target.value })}
+            placeholder="https://host/v1"
+            spellCheck={false}
+          />
+        </Row>
+        <Row stacked title="Модель" hint="ID модели синтеза у этого сервиса.">
+          <input
+            value={tts.model}
+            onChange={(event) => onTtsChange({ model: event.target.value })}
+            placeholder="ID модели синтеза"
+            spellCheck={false}
+          />
+        </Row>
+        <Row stacked title="Голос" hint="Имя голоса, как его называет сервис.">
+          <input
+            value={tts.voice}
+            onChange={(event) => onTtsChange({ voice: event.target.value })}
+            placeholder="имя голоса"
+            spellCheck={false}
+          />
+        </Row>
+        <Row
+          stacked
+          title="Стиль подачи"
+          hint="Свободная инструкция для движка: «дружный», «спокойно», «бодро». Пусто — без неё."
+        >
+          <input
+            value={tts.style}
+            onChange={(event) => onTtsChange({ style: event.target.value })}
+            placeholder="дружный"
+          />
+        </Row>
+        <Row
+          stacked
+          title="Ключ синтеза"
+          hint={
+            speech?.keyConfigured
+              ? 'Ключ лежит в Keychain и никогда не показывается целиком.'
+              : 'Отдельный ключ для этого endpoint. Не тот, что у модели, если сервисы разные.'
+          }
+        >
+          {speech?.keyConfigured ? (
+            <div className="row-actions">
+              <span className="permission-state ok">● Ключ сохранён</span>
+              <button className="ghost" onClick={() => void removeTtsKey()}>
+                Удалить
+              </button>
+            </div>
+          ) : (
+            <div className="row-actions">
+              <input
+                type="password"
+                value={ttsKey}
+                onChange={(event) => setTtsKeyInput(event.target.value)}
+                placeholder="sk-…"
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') void saveTtsKey()
+                }}
+              />
+              <button disabled={!ttsKey.trim()} onClick={() => void saveTtsKey()}>
+                Сохранить
+              </button>
+            </div>
+          )}
+        </Row>
+        <Row
+          title="Проверка"
+          hint={
+            previewError
+              ? previewError
+              : !speech?.configured
+                ? (speech?.reason ?? 'Заполните адрес, модель, голос и ключ.')
+                : speech.reason
+                  ? `Последний синтез не удался: ${speech.reason}`
+                  : 'Прозвучит короткий пример текущим голосом.'
+          }
+        >
+          <button
+            disabled={previewing || !speech?.configured}
+            onClick={() => void preview()}
+          >
+            {previewing ? 'Играет…' : 'Прослушать пример'}
+          </button>
+        </Row>
       </Group>
 
       <Group title="Состояние">

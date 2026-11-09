@@ -21,10 +21,12 @@ import type {
   StreamEvent,
   TestKeyResult,
   TranscribeResult,
+  TtsStatus,
   VoiceEvent,
   VoicePhase,
   VoiceStatus
 } from './types'
+import type { TtsResult } from './tts'
 
 export interface RunningAppInfo {
   bundleId: string
@@ -216,5 +218,21 @@ export interface SmartCursorApi {
     deleteModel(id: string): Promise<VoiceStatus>
     /** Records a short clip and transcribes it, so the user can hear the quality. */
     test(): Promise<TranscribeResult>
+  }
+  /**
+   * The assistant's own voice.
+   *
+   * Separate from `voice`, which is the microphone. The card asks for a clip and
+   * plays it; the main process owns the provider key and the disk cache, so a
+   * repeated line is never paid for twice.
+   */
+  tts: {
+    speak(text: string): Promise<TtsResult>
+    status(): Promise<TtsStatus>
+    /** Stores the key encrypted; an empty string removes it. */
+    setKey(key: string): Promise<TtsStatus>
+    deleteKey(): Promise<TtsStatus>
+    /** Renders a short sample with the current settings, for listening in the pane. */
+    preview(): Promise<TtsResult>
   }
 }

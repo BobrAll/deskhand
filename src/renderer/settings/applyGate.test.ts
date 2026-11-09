@@ -9,7 +9,7 @@
 
 import { describe, expect, it } from 'vitest'
 import type { AppSettings, ProviderId } from '@shared/types'
-import { PROVIDERS } from '@shared/defaults'
+import { DEFAULT_SETTINGS, PROVIDERS } from '@shared/defaults'
 import {
   HOLD_REASON,
   MAX_TOKENS_MAX,
@@ -99,6 +99,16 @@ describe('applyGate: why a write is held', () => {
     const draft = settings({ maxTokens: 1, systemPrompt: '' })
 
     expect(holdReasonFor(draft, ['openai'])).toBe(HOLD_REASON.baseUrl)
+  })
+
+  it('holds a half-typed synthesis address instead of clearing the field', () => {
+    // The store normalises an address it cannot parse to an empty string, so
+    // writing mid-word would wipe the field the user is still typing in.
+    const draft = settings({ tts: { ...DEFAULT_SETTINGS.tts, baseUrl: 'speech.example/v1' } })
+    expect(holdReasonFor(draft, [])).toBe(HOLD_REASON.ttsBaseUrl)
+
+    const valid = settings({ tts: { ...DEFAULT_SETTINGS.tts, baseUrl: 'https://speech.example/v1' } })
+    expect(holdReasonFor(valid, [])).toBeNull()
   })
 
   it('holds a token count out of range, at both ends', () => {

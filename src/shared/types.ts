@@ -30,14 +30,46 @@ export interface VoiceSettings {
   action: VoiceAction
   /** `command` only: send the recognised wording at once instead of filling the field. */
   autoSend: boolean
-  /** Opt-in spoken replies to voice commands. */
-  dialogue: boolean
-  /** Short local acknowledgement while an agent command is pending. */
+  /**
+   * What speaks the answer itself, as opposed to the short recorded lines.
+   *
+   * `off` — the answer is read, not heard; the card is the channel.
+   * `system` — the macOS voice, free and local, but it reads like a log.
+   * `neural` — the voice configured in `tts`, which costs a request per answer
+   * and needs a key. Falls back to `system` when it is not configured.
+   */
+  answerVoice: AnswerVoice
+  /** Short acknowledgement while an agent command is pending. */
   agentFeedback: boolean
   /** A shorter press is treated as an accidental tap and thrown away. */
   minDurationMs: number
   /** Hard cap so a stuck key cannot record forever. */
   maxDurationMs: number
+}
+
+export type AnswerVoice = 'off' | 'system' | 'neural'
+
+/**
+ * Live speech synthesis for lines that were not recorded in advance.
+ *
+ * The app ships with its short lines already rendered, so this is not needed for
+ * the assistant to have a voice at all. It exists for two cases: reading an
+ * answer aloud in the same voice, and re-recording a line in a different voice.
+ *
+ * Every field is the user's: the endpoint, the model, the voice and the delivery
+ * instruction. Nothing here is baked into the build, and the key is not part of
+ * this object at all — it lives encrypted in `secrets` and never reaches a
+ * renderer.
+ */
+export interface TtsSettings {
+  /** Off means "use the shipped recordings only". */
+  enabled: boolean
+  /** API root without a trailing slash, e.g. `https://host/v1`. */
+  baseUrl: string
+  model: string
+  voice: string
+  /** Free-form delivery instruction, sent as `instructions`. */
+  style: string
 }
 
 /**
@@ -286,6 +318,27 @@ export interface DownloadProgress {
 }
 
 
+/**
+ * Whether the assistant can speak a line that was not recorded in advance.
+ *
+ * `configured: false` is not a broken app: the shipped lines still play, and an
+ * answer is read with the macOS voice or not at all, depending on
+ * `voice.answerVoice`.
+ */
+export interface TtsStatus {
+  /** Live synthesis is switched on and has everything it needs. */
+  configured: boolean
+  /** Why not, when `configured` is false. */
+  reason: string | null
+  /** The voice that will speak live lines, as configured. */
+  voice: string
+  model: string
+  /** Whether an API key is stored for this endpoint. */
+  keyConfigured: boolean
+  /** The voice the shipped recordings were made with; always available. */
+  recordedVoice: string
+}
+
 export interface TranscribeResult {
   ok: boolean
   text: string
@@ -320,6 +373,8 @@ export interface AppSettings {
   onboardingCompleted: boolean
   /** Push-to-talk voice input (local whisper). */
   voice: VoiceSettings
+  /** Live synthesis for lines that were not recorded in advance. */
+  tts: TtsSettings
   /** Mouse-and-keyboard control ("агент"). Off by default. */
   agent: AgentSettings
 }

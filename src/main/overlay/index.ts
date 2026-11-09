@@ -1116,7 +1116,9 @@ export function createOverlayController(host: OverlayHost) {
           host.showInactive(INITIAL_HEIGHT)
         }
       } else if (request.voice) {
-        if (getSettings().voice.dialogue) host.showInactive(INITIAL_HEIGHT)
+        // Nothing to show and nothing to read: keep the card only when the answer
+        // would have been spoken, because then the user needs the text of it.
+        if (getSettings().voice.answerVoice !== 'off') host.showInactive(INITIAL_HEIGHT)
         else host.hide()
       }
     } catch (error) {

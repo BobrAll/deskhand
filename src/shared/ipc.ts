@@ -158,5 +158,24 @@ export const CH = {
     importModel: 'voice:import-model',
     deleteModel: 'voice:delete-model',
     test: 'voice:test'
+  },
+  /**
+   * Speech synthesis for the assistant's own voice.
+   *
+   * Separate from `voice`, which is the microphone: this one only turns text
+   * into a clip. The request is made by the main process because that is where
+   * the provider key lives, and the clip comes back as base64 so the overlay can
+   * play it without a second request.
+   */
+  tts: {
+    /** overlay -> main: `{ ok, audio }` for one line, or a reason to use the system voice. */
+    speak: 'tts:speak',
+    /** Settings window: whether live synthesis is configured, and why not. */
+    status: 'tts:status',
+    /** Settings window: stores the synthesis key encrypted; never read back. */
+    setKey: 'tts:set-key',
+    deleteKey: 'tts:delete-key',
+    /** Settings window: renders one short line so the voice can be heard. */
+    preview: 'tts:preview'
   }
 } as const

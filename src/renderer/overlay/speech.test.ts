@@ -17,6 +17,6 @@ describe('spoken replies', () => {
     expect(requestedReading('озвучь ответ')).toBe(true)
   })
   it('does not speak a truncated sentence', () => {
-    expect(automaticSpeech('Объясни', 'Слово '.repeat(100))).toBe('Ответ готов. Подробности в карточке.')
+    expect(automaticSpeech('Объясни', 'Слово '.repeat(100))).toBe('Ответ готов.')
   })
 })

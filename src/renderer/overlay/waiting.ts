@@ -1,4 +1,6 @@
 /** Local content only: waiting must never make another model request. */
+import { SPEECH_BANK } from '@shared/speechBank'
+
 export const WAIT_STATUS_MS = 1500
 export const WAIT_TIP_MS = 8000
 export const WAIT_LONG_MS = 25000
@@ -12,7 +14,7 @@ export const waitingTips = [
   'Для точной правки полезно сказать, что нужно сохранить: смысл, тон или длину.'
 ] as const
 
-export const waitingPhrases = ['Сейчас посмотрю.', 'Так, разберёмся.', 'Секунду, подумаю.'] as const
+export const waitingPhrases: readonly string[] = SPEECH_BANK.acknowledge.map((line) => line.text)
 
 export function waitingStage(elapsed: number): 'quiet' | 'status' | 'tip' | 'long' {
   if (elapsed >= WAIT_LONG_MS) return 'long'

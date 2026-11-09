@@ -21,6 +21,16 @@ import { readPermissions } from './permissions'
 import { encryptionAvailable } from './settings/secrets'
 import { DEFAULT_SETTINGS } from '@shared/defaults'
 
+/**
+ * Audio has to start without a click.
+ *
+ * The card is opened by a global hotkey, and Chromium does not count that as a
+ * user gesture: with the default policy every `Audio.play()` would be rejected
+ * and the assistant would fall back to the system voice for no visible reason.
+ * The window never loads remote content and plays only its own clips.
+ */
+app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required')
+
 // Regular activation policy: the app behaves like a normal program — it has a
 // Dock icon and a Cmd+Tab entry, and its windows can be focused, raised and sent
 // to the background by the system like any other window. (Keeping the Dock icon

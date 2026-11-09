@@ -64,6 +64,46 @@ export function deleteApiKey(provider: ProviderId): void {
   db().set('secrets', secrets)
 }
 
+/**
+ * The key for live speech synthesis.
+ *
+ * Stored under a fixed slot next to the provider keys, encrypted the same way:
+ * the endpoint is configurable, so it cannot be looked up by provider id. The
+ * plaintext never leaves the main process, and no settings object carries it.
+ */
+const TTS_SLOT = 'tts'
+
+export function getTtsKey(): string | null {
+  const raw = db().get('secrets')[TTS_SLOT]
+  if (!raw) return null
+  const [scheme, payload] = raw.split(':', 2)
+  if (!payload) return null
+  if (scheme === 'plain') return Buffer.from(payload, 'base64').toString('utf8')
+  try {
+    return safeStorage.decryptString(Buffer.from(payload, 'base64'))
+  } catch {
+    return null
+  }
+}
+
+export function setTtsKey(key: string): void {
+  const trimmed = key.trim()
+  if (!trimmed) {
+    deleteTtsKey()
+    return
+  }
+  const encoded = encryptionAvailable()
+    ? `enc:${safeStorage.encryptString(trimmed).toString('base64')}`
+    : `plain:${Buffer.from(trimmed, 'utf8').toString('base64')}`
+  db().set('secrets', { ...db().get('secrets'), [TTS_SLOT]: encoded })
+}
+
+export function deleteTtsKey(): void {
+  const secrets = { ...db().get('secrets') }
+  delete secrets[TTS_SLOT]
+  db().set('secrets', secrets)
+}
+
 export function keyStatuses(): KeyStatus[] {
   const secrets = db().get('secrets')
   return PROVIDERS.map((provider) => ({

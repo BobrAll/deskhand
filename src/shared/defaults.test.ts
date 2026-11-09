@@ -375,3 +375,61 @@ describe('normalizeSettings: idempotence', () => {
     expect(normalizeSettings(once)).toEqual(once)
   })
 })
+
+describe('normalizeSettings: the answer voice', () => {
+  it('is off by default, so a voice question is not read aloud unasked', () => {
+    expect(normalizeSettings({}).voice.answerVoice).toBe('off')
+  })
+
+  it('accepts the three modes and rejects anything else', () => {
+    for (const mode of ['off', 'system', 'neural'] as const) {
+      expect(normalizeSettings({ voice: { answerVoice: mode } }).voice.answerVoice).toBe(mode)
+    }
+    expect(normalizeSettings({ voice: { answerVoice: 'loud' } }).voice.answerVoice).toBe('off')
+  })
+
+  it('reads the old boolean as the system voice it used to mean', () => {
+    // `dialogue: true` spoke the answer with the macOS voice; that is exactly
+    // `system` now, and an existing install must not lose the setting.
+    expect(normalizeSettings({ voice: { dialogue: true } }).voice.answerVoice).toBe('system')
+    expect(normalizeSettings({ voice: { dialogue: false } }).voice.answerVoice).toBe('off')
+  })
+})
+
+describe('normalizeSettings: live synthesis', () => {
+  it('is off and empty by default: no endpoint, no voice, no spend', () => {
+    expect(normalizeSettings({}).tts).toEqual(DEFAULT_SETTINGS.tts)
+    expect(DEFAULT_SETTINGS.tts.enabled).toBe(false)
+  })
+
+  it('keeps the configuration the user typed, trimmed', () => {
+    const tts = normalizeSettings({
+      tts: {
+        enabled: true,
+        baseUrl: ' https://speech.example/v1/audio/speech ',
+        model: ' tts-model ',
+        voice: ' Kore ',
+        style: ' дружный '
+      }
+    }).tts
+
+    expect(tts).toEqual({
+      enabled: true,
+      // The endpoint is normalised like a provider URL: a pasted path collapses
+      // to the root instead of producing `.../audio/speech/audio/speech`.
+      baseUrl: 'https://speech.example/v1',
+      model: 'tts-model',
+      voice: 'Kore',
+      style: 'дружный'
+    })
+  })
+
+  it('never carries a key: that lives in secrets, not in settings', () => {
+    const settings = normalizeSettings({
+      tts: { enabled: true, baseUrl: 'https://speech.example/v1', model: 'm', voice: 'v', key: 'sk-x' }
+    })
+
+    expect(settings.tts).not.toHaveProperty('key')
+    expect(JSON.stringify(settings)).not.toContain('sk-x')
+  })
+})

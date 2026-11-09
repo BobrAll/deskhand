@@ -20,8 +20,10 @@ import type {
   ProviderId,
   SendRequest,
   StreamEvent,
+  TtsStatus,
   VoiceEvent
 } from '../shared/types'
+import type { TtsResult } from '../shared/tts'
 
 function subscribe<T>(channel: string, handler: (payload: T) => void): Unsubscribe {
   const listener = (_event: Electron.IpcRendererEvent, payload: T): void => handler(payload)
@@ -106,6 +108,13 @@ const api: SmartCursorApi = {
     importModel: () => ipcRenderer.invoke(CH.voice.importModel),
     deleteModel: (id) => ipcRenderer.invoke(CH.voice.deleteModel, id),
     test: () => ipcRenderer.invoke(CH.voice.test)
+  },
+  tts: {
+    speak: (text: string) => ipcRenderer.invoke(CH.tts.speak, text) as Promise<TtsResult>,
+    status: () => ipcRenderer.invoke(CH.tts.status) as Promise<TtsStatus>,
+    setKey: (key: string) => ipcRenderer.invoke(CH.tts.setKey, key) as Promise<TtsStatus>,
+    deleteKey: () => ipcRenderer.invoke(CH.tts.deleteKey) as Promise<TtsStatus>,
+    preview: () => ipcRenderer.invoke(CH.tts.preview) as Promise<TtsResult>
   }
 }
 
