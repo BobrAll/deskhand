@@ -122,7 +122,8 @@ export async function resolveModel(
 }
 
 export async function voiceStatus(): Promise<VoiceStatus> {
-  const configured = voiceModel(getSettings().voice.model)
+  const voice = getSettings().voice
+  const configured = voiceModel(voice.model)
   const engine = configured?.engine ?? 'whisper'
   const binary = resolveBinary(engine)
   const model = await resolveModel(configured)
@@ -136,6 +137,7 @@ export async function voiceStatus(): Promise<VoiceStatus> {
   else if (!model.path) detail = 'Не скачана модель распознавания — выберите её в настройках.'
   return {
     ready: Boolean(binary && model.path),
+    enabled: voice.enabled,
     detail,
     modelPath: model.path,
     binaryPath: binary,

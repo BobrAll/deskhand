@@ -7,12 +7,16 @@
  * the main process receives a finished WAV, not raw audio it would have to
  * process on the UI thread's behalf.
  *
- * Two details matter for the feel of hold-to-talk:
+ * Three details matter for the feel of hold-to-talk:
  *
  * - capture starts immediately on press and the level meter is driven from the
  *   same buffers, so the card reacts while the user is still speaking;
- * - the graph is torn down on stop. A microphone that stays open after the turn
- *   puts the orange dot in the menu bar forever, which reads as "it is spying".
+ * - the microphone and the audio context are opened ahead of the first press
+ *   (`primeRecorder`), because opening them for the first time takes long enough
+ *   that a phrase spoken at once would lose its beginning;
+ * - the input stream is released on stop. A microphone that stays open after the
+ *   turn puts the orange dot in the menu bar forever, which reads as "it is
+ *   spying".
  */
 
 /** whisper.cpp only accepts 16 kHz mono input. */
@@ -23,6 +27,24 @@ const MAX_SECONDS = 120
 
 /** Below this the recording is silence, not speech. */
 const SILENCE_RMS = 0.0035
+
+/**
+ * How long a warm-up may hold the microphone when the device never delivers a
+ * block. Normally the first block arrives in about 80 ms and the stream is
+ * released at once; this only bounds a wedged device.
+ */
+const WARM_TIMEOUT_MS = 400
+
+/** The microphone every capture — warm-up included — is opened with. */
+const MICROPHONE: MediaTrackConstraints = {
+  // Getting whisper's format as early as possible: the further processing the
+  // browser does, the more it "improves" the audio into something the model
+  // was never trained on.
+  channelCount: 1,
+  echoCancellation: true,
+  noiseSuppression: true,
+  autoGainControl: true
+}
 
 interface RecordedAudio {
   /** 16 kHz mono 16-bit WAV, base64. */
@@ -128,47 +150,39 @@ function trimSilence(samples: Float32Array, rate: number): Float32Array {
 }
 
 /**
- * Opens the microphone and starts buffering.
+ * One audio context for the whole page.
  *
- * Resolves with the handles rather than a promise of audio: the caller decides
- * when the turn ends, and it may end without any audio at all (Escape).
+ * Creating a context is what brings the audio subsystem up — the renderer's
+ * audio service, the output device, the resampler — and that work is paid once.
+ * A context per turn made the *first* turn of a session pay it between the key
+ * press and the first captured sample, which is exactly the syllable the user
+ * heard as lost; every later turn found the subsystem already warm. Keeping one
+ * context and closing only the nodes that touch the microphone gives every turn
+ * the same start. The microphone itself is still released on stop: the orange
+ * dot in the menu bar belongs to the input stream, not to the context.
  */
-export async function startRecording(maxDurationMs: number): Promise<RecorderHandles> {
-  const stream = await navigator.mediaDevices.getUserMedia({
-    audio: {
-      // Getting whisper's format as early as possible: the further processing the
-      // browser does, the more it "improves" the audio into something the model
-      // was never trained on.
-      channelCount: 1,
-      echoCancellation: true,
-      noiseSuppression: true,
-      autoGainControl: true
-    }
-  })
+let sharedContext: AudioContext | null = null
 
-  const context = new AudioContext()
-  await context.resume()
+function audioContext(): AudioContext {
+  if (!sharedContext || sharedContext.state === 'closed') sharedContext = new AudioContext()
+  return sharedContext
+}
+
+/**
+ * Connects a stream to a muted output and reports every captured block.
+ *
+ * `createScriptProcessor` is deprecated, but it is the only API that works in
+ * every Electron build without shipping a worklet bundle; the load is trivial.
+ * The returned function detaches the nodes and leaves the context running.
+ */
+function openGraph(
+  context: AudioContext,
+  stream: MediaStream,
+  onBlock: (block: Float32Array) => void
+): () => void {
   const source = context.createMediaStreamSource(stream)
-  // `createScriptProcessor` is deprecated, but it is the only API that works in
-  // every Electron build without shipping a worklet bundle; the load is trivial.
   const processor = context.createScriptProcessor(4096, 1, 1)
-
-  // Captured before teardown: `context.sampleRate` is unreadable once the audio
-  // context is closed, and the resampler needs the real input rate.
-  const inputRate = context.sampleRate
-  const chunks: Float32Array[] = []
-  let buffered = 0
-  const limit = Math.floor((TARGET_RATE * Math.min(maxDurationMs, MAX_SECONDS * 1000)) / 1000)
-  let lastLevel = 0
-
-  processor.onaudioprocess = (event) => {
-    const input = event.inputBuffer.getChannelData(0)
-    lastLevel = Math.min(1, rms(input) * 6)
-    if (buffered >= limit) return
-    const copy = new Float32Array(input)
-    chunks.push(copy)
-    buffered += copy.length
-  }
+  processor.onaudioprocess = (event) => onBlock(event.inputBuffer.getChannelData(0))
 
   // A silent destination keeps the processor running; without a connection some
   // browsers optimise the node away and no samples ever arrive.
@@ -178,10 +192,7 @@ export async function startRecording(maxDurationMs: number): Promise<RecorderHan
   processor.connect(mute)
   mute.connect(context.destination)
 
-  let closed = false
-  const teardown = (): void => {
-    if (closed) return
-    closed = true
+  return () => {
     processor.onaudioprocess = null
     try {
       source.disconnect()
@@ -190,8 +201,103 @@ export async function startRecording(maxDurationMs: number): Promise<RecorderHan
     } catch {
       /* already disconnected */
     }
+  }
+}
+
+/**
+ * A microphone opened ahead of the first press, so it is not opened *during* it.
+ *
+ * On macOS the first `getUserMedia` of a process resolves the TCC decision,
+ * brings up the input device and starts CoreAudio — hundreds of milliseconds in
+ * which nothing is captured. That cost lands on whichever phrase comes first,
+ * and a person who presses the key and starts talking immediately loses the
+ * beginning of that phrase.
+ *
+ * The warm-up runs the same path a turn does — context, stream, one block
+ * through a processor — and then releases the stream, because an idle microphone
+ * is an orange dot in the menu bar. A failure is deliberately swallowed: the
+ * press opens the microphone itself and reports the real reason there.
+ */
+let warming: Promise<void> | null = null
+
+export function primeRecorder(): Promise<void> {
+  if (!warming) {
+    warming = warmUp().catch(() => {
+      // Not cached: a device that was busy at launch must be tried again rather
+      // than staying cold for the life of the window.
+      warming = null
+    })
+  }
+  return warming
+}
+
+async function warmUp(): Promise<void> {
+  const context = audioContext()
+  if (context.state !== 'running') await context.resume().catch(() => undefined)
+
+  const stream = await navigator.mediaDevices.getUserMedia({ audio: MICROPHONE })
+  try {
+    let detach = (): void => undefined
+    await new Promise<void>((resolve) => {
+      let settled = false
+      let timer: ReturnType<typeof setTimeout> | null = null
+      const finish = (): void => {
+        if (settled) return
+        settled = true
+        if (timer) clearTimeout(timer)
+        detach()
+        resolve()
+      }
+      timer = setTimeout(finish, WARM_TIMEOUT_MS)
+      detach = openGraph(context, stream, finish)
+    })
+  } finally {
     for (const track of stream.getTracks()) track.stop()
-    void context.close()
+  }
+}
+
+/**
+ * Opens the microphone and starts buffering.
+ *
+ * Resolves with the handles rather than a promise of audio: the caller decides
+ * when the turn ends, and it may end without any audio at all (Escape).
+ */
+export async function startRecording(maxDurationMs: number): Promise<RecorderHandles> {
+  // A press that lands while the page is still warming the microphone waits for
+  // that open instead of starting a second one: two `getUserMedia` calls at once
+  // would have the second queue behind the first anyway, and the first turn is
+  // the one that must not lose audio.
+  if (warming) await warming
+
+  const stream = await navigator.mediaDevices.getUserMedia({ audio: MICROPHONE })
+  const context = audioContext()
+  if (context.state !== 'running') await context.resume()
+
+  // The resampler needs the real input rate; read it once, while the context is
+  // certainly alive.
+  const inputRate = context.sampleRate
+  const chunks: Float32Array[] = []
+  let buffered = 0
+  const limit = Math.floor((TARGET_RATE * Math.min(maxDurationMs, MAX_SECONDS * 1000)) / 1000)
+  let lastLevel = 0
+
+  const detach = openGraph(context, stream, (input) => {
+    lastLevel = Math.min(1, rms(input) * 6)
+    if (buffered >= limit) return
+    const copy = new Float32Array(input)
+    chunks.push(copy)
+    buffered += copy.length
+  })
+
+  let closed = false
+  const teardown = (): void => {
+    if (closed) return
+    closed = true
+    detach()
+    for (const track of stream.getTracks()) track.stop()
+    // The context stays open on purpose: see `audioContext`. Closing it here
+    // would tear the audio subsystem down again and the next press would pay the
+    // same startup cost in the middle of the first word.
   }
 
   return {

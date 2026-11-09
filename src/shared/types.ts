@@ -295,6 +295,14 @@ export interface VoiceEvent {
 export interface VoiceStatus {
   /** Everything needed for a turn is in place. */
   ready: boolean
+  /**
+   * Whether push-to-talk is switched on.
+   *
+   * `ready` only says the install is complete; a user who turned the feature off
+   * still has the model and the binary. The overlay uses this to decide whether
+   * opening the microphone ahead of a press is welcome at all.
+   */
+  enabled: boolean
   /** Human-readable reason when `ready` is false. */
   detail: string | null
   /** Model file that will actually be used, or null when none was found. */

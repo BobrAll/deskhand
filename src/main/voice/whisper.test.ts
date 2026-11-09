@@ -14,7 +14,7 @@ const state = vi.hoisted(() => ({
   dirs: {} as Record<string, string[]>,
   /** File sizes per path. */
   sizes: {} as Record<string, number>,
-  settings: { voice: { model: 'small-q5_1', language: 'ru' } },
+  settings: { voice: { model: 'small-q5_1', language: 'ru', enabled: true } },
   spawned: [] as Array<{ binary: string; args: string[] }>,
   /** What the fake whisper process prints and how it ends. */
   whisper: { stdout: '', stderr: '', code: 0 as number | null, emitError: false },
@@ -133,7 +133,7 @@ beforeEach(async () => {
   state.isPackaged = false
   state.dirs = {}
   state.sizes = {}
-  state.settings = { voice: { model: 'small-q5_1', language: 'ru' } }
+  state.settings = { voice: { model: 'small-q5_1', language: 'ru', enabled: true } }
   state.spawned = []
   state.whisper = { stdout: '', stderr: '', code: 0, emitError: false }
   state.transcript = ''
@@ -237,10 +237,24 @@ describe('voiceStatus', () => {
     const status = await whisper.voiceStatus()
 
     expect(status.ready).toBe(true)
+    expect(status.enabled).toBe(true)
     expect(status.detail).toBeNull()
     expect(status.modelsDir).toBe('/userdata/models')
     expect(status.installed).toEqual(['small-q5_1'])
     expect(status.listenerError).toBeNull()
+  })
+
+  it('reports the feature switch separately from the install state', async () => {
+    state.existing = new Set(['/app/resources/whisper-cli', '/userdata/models/ggml-small-q5_1.bin'])
+    state.dirs['/userdata/models'] = ['ggml-small-q5_1.bin']
+    state.settings.voice.enabled = false
+
+    const status = await whisper.voiceStatus()
+
+    // Ready means "could work"; enabled is whether the user wants it to. The
+    // overlay warms the microphone only for the second.
+    expect(status.ready).toBe(true)
+    expect(status.enabled).toBe(false)
   })
 
   it('explains a missing binary', async () => {
@@ -268,7 +282,7 @@ describe('transcribe', () => {
   }
 
   it('runs the selected GigaAM model in Russian and reads only its transcript file', async () => {
-    state.settings.voice = { model: 'gigaam-v3-e2e-rnnt', language: 'en' }
+    state.settings.voice = { model: 'gigaam-v3-e2e-rnnt', language: 'en', enabled: true }
     const binary = '/app/resources/transcribe-cli'
     const model = '/userdata/models/gigaam-v3-e2e-rnnt-Q4_K_M.gguf'
     state.existing = new Set([binary, model])
@@ -346,11 +360,11 @@ describe('transcribe', () => {
     await whisper.transcribe({ wav: WAV })
     expect(state.spawned[0].args[5]).toBe('ru')
 
-    state.settings = { voice: { model: 'small-q5_1', language: '' } }
+    state.settings = { voice: { model: 'small-q5_1', language: '', enabled: true } }
     await whisper.transcribe({ wav: WAV })
     expect(state.spawned[1].args[5]).toBe('ru')
 
-    state.settings = { voice: { model: 'small-q5_1', language: 'en' } }
+    state.settings = { voice: { model: 'small-q5_1', language: 'en', enabled: true } }
     await whisper.transcribe({ wav: WAV })
     expect(state.spawned[2].args[5]).toBe('en')
   })
