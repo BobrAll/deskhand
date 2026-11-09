@@ -1,7 +1,6 @@
 import type {
   AgentSettings,
   AppSettings,
-  GestureSettings,
   ProviderId,
   ProviderInfo,
   VoiceSettings
@@ -220,22 +219,6 @@ export const DEFAULT_VOICE: VoiceSettings = {
   maxDurationMs: 120_000
 }
 
-/**
- * Three fingers on the trackpad: a short touch opens the card, a longer one
- * records.
- *
- * `holdMs` sits above a firm tap and below "I am thinking about it": 450 ms is
- * long enough that a knock never records, and short enough that someone who does
- * intend to speak does not feel the microphone waiting. Gestures are additive —
- * every keyboard shortcut keeps working — so leaving them on by default cannot
- * take anything away.
- */
-export const DEFAULT_GESTURES: GestureSettings = {
-  enabled: true,
-  fingers: 3,
-  holdMs: 450
-}
-
 export const WHISPER_LANGUAGES: Array<{ id: string; label: string }> = [
   { id: 'ru', label: 'Русский' },
   { id: 'auto', label: 'Определять автоматически' },
@@ -317,7 +300,6 @@ export const DEFAULT_SETTINGS: AppSettings = {
   launchAtLogin: false,
   onboardingCompleted: false,
   voice: DEFAULT_VOICE,
-  gestures: DEFAULT_GESTURES,
   agent: DEFAULT_AGENT
 }
 
@@ -385,19 +367,6 @@ function sanitizeAgent(input: unknown): AgentSettings {
   }
 }
 
-function sanitizeGestures(input: unknown): GestureSettings {
-  const raw = (typeof input === 'object' && input !== null ? input : {}) as Partial<GestureSettings>
-  return {
-    enabled: typeof raw.enabled === 'boolean' ? raw.enabled : DEFAULT_GESTURES.enabled,
-    // Two fingers are scroll and right-click territory, four belong to Mission
-    // Control; three is the only count macOS leaves alone by default.
-    fingers: 3,
-    // Below 250 ms a knock becomes a recording; above 900 ms the card feels
-    // stuck before it opens.
-    holdMs: Math.round(clamp(raw.holdMs, 250, 900, DEFAULT_GESTURES.holdMs))
-  }
-}
-
 /** Coerces anything coming from disk or IPC into a valid settings object. */
 export function normalizeSettings(input: unknown): AppSettings {
   const raw = (typeof input === 'object' && input !== null ? input : {}) as Partial<AppSettings>
@@ -442,7 +411,6 @@ export function normalizeSettings(input: unknown): AppSettings {
         ? raw.onboardingCompleted
         : DEFAULT_SETTINGS.onboardingCompleted,
     voice: sanitizeVoice(raw.voice),
-    gestures: sanitizeGestures(raw.gestures),
     agent: sanitizeAgent(raw.agent)
   }
 }

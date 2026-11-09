@@ -142,8 +142,7 @@ export async function voiceStatus(): Promise<VoiceStatus> {
     modelsDir: modelsDir(),
     installed: await installedModels(),
     // Filled in by the controller: the tap lives there, not in this module.
-    listenerError: null,
-    gestureError: null
+    listenerError: null
   }
 }
 

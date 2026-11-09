@@ -3,7 +3,6 @@ import { describe, expect, it } from 'vitest'
 import {
   DEFAULT_AGENT,
   DEFAULT_EXCLUDED_APPS,
-  DEFAULT_GESTURES,
   DEFAULT_SETTINGS,
   DEFAULT_SYSTEM_PROMPT,
   DEFAULT_VOICE,
@@ -89,13 +88,11 @@ describe('normalizeSettings: extra keys are dropped', () => {
   it('drops unknown keys inside nested objects', () => {
     const result = normalizeSettings({
       voice: { ...DEFAULT_VOICE, extra: 1 },
-      agent: { ...DEFAULT_AGENT, extra: 2 },
-      gestures: { ...DEFAULT_GESTURES, extra: 3 }
+      agent: { ...DEFAULT_AGENT, extra: 2 }
     })
 
     expect(result.voice).not.toHaveProperty('extra')
     expect(result.agent).not.toHaveProperty('extra')
-    expect(result.gestures).not.toHaveProperty('extra')
   })
 })
 
@@ -320,23 +317,6 @@ describe('normalizeSettings: voice', () => {
   })
 })
 
-describe('normalizeSettings: gestures', () => {
-  it('always forces three fingers', () => {
-    expect(normalizeSettings({ gestures: { fingers: 2 } }).gestures.fingers).toBe(3)
-    expect(normalizeSettings({ gestures: { fingers: 4 } }).gestures.fingers).toBe(3)
-  })
-
-  it('clamps holdMs to 250..900', () => {
-    expect(normalizeSettings({ gestures: { holdMs: 10 } }).gestures.holdMs).toBe(250)
-    expect(normalizeSettings({ gestures: { holdMs: 5000 } }).gestures.holdMs).toBe(900)
-    expect(normalizeSettings({ gestures: { holdMs: 500.4 } }).gestures.holdMs).toBe(500)
-  })
-
-  it('fills a missing block from the defaults', () => {
-    expect(normalizeSettings({ gestures: null }).gestures).toEqual(DEFAULT_GESTURES)
-  })
-})
-
 describe('normalizeSettings: agent', () => {
   it('keeps the step budget the user typed, with a floor of one', () => {
     const result = normalizeSettings({ agent: { maxSteps: 0 } })
@@ -389,7 +369,6 @@ describe('normalizeSettings: idempotence', () => {
       hotkey: ' Cmd+J ',
       excludedApps: ['com.a', ' com.a '],
       voice: { model: 'small', language: 'EN', minDurationMs: 100 },
-      gestures: { holdMs: 400 },
       agent: { maxSteps: 5 }
     })
 

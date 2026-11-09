@@ -6,10 +6,9 @@
 //   * activate     - bring an application back to the front
 //   * permissions  - accessibility + screen recording state (optionally prompting)
 //   * voice        - long-lived push-to-talk listener (CGEventTap, JSON lines)
-//   * gesture      - long-lived trackpad listener (tap / hold, JSON lines)
 //   * ping         - liveness probe
-// One-shot commands write a single JSON object on stdout; `voice` and `gesture`
-// stream one JSON object per line until they are killed.
+// One-shot commands write a single JSON object on stdout; `voice` streams one
+// JSON object per line until it is killed.
 
 #import <Cocoa/Cocoa.h>
 #import <ApplicationServices/ApplicationServices.h>
@@ -20,7 +19,6 @@
 #import <unistd.h>
 #import <signal.h>
 
-#import "gesture.h"
 
 static void emit(NSDictionary *payload) {
   NSError *error = nil;
@@ -860,150 +858,6 @@ static int commandVoice(int64_t keyCode, CGEventFlags flags, BOOL swallow) {
   return 0;
 }
 
-// MARK: - Trackpad gestures
-
-// Three fingers on the trackpad are two different actions, and the difference is
-// time: a short contact is a tap (it opens the card), a longer one is a hold (it
-// records). macOS has no public API for "what is the trackpad doing right now",
-// so the raw contact stream comes from MultitouchSupport. It is a private
-// framework, hence `dlopen`: the helper must start even on a machine where the
-// framework has moved or is missing, and just report that gestures are off.
-//
-// The framework prints its own banner to stdout ("*** Recognized ... family***")
-// the moment the device is opened, which would corrupt the line protocol, so the
-// protocol is written to a saved duplicate of the original stdout and fd 1 is
-// pointed at /dev/null before the framework is touched.
-
-// The classification lives in `gesture.h`: it is the part worth replaying against
-// recorded contact frames (`scripts/gesture.test.c`, run with
-// `npm run test:gesture`), and it has no business knowing about JSON, processes
-// or the framework.
-/** Set by `SMARTCURSOR_GESTURE_DEBUG`: every edge carries the contact age. */
-static BOOL gGestureDebug = NO;
-static int gGestureJsonFd = -1;
-
-static void emitGesture(NSDictionary *payload) {
-  if (gGestureJsonFd < 0) return;
-  NSError *error = nil;
-  NSData *data = [NSJSONSerialization dataWithJSONObject:payload options:0 error:&error];
-  if (error || !data) return;
-  const char *bytes = [data bytes];
-  size_t length = [data length];
-  size_t written = 0;
-  while (written < length) {
-    ssize_t chunk = write(gGestureJsonFd, bytes + written, length - written);
-    if (chunk <= 0) return;
-    written += (size_t)chunk;
-  }
-  write(gGestureJsonFd, "\n", 1);
-}
-
-static void emitGestureEvent(GestureEventKind kind, double heldMs, void *context) {
-  (void)context;
-  const char *name = NULL;
-  switch (kind) {
-    case kGestureEventTap:
-      name = "tap";
-      break;
-    case kGestureEventPress:
-      name = "press";
-      break;
-    case kGestureEventRelease:
-      name = "release";
-      break;
-    case kGestureEventCancel:
-      name = "cancel";
-      break;
-    default:
-      return;
-  }
-  if (gGestureDebug && heldMs >= 0) {
-    emitGesture(@{@"event" : [NSString stringWithUTF8String:name], @"heldMs" : @(heldMs)});
-  } else {
-    emitGesture(@{@"event" : [NSString stringWithUTF8String:name]});
-  }
-}
-
-static GestureState gGestureState;
-
-// The device handle and the callback signature come from the framework, not from
-// `gesture.h`: that header only knows about contacts.
-typedef void *MTDeviceRef;
-typedef int (*MTContactCallback)(MTDeviceRef device, MTTouch *touches, int count, double timestamp,
-                                 int frame);
-typedef CFArrayRef (*MTDeviceCreateListFn)(void);
-typedef void (*MTRegisterContactFrameCallbackFn)(MTDeviceRef device, MTContactCallback callback);
-typedef void (*MTDeviceStartFn)(MTDeviceRef device, int mode);
-
-static int gestureContactCallback(MTDeviceRef device, MTTouch *touches, int count, double timestamp,
-                                  int frame) {
-  // Monotonic, and unaffected by the wall clock, which may jump mid-gesture.
-  double now = [NSProcessInfo processInfo].systemUptime;
-  gestureHandleFrame(&gGestureState, touches, count, now);
-  return 0;
-}
-
-static int commandGesture(int fingers, double holdMs) {
-  // The protocol keeps its own channel before the framework can write to fd 1.
-  gGestureJsonFd = dup(STDOUT_FILENO);
-  int devnull = open("/dev/null", O_WRONLY);
-  if (devnull >= 0) {
-    dup2(devnull, STDOUT_FILENO);
-    close(devnull);
-  }
-
-  // 6% of the pad is roughly 5 mm: past that the fingers are going somewhere,
-  // which is a swipe (Mission Control, an app switch), not a tap or a hold.
-  gestureInit(&gGestureState, fingers, holdMs, 0.06, emitGestureEvent, NULL);
-  gGestureDebug = getenv("SMARTCURSOR_GESTURE_DEBUG") != NULL;
-
-  void *handle = dlopen(
-      "/System/Library/PrivateFrameworks/MultitouchSupport.framework/MultitouchSupport", RTLD_LAZY);
-  if (!handle) {
-    emitGesture(@{@"ok" : @NO, @"error" : @"multitouch-unavailable"});
-    return 0;
-  }
-  MTDeviceCreateListFn list = (MTDeviceCreateListFn)dlsym(handle, "MTDeviceCreateList");
-  MTRegisterContactFrameCallbackFn registerCallback =
-      (MTRegisterContactFrameCallbackFn)dlsym(handle, "MTRegisterContactFrameCallback");
-  MTDeviceStartFn start = (MTDeviceStartFn)dlsym(handle, "MTDeviceStart");
-  if (!list || !registerCallback || !start) {
-    emitGesture(@{@"ok" : @NO, @"error" : @"multitouch-unavailable"});
-    return 0;
-  }
-
-  CFArrayRef devices = list();
-  if (!devices || CFArrayGetCount(devices) == 0) {
-    if (devices) CFRelease(devices);
-    // No trackpad: a desktop Mac with a mouse only. Not an error to shout about,
-    // but the caller has to know gestures will never fire.
-    emitGesture(@{@"ok" : @NO, @"error" : @"no-trackpad"});
-    return 0;
-  }
-
-  for (CFIndex i = 0; i < CFArrayGetCount(devices); i++) {
-    MTDeviceRef device = (MTDeviceRef)CFArrayGetValueAtIndex(devices, i);
-    registerCallback(device, gestureContactCallback);
-    start(device, 0);
-  }
-  emitGesture(@{@"ok" : @YES, @"event" : @"ready", @"fingers" : @(fingers)});
-
-  // The contact frames arrive on the framework's own thread, so the main thread
-  // has nothing to service — and a run loop with no sources returns immediately,
-  // which would end the process right after `ready`. A far-future timer is the
-  // cheapest way to keep it parked here until the process is killed.
-  CFRunLoopTimerRef keepAlive =
-      CFRunLoopTimerCreate(kCFAllocatorDefault, CFAbsoluteTimeGetCurrent() + 3600, 3600, 0, 0, NULL,
-                           NULL);
-  if (keepAlive) CFRunLoopAddTimer(CFRunLoopGetCurrent(), keepAlive, kCFRunLoopDefaultMode);
-  CFRunLoopRun();
-  if (keepAlive) CFRelease(keepAlive);
-
-  CFRelease(devices);
-  dlclose(handle);
-  return 0;
-}
-
 // MARK: - Agent: precise targeting
 //
 // A click is only as good as the rectangle it lands in. The model returns a
@@ -1512,20 +1366,6 @@ int main(int argc, const char *argv[]) {
       CGEventFlags flags = (CGEventFlags)strtoull(argv[3], NULL, 10);
       BOOL swallow = argc > 4 && strcmp(argv[4], "swallow") == 0;
       return commandVoice(keyCode, flags, swallow);
-    }
-    if (strcmp(command, "gesture") == 0) {
-      // gesture <fingers> <holdMs>
-      if (argc < 4) {
-        emit(@{@"ok" : @NO, @"error" : @"missing-arguments"});
-        return 1;
-      }
-      int fingers = (int)strtol(argv[2], NULL, 10);
-      double holdMs = strtod(argv[3], NULL);
-      if (fingers < 2 || fingers > 4 || holdMs < 100 || holdMs > 2000) {
-        emit(@{@"ok" : @NO, @"error" : @"bad-arguments"});
-        return 1;
-      }
-      return commandGesture(fingers, holdMs);
     }
     if (strcmp(command, "move") == 0) {
       // move <x> <y>

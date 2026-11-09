@@ -37,6 +37,7 @@ exports[`preload: the exposed bridge > matches the snapshot of the method set 1`
   "settings.load",
   "settings.open",
   "settings.pickApp",
+  "settings.recording",
   "settings.runningApps",
   "settings.save",
   "settings.setKey",

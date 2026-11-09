@@ -8,12 +8,13 @@
  * child is started, restarted and stopped from here — nowhere else.
  *
  * The process half (spawn, JSON lines, restarts, backoff) lives in
- * `native/tapListener.ts` and is shared with `gesture/listen.ts`. Everything
- * below is what only the keyboard tap does: the accelerator table, the argument
- * list, the «Универсальный доступ» texts and forgetting the accelerator on stop.
+ * `native/tapListener.ts`. Everything below is what only the keyboard tap does:
+ * the accelerator table, the argument list, the «Универсальный доступ» texts and
+ * forgetting the accelerator on stop.
  */
 
 import { FUNCTION_CODES, VOICE_KEY_CODES as KEY_CODES } from '@shared/keycodes'
+import { MODIFIER_FLAGS } from '@shared/accelerator'
 import { TapListener } from '../native/tapListener'
 
 export type TapEvent = 'press' | 'release' | 'cancel' | 'ready' | 'reenabled'
@@ -25,17 +26,6 @@ export interface VoiceKeyListenerOptions {
   onEvent(event: TapEvent): void
   /** Fatal problems only: the combination is unusable or the tap was refused. */
   onError(message: string): void
-}
-
-const MODIFIER_FLAGS: Record<string, number> = {
-  // kCGEventFlagMaskCommand / kCGEventFlagMaskShift / Control / Alternate
-  command: 0x00100000,
-  cmd: 0x00100000,
-  control: 0x00040000,
-  ctrl: 0x00040000,
-  alt: 0x00080000,
-  option: 0x00080000,
-  shift: 0x00020000
 }
 
 export interface ParsedAccelerator {

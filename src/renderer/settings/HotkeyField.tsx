@@ -1,10 +1,19 @@
 /**
  * Hotkey recorder: captures the next key combination and converts it to an
  * Electron accelerator string. Modifiers alone are ignored, so the user cannot
- * accidentally bind a bare letter to a global shortcut.
+ * accidentally bind a bare letter — or a bare modifier — to a global shortcut.
+ *
+ * One thing here is not obvious: the app's own listeners are silenced while the
+ * field is armed. Both the card hotkey and the voice tap are global, so the
+ * combination being typed would be swallowed by the old binding before this
+ * field ever saw it — re-assigning a shortcut to itself was impossible, and
+ * re-assigning it to another one fired the old action mid-recording.
+ * `settings.recording` tells the main process to stand down, and to come back
+ * with whatever is stored once the field is done.
  */
 
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { prettyAccelerator } from '@shared/accelerator'
 
 const MODIFIER_KEYS = new Set(['Meta', 'Control', 'Alt', 'Shift', 'CapsLock', 'Fn'])
 
@@ -59,17 +68,9 @@ function toAccelerator(event: KeyboardEvent): string | null {
   return parts.join('+')
 }
 
+/** How the field prints a combination: `⌥ Space`, not `Alt+Space`. */
 export function prettyHotkey(accelerator: string): string {
-  return accelerator
-    .split('+')
-    .map((part) => {
-      if (part === 'Command' || part === 'Cmd') return '⌘'
-      if (part === 'Control' || part === 'Ctrl') return '⌃'
-      if (part === 'Alt' || part === 'Option') return '⌥'
-      if (part === 'Shift') return '⇧'
-      return part
-    })
-    .join(' ')
+  return prettyAccelerator(accelerator)
 }
 
 interface HotkeyFieldProps {
@@ -82,6 +83,13 @@ export function HotkeyField({ value, onChange }: HotkeyFieldProps) {
   const [error, setError] = useState<string | null>(null)
   const buttonRef = useRef<HTMLButtonElement | null>(null)
 
+  const setArmed = useCallback((active: boolean) => {
+    setRecording(active)
+    // The main process re-reads the stored accelerator when this goes false, so
+    // a combination the system refused is not re-armed by accident.
+    window.smartCursor.settings.recording(active)
+  }, [])
+
   useEffect(() => {
     if (!recording) return
 
@@ -89,7 +97,7 @@ export function HotkeyField({ value, onChange }: HotkeyFieldProps) {
       event.preventDefault()
       event.stopPropagation()
       if (event.key === 'Escape') {
-        setRecording(false)
+        setArmed(false)
         setError(null)
         return
       }
@@ -100,14 +108,26 @@ export function HotkeyField({ value, onChange }: HotkeyFieldProps) {
         setError('Нужна комбинация с ⌘, ⌥, ⌃ или ⇧')
         return
       }
-      setRecording(false)
+      setArmed(false)
       setError(null)
       onChange(accelerator)
     }
 
     window.addEventListener('keydown', handler, true)
     return () => window.removeEventListener('keydown', handler, true)
-  }, [recording, onChange])
+  }, [recording, onChange, setArmed])
+
+  // Closing the tab or the window while armed must not leave the app deaf.
+  const armedRef = useRef(false)
+  useEffect(() => {
+    armedRef.current = recording
+  }, [recording])
+  useEffect(
+    () => () => {
+      if (armedRef.current) window.smartCursor.settings.recording(false)
+    },
+    []
+  )
 
   return (
     <div className="hotkey-field">
@@ -117,7 +137,7 @@ export function HotkeyField({ value, onChange }: HotkeyFieldProps) {
         aria-pressed={recording}
         onClick={() => {
           setError(null)
-          setRecording((prev) => !prev)
+          setArmed(!recording)
         }}
         /**
          * Two recorders can be on screen at once — the card key and the voice key
@@ -127,7 +147,8 @@ export function HotkeyField({ value, onChange }: HotkeyFieldProps) {
          * that ends the recording, so it is also the one that disarms it.
          */
         onBlur={() => {
-          setRecording(false)
+          if (!recording) return
+          setArmed(false)
           setError(null)
         }}
       >

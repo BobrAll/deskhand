@@ -9,7 +9,6 @@
 import { app, Menu, nativeTheme } from 'electron'
 import { createOverlayController } from './overlay'
 import { createVoiceController } from './voice'
-import { createGestureController } from './gesture'
 import { registerHotkey, unregisterHotkey } from './hotkey'
 import { registerIpc } from './ipc'
 import { createTray, destroyTray, refreshTray } from './tray'
@@ -20,6 +19,7 @@ import { openOnboardingWindow, openSettingsWindow, overlayHost, showActiveWindow
 import { getSettings, patchSettings } from './settings/store'
 import { readPermissions } from './permissions'
 import { encryptionAvailable } from './settings/secrets'
+import { DEFAULT_SETTINGS } from '@shared/defaults'
 
 // Regular activation policy: the app behaves like a normal program — it has a
 // Dock icon and a Cmd+Tab entry, and its windows can be focused, raised and sent
@@ -48,19 +48,6 @@ const voice = createVoiceController({
   target: () => overlay.target()
 })
 
-/**
- * Three-finger gestures. They are wired to the same two entry points the
- * keyboard uses — `overlay.open()` for the tap and the voice controller's own
- * press / release for the hold — so the two input paths can never drift apart.
- */
-const gestures = createGestureController({
-  open: () => overlay.open(),
-  isOpen: () => overlay.isOpen(),
-  press: () => voice.press(),
-  release: () => voice.release(),
-  cancel: () => voice.cancel()
-})
-
 function applyLaunchAtLogin(enabled: boolean): void {
   try {
     app.setLoginItemSettings({ openAtLogin: enabled, openAsHidden: true })
@@ -79,6 +66,26 @@ function applyHotkey(accelerator: string): boolean {
   }
   refreshTray()
   return true
+}
+
+/**
+ * Silences the app's own listeners while the settings window records a key.
+ *
+ * Without this, the combination being typed is intercepted before the recorder
+ * sees it: the old binding is still registered globally, and the voice tap
+ * swallows its own key, so re-assigning a shortcut to itself is impossible and
+ * re-assigning it to another one fires the old action mid-recording.
+ */
+function setRecording(active: boolean): void {
+  if (active) {
+    unregisterHotkey()
+    voice.suspend()
+    return
+  }
+  // Both are re-read from the settings store, so a combination the system
+  // refused is not re-armed by accident.
+  applyHotkey(getSettings().hotkey)
+  voice.applySettings()
 }
 
 function quit(): void {
@@ -118,7 +125,14 @@ function bootstrap(): void {
 
   // IPC registration must happen before anything that can throw: without it the
   // settings window opens but every `invoke` rejects, so it stays empty forever.
-  registerIpc({ overlay, voice, gestures, applyHotkey, applyLaunchAtLogin, quit })
+  registerIpc({
+    overlay,
+    voice,
+    applyHotkey,
+    applyLaunchAtLogin,
+    setRecording,
+    quit
+  })
 
   createTray({
     toggle: () => {
@@ -132,7 +146,7 @@ function bootstrap(): void {
   const settings = getSettings()
   if (!applyHotkey(settings.hotkey)) {
     // Keep the app usable even if the stored accelerator is unavailable.
-    if (settings.hotkey !== 'Alt+Space') applyHotkey('Alt+Space')
+    if (settings.hotkey !== DEFAULT_SETTINGS.hotkey) applyHotkey(DEFAULT_SETTINGS.hotkey)
   }
 
   applyLaunchAtLogin(settings.launchAtLogin)
@@ -143,12 +157,6 @@ function bootstrap(): void {
   // microphone lives there, and a window created on the first press would lose
   // that press's animation and transcript.
   voice.applySettings()
-
-  // The trackpad listener is a second helper process. It is started here rather
-  // than lazily so the very first three-finger tap works, and it is additive: if
-  // the machine has no trackpad it reports why and the keyboard paths are
-  // untouched.
-  gestures.applySettings()
 
   // The keyboard path needs the same warm renderer, and for the same reason: the
   // card is now put on screen before the context is collected, so the very first
@@ -223,9 +231,6 @@ if (!app.requestSingleInstanceLock()) {
     // The tap is a child process blocked in a run loop; without this it outlives
     // the app and keeps swallowing the shortcut.
     voice.stop()
-    // Same reason as the keyboard tap: the helper blocks in a run loop and would
-    // outlive the app, keeping the trackpad device open.
-    gestures.stop()
     // The agent is a child process that blocks in a run loop; without this it
     // outlives the app and keeps a pipe open.
     overlay.disposeAgent()

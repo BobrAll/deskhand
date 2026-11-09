@@ -155,12 +155,9 @@ function fakeDeps(): IpcDeps {
       failed: vi.fn(),
       setLevel: vi.fn()
     } as unknown as IpcDeps['voice'],
-    gestures: {
-      applySettings: vi.fn(),
-      status: vi.fn(() => ({ gestureError: null }))
-    } as unknown as IpcDeps['gestures'],
     applyHotkey: vi.fn(() => true),
     applyLaunchAtLogin: vi.fn(),
+    setRecording: vi.fn(),
     quit: vi.fn()
   }
 }
@@ -331,7 +328,7 @@ describe('registerIpc: the handlers reach their dependency', () => {
 })
 
 describe('registerIpc: settings save reacts only to real changes', () => {
-  it('does not restart voice or gestures when nothing of theirs moved', async () => {
+  it('does not restart voice when nothing of it moved', async () => {
     const deps = fakeDeps()
     electron.reset()
     registerIpc(deps)
@@ -339,7 +336,19 @@ describe('registerIpc: settings save reacts only to real changes', () => {
     const save = electron.handles.get(CH.settings.save)!
     await save({}, {})
     expect(deps.voice.applySettings).not.toHaveBeenCalled()
-    expect(deps.gestures.applySettings).not.toHaveBeenCalled()
+  })
+
+  it('silences the listeners while a hotkey is being recorded', async () => {
+    const deps = fakeDeps()
+    electron.reset()
+    registerIpc(deps)
+
+    const recording = electron.ons.get(CH.settings.recording)!
+    recording({}, true)
+    expect(deps.setRecording).toHaveBeenLastCalledWith(true)
+
+    recording({}, false)
+    expect(deps.setRecording).toHaveBeenLastCalledWith(false)
   })
 })
 

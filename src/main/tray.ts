@@ -3,6 +3,7 @@
  */
 
 import { Menu, Tray, app, nativeImage, shell } from 'electron'
+import { prettyAccelerator } from '@shared/accelerator'
 import { resourcePath } from './paths'
 import { getSettings } from './settings/store'
 
@@ -24,7 +25,7 @@ function trayImage(): Electron.NativeImage {
 }
 
 function buildMenu(): Menu {
-  const hotkey = getSettings().hotkey
+  const hotkey = prettyAccelerator(getSettings().hotkey)
   return Menu.buildFromTemplate([
     { label: `Открыть ассистента (${hotkey})`, click: () => actions?.toggle() },
     { type: 'separator' },

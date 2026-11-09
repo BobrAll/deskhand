@@ -130,6 +130,14 @@ export interface SmartCursorApi {
      * instead of discarding the last keystroke.
      */
     hold(busy: boolean): void
+    /**
+     * Tells the main process that a hotkey recorder is armed.
+     *
+     * While it is `true` the app's own global listeners are unregistered: the
+     * old binding would otherwise swallow the combination being typed, and the
+     * voice tap would start recording instead of letting the key through.
+     */
+    recording(active: boolean): void
   }
   onboarding: {
     complete(): Promise<void>

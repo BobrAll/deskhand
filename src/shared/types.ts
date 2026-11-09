@@ -41,30 +41,6 @@ export interface VoiceSettings {
 }
 
 /**
- * Trackpad gestures: three fingers are the whole interface.
- *
- * One contact, two actions, and only time tells them apart — a short touch opens
- * the card, a longer one records. `holdMs` is that boundary, and it is a setting
- * because "short" is a personal threshold: a firm tap is 80 ms, a deliberate one
- * can be 250 ms, and someone who talks with their hands needs more room before a
- * brush of the pad becomes a recording.
- *
- * Gestures are additive: the keyboard shortcuts keep working exactly as before,
- * so a Mac without a trackpad loses nothing.
- */
-export interface GestureSettings {
-  enabled: boolean
-  /**
-   * How many fingers the gesture uses. Fixed at three: two are scroll and
-   * right-click territory and four belong to Mission Control, so a configurable
-   * count would only offer ways to break the system's own gestures.
-   */
-  fingers: number
-  /** How long the fingers must stay down before a tap becomes a hold, in ms. */
-  holdMs: number
-}
-
-/**
  * Agent mode: the assistant may take over the mouse and the keyboard.
  *
  * It is off by default and gated on three things at once — this switch, the
@@ -299,8 +275,6 @@ export interface VoiceStatus {
   installed: string[]
   /** Set when the keyboard listener could not be started. */
   listenerError: string | null
-  /** Set when the trackpad listener could not be started. */
-  gestureError: string | null
 }
 
 export interface DownloadProgress {
@@ -346,8 +320,6 @@ export interface AppSettings {
   onboardingCompleted: boolean
   /** Push-to-talk voice input (local whisper). */
   voice: VoiceSettings
-  /** Three-finger trackpad gestures: tap opens the card, hold records. */
-  gestures: GestureSettings
   /** Mouse-and-keyboard control ("агент"). Off by default. */
   agent: AgentSettings
 }

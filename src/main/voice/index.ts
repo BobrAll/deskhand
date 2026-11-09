@@ -454,6 +454,17 @@ export function createVoiceController(host: VoiceHost) {
     busy = false
   }
 
+  /**
+   * Takes the tap down without forgetting the turn.
+   *
+   * The settings window arms a recorder to learn a new combination; while it is
+   * armed the tap would swallow the very keys being typed. `applySettings`
+   * brings it back with whatever is stored by then.
+   */
+  function suspend(): void {
+    listener?.stop()
+  }
+
   async function status() {
     const base = await voiceStatus()
     return { ...base, listenerError }
@@ -485,13 +496,11 @@ export function createVoiceController(host: VoiceHost) {
   }
 
   /**
-   * The three edges a hold produces, for the trackpad gesture.
+   * The three edges a hold produces, exposed for tests and for anything that
+   * drives the state machine without a physical key.
    *
-   * A gesture is not a second voice pipeline: it is another way to press and
-   * release the same button, so it goes through exactly this state machine and
-   * inherits Escape, the watchdog, superseding and the transcript routing for
-   * free. Keeping one path is what stops "hold with three fingers" from drifting
-   * away from "hold Alt+Shift+Space".
+   * They go through exactly the same path as the tap, so Escape, the watchdog,
+   * superseding and the transcript routing apply unchanged.
    */
   function press(): void {
     void onTap('press')
@@ -508,6 +517,7 @@ export function createVoiceController(host: VoiceHost) {
   return {
     applySettings,
     stop,
+    suspend,
     status,
     handleRecording,
     failed,

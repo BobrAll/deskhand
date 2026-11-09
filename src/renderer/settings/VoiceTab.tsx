@@ -11,21 +11,14 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import type {
-  DownloadProgress,
-  GestureSettings,
-  VoiceSettings,
-  VoiceStatus
-} from '@shared/types'
+import type { DownloadProgress, VoiceSettings, VoiceStatus } from '@shared/types'
 import { WHISPER_LANGUAGES, VOICE_MODELS, voiceModel } from '@shared/defaults'
 import { Group, Row, ToggleRow } from './Row'
 
 interface VoiceTabProps {
   voice: VoiceSettings
   savedModel: string
-  gestures: GestureSettings
   onChange(changes: Partial<VoiceSettings>): void
-  onGestureChange(changes: Partial<GestureSettings>): void
 }
 
 function megabytes(bytes: number): string {
@@ -33,7 +26,7 @@ function megabytes(bytes: number): string {
   return `${Math.round(bytes / (1024 * 1024))} МБ`
 }
 
-export function VoiceTab({ voice, savedModel, gestures, onChange, onGestureChange }: VoiceTabProps) {
+export function VoiceTab({ voice, savedModel, onChange }: VoiceTabProps) {
   const [status, setStatus] = useState<VoiceStatus | null>(null)
   const [deleting, setDeleting] = useState<string | null>(null)
   const [progress, setProgress] = useState<DownloadProgress | null>(null)
@@ -124,40 +117,10 @@ export function VoiceTab({ voice, savedModel, gestures, onChange, onGestureChang
       <Group title="Ввод">
         <ToggleRow
           title="Включить голосовой ввод"
-          hint="Удерживайте клавишу или три пальца на трекпаде. Распознавание локальное — звук не покидает Mac."
+          hint="Удерживайте клавишу. Распознавание локальное — звук не покидает Mac."
           checked={voice.enabled}
           onChange={(enabled) => onChange({ enabled })}
         />
-
-        <ToggleRow
-          title="Три пальца на трекпаде"
-          hint="Короткое касание открывает карточку, удержание записывает речь."
-          checked={gestures.enabled}
-          onChange={(enabled) => onGestureChange({ enabled })}
-        />
-
-        {gestures.enabled && (
-          <Row
-            title="Граница «касание / удержание»"
-            hint={`${gestures.holdMs} мс. Короче — случайное касание начнёт запись.`}
-          >
-            <input
-              type="range"
-              min={250}
-              max={900}
-              step={10}
-              value={gestures.holdMs}
-              aria-label="Граница между касанием и удержанием"
-              onChange={(event) => onGestureChange({ holdMs: Number(event.target.value) })}
-            />
-          </Row>
-        )}
-
-        {status?.gestureError && (
-          <Row stacked>
-            <div className="row-hint err">{status.gestureError}</div>
-          </Row>
-        )}
       </Group>
 
       <Group title="Распознавание">

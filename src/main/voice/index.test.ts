@@ -55,8 +55,7 @@ vi.mock('./whisper', () => ({
     binaryPath: '/b',
     modelsDir: '/d',
     installed: [],
-    listenerError: null,
-    gestureError: null
+    listenerError: null
   })
 }))
 

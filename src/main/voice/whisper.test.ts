@@ -241,7 +241,6 @@ describe('voiceStatus', () => {
     expect(status.modelsDir).toBe('/userdata/models')
     expect(status.installed).toEqual(['small-q5_1'])
     expect(status.listenerError).toBeNull()
-    expect(status.gestureError).toBeNull()
   })
 
   it('explains a missing binary', async () => {

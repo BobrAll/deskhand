@@ -54,9 +54,7 @@ function voice(): string {
     createElement(VoiceTab, {
       voice: DEFAULT_SETTINGS.voice,
       savedModel: DEFAULT_SETTINGS.voice.model,
-      gestures: DEFAULT_SETTINGS.gestures,
-      onChange: noop,
-      onGestureChange: noop
+      onChange: noop
     })
   )
 }
