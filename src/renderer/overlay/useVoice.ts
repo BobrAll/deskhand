@@ -17,12 +17,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { VoiceEvent, VoicePhase } from '@shared/types'
-
-/** The part of `recorder.ts` this hook uses, kept local to avoid an import cycle. */
-interface Recorder {
-  level(): number
-  stop(capture: boolean): Promise<{ wavBase64: string; durationMs: number } | null>
-}
+import { primeRecorder, startRecording, type RecorderHandles } from './recorder'
 
 interface VoiceState {
   phase: VoicePhase
@@ -66,7 +61,7 @@ export function useVoice(): VoiceHook {
   const [state, setState] = useState<VoiceState>(IDLE)
   const [available, setAvailable] = useState(false)
   const [ready, setReady] = useState(false)
-  const recorderRef = useRef<Recorder | null>(null)
+  const recorderRef = useRef<RecorderHandles | null>(null)
   const lingerRef = useRef<number | null>(null)
   const levelTimerRef = useRef<number | null>(null)
   /** Set when the key was released before the microphone finished opening. */
@@ -146,7 +141,6 @@ export function useVoice(): VoiceHook {
       const mine = captureRef.current
       setState({ phase: 'listening', level: 0, message: null, error: false })
       try {
-        const { startRecording } = await import('./recorder')
         const recorder = await startRecording(maxDurationMs)
         if (mine !== captureRef.current) {
           // A newer capture took over while this one was opening: this stream is
@@ -270,9 +264,13 @@ export function useVoice(): VoiceHook {
     })
 
     // The hint is only offered when a hotkey actually exists: advertising voice on
-    // a machine without a model or a tap would be a lie.
+    // a machine without a model or a tap would be a lie. The same answer decides
+    // whether the microphone is warmed: opening it is the expensive part of the
+    // first turn on macOS, and doing it here — while the user is not speaking —
+    // is what keeps the first phrase after launch from losing its beginning.
     void api.status().then((status) => {
       setAvailable(status.ready && status.listenerError === null)
+      if (status.ready && status.enabled) void primeRecorder()
     })
 
     return () => {
