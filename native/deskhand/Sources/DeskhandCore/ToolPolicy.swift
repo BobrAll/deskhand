@@ -20,7 +20,6 @@ public struct ToolCallContext: Sendable {
     public var role: String?
     public var title: String?
     public var label: String?
-    public var description: String?
     /// True when the target is a text field, so typing into it commits nothing.
     public var isTextField: Bool
     /// What the model said it was doing, in the user's language.
@@ -35,7 +34,6 @@ public struct ToolCallContext: Sendable {
         role: String? = nil,
         title: String? = nil,
         label: String? = nil,
-        description: String? = nil,
         isTextField: Bool = false,
         narration: String? = nil
     ) {
@@ -47,7 +45,6 @@ public struct ToolCallContext: Sendable {
         self.role = role
         self.title = title
         self.label = label
-        self.description = description
         self.isTextField = isTextField
         self.narration = narration
     }

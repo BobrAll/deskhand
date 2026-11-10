@@ -1,7 +1,8 @@
 import Foundation
 
-/// Minimal dynamic JSON representation used for tool arguments, MCP payloads and
-/// model responses. Kept dependency-free so the core has no third-party code.
+/// Minimal dynamic JSON representation used for tool arguments, provider
+/// payloads and model responses. Kept dependency-free so the core has no
+/// third-party code.
 public enum JSONValue: Sendable, Equatable {
     case null
     case bool(Bool)

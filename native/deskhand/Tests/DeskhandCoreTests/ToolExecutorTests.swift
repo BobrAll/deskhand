@@ -25,7 +25,17 @@ final class ToolExecutorTests: XCTestCase {
             arguments: .object(["app": .string("DefinitelyNotAnApp-9f3a")])
         )
         XCTAssertTrue(result.isError)
-        XCTAssertTrue(result.plainText.lowercased().contains("no running or installed app"))
+        // `get_app_state` checks the Accessibility grant before it resolves the
+        // app, so both messages are legitimate: without the grant the call never
+        // reaches the lookup, and with it the lookup reports the missing app.
+        // The test is about reporting rather than crashing, not about which of
+        // the two preconditions this machine happens to meet.
+        let text = result.plainText.lowercased()
+        XCTAssertTrue(
+            text.contains("no running or installed app")
+                || text.contains("accessibility permission is not granted"),
+            "expected the not-found or the permission message, got: \(result.plainText)"
+        )
     }
 
     func testClickRequiresCoordinatesOrIndex() async {
@@ -36,15 +46,18 @@ final class ToolExecutorTests: XCTestCase {
             name: "click",
             arguments: .object(["app": .string("Finder")])
         )
-        if !result.isError {
-            // On a headless CI runner Finder may not resolve at all; either way
-            // the call must not crash.
-            return
-        }
+        // Both outcomes are assertions: with an app the call must be rejected
+        // for having no target, and without one (a headless runner, or a
+        // missing Accessibility grant) it must be rejected before clicking.
+        // A success would mean a click happened with no coordinates and no
+        // index, which is the one thing this call may never do.
+        XCTAssertTrue(result.isError, "a click with no target must not succeed")
         XCTAssertTrue(
             result.plainText.contains("element_index")
                 || result.plainText.contains("both x and y")
                 || result.plainText.contains("no running or installed app")
+                || result.plainText.contains("Accessibility permission"),
+            "got: \(result.plainText)"
         )
     }
 
@@ -162,5 +175,32 @@ final class ElementTextSelectionTests: XCTestCase {
         XCTAssertEqual(ElementActions.TextSelection(raw: "cursor_before"), .cursorBefore)
         XCTAssertEqual(ElementActions.TextSelection(raw: "cursor_after"), .cursorAfter)
         XCTAssertNil(ElementActions.TextSelection(raw: "bogus"))
+    }
+
+    func testSelectionRangeIsConvertedFromCharactersToUTF16() throws {
+        // `locate` counts Characters (grapheme clusters), while
+        // `AXSelectedTextRange` counts UTF-16 code units. "😀" is one Character
+        // but two code units, so the target starts at Character 2 and at UTF-16
+        // 3. Passing the Character offset through unchanged selected the wrong
+        // text in any field with an emoji before the target.
+        let text = "😀 cat"
+        let characters = try XCTUnwrap(
+            ElementActions.locate("cat", in: text, prefix: nil, suffix: nil))
+        XCTAssertEqual(characters, 2..<5, "locate reports Character offsets")
+
+        let range = ElementActions.utf16Range(characters, in: text)
+        XCTAssertEqual(range.location, 3, "not 2: the emoji takes two UTF-16 units")
+        XCTAssertEqual(range.length, 3)
+        XCTAssertEqual(
+            (text as NSString).substring(with: range), "cat",
+            "the range must still select the target text")
+    }
+
+    func testSelectionRangeMatchesCharactersForPlainText() throws {
+        let text = "hello world"
+        let characters = try XCTUnwrap(
+            ElementActions.locate("world", in: text, prefix: nil, suffix: nil))
+        let range = ElementActions.utf16Range(characters, in: text)
+        XCTAssertEqual(range, NSRange(location: 6, length: 5))
     }
 }

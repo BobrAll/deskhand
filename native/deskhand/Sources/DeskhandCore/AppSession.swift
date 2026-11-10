@@ -35,10 +35,6 @@ public struct DiffSettle: Sendable {
         self.intervalMilliseconds = intervalMilliseconds
         self.maxWalkCostMilliseconds = maxWalkCostMilliseconds
     }
-
-    /// No waiting: one walk, whatever it shows.
-    public static let immediate = DiffSettle(
-        budgetMilliseconds: 0, intervalMilliseconds: 0, maxWalkCostMilliseconds: 0)
 }
 
 /// An active session with one application.
@@ -52,6 +48,13 @@ public final class AppSession {
     private(set) var snapshot: AXSnapshot?
     private(set) var elementTable: [Int: AXElement]
     private(set) var lastCapture: WindowCapture.Result?
+    /// Why the last capture attempt produced no image, when it failed.
+    ///
+    /// Kept so the model is told what actually happened. Without it a failed
+    /// capture is reported as a missing permission, which reads as
+    /// "…may be missing: all permissions granted" on a Mac that has granted it,
+    /// and sends the model looking for a setting that is already on.
+    private(set) var lastCaptureError: String?
     private(set) var coordinateMapper: CoordinateMapper?
     /// Time spent inside the last refresh, split by phase, for the timings log.
     private(set) var lastTimings = ToolTimings()
@@ -141,13 +144,16 @@ public final class AppSession {
                 timings.encode = result.encodeMilliseconds
                 timings.screenshotBytes = result.imageData.count
                 lastCapture = result
+                lastCaptureError = nil
                 coordinateMapper = CoordinateMapper(
                     windowFrame: result.windowFrame, scale: result.scale)
             } catch {
                 lastCapture = nil
+                lastCaptureError = "\(error)"
             }
         } else {
             lastCapture = nil
+            lastCaptureError = nil
         }
 
         timings.wall = clock.milliseconds

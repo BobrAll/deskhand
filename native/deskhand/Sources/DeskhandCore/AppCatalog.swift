@@ -25,17 +25,6 @@ public struct AppHandle: Sendable, Identifiable, Equatable {
         self.bundleIdentifier = runningApp.bundleIdentifier
         self.path = runningApp.bundleURL?.path
     }
-
-    public var dictionary: [String: JSONValue] {
-        var d: [String: JSONValue] = [
-            "name": .string(name),
-            "pid": .number(Double(pid)),
-            "running": .bool(true),
-        ]
-        if let bundleIdentifier { d["bundle_identifier"] = .string(bundleIdentifier) }
-        if let path { d["path"] = .string(path) }
-        return d
-    }
 }
 
 public enum AppResolutionError: Error, CustomStringConvertible {
@@ -115,8 +104,7 @@ public enum AppCatalog {
     ///
     /// The scan opens a `Bundle` per app, which costs tens of milliseconds for
     /// the ~100 apps on a typical Mac. The list does not change during a run,
-    /// so it is cached; `invalidateInstalledApps()` drops the cache if an
-    /// installer ran in the meantime.
+    /// so it is cached for the lifetime of the process.
     public static func installedApps() -> [AppHandle] {
         installedAppsLock.lock()
         if let cached = installedAppsCache {
@@ -131,12 +119,6 @@ public enum AppCatalog {
         installedAppsCache = scanned
         installedAppsLock.unlock()
         return scanned
-    }
-
-    public static func invalidateInstalledApps() {
-        installedAppsLock.lock()
-        installedAppsCache = nil
-        installedAppsLock.unlock()
     }
 
     private static func scanInstalledApps() -> [AppHandle] {

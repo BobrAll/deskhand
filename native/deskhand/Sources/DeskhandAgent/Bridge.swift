@@ -365,10 +365,19 @@ final class Bridge: @unchecked Sendable {
             throw ConfigError.invalidValue("run needs provider settings")
         }
         var config = ProviderConfig()
-        if let wire = value["wire"]?.stringValue, let parsed = ProviderConfig.Wire(rawValue: wire) {
+        if let wire = value["wire"]?.stringValue {
+            guard let parsed = ProviderConfig.Wire(rawValue: wire) else {
+                throw ConfigError.invalidValue("unknown wire \"\(wire)\"")
+            }
             config.wire = parsed
         }
-        if let base = value["base_url"]?.stringValue, let url = URL(string: base) {
+        if let base = value["base_url"]?.stringValue {
+            // The default is api.openai.com. Dropping a base URL that does not
+            // parse would send the user's key there instead of the endpoint they
+            // configured, so a bad value is an error, not a fallback.
+            guard let url = URL(string: base), url.scheme != nil, url.host != nil else {
+                throw ConfigError.invalidValue("base_url \"\(base)\" is not a URL")
+            }
             config.baseURL = url
         }
         if let model = value["model"]?.stringValue { config.model = model }

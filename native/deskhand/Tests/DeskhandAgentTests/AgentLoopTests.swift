@@ -60,7 +60,8 @@ final class ScriptedExecutor: ToolRunning {
     }
 }
 
-final class AgentLoopTests: XCTestCase {    func testATruncatedReplyIsNotMistakenForAFinishedRun() async throws {
+final class AgentLoopTests: XCTestCase {
+    func testATruncatedReplyIsNotMistakenForAFinishedRun() async throws {
         // The provider cut the answer off at `max_tokens`. The tool call it was
         // writing never finished, so the reply arrives with no calls and no text
         // — the exact shape of "the model said it is done". Taking that at face
@@ -90,7 +91,9 @@ final class AgentLoopTests: XCTestCase {    func testATruncatedReplyIsNotMistake
         let answer = try await loop.run(task: "do nothing")
         XCTAssertEqual(answer, "All done.")
         XCTAssertEqual(provider.calls.count, 1)
-        XCTAssertEqual(provider.calls[0].1.count, 11, "all tools are offered")
+        XCTAssertEqual(
+            provider.calls[0].1.count, ToolSurface.definitions().count,
+            "all tools are offered")
     }
 
     func testExecutesToolCallsThenFinishes() async throws {
@@ -120,8 +123,10 @@ final class AgentLoopTests: XCTestCase {    func testATruncatedReplyIsNotMistake
 
     func testSeveralCallsInOneAnswerAllRun() async throws {
         // Batching is the main lever on run time, so the loop must actually
-        // execute every call in one answer — in order, and answering each with
-        // its own tool message.
+        // execute every call in one answer — in order, answering each with its
+        // own tool message, and without stopping early on a call that succeeded.
+        // (This replaces `testASuccessfulBatchDoesNotStopEarly`, which used the
+        // same script and asserted a strict subset of the same facts.)
         let provider = ScriptedProvider(steps: [
             .init(text: "", toolCalls: [
                 ToolCall(id: "a", name: "list_apps", arguments: .object(["include_installed": .bool(false)])),
@@ -141,6 +146,7 @@ final class AgentLoopTests: XCTestCase {    func testATruncatedReplyIsNotMistake
         let toolMessages = provider.calls[1].0.filter { $0.role == .tool }
         XCTAssertEqual(toolMessages.count, 2, "each call needs its own result message")
         XCTAssertEqual(toolMessages.map(\.toolCallID), ["a", "b"], "results follow call order")
+        XCTAssertFalse(toolMessages.contains { $0.isError }, "a successful batch is not cut short")
     }
 
     func testAFailedCallStopsTheBatchAndMarksTheRestSkipped() async throws {
@@ -174,36 +180,15 @@ final class AgentLoopTests: XCTestCase {    func testATruncatedReplyIsNotMistake
         )
     }
 
-    func testASuccessfulBatchDoesNotStopEarly() async throws {
-        // The guard must be about failures only. Two good calls in one answer
-        // both run, or batching would be pointless.
-        let provider = ScriptedProvider(steps: [
-            .init(text: "", toolCalls: [
-                ToolCall(id: "a", name: "list_apps", arguments: .object(["include_installed": .bool(false)])),
-                ToolCall(id: "b", name: "list_apps", arguments: .object(["include_installed": .bool(true)])),
-            ]),
-            .init(text: "done", toolCalls: []),
-        ])
-        let loop = AgentLoop(
-            provider: provider,
-            executor: ToolExecutor(),
-            options: .init(verbose: false)
-        )
-        _ = try await loop.run(task: "batch")
-
-        let toolMessages = provider.calls[1].0.filter { $0.role == .tool }
-        XCTAssertEqual(toolMessages.count, 2)
-        XCTAssertFalse(toolMessages.contains { $0.isError })
-    }
-
-    func testLoopGuardStopsRepeatedIdenticalCalls() async throws {
+    func testLoopGuardWarnsOnRepeatedIdenticalCallsWithoutStopping() async throws {
         let repeated = ToolCall(
             id: "same",
             name: "list_apps",
             arguments: .object(["include_installed": .bool(false)])
         )
-        // Four identical turns: the guard should inject warnings rather than
-        // executing the same tool forever.
+        // Four identical turns: the guard injects a warning instead of running
+        // the same tool a fourth time, but it does not end the run — the model
+        // gets the next step to change approach.
         let provider = ScriptedProvider(steps: [
             .init(text: "", toolCalls: [repeated]),
             .init(text: "", toolCalls: [repeated]),
@@ -216,7 +201,10 @@ final class AgentLoopTests: XCTestCase {    func testATruncatedReplyIsNotMistake
             options: .init(maxSteps: 6, verbose: false)
         )
         let answer = try await loop.run(task: "loop")
+        // The run reaches the model's own final answer: the guard warned, it did
+        // not cut the run short.
         XCTAssertEqual(answer, "gave up")
+        XCTAssertTrue(loop.finished, "a warning is not a stop")
 
         // The third call should have produced a warning instead of a result.
         let lastMessages = provider.calls.last!.0

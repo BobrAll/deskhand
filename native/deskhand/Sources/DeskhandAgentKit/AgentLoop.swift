@@ -426,7 +426,9 @@ public final class AgentLoop {
                     let remaining = batch.count - position - 1
                     if remaining > 0 {
                         let note = """
-                            Stopped the batch here: this step failed, so the \(remaining) step(s)                             after it would run against a state they were not planned for. Re-read                             the app state before continuing.
+                            Stopped the batch here: this step failed, so the \(remaining) step(s) \
+                            after it would run against a state they were not planned for. Re-read \
+                            the app state before continuing.
                             """
                         for skipped in batch[(position + 1)...] {
                             messages.append(ChatMessage(
@@ -605,21 +607,6 @@ public final class AgentLoop {
         return lines.joined(separator: "\n")
     }
 
-    /// Keeps the conversation bounded.
-    ///
-    /// Two kinds of bulk live in the history: screenshots and accessibility
-    /// trees. Screenshots are capped by count. Trees are replaced by a marker
-    /// once a newer tree exists, for two reasons: a browser tree is thousands
-    /// of tokens, and every tree but the newest advertises indices that no
-    /// longer resolve to what the model thinks they do.
-    ///
-    /// The tree cap is **per app**, not global. A run that moves between two
-    /// windows — a browser and a chat client, say — would otherwise throw away
-    /// the other app's tree on every switch and make the model re-read 500-node
-    /// trees over and over to recover indices it already had. Keeping the
-    /// newest tree of each app preserves the "indices stay valid" promise
-    /// across switches while still bounding growth by `keepTrees` apps, most
-    /// recently seen first.
     /// One model call, streaming when the provider supports it.
     ///
     /// Extracted so the step can be asked twice: once with the screenshots the
@@ -645,6 +632,21 @@ public final class AgentLoop {
         )
     }
 
+    /// Keeps the conversation bounded.
+    ///
+    /// Two kinds of bulk live in the history: screenshots and accessibility
+    /// trees. Screenshots are capped by count. Trees are replaced by a marker
+    /// once a newer tree exists, for two reasons: a browser tree is thousands
+    /// of tokens, and every tree but the newest advertises indices that no
+    /// longer resolve to what the model thinks they do.
+    ///
+    /// The tree cap is **per app**, not global. A run that moves between two
+    /// windows — a browser and a chat client, say — would otherwise throw away
+    /// the other app's tree on every switch and make the model re-read 500-node
+    /// trees over and over to recover indices it already had. Keeping the
+    /// newest tree of each app preserves the "indices stay valid" promise
+    /// across switches while still bounding growth by `keepTrees` apps, most
+    /// recently seen first.
     func trimmedHistory(_ messages: [ChatMessage]) -> [ChatMessage] {
         var seenImages = 0
         var treesKeptPerApp: [String: Int] = [:]

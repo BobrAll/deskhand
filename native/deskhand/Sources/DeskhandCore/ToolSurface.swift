@@ -1,9 +1,9 @@
 import Foundation
 
-/// The tool contract exposed to models, over MCP and to the built-in agent.
+/// The tool contract the built-in agent offers the model.
 ///
-/// Definitions live in one place so the MCP server, the agent loop and the
-/// documentation can never drift apart.
+/// Definitions live in one place so the agent loop, the provider encodings and
+/// the documentation can never drift apart.
 public enum ToolSurface {
     public static func definitions() -> [ToolDefinition] {
         [
@@ -281,15 +281,6 @@ public struct ToolDefinition: Sendable {
         self.name = name
         self.description = description
         self.inputSchema = inputSchema
-    }
-
-    /// MCP `tools/list` representation.
-    public var mcpJSON: JSONValue {
-        .object([
-            "name": .string(name),
-            "description": .string(description),
-            "inputSchema": inputSchema,
-        ])
     }
 
     /// OpenAI chat-completions `tools` representation.

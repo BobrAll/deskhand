@@ -2,24 +2,11 @@ import Foundation
 import ApplicationServices
 import CoreGraphics
 
-/// Content returned by a tool call, in a transport-neutral form that maps
-/// directly onto MCP content blocks.
+/// Content returned by a tool call, in the transport-neutral form the agent
+/// loop feeds back to the model: text blocks and image blocks.
 public enum ToolContent: Sendable {
     case text(String)
     case image(Data)
-
-    public var mcpJSON: JSONValue {
-        switch self {
-        case .text(let text):
-            return .object(["type": .string("text"), "text": .string(text)])
-        case .image(let data):
-            return .object([
-                "type": .string("image"),
-                "data": .string(data.base64EncodedString()),
-                "mimeType": .string(WindowCapture.mimeType(of: data)),
-            ])
-        }
-    }
 }
 
 public struct ToolResult: Sendable {
@@ -215,7 +202,7 @@ public final class ToolExecutor: @unchecked Sendable {
         session: AppSession,
         actionLabel: String,
         verify: Bool,
-        clickedAt point: CGPoint? = nil
+        clickedPoint point: CGPoint? = nil
     ) -> ToolResult {
         guard verify else {
             return ToolResult(
@@ -371,11 +358,14 @@ public final class ToolExecutor: @unchecked Sendable {
         return value
     }
 
+    /// The message the model sees for a failed call.
+    ///
+    /// `String(describing:)` uses `description` for every error type that has
+    /// one — which is every `Error` the compiler will let us cast to
+    /// `CustomStringConvertible`, i.e. all of them — and falls back to the same
+    /// rendering for an `NSError`. So there is no case left to branch on.
     private func errorMessage(_ error: Error) -> String {
-        if let custom = error as? CustomStringConvertible {
-            return custom.description
-        }
-        return error.localizedDescription
+        String(describing: error)
     }
 
     // MARK: - Tools
@@ -577,8 +567,16 @@ public final class ToolExecutor: @unchecked Sendable {
                     scale \(String(format: "%.2f", capture.scale)). Click coordinates are in screenshot pixels.
                     """))
             } else {
+                // Say what actually went wrong. "Permission may be missing" is
+                // only true when it is; otherwise the model is sent after a
+                // setting that is already granted.
+                let reason = session.lastCaptureError
+                    ?? (permissions.screenRecording
+                        ? "the window could not be captured"
+                        : "Screen Recording permission is not granted")
                 blocks.append(.text(
-                    "No screenshot available. Screen Recording permission may be missing: \(permissions.summary)."))
+                    "No screenshot available: \(reason). The tree below is still current; "
+                        + "address elements by index or ask again for a screenshot."))
             }
         }
 
@@ -703,7 +701,7 @@ public final class ToolExecutor: @unchecked Sendable {
 
         let warning = bringToFrontChecked(session, actionLabel: "the click")
         Mouse.click(at: point, button: button, count: count, modifiers: modifiers)
-        let clickedAt = optionalInt(args, "element_index") == nil ? point : nil
+        let clickedPoint = optionalInt(args, "element_index") == nil ? point : nil
         var message = "Clicked \(button.rawValue) at screen \(Int(point.x)),\(Int(point.y)) x\(count)."
             + (warning ?? "")
         // Clicking a container is aiming at a region, not at an item: the
@@ -729,7 +727,7 @@ public final class ToolExecutor: @unchecked Sendable {
         }
         return finish(
             message,
-            session: session, actionLabel: "the click", verify: verify, clickedAt: clickedAt)
+            session: session, actionLabel: "the click", verify: verify, clickedPoint: clickedPoint)
     }
 
     private func secondaryAction(_ args: JSONValue, verify: Bool) async throws -> ToolResult {
