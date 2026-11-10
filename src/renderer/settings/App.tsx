@@ -107,32 +107,31 @@ function NavIcon({ tab }: { tab: Tab }) {
   )
 }
 
-interface Banner {
+/** How long a footer message stays up before the apply status comes back. */
+const BANNER_WRITE_ERROR_MS = 2600
+const BANNER_KEY_TEST_MS = 3600
+const BANNER_KEY_REMOVED_MS = 2200
+
+/** Quiet time after the last edit before the draft is written. */
+const AUTOSAVE_DEBOUNCE_MS = 450
+
+/** A temporary message in the footer, replacing the apply status while it shows. */
+interface Notice {
   kind: 'ok' | 'err'
   text: string
 }
-
-/**
- * Where a change is on its way to disk.
- *
- * The window has no «Сохранить» any more: everything is written as it is edited.
- * That removes a whole class of "я же поставил галочку" bugs, but it also means
- * the footer has to be honest about the three states that are not "done" — a
- * change still waiting for the debounce, one that is in flight, and one the
- * settings themselves refuse (an invalid base URL, an empty prompt field).
- */
 
 export function App() {
   const [bundle, setBundle] = useState<SettingsBundle | null>(null)
   const [draft, setDraft] = useState<AppSettings | null>(null)
   const [tab, setTab] = useState<Tab>('provider')
-  const [banner, setBanner] = useState<Banner | null>(null)
+  const [notice, setNotice] = useState<Notice | null>(null)
   const [applyState, setApplyState] = useState<ApplyState>('idle')
 
   const [keyInput, setKeyInput] = useState('')
   const [testing, setTesting] = useState(false)
   const [apps, setApps] = useState<RunningAppInfo[]>([])
-  const [hotkeyError, setHotkeyError] = useState<string | null>(null)
+  const [hotkeyMessage, setHotkeyMessage] = useState<string | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
 
   /**
@@ -199,7 +198,8 @@ export function App() {
    * value — a trailing slash on a base URL, a temperature of 0.35 stored as 0.35
    * but a stray space trimmed — because the draft then differs from what was just
    * saved while the user has not touched anything. Without this, the window would
-   * rewrite the same settings every 450 ms for as long as it stayed open.
+   * rewrite the same settings on every `AUTOSAVE_DEBOUNCE_MS` tick for as long as
+   * it stayed open.
    */
   const writtenRef = useRef<string | null>(null)
 
@@ -207,8 +207,8 @@ export function App() {
    * The snapshot a failed write was for, so it is not retried in a loop.
    *
    * Without this, a write that throws leaves the draft different from the bundle,
-   * the effect sees work to do, waits 450 ms, fails again — forever, once every
-   * half second, for as long as the window is open. One failure is reported; the
+   * the effect sees work to do, waits `AUTOSAVE_DEBOUNCE_MS`, fails again — forever,
+   * on every tick, for as long as the window is open. One failure is reported; the
    * next attempt happens when the user changes something, presses ⌘S or closes.
    */
   const failedRef = useRef<string | null>(null)
@@ -229,39 +229,39 @@ export function App() {
       setBundle(saved)
       writtenRef.current = written
       failedRef.current = null
-      const hotkeyError = Boolean(saved.hotkeyError)
+      const hotkeyRejected = Boolean(saved.hotkeyError)
       setDraft((current) => {
         if (!current) return current
         // A rejected hotkey comes back with the previous binding restored, and the
         // draft has to follow it: keeping the rejected combination would leave the
         // window retrying a write the system refuses, forever.
-        if (hotkeyError) return { ...current, hotkey: saved.settings.hotkey }
+        if (hotkeyRejected) return { ...current, hotkey: saved.settings.hotkey }
         return JSON.stringify(current) === written ? saved.settings : current
       })
-      if (hotkeyError) {
+      if (hotkeyRejected) {
         // The rejected binding is the one thing that did not land, so the write
         // snapshot must not be remembered: the draft is about to be dragged back
         // to the stored hotkey, and treating the refused combination as "already
         // applied" would hide a retry that can never succeed.
         writtenRef.current = null
-        setHotkeyError('Комбинация занята — оставлена прежняя.')
+        setHotkeyMessage('Комбинация занята — оставлена прежняя.')
         setApplyState('error')
-        setBanner({ kind: 'err', text: 'Не удалось назначить горячую клавишу.' })
-        window.setTimeout(() => setBanner(null), 2600)
+        setNotice({ kind: 'err', text: 'Не удалось назначить горячую клавишу.' })
+        window.setTimeout(() => setNotice(null), BANNER_WRITE_ERROR_MS)
         return false
       }
-      setHotkeyError(null)
+      setHotkeyMessage(null)
       setApplyState('saved')
       return true
     } catch {
       // Nothing reached the disk, so a later change must be allowed to try again —
-      // but this exact snapshot must not, or the timer would retry it every 450 ms
-      // for as long as the window stayed open.
+      // but this exact snapshot must not, or the timer would retry it every
+      // `AUTOSAVE_DEBOUNCE_MS` for as long as the window stayed open.
       writtenRef.current = null
       failedRef.current = written
       setApplyState('error')
-      setBanner({ kind: 'err', text: 'Не удалось сохранить настройки.' })
-      window.setTimeout(() => setBanner(null), 2600)
+      setNotice({ kind: 'err', text: 'Не удалось сохранить настройки.' })
+      window.setTimeout(() => setNotice(null), BANNER_WRITE_ERROR_MS)
       return false
     }
   }, [])
@@ -269,9 +269,10 @@ export function App() {
   /**
    * Applies the draft as it is edited.
    *
-   * 450 ms of quiet: long enough that a typed model name is not written letter by
-   * letter, short enough that a checkbox feels like it did something. The timer
-   * is cleared on every new keystroke by the effect's own cleanup.
+   * `AUTOSAVE_DEBOUNCE_MS` of quiet: long enough that a typed model name is not
+   * written letter by letter, short enough that a checkbox feels like it did
+   * something. The timer is cleared on every new keystroke by the effect's own
+   * cleanup.
    */
   useEffect(() => {
     if (!draft || !bundle) return
@@ -296,17 +297,17 @@ export function App() {
     setApplyState('pending')
     const timer = window.setTimeout(() => {
       void flush(draft)
-    }, 450)
+    }, AUTOSAVE_DEBOUNCE_MS)
     return () => window.clearTimeout(timer)
   }, [draft, bundle, holdReason, flush])
 
   /**
    * Tells the main process that a write is still coming.
    *
-   * ⌘W is how a window gets closed, and it lands in the 450 ms between the last
-   * keystroke and the write. Without this the window would be destroyed with the
-   * edit still in React state — the exact bug the missing save button was
-   * supposed to make impossible, just moved into a smaller window.
+   * ⌘W is how a window gets closed, and it lands inside `AUTOSAVE_DEBOUNCE_MS`
+   * between the last keystroke and the write. Without this the window would be
+   * destroyed with the edit still in React state — the exact bug the missing save
+   * button was supposed to make impossible, just moved into a smaller window.
    */
   useEffect(() => {
     window.deskhand.settings.hold(applyState === 'pending' || applyState === 'saving')
@@ -372,18 +373,18 @@ export function App() {
         draft.baseUrls[draft.provider]
       )
       if (!test.ok) {
-        setBanner({ kind: 'err', text: test.message })
+        setNotice({ kind: 'err', text: test.message })
         return
       }
       const next = await window.deskhand.settings.setKey(draft.provider, keyInput)
       setBundle(next)
       setKeyInput('')
-      setBanner({ kind: 'ok', text: test.message })
+      setNotice({ kind: 'ok', text: test.message })
     } catch {
-      setBanner({ kind: 'err', text: 'Не удалось сохранить ключ.' })
+      setNotice({ kind: 'err', text: 'Не удалось сохранить ключ.' })
     } finally {
       setTesting(false)
-      window.setTimeout(() => setBanner(null), 3600)
+      window.setTimeout(() => setNotice(null), BANNER_KEY_TEST_MS)
     }
   }, [draft, keyInput])
 
@@ -391,8 +392,8 @@ export function App() {
     if (!draft) return
     const next = await window.deskhand.settings.deleteKey(draft.provider)
     setBundle(next)
-    setBanner({ kind: 'ok', text: 'Ключ удалён' })
-    window.setTimeout(() => setBanner(null), 2200)
+    setNotice({ kind: 'ok', text: 'Ключ удалён' })
+    window.setTimeout(() => setNotice(null), BANNER_KEY_REMOVED_MS)
   }, [draft])
 
   const addExcluded = useCallback(
@@ -446,11 +447,11 @@ export function App() {
             <HotkeyField
               value={draft.hotkey}
               onChange={(accelerator) => {
-                setHotkeyError(null)
+                setHotkeyMessage(null)
                 patch({ hotkey: accelerator })
               }}
             />
-            {hotkeyError && <div className="hint err">{hotkeyError}</div>}
+            {hotkeyMessage && <div className="hint err">{hotkeyMessage}</div>}
           </div>
 
           <div className="side-key">
@@ -501,7 +502,7 @@ export function App() {
               voice={draft.voice}
               tts={draft.tts}
               savedModel={bundle.settings.voice.model}
-              onChange={(changes) => patch({ voice: { ...draft.voice, ...changes } })}
+              onVoiceChange={(changes) => patch({ voice: { ...draft.voice, ...changes } })}
               onTtsChange={(changes) => patch({ tts: { ...draft.tts, ...changes } })}
             />
           )}
@@ -514,7 +515,7 @@ export function App() {
                 // Written through the dedicated channel, not the draft: this switch
                 // decides whether the assistant can act at all, and it has to be on
                 // disk before the answer that arrives a second later. The debounced
-                // autosave would also get there, 450 ms too late.
+                // autosave would also get there, one debounce too late.
                 const availability = await window.deskhand.agent.setEnabled(enabled)
                 // The bundle is the "saved" side of the auto-apply comparison;
                 // syncing it keeps the footer from announcing a pending write for a
@@ -543,8 +544,8 @@ export function App() {
         </div>
 
         <div className="footer">
-          {banner ? (
-            <span className={`banner ${banner.kind}`}>{banner.text}</span>
+          {notice ? (
+            <span className={`banner ${notice.kind}`}>{notice.text}</span>
           ) : (
             <ApplyStatus state={applyState} holdReason={holdReason} />
           )}

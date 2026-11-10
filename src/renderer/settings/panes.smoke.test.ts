@@ -55,7 +55,7 @@ function voice(): string {
       voice: DEFAULT_SETTINGS.voice,
       tts: DEFAULT_SETTINGS.tts,
       savedModel: DEFAULT_SETTINGS.voice.model,
-      onChange: noop,
+      onVoiceChange: noop,
       onTtsChange: noop
     })
   )

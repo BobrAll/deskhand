@@ -1,6 +1,7 @@
 /** Renders the screen glow and completion mark for an agent turn. */
 
 import type { AgentCursorFrame } from '@shared/types'
+import { SVG_NS } from '../svg'
 
 const CHECK_GAP = 10
 const CHECK_SIZE = 24
@@ -10,6 +11,11 @@ export interface CursorHighlight {
   render(frame: AgentCursorFrame): void
 }
 
+/**
+ * Unlike `clamp` in `overlay/metrics.ts`, the upper bound here never falls below
+ * `min`: in a window too narrow for the mark and its margin, the mark still sits
+ * at the margin instead of at a negative offset.
+ */
 function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), Math.max(min, max))
 }
@@ -24,11 +30,11 @@ export function createCursor(root: HTMLElement): CursorHighlight {
 
   const tag = document.createElement('div')
   tag.className = 'tag'
-  const check = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
+  const check = document.createElementNS(SVG_NS, 'svg')
   check.classList.add('completion-check')
   check.setAttribute('viewBox', '0 0 24 24')
   check.setAttribute('aria-hidden', 'true')
-  const checkPath = document.createElementNS('http://www.w3.org/2000/svg', 'path')
+  const checkPath = document.createElementNS(SVG_NS, 'path')
   checkPath.setAttribute('d', 'm5 12 4.5 4.5L19 7')
   checkPath.setAttribute('pathLength', '1')
   const checkOutline = checkPath.cloneNode(true) as SVGPathElement

@@ -30,8 +30,10 @@ import type {
 import {
   ANSWER_CHROME,
   ACTIONS_CHROME,
-  AGENT_STATUS_INSET,
+  ACTIONS_FONT,
+  AGENT_FONT,
   AGENT_ROW_CHROME,
+  AGENT_STATUS_INSET,
   CARET_SLACK,
   CHROME_WIDTH,
   FIELD_FONT,
@@ -51,6 +53,7 @@ import { agentLabel, agentMark } from './agentRow'
 import { keyPolicy, type KeyAction } from './keyPolicy'
 import { routeStream } from './streamRouting'
 import { Markdown } from './markdownText'
+import { LiveThumb } from './LiveThumb'
 import { draggedWidth, expandedWidth, resolveWidth } from './cardWidth'
 
 interface Failure {
@@ -58,9 +61,18 @@ interface Failure {
   retryable: boolean
 }
 
+/** The bars on the voice surface. */
+const VOICE_BARS = 5
+/** The bars' resting height and how much of the microphone level they add. */
+const VOICE_AMP_BASE = 0.62
+const VOICE_AMP_PER_LEVEL = 0.55
+
 function newRequestId(): string {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
 }
+
+/** One measuring context for the whole window: creating one is not free. */
+let ruler: CanvasRenderingContext2D | null = null
 
 /**
  * The width of the widest line of `text`, in the font the field renders in.
@@ -83,50 +95,6 @@ function measureLine(text: string, font: string): number {
     widest = Math.max(widest, ruler.measureText(line).width)
   }
   return widest
-}
-
-/** One measuring context for the whole window: creating one is not free. */
-let ruler: CanvasRenderingContext2D | null = null
-
-/**
- * The context tag re-captures its image live, so the `src` changes every couple
- * of seconds. Swapping it straight onto an `<img>` blanks the thumbnail for a
- * frame each time (the new data URL is decoded after the old one is dropped), so
- * the next frame is preloaded and only then takes over.
- */
-function LiveThumb({ src }: { src: string }) {
-  const [shown, setShown] = useState(src)
-  const [incoming, setIncoming] = useState<string | null>(null)
-
-  useEffect(() => {
-    if (src === shown) {
-      setIncoming(null)
-      return
-    }
-    let cancelled = false
-    const loader = new Image()
-    loader.decoding = 'sync'
-    loader.onload = () => {
-      if (cancelled) return
-      setShown(src)
-      setIncoming(null)
-    }
-    loader.onerror = () => {
-      if (!cancelled) setIncoming(null)
-    }
-    loader.src = src
-    setIncoming(src)
-    return () => {
-      cancelled = true
-    }
-  }, [src, shown])
-
-  return (
-    <>
-      <img className="thumb" src={shown} alt="Скриншот экрана" decoding="sync" />
-      {incoming && <img className="thumb probe" src={incoming} alt="" aria-hidden />}
-    </>
-  )
 }
 
 export function App() {
@@ -184,7 +152,7 @@ export function App() {
     /** Answer the last rewrite started from — retries must not chain partials. */
     base: string
     /** True when the last prompt was spoken, so a retry keeps its suppression. */
-    voice: boolean
+    spoken: boolean
   } | null>(null)
 
   const stateRef = useRef<OverlayState | null>(null)
@@ -208,7 +176,7 @@ export function App() {
    */
   const ignoredRequestRef = useRef<string | null>(null)
   /** Latest `send`, so the voice listener does not resubscribe on every render. */
-  const sendRef = useRef<(text: string, voice?: boolean) => void>(() => {})
+  const sendRef = useRef<(text: string, spoken?: boolean) => void>(() => {})
   /**
    * A spoken command that arrived before the turn's state did.
    *
@@ -482,7 +450,7 @@ export function App() {
    */
   const listening = voice.phase !== 'idle'
   /** The bars open with the voice; the meter arrives at ~10 Hz, hence the transition. */
-  const amp = voice.phase === 'listening' ? 0.62 + voice.level * 0.55 : 1
+  const amp = voice.phase === 'listening' ? VOICE_AMP_BASE + voice.level * VOICE_AMP_PER_LEVEL : 1
 
   /**
    * Whether there is anything to read. A model that produced only whitespace has
@@ -547,11 +515,11 @@ export function App() {
         // when the answer finishes and the remaining buttons appear. «Вернуть» is
         // the longer of the two width labels, so it is the one measured.
         `${speech.speaking ? 'Остановить озвучку' : 'Прослушать'} Вернуть Скопировать`,
-        FIELD_FONT.replace('13px', '11px')
+        ACTIONS_FONT
       )) + ACTIONS_CHROME
     : 0
   const agentWidth = agentStatus
-    ? Math.ceil(measureLine(agentStatus, FIELD_FONT.replace('13px', '11.5px'))) +
+    ? Math.ceil(measureLine(agentStatus, AGENT_FONT)) +
       AGENT_ROW_CHROME + (agentRunning ? 0 : AGENT_STATUS_INSET) + CARET_SLACK
     : 0
   const inputWidth = agentRunning ? NARROW_WIDTH : composedWidth
@@ -571,7 +539,7 @@ export function App() {
   // React would then write its own width over the dragged one. Reading the live
   // value here makes such a render agree with the edge instead of fighting it.
   const cardWidth = resolveWidth({
-    listening,
+    showingVoiceBars: listening,
     wantsWide,
     contentWidth,
     userWidth: dragRef.current?.width ?? userWidth,
@@ -586,13 +554,13 @@ export function App() {
 
   // Measure layout, not the entrance transform. getBoundingClientRect includes
   // the appear animation's scale, which used to feed false heights back to macOS.
-  const reportRef = useRef<() => void>(() => {})
+  const resizeWindowToLayoutRef = useRef<() => void>(() => {})
   useLayoutEffect(() => {
     const node = rootNode
     if (!node) return
     let lastWidth = 0
     let lastHeight = 0
-    const report = (): void => {
+    const resizeWindowToLayout = (): void => {
       const width = node.offsetWidth
       const height = node.offsetHeight
       if (width === lastWidth && height === lastHeight) return
@@ -604,16 +572,16 @@ export function App() {
     }
     const onFocus = (): void => {
       lastWidth = lastHeight = 0
-      report()
+      resizeWindowToLayout()
       inputRef.current?.focus()
     }
-    reportRef.current = report
-    const observer = new ResizeObserver(report)
+    resizeWindowToLayoutRef.current = resizeWindowToLayout
+    const observer = new ResizeObserver(resizeWindowToLayout)
     observer.observe(node)
-    report()
+    resizeWindowToLayout()
     window.addEventListener('focus', onFocus)
     return () => {
-      reportRef.current = () => {}
+      resizeWindowToLayoutRef.current = () => {}
       observer.disconnect()
       window.removeEventListener('focus', onFocus)
     }
@@ -622,7 +590,7 @@ export function App() {
   // Chromium sizes the field from its content. Report the final layout before
   // paint without temporarily collapsing the focused textarea to measure it.
   useLayoutEffect(() => {
-    reportRef.current()
+    resizeWindowToLayoutRef.current()
   }, [prompt, cardWidth, wrapped, rootNode])
 
   useEffect(() => {
@@ -636,7 +604,7 @@ export function App() {
     if (failure || state?.setupNotice) setExpanded(true)
   }, [failure, state?.setupNotice])
 
-  const send = useCallback((text: string, sendMode?: ResponseMode, voice = false) => {
+  const send = useCallback((text: string, sendMode?: ResponseMode, spoken = false) => {
     const value = text.trim()
     const current = stateRef.current
     if (!value || !current) return
@@ -644,7 +612,7 @@ export function App() {
       // A typed Enter while an answer streams is most likely a duplicate; a
       // spoken command is a new question and has to win, or the phrase would be
       // swallowed and the user would hear nothing back at all.
-      if (!voice) return
+      if (!spoken) return
       const previous = requestIdRef.current
       setBusy(false)
       if (previous) window.deskhand.overlay.cancel(previous)
@@ -652,7 +620,7 @@ export function App() {
     const usedMode = sendMode ?? 'insert'
     const requestId = newRequestId()
     requestIdRef.current = requestId
-    speechRef.current.begin(requestId, value, voice)
+    speechRef.current.begin(requestId, value, spoken)
     setBusy(true)
     setAnswer('')
     setFailure(null)
@@ -682,16 +650,16 @@ export function App() {
     // confirmation of what was heard, so it stays until the answer starts arriving
     // (`onStream` clears it then). The user did not type it, so they have not
     // already seen it.
-    spokenPromptRef.current = voice
-    setPrompt(voice ? value : '')
-    setLast({ prompt: value, mode: usedMode, refine: null, base: '', voice })
+    spokenPromptRef.current = spoken
+    setPrompt(spoken ? value : '')
+    setLast({ prompt: value, mode: usedMode, refine: null, base: '', spoken })
     window.deskhand.overlay.send({
       requestId,
       prompt: value,
       mode: usedMode,
       includeSelection: current.flags.includeSelection,
       includeScreenshot: current.flags.includeScreenshot,
-      voice
+      voice: spoken
     })
   }, [])
 
@@ -702,7 +670,7 @@ export function App() {
    */
   // Assigned after `send` is defined so the transcript listener can call it
   // without depending on it (that would resubscribe on every render).
-  sendRef.current = (text: string, voice?: boolean) => send(text, undefined, voice)
+  sendRef.current = (text: string, spoken?: boolean) => send(text, undefined, spoken)
 
   const refine = useCallback(
     (direction: RefineDirection, base?: string) => {
@@ -721,7 +689,7 @@ export function App() {
         mode: last?.mode ?? 'insert',
         refine: direction,
         base: baseAnswer,
-        voice: false
+        spoken: false
       })
       window.deskhand.overlay.send({
         requestId,
@@ -865,9 +833,10 @@ export function App() {
    *   A state update per pointer move re-renders the whole card — the answer's
    *   Markdown included — a hundred times a second, and the card lags behind the
    *   hand by exactly that much. State is committed once, on release.
-   * - The window follows from the element: the `ResizeObserver` in `report` sees
-   *   the new width and resizes the window with `pin`, so the left edge stays put
-   *   and the right edge tracks the pointer. There is one resize path, not two.
+   * - The window follows from the element: the `ResizeObserver` in
+   *   `resizeWindowToLayout` sees the new width and resizes the window with
+   *   `pin`, so the left edge stays put and the right edge tracks the pointer.
+   *   There is one resize path, not two.
    */
   const gripDown = useCallback(
     (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -969,7 +938,6 @@ export function App() {
         shift: event.shiftKey,
         tagName: (event.target as HTMLElement | null)?.tagName ?? null,
         agentPhase: agentRef.current?.phase ?? null,
-        hasRequestId: Boolean(requestIdRef.current),
         hasSelection: Boolean(window.getSelection()?.toString()),
         hasAnswer: Boolean(answer.trim())
       })
@@ -1004,7 +972,7 @@ export function App() {
           role="status"
           aria-label={voice.phase === 'listening' ? 'Слушаю' : 'Распознаю'}
         >
-          {[0, 1, 2, 3, 4].map((bar) => (
+          {Array.from({ length: VOICE_BARS }, (_, bar) => (
             <i key={bar} />
           ))}
         </div>
@@ -1013,18 +981,31 @@ export function App() {
   }
 
   /**
-   * The card is on screen *before* its session exists.
+   * Everything the card decides about itself, in one place and out of this file.
    *
-   * The window comes up on the key press, and the context — frontmost app,
-   * selection, screenshot — lands a few hundred milliseconds later. That gap is
-   * rendered as the card itself: the same field and the same
-   * placeholder. Announcing the wait ("Подготовка контекста…") turned the first
-   * beat of every press into a status line nobody asked to read, and made the
-   * panel change shape and contents right after it appeared. Collecting the
-   * context is background work; the card just looks like itself from frame one.
+   * The flags are a pure function of the session, the drawer and the last request
+   * — see `viewFlags.ts`. They used to be expressions here, which meant they could
+   * only be checked by looking at the card. `blocked` is one of them: the field
+   * needs it before the session exists, and the drawer's lines need it after.
    */
-  const blocked = state?.context.excluded ?? false
-  const showingTranscript = busy && last?.voice && Boolean(prompt)
+  const {
+    blocked,
+    showMeta,
+    answerReady,
+    agentOff,
+    agentBlocked,
+    promptLooksLikeAction,
+    hint,
+    needsAttention
+  } = deriveView({
+    session: state,
+    expanded,
+    hasAnswer,
+    busy,
+    failed: Boolean(failure),
+    last
+  })
+  const showingTranscript = busy && last?.spoken && Boolean(prompt)
 
   /**
    * The field is shared by the provisional and ready card.
@@ -1062,7 +1043,6 @@ export function App() {
           shift: event.shiftKey,
           tagName: 'TEXTAREA',
           agentPhase: null,
-          hasRequestId: false,
           hasSelection: false,
           hasAnswer: Boolean(answer.trim())
         }) !== 'send') {
@@ -1074,6 +1054,17 @@ export function App() {
     />
   )
 
+  /**
+   * The card is on screen *before* its session exists.
+   *
+   * The window comes up on the key press, and the context — frontmost app,
+   * selection, screenshot — lands a few hundred milliseconds later. That gap is
+   * rendered as the card itself: the same field and the same placeholder.
+   * Announcing the wait ("Подготовка контекста…") turned the first beat of every
+   * press into a status line nobody asked to read, and made the panel change shape
+   * and contents right after it appeared. Collecting the context is background
+   * work; the card just looks like itself from frame one.
+   */
   if (!state) {
     // Nothing to unfold yet and nothing to send to: the field is the whole card.
     //
@@ -1104,29 +1095,6 @@ export function App() {
   const { context, flags, setupNotice } = state
   const selection = context.selection
   const screenshot = context.screenshot
-  /**
-   * Everything the card decides about itself, in one place and out of this file.
-   *
-   * The flags are a pure function of the session, the drawer and the last request
-   * — see `viewFlags.ts`. They used to be expressions here, which meant they could
-   * only be checked by looking at the card.
-   */
-  const {
-    showMeta,
-    answerReady,
-    agentOff,
-    agentBlocked,
-    actionAsk,
-    hint,
-    alert
-  } = deriveView({
-    session: state,
-    expanded,
-    hasAnswer,
-    busy,
-    failed: Boolean(failure),
-    last
-  })
 
   return (
     // While the assistant is painting on the screen the card turns into a much
@@ -1164,7 +1132,7 @@ export function App() {
           <button
             className="toggle"
             data-open={expanded || undefined}
-            data-alert={!expanded && alert ? true : undefined}
+            data-alert={!expanded && needsAttention ? true : undefined}
             aria-expanded={expanded}
             aria-label={expanded ? 'Свернуть' : 'Развернуть'}
             title={expanded ? 'Свернуть' : 'Контекст, подсказки и действия'}
@@ -1256,10 +1224,10 @@ export function App() {
         сделать" is exactly the moment this switch is worth knowing about, and
         inside the drawer it would only be found by people who already knew.
       */}
-      {agentOff && !blocked && !busy && (expanded || drawn > 0 || actionAsk) && (
-        <div className="line" data-tone={actionAsk ? 'warn' : undefined}>
+      {agentOff && !blocked && !busy && (expanded || drawn > 0 || promptLooksLikeAction) && (
+        <div className="line" data-tone={promptLooksLikeAction ? 'warn' : undefined}>
           <span>
-            {actionAsk
+            {promptLooksLikeAction
               ? 'Это можно было сделать, а не показать: включите управление — и я нажму сам.'
               : 'Могу и нажать за вас — управление мышью пока выключено.'}
           </span>
@@ -1354,7 +1322,7 @@ export function App() {
 
       {failure && (
         <>
-          {last?.voice && <div className="line transcript">Распознано: {last.prompt}</div>}
+          {last?.spoken && <div className="line transcript">Распознано: {last.prompt}</div>}
           <div className="line" data-tone="err">
             <span>{failure.message}</span>
             {failure.retryable && last && (
@@ -1363,7 +1331,7 @@ export function App() {
                 onClick={() =>
                   last.refine
                     ? refine(last.refine, last.base)
-                    : send(last.prompt, last.mode, last.voice)
+                    : send(last.prompt, last.mode, last.spoken)
                 }
               >
                 Повторить

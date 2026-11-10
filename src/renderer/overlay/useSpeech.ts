@@ -1,8 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { WAIT_STATUS_MS, WAIT_VOICE_COOLDOWN_MS, waitingPhrases } from './waiting'
+import { WAIT_STATUS_MS, waitingPhrases } from './waiting'
 import { looksLikeAction } from '@shared/intent'
 import type { AnswerVoice } from '@shared/types'
-import { ANSWER_FALLBACK, automaticSpeech, requestedReading, speechText } from './speech'
+import {
+  ANSWER_FALLBACK,
+  SPEECH_COOLDOWN_MS,
+  automaticSpeech,
+  requestedReading,
+  speechText
+} from './speech'
 import { phraseAudio } from './speechAudio'
 
 /**
@@ -25,6 +31,15 @@ import { phraseAudio } from './speechAudio'
 /** Chromium can populate the voice list a frame or two after the first call. */
 const VOICE_RETRY_MS = 200
 const VOICE_RETRIES = 10
+
+/** The system voice is fed the answer in chunks of at most this many characters. */
+const SPEECH_CHUNK_CHARS = 220
+const SPEECH_CHUNKS = new RegExp(
+  `.{1,${SPEECH_CHUNK_CHARS}}(?:\\s|$)|\\S{1,${SPEECH_CHUNK_CHARS}}`,
+  'g'
+)
+/** Faster than the macOS default, which reads slower than a person scans the card. */
+const SPEECH_RATE = 1.3
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
@@ -142,14 +157,14 @@ export function useSpeech() {
       return
     }
 
-    const chunks = clean.match(/.{1,220}(?:\s|$)|\S{1,220}/g) ?? [clean]
+    const chunks = clean.match(SPEECH_CHUNKS) ?? [clean]
     await new Promise<void>((resolve) => {
       let left = chunks.length
       for (const chunk of chunks) {
         const utterance = new SpeechSynthesisUtterance(chunk)
         utterance.voice = voice
         utterance.lang = voice.lang
-        utterance.rate = 1.3
+        utterance.rate = SPEECH_RATE
         utterance.onend = () => {
           if (token !== generation.current) return resolve()
           left -= 1
@@ -229,10 +244,10 @@ export function useSpeech() {
     }).catch(() => undefined)
   }, [stop, playSystem])
 
-  const begin = useCallback((id: string, prompt: string, voice: boolean) => {
+  const begin = useCallback((id: string, prompt: string, spoken: boolean) => {
     stop()
     setError(null)
-    if (!voice) return
+    if (!spoken) return
     // Read the preference while the model is thinking, not after its answer.
     const action = looksLikeAction(prompt)
     const preferences = window.deskhand.settings.load().then(({ settings }) => settings.voice)
@@ -260,7 +275,7 @@ export function useSpeech() {
       waitingTimer.current = null
       const token = generation.current
       if (!await acknowledgement || token !== generation.current || turn.current !== current) return
-      if (current.spoken || Date.now() - lastAcknowledgement.current < WAIT_VOICE_COOLDOWN_MS) return
+      if (current.spoken || Date.now() - lastAcknowledgement.current < SPEECH_COOLDOWN_MS) return
       lastAcknowledgement.current = Date.now()
       waitingVoice.current = true
       enqueue(waitingPhrases[phraseIndex.current++ % waitingPhrases.length])

@@ -48,7 +48,7 @@ export function ProviderSection({
   onRemoveKey
 }: ProviderSectionProps) {
   const info = providerInfo(draft.provider)
-  const status = providerKeys[draft.provider]
+  const keyStatus = providerKeys[draft.provider]
   const searchModel = draft.searchModels[draft.provider]
   const fallbackSearchModel = defaultSearchModel(draft)
   // An invalid override is rejected instead of being silently replaced by the
@@ -101,12 +101,12 @@ export function ProviderSection({
           stacked
           title={`Ключ API ${info?.label ?? ''}`.trim()}
           hint={
-            status?.configured
+            keyStatus?.configured
               ? 'Ключ лежит в Keychain и никогда не показывается целиком.'
               : undefined
           }
         >
-          {status?.configured ? (
+          {keyStatus?.configured ? (
             <div className="row-actions">
               <span className="permission-state ok">● Ключ сохранён</span>
               <button className="ghost" onClick={onRemoveKey}>

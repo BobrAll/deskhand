@@ -50,8 +50,6 @@ export interface KeyInput {
   tagName: string | null
   /** The agent row's phase, when a run is on screen. */
   agentPhase: RunPhase | null
-  /** Whether a request is in flight — a check can be cancelled, a run stopped. */
-  hasRequestId: boolean
   /** Whether anything is selected on the page. */
   hasSelection: boolean
   /** Whether there is an answer to copy. */

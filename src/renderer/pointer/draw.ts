@@ -1,14 +1,32 @@
 /** Draws the annotation paths and lays out their captions in screen coordinates. */
 
 import type { PointerPayload, PointerShape } from '@shared/types'
+import { SVG_NS } from '../svg'
 
-const NS = 'http://www.w3.org/2000/svg'
+/** How rounded a box's corners are. */
+const BOX_RADIUS = 14
+/** The arrow head's longest side, and the half-angle it opens at. */
+const ARROW_HEAD_SIZE = 16
+const ARROW_HEAD_SPREAD = 0.42
+/** How far around its tip an arrow's bounds reach, for caption placement. */
+const ARROW_BOUNDS_PAD = 6
+/** Room for the stroke and a small visual gap between two captions. */
+const LABEL_OVERLAP_GAP = 4
+/** Distance between a caption and the shape it belongs to. */
+const LABEL_GAP = 8
+/** Clearance a caption keeps from the screen edge. */
+const LABEL_MARGIN = 6
+/** How long the layer takes to fade out, matching `pointer.css`. */
+const FADE_MS = 240
+/** Stagger between captions, and how many of them are staggered at all. */
+const STAGGER_MS = 45
+const MAX_STAGGERED_LABELS = 4
 
 function el<K extends keyof SVGElementTagNameMap>(
   name: K,
   attrs: Record<string, string | number>
 ): SVGElementTagNameMap[K] {
-  const node = document.createElementNS(NS, name)
+  const node = document.createElementNS(SVG_NS, name)
   for (const [key, value] of Object.entries(attrs)) node.setAttribute(key, String(value))
   return node
 }
@@ -56,7 +74,7 @@ function circlePath(shape: PointerShape): string {
 function pathFor(shape: PointerShape): string {
   switch (shape.kind) {
     case 'box':
-      return roundedRectPath(shape, 14)
+      return roundedRectPath(shape, BOX_RADIUS)
     case 'circle':
       return circlePath(shape)
     case 'underline':
@@ -70,8 +88,8 @@ function arrowHead(shape: PointerShape): SVGElementTagNameMap['path'] {
   const dx = shape.to.x - shape.from.x
   const dy = shape.to.y - shape.from.y
   const angle = Math.atan2(dy, dx)
-  const size = Math.min(16, Math.hypot(dx, dy))
-  const spread = 0.42
+  const size = Math.min(ARROW_HEAD_SIZE, Math.hypot(dx, dy))
+  const spread = ARROW_HEAD_SPREAD
   const left = angle + Math.PI - spread
   const right = angle + Math.PI + spread
   const d = [
@@ -88,7 +106,12 @@ type Rect = { left: number; top: number; right: number; bottom: number }
 function targetBounds(shape: PointerShape): Rect {
   const { from, to } = shape
   if (shape.kind === 'arrow') {
-    return { left: to.x - 6, top: to.y - 6, right: to.x + 6, bottom: to.y + 6 }
+    return {
+      left: to.x - ARROW_BOUNDS_PAD,
+      top: to.y - ARROW_BOUNDS_PAD,
+      right: to.x + ARROW_BOUNDS_PAD,
+      bottom: to.y + ARROW_BOUNDS_PAD
+    }
   }
   return {
     left: Math.min(from.x, to.x),
@@ -99,12 +122,59 @@ function targetBounds(shape: PointerShape): Rect {
 }
 
 function overlap(a: Rect, b: Rect): number {
-  // Leave room for the stroke and a small visual gap between captions.
-  const gap = 4
-  return (
-    Math.max(0, Math.min(a.right, b.right + gap) - Math.max(a.left, b.left - gap)) *
-    Math.max(0, Math.min(a.bottom, b.bottom + gap) - Math.max(a.top, b.top - gap))
-  )
+  const width = Math.min(a.right, b.right + LABEL_OVERLAP_GAP) -
+    Math.max(a.left, b.left - LABEL_OVERLAP_GAP)
+  const height = Math.min(a.bottom, b.bottom + LABEL_OVERLAP_GAP) -
+    Math.max(a.top, b.top - LABEL_OVERLAP_GAP)
+  return Math.max(0, width) * Math.max(0, height)
+}
+
+/**
+ * Every place a caption could sit, clamped onto the screen, in preference order.
+ *
+ * The first four are the sides of the shape itself; the rest are just beyond the
+ * captions already placed, which is what keeps a crowded corner readable.
+ */
+function labelPlacements(
+  width: number,
+  height: number,
+  shape: PointerShape,
+  screen: { width: number; height: number },
+  obstacles: Rect[]
+): Rect[] {
+  const { left, top, right, bottom } = targetBounds(shape)
+  const below = { x: left, y: bottom + LABEL_GAP }
+  const above = { x: left, y: top - height - LABEL_GAP }
+  const after = { x: right + LABEL_GAP, y: top }
+  const before = { x: left - width - LABEL_GAP, y: top }
+  const candidates = shape.kind === 'underline'
+    ? [below, above, after, before]
+    : [after, before, below, above]
+  const alternatives = obstacles.flatMap((obstacle) => [
+    { x: left, y: obstacle.top - height - LABEL_GAP },
+    { x: left, y: obstacle.bottom + LABEL_GAP }
+  ]).sort((a, b) => Math.abs(a.y - top) - Math.abs(b.y - top))
+
+  return [...candidates, ...alternatives].map(({ x, y }) => {
+    const clampedX = Math.max(LABEL_MARGIN, Math.min(x, screen.width - width - LABEL_MARGIN))
+    const clampedY = Math.max(LABEL_MARGIN, Math.min(y, screen.height - height - LABEL_MARGIN))
+    return { left: clampedX, top: clampedY, right: clampedX + width, bottom: clampedY + height }
+  })
+}
+
+/** The first placement that covers nothing, or the one that covers the least. */
+function leastCovered(placements: Rect[], obstacles: Rect[]): Rect {
+  let best = placements[0]
+  let leastOverlap = Infinity
+  for (const rect of placements) {
+    const covered = obstacles.reduce((area, obstacle) => area + overlap(rect, obstacle), 0)
+    if (covered === 0) return rect
+    if (covered < leastOverlap) {
+      best = rect
+      leastOverlap = covered
+    }
+  }
+  return best
 }
 
 function placeLabel(
@@ -114,36 +184,7 @@ function placeLabel(
   screen: { width: number; height: number },
   obstacles: Rect[]
 ): Rect {
-  const { left, top, right, bottom } = targetBounds(shape)
-  const gap = 8
-  const margin = 6
-  const below = { x: left, y: bottom + gap }
-  const above = { x: left, y: top - height - gap }
-  const after = { x: right + gap, y: top }
-  const before = { x: left - width - gap, y: top }
-  const candidates = shape.kind === 'underline'
-    ? [below, above, after, before]
-    : [after, before, below, above]
-  // In a crowded corner, try just beyond the existing obstacles as well.
-  const alternatives = obstacles.flatMap((obstacle) => [
-    { x: left, y: obstacle.top - height - gap },
-    { x: left, y: obstacle.bottom + gap }
-  ]).sort((a, b) => Math.abs(a.y - top) - Math.abs(b.y - top))
-
-  let best: Rect | undefined
-  let leastOverlap = Infinity
-  for (const { x, y } of [...candidates, ...alternatives]) {
-    const clampedX = Math.max(margin, Math.min(x, screen.width - width - margin))
-    const clampedY = Math.max(margin, Math.min(y, screen.height - height - margin))
-    const rect = { left: clampedX, top: clampedY, right: clampedX + width, bottom: clampedY + height }
-    const covered = obstacles.reduce((area, obstacle) => area + overlap(rect, obstacle), 0)
-    if (covered === 0) return rect
-    if (covered < leastOverlap) {
-      best = rect
-      leastOverlap = covered
-    }
-  }
-  return best!
+  return leastCovered(labelPlacements(width, height, shape, screen, obstacles), obstacles)
 }
 
 function renderShape(shape: PointerShape, delay: string): SVGGElement {
@@ -173,7 +214,7 @@ export function render(root: HTMLElement, payload: PointerPayload): void {
     window.setTimeout(() => {
       // A newer payload may have arrived while the fade was running.
       if (root.classList.contains('leaving')) root.replaceChildren()
-    }, 240)
+    }, FADE_MS)
     return
   }
 
@@ -188,7 +229,7 @@ export function render(root: HTMLElement, payload: PointerPayload): void {
   })
   layer.append(svg)
   const labels = payload.shapes.flatMap((shape, index) => {
-    const delay = `${Math.min(index, 4) * 45}ms`
+    const delay = `${Math.min(index, MAX_STAGGERED_LABELS) * STAGGER_MS}ms`
     svg.append(renderShape(shape, delay))
     if (!shape.label) return []
 

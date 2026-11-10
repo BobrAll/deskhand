@@ -35,26 +35,26 @@ const files = import.meta.glob('./speech/*.mp3', {
  * beyond that — a different word, an inserted clause — is a different line and
  * must not be swapped for a recording of another one.
  */
-function key(text: string): string {
+function normalizeForLookup(text: string): string {
   return text.toLowerCase().replace(/\s+/g, ' ').replace(/[\s.!?…]+$/, '').trim()
 }
 
-const byText = new Map<string, string>()
+const clipsByText = new Map<string, string>()
 for (const line of speechLines()) {
   const rendered = (manifest as Record<string, string>)[line.id]
   const url = files[`./speech/${line.id}.mp3`]
   // Both halves must agree: the file exists, and it was rendered from this text.
-  if (url && rendered === line.text) byText.set(key(line.text), url)
+  if (url && rendered === line.text) clipsByText.set(normalizeForLookup(line.text), url)
 }
 
 /** The recorded clip for this exact line, or null when it must be synthesised. */
 export function phraseAudio(text: string): string | null {
-  return byText.get(key(text)) ?? null
+  return clipsByText.get(normalizeForLookup(text)) ?? null
 }
 
 /** How many lines actually shipped with audio; used by the tests and the docs. */
 export function recordedLineCount(): number {
-  return byText.size
+  return clipsByText.size
 }
 
 /** Ids whose audio is missing or was rendered from different wording. */

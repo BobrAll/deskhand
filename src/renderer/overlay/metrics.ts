@@ -86,6 +86,15 @@ export const MAX_FIELD_HEIGHT = 84
 export const FIELD_FONT =
   "13px -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', Arial, sans-serif"
 
+/**
+ * The two places the card prints smaller than the field it measured.
+ *
+ * `button.link` in the answer's action strip is 11 px and the agent row is
+ * 11.5 px, so a width measured in `FIELD_FONT` would over-report both.
+ */
+export const ACTIONS_FONT = FIELD_FONT.replace('13px', '11px')
+export const AGENT_FONT = FIELD_FONT.replace('13px', '11.5px')
+
 export function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max)
 }

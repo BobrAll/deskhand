@@ -47,11 +47,11 @@ export interface ViewFlags {
   /** It is switched on but cannot run (no permission, no helper). */
   agentBlocked: boolean
   /** The request was phrased as an action and the mode that would perform it is off. */
-  actionAsk: boolean
+  promptLooksLikeAction: boolean
   /** The one warning worth a line, if any. */
   hint: string | null
   /** Anything the user has to see even in the folded, one-line state. */
-  alert: boolean
+  needsAttention: boolean
 }
 
 /**
@@ -63,9 +63,9 @@ export interface ViewFlags {
  *   differently: off is an offer (a switch in the card), blocked is an explanation
  *   (why the switch would not help). Collapsing them was the bug this pair exists
  *   to prevent — "нарисовал вместо того, чтобы сделать" with no way to tell which.
- * - `actionAsk` excludes a rewrite. «Короче» on an answer that happens to read
- *   like an instruction is not a request to act, and offering the agent switch
- *   over it would be a non-sequitur.
+ * - `promptLooksLikeAction` excludes a rewrite. «Короче» on an answer that happens
+ *   to read like an instruction is not a request to act, and offering the agent
+ *   switch over it would be a non-sequitur.
  */
 export function deriveView(state: ViewState): ViewFlags {
   const blocked = state.session?.context.excluded ?? false
@@ -73,11 +73,13 @@ export function deriveView(state: ViewState): ViewFlags {
 
   const agentOff = agent ? !agent.enabled : false
   const agentBlocked = agent ? agent.enabled && !agent.ready : false
-  const agentNotice = agentBlocked ? (agent?.reason ?? null) : null
 
-  const actionAsk = !state.last?.refine && looksLikeAction(state.last?.prompt ?? '')
+  const promptLooksLikeAction = !state.last?.refine && looksLikeAction(state.last?.prompt ?? '')
 
-  const hint = state.session?.warnings.filter(Boolean)[0] ?? agentNotice
+  // A blocked agent explains itself in the same line as a warning: the card has
+  // one place for "this will not work", and the reason is what belongs there.
+  const hint = state.session?.warnings.filter(Boolean)[0] ??
+    (agentBlocked ? (agent?.reason ?? null) : null)
 
   return {
     blocked,
@@ -85,8 +87,8 @@ export function deriveView(state: ViewState): ViewFlags {
     answerReady: state.hasAnswer && !state.busy,
     agentOff,
     agentBlocked,
-    actionAsk,
+    promptLooksLikeAction,
     hint: hint ?? null,
-    alert: Boolean(blocked || state.session?.setupNotice || state.failed || hint)
+    needsAttention: Boolean(blocked || state.session?.setupNotice || state.failed || hint)
   }
 }

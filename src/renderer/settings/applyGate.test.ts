@@ -2,14 +2,14 @@
  * The rules that decide whether the settings window may write.
  *
  * A disagreement here does not throw. It either rewrites a field under the user's
- * hands while they are typing in it, or it writes the same value on a 450 ms timer
- * forever — so the cases below are the ones where the two halves of the rule (hold
- * the write / fix the value up) have to agree.
+ * hands while they are typing in it, or it writes the same value on an autosave
+ * tick forever — so the cases below are the ones where the two halves of the rule
+ * (hold the write / fix the value up) have to agree.
  */
 
 import { describe, expect, it } from 'vitest'
-import type { AppSettings, ProviderId } from '@shared/types'
-import { DEFAULT_SETTINGS, PROVIDERS } from '@shared/defaults'
+import type { AppSettings } from '@shared/types'
+import { DEFAULT_SETTINGS } from '@shared/defaults'
 import {
   HOLD_REASON,
   MAX_TOKENS_MAX,
@@ -23,19 +23,7 @@ import {
 
 /** Settings as the window usually has them: valid everywhere. */
 function settings(overrides: Partial<AppSettings> = {}): AppSettings {
-  const baseUrls = {} as Record<ProviderId, string>
-  for (const provider of PROVIDERS) baseUrls[provider.id] = ''
-
-  return {
-    provider: 'openai',
-    model: 'gpt-4o-mini',
-    maxTokens: 2048,
-    temperature: 0.3,
-    systemPrompt: 'Ты помощник.',
-    hotkey: 'Alt+Space',
-    baseUrls,
-    ...overrides
-  } as AppSettings
+  return { ...DEFAULT_SETTINGS, maxTokens: 2048, ...overrides }
 }
 
 describe('applyGate: the token bounds appear once', () => {

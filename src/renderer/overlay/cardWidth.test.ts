@@ -9,13 +9,14 @@
 import { describe, expect, it } from 'vitest'
 import { BUBBLE_MAX_WIDTH } from '@shared/metrics'
 import { FULL_WIDTH, NARROW_WIDTH, VOICE_WIDTH } from './metrics'
-import { draggedWidth, expandedWidth, manualCeiling, resolveWidth } from './cardWidth'
+import { draggedWidth, expandedWidth, userWidthCeiling, resolveWidth } from './cardWidth'
+import type { WidthInputs } from './cardWidth'
 
 const SCREEN = 1440
 
-function width(overrides: Partial<Parameters<typeof resolveWidth>[0]> = {}): number {
+function width(overrides: Partial<WidthInputs> = {}): number {
   return resolveWidth({
-    listening: false,
+    showingVoiceBars: false,
     wantsWide: false,
     contentWidth: 200,
     userWidth: null,
@@ -62,17 +63,17 @@ describe('resolveWidth: the user', () => {
   })
 
   it('never lets a voice turn be widened', () => {
-    expect(width({ listening: true, userWidth: 500 })).toBe(VOICE_WIDTH)
+    expect(width({ showingVoiceBars: true, userWidth: 500 })).toBe(VOICE_WIDTH)
   })
 })
 
-describe('manualCeiling', () => {
+describe('userWidthCeiling', () => {
   it('is the design ceiling on a wide display', () => {
-    expect(manualCeiling(SCREEN)).toBe(BUBBLE_MAX_WIDTH)
+    expect(userWidthCeiling(SCREEN)).toBe(BUBBLE_MAX_WIDTH)
   })
 
   it('never falls below the content cap on a narrow one', () => {
-    expect(manualCeiling(320)).toBe(FULL_WIDTH)
+    expect(userWidthCeiling(320)).toBe(FULL_WIDTH)
   })
 })
 

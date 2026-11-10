@@ -11,13 +11,22 @@
  * window that explains itself and one that sulks.
  */
 
+/**
+ * Where a change is on its way to disk.
+ *
+ * The window has no «Сохранить»: everything is written as it is edited. That
+ * removes a whole class of "я же поставил галочку" bugs, but it also means the
+ * footer has to be honest about the three states that are not "done" — a change
+ * still waiting for the debounce, one that is in flight, and one the settings
+ * themselves refuse (an invalid base URL, an empty prompt field).
+ */
 export type ApplyState = 'idle' | 'pending' | 'saving' | 'saved' | 'held' | 'error'
 
 export interface ApplyStatusText {
   /** The line itself. */
   text: string
   /** Whether it reads as a problem. */
-  bad: boolean
+  isProblem: boolean
 }
 
 /** What the footer says for a given state, or `null` when it says nothing. */
@@ -27,11 +36,11 @@ export function applyStatusText(
 ): ApplyStatusText | null {
   if (state === 'idle') return null
 
-  if (state === 'pending') return { text: 'Применяю…', bad: false }
-  if (state === 'saving') return { text: 'Сохраняю…', bad: false }
-  if (state === 'saved') return { text: 'Применено', bad: false }
-  if (state === 'held') return { text: holdReason ?? 'Изменения не применены', bad: true }
-  return { text: 'Не применено — попробуйте ещё раз', bad: true }
+  if (state === 'pending') return { text: 'Применяю…', isProblem: false }
+  if (state === 'saving') return { text: 'Сохраняю…', isProblem: false }
+  if (state === 'saved') return { text: 'Применено', isProblem: false }
+  if (state === 'held') return { text: holdReason ?? 'Изменения не применены', isProblem: true }
+  return { text: 'Не применено — попробуйте ещё раз', isProblem: true }
 }
 
 export function ApplyStatus(props: { state: ApplyState; holdReason: string | null }) {
@@ -40,7 +49,7 @@ export function ApplyStatus(props: { state: ApplyState; holdReason: string | nul
 
   return (
     <span
-      className={`status ${status.bad ? 'err' : 'ok'}`}
+      className={`status ${status.isProblem ? 'err' : 'ok'}`}
       title={props.holdReason ?? undefined}
       role="status"
     >

@@ -1,7 +1,7 @@
 /**
  * The card's flags, without a card.
  *
- * These expressions were inline in the middle of a 1300-line render, where the
+ * These expressions were inline in the middle of a 1440-line render, where the
  * only way to check them was to open the overlay and look. The cases below are the
  * ones that actually differ on screen, and each one is here because getting it
  * wrong is invisible rather than loud.
@@ -54,18 +54,18 @@ describe('deriveView: before the session lands', () => {
     expect(flags.answerReady).toBe(false)
     expect(flags.agentOff).toBe(false)
     expect(flags.agentBlocked).toBe(false)
-    expect(flags.actionAsk).toBe(false)
+    expect(flags.promptLooksLikeAction).toBe(false)
     expect(flags.hint).toBeNull()
-    expect(flags.alert).toBe(false)
+    expect(flags.needsAttention).toBe(false)
   })
 })
 
 describe('deriveView: the exclusion list', () => {
-  it('blocks the card and raises the alert even when folded', () => {
+  it('blocks the card and raises the attention flag even when folded', () => {
     const flags = deriveView(view({ session: session({ context: { ...session().context, excluded: true } }) }))
 
     expect(flags.blocked).toBe(true)
-    expect(flags.alert).toBe(true)
+    expect(flags.needsAttention).toBe(true)
   })
 })
 
@@ -136,21 +136,21 @@ describe('deriveView: mouse control, off and blocked', () => {
 
 describe('deriveView: an action request with the mode off', () => {
   it('notices a prompt phrased as an action', () => {
-    expect(deriveView(view({ last: { prompt: 'запусти видео', refine: null } })).actionAsk).toBe(true)
+    expect(deriveView(view({ last: { prompt: 'запусти видео', refine: null } })).promptLooksLikeAction).toBe(true)
   })
 
   it('does not treat a rewrite as one', () => {
     // «Короче» over an answer that happens to read like an instruction is still a
     // rewrite: the user is editing text, not asking for the screen to be touched.
-    expect(deriveView(view({ last: { prompt: 'запусти видео', refine: 'shorter' } })).actionAsk).toBe(false)
+    expect(deriveView(view({ last: { prompt: 'запусти видео', refine: 'shorter' } })).promptLooksLikeAction).toBe(false)
   })
 
   it('is false before anything has been asked', () => {
-    expect(deriveView(view({ last: null })).actionAsk).toBe(false)
+    expect(deriveView(view({ last: null })).promptLooksLikeAction).toBe(false)
   })
 })
 
-describe('deriveView: the hint and the alert', () => {
+describe('deriveView: the hint and the attention flag', () => {
   it('takes the first warning and skips the empty ones', () => {
     const flags = deriveView(view({ session: session({ warnings: ['', 'Скриншот недоступен'] }) }))
 
@@ -170,15 +170,15 @@ describe('deriveView: the hint and the alert', () => {
     expect(flags.hint).toBe('Скриншот недоступен')
   })
 
-  it('raises the alert for a setup notice, a failure or a hint', () => {
+  it('raises the attention flag for a setup notice, a failure or a hint', () => {
     const notice = session({ setupNotice: { kind: 'error', message: 'Нужен ключ' } })
 
-    expect(deriveView(view({ session: notice })).alert).toBe(true)
-    expect(deriveView(view({ failed: true })).alert).toBe(true)
-    expect(deriveView(view({ session: session({ warnings: ['x'] }) })).alert).toBe(true)
+    expect(deriveView(view({ session: notice })).needsAttention).toBe(true)
+    expect(deriveView(view({ failed: true })).needsAttention).toBe(true)
+    expect(deriveView(view({ session: session({ warnings: ['x'] }) })).needsAttention).toBe(true)
   })
 
   it('stays quiet on an ordinary session', () => {
-    expect(deriveView(view()).alert).toBe(false)
+    expect(deriveView(view()).needsAttention).toBe(false)
   })
 })

@@ -54,8 +54,9 @@ export function AgentTab({ agent, onChange, onEnabledChange }: AgentTabProps) {
     return () => window.removeEventListener('focus', onFocus)
   }, [refresh])
 
-  // The draft is only persisted on save, so the panel would otherwise keep showing
-  // the old answer until the window was reopened.
+  // The master switch is written through its own channel rather than the
+  // autosave, so the availability has to be re-read when it changes: the panel
+  // would otherwise keep showing the old answer until the window was reopened.
   useEffect(() => {
     refresh()
   }, [agent.enabled, refresh])

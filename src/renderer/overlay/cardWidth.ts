@@ -28,7 +28,7 @@ const SCREEN_INSET = 16
  * narrow screen the second is smaller, and a card that cannot fit is not a wider
  * card, it is a card with its right side off the screen.
  */
-export function manualCeiling(availWidth: number): number {
+export function userWidthCeiling(availWidth: number): number {
   return Math.max(FULL_WIDTH, Math.min(BUBBLE_MAX_WIDTH, availWidth - SCREEN_INSET))
 }
 
@@ -49,7 +49,7 @@ export function draggedWidth(
   availWidth: number,
   min = BUBBLE_MIN_WIDTH
 ): number {
-  return Math.round(clamp(startWidth + delta, min, manualCeiling(availWidth)))
+  return Math.round(clamp(startWidth + delta, min, userWidthCeiling(availWidth)))
 }
 
 /**
@@ -66,12 +66,12 @@ export function draggedWidth(
  */
 export function expandedWidth(natural: number, availWidth: number): number | null {
   if (natural <= FULL_WIDTH) return null
-  return Math.round(clamp(natural, FULL_WIDTH, manualCeiling(availWidth)))
+  return Math.round(clamp(natural, FULL_WIDTH, userWidthCeiling(availWidth)))
 }
 
 export interface WidthInputs {
   /** A voice turn shows the bars and nothing else. */
-  listening: boolean
+  showingVoiceBars: boolean
   /** The drawer, a failure or a waiting row needs the full width. */
   wantsWide: boolean
   /** What the content measured out to, chrome included. */
@@ -95,12 +95,12 @@ export interface WidthInputs {
  * the drawer unfolds, and goes back to 200 when it closes.
  */
 export function resolveWidth(input: WidthInputs): number {
-  if (input.listening) return VOICE_WIDTH
+  if (input.showingVoiceBars) return VOICE_WIDTH
 
   const chosen =
     input.userWidth === null
       ? null
-      : Math.round(clamp(input.userWidth, BUBBLE_MIN_WIDTH, manualCeiling(input.availWidth)))
+      : Math.round(clamp(input.userWidth, BUBBLE_MIN_WIDTH, userWidthCeiling(input.availWidth)))
 
   if (chosen !== null) return input.wantsWide ? Math.max(chosen, FULL_WIDTH) : chosen
   if (input.wantsWide) return FULL_WIDTH

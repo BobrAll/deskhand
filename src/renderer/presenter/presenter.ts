@@ -10,8 +10,11 @@
  */
 
 import type { AgentGesture, AgentPointerFrame } from '@shared/types'
+import { SVG_NS } from '../svg'
 
-const NS = 'http://www.w3.org/2000/svg'
+/** The arrow's own coordinate box, and the size it is drawn at on screen. */
+const ARROW_BOX = 26
+const ARROW_SIZE = 20
 
 /** How long the arrow stays pressed after a click. */
 const PRESS_MS = 260
@@ -23,10 +26,10 @@ const MAX_RIPPLES = 3
  *
  * The point the layer receives is the pixel that will be clicked, so the tip —
  * not the corner of the icon — has to land on it. The number follows the path
- * below: `M5 3.2` in a 26-unit viewBox drawn at 20 px.
+ * below: `M5 3.2` in an `ARROW_BOX`-unit viewBox drawn at `ARROW_SIZE` pixels.
  */
-const TIP_X = (5 / 26) * 20
-const TIP_Y = (3.2 / 26) * 20
+const TIP_X = (5 / ARROW_BOX) * ARROW_SIZE
+const TIP_Y = (3.2 / ARROW_BOX) * ARROW_SIZE
 
 /** Gestures that deserve a faint ring where they land. */
 const RINGING: ReadonlySet<AgentGesture> = new Set<AgentGesture>([
@@ -42,11 +45,11 @@ export interface PresenterLayer {
 }
 
 function arrow(): SVGSVGElement {
-  const svg = document.createElementNS(NS, 'svg')
-  svg.setAttribute('viewBox', '0 0 26 26')
+  const svg = document.createElementNS(SVG_NS, 'svg')
+  svg.setAttribute('viewBox', `0 0 ${ARROW_BOX} ${ARROW_BOX}`)
   svg.setAttribute('aria-hidden', 'true')
 
-  const path = document.createElementNS(NS, 'path')
+  const path = document.createElementNS(SVG_NS, 'path')
   path.setAttribute('class', 'arrow')
   // A slim, rounded pointer rather than the system arrow: the mark should read
   // as "here", not as a second mouse the user might try to grab.

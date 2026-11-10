@@ -23,12 +23,12 @@ describe('applyStatusText: silence when there is nothing to say', () => {
 
 describe('applyStatusText: on the way to disk', () => {
   it('distinguishes waiting from writing', () => {
-    expect(applyStatusText('pending', null)).toEqual({ text: 'Применяю…', bad: false })
-    expect(applyStatusText('saving', null)).toEqual({ text: 'Сохраняю…', bad: false })
+    expect(applyStatusText('pending', null)).toEqual({ text: 'Применяю…', isProblem: false })
+    expect(applyStatusText('saving', null)).toEqual({ text: 'Сохраняю…', isProblem: false })
   })
 
   it('confirms the write', () => {
-    expect(applyStatusText('saved', null)).toEqual({ text: 'Применено', bad: false })
+    expect(applyStatusText('saved', null)).toEqual({ text: 'Применено', isProblem: false })
   })
 })
 
@@ -36,26 +36,26 @@ describe('applyStatusText: a write that did not happen', () => {
   it('prints the reason when the settings refused the value', () => {
     expect(applyStatusText('held', 'Пустой системный промпт оставлен прежним.')).toEqual({
       text: 'Пустой системный промпт оставлен прежним.',
-      bad: true
+      isProblem: true
     })
   })
 
   it('falls back to a plain sentence when there is no reason', () => {
-    expect(applyStatusText('held', null)).toEqual({ text: 'Изменения не применены', bad: true })
+    expect(applyStatusText('held', null)).toEqual({ text: 'Изменения не применены', isProblem: true })
   })
 
   it('reports a failed write without pretending to know why', () => {
     expect(applyStatusText('error', null)).toEqual({
       text: 'Не применено — попробуйте ещё раз',
-      bad: true
+      isProblem: true
     })
   })
 
   it('marks both unhappy states as problems', () => {
     // The colour is the only difference between "не сохранено" and "сохранено"
     // for someone glancing at the footer.
-    expect(applyStatusText('held', 'x')?.bad).toBe(true)
-    expect(applyStatusText('error', null)?.bad).toBe(true)
-    expect(applyStatusText('saved', null)?.bad).toBe(false)
+    expect(applyStatusText('held', 'x')?.isProblem).toBe(true)
+    expect(applyStatusText('error', null)?.isProblem).toBe(true)
+    expect(applyStatusText('saved', null)?.isProblem).toBe(false)
   })
 })

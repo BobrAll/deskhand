@@ -19,14 +19,34 @@
  *   spying".
  */
 
+import { DEFAULT_VOICE } from '@shared/defaults'
+
 /** whisper.cpp only accepts 16 kHz mono input. */
 const TARGET_RATE = 16_000
 
-/** Ceiling on buffered audio, so a wedged key cannot exhaust memory. */
-const MAX_SECONDS = 120
+/**
+ * Ceiling on buffered audio, so a wedged key cannot exhaust memory.
+ *
+ * The same budget the shipped voice settings allow for one recording: a longer
+ * press is already clamped by the main process, and buffering past it only costs
+ * memory.
+ */
+const MAX_RECORDING_MS = DEFAULT_VOICE.maxDurationMs
 
 /** Below this the recording is silence, not speech. */
 const SILENCE_RMS = 0.0035
+
+/**
+ * Blocks of silence kept on each side of the speech.
+ *
+ * The first and last phoneme are quieter than the block that contains them, and
+ * cutting at the loud block alone clips them.
+ */
+const TRIM_PAD_LEAD_BLOCKS = 5
+const TRIM_PAD_TAIL_BLOCKS = 6
+
+/** How far a quiet phrase moves the meter: it is a display, not a measurement. */
+const LEVEL_GAIN = 6
 
 /**
  * How long a warm-up may hold the microphone when the device never delivers a
@@ -144,8 +164,8 @@ function trimSilence(samples: Float32Array, rate: number): Float32Array {
 
   if (first >= blocks) return new Float32Array(0)
   // A little padding keeps the first and last phoneme from being clipped.
-  const start = Math.max(0, (first - 5) * blockSize)
-  const end = Math.min(samples.length, (last + 6) * blockSize)
+  const start = Math.max(0, (first - TRIM_PAD_LEAD_BLOCKS) * blockSize)
+  const end = Math.min(samples.length, (last + TRIM_PAD_TAIL_BLOCKS) * blockSize)
   return samples.subarray(start, end)
 }
 
@@ -278,11 +298,11 @@ export async function startRecording(maxDurationMs: number): Promise<RecorderHan
   const inputRate = context.sampleRate
   const chunks: Float32Array[] = []
   let buffered = 0
-  const limit = Math.floor((TARGET_RATE * Math.min(maxDurationMs, MAX_SECONDS * 1000)) / 1000)
+  const limit = Math.floor((TARGET_RATE * Math.min(maxDurationMs, MAX_RECORDING_MS)) / 1000)
   let lastLevel = 0
 
   const detach = openGraph(context, stream, (input) => {
-    lastLevel = Math.min(1, rms(input) * 6)
+    lastLevel = Math.min(1, rms(input) * LEVEL_GAIN)
     if (buffered >= limit) return
     const copy = new Float32Array(input)
     chunks.push(copy)
