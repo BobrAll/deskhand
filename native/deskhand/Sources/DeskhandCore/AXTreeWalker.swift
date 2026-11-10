@@ -27,13 +27,13 @@ public struct AXSnapshot: Sendable {
     /// with an occurrence counter so that two identical list rows stay distinct.
     /// Geometry is deliberately excluded: it is compared separately, because a
     /// scroll moves everything without changing anything.
-    func identities() -> [String] {
-        Self.identities(of: nodes)
+    func identityKeys() -> [String] {
+        Self.identityKeys(of: nodes)
     }
 
     /// The same keys, for a node list that has not been wrapped in a snapshot
     /// yet — which is how a fresh walk is renumbered before anyone sees it.
-    static func identities(of nodes: [AXNode]) -> [String] {
+    static func identityKeys(of nodes: [AXNode]) -> [String] {
         var seen: [String: Int] = [:]
         return nodes.map { node in
             let base = [
@@ -69,12 +69,12 @@ public struct AXSnapshot: Sendable {
     /// Two walks with the same signature describe the same screen, which is how
     /// the session knows an app has finished reacting to an action instead of
     /// catching it mid-update.
-    var restSignature: Int {
+    var settledSignature: Int {
         var hasher = Hasher()
         hasher.combine(nodes.count)
         for node in nodes {
-            hasher.combine(node.visibleState)
-            hasher.combine(node.geometry)
+            hasher.combine(node.visibleStateKey)
+            hasher.combine(node.geometryKey)
         }
         return hasher.finalize()
     }
@@ -85,8 +85,8 @@ public struct AXSnapshot: Sendable {
     /// reported as changed rather than as one node disappearing and an
     /// identical one appearing.
     public func diff(from previous: AXSnapshot) -> AXSnapshotDiff {
-        let previousIDs = previous.identities()
-        let currentIDs = identities()
+        let previousIDs = previous.identityKeys()
+        let currentIDs = identityKeys()
 
         var beforeByID: [String: AXNode] = [:]
         for (position, identity) in previousIDs.enumerated() where beforeByID[identity] == nil {
@@ -106,9 +106,9 @@ public struct AXSnapshot: Sendable {
                 added.append(node)
                 continue
             }
-            if before.visibleState != node.visibleState {
+            if before.visibleStateKey != node.visibleStateKey {
                 changed.append((before, node))
-            } else if before.geometry != node.geometry {
+            } else if before.geometryKey != node.geometryKey {
                 moved += 1
             }
         }
@@ -315,11 +315,11 @@ public enum AXTreeWalker {
         // is given is the session's number for that control, unchanged from the
         // last time it saw it.
         if let indexBook {
-            let identities = AXSnapshot.identities(of: nodes)
+            let keys = AXSnapshot.identityKeys(of: nodes)
             var stable: [Int: AXElement] = [:]
             stable.reserveCapacity(nodes.count)
-            for (position, identity) in identities.enumerated() {
-                let number = indexBook.number(for: identity)
+            for (position, key) in keys.enumerated() {
+                let number = indexBook.number(for: key)
                 if let element = elementTable[nodes[position].index] { stable[number] = element }
                 nodes[position].index = number
             }
@@ -347,7 +347,7 @@ public enum AXTreeWalker {
         if let main = app.element(kAXMainWindowAttribute) {
             if !main.role.isEmpty { return main }
         }
-        let windows = app.children().filter { $0.role == kAXWindowRole }
+        let windows = app.childrenResult().elements.filter { $0.role == kAXWindowRole }
         return windows.first
     }
 }

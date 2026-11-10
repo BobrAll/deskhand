@@ -117,7 +117,7 @@ public final class Timings: @unchecked Sendable {
         switch worst.label {
         case TimingLabel.model:
             advice = "the model round trips dominate — batch more actions per answer and keep the prompt small"
-        case TimingLabel.toolPrefix + "get_app_state":
+        case TimingLabel.tool("get_app_state"):
             advice = "reading state dominates — rely on the post-action diff instead of re-reading"
         default:
             if worst.label.hasPrefix(TimingLabel.toolPrefix) {
@@ -132,18 +132,35 @@ public final class Timings: @unchecked Sendable {
 
 /// The label vocabulary the run loop records and the report reads back.
 ///
-/// The two sides live in different files, so the strings are named once here
-/// rather than spelled out in both.
-enum TimingLabel {
+/// The two sides live in different files — and, for the producers, in a
+/// different module — so the strings are named once here rather than spelled
+/// out in each of them. `bottleneck()` recognises a row by these exact
+/// prefixes, so a producer that invents a spelling silently drops out of the
+/// verdict.
+public enum TimingLabel {
     /// Model round trips.
-    static let model = "llm"
+    public static let model = "llm"
     /// The whole run. It contains everything else, so it is not a bottleneck.
-    static let runTotal = "run total"
+    public static let runTotal = "run total"
     /// Prefix of a whole tool call: `tool <name>`.
-    static let toolPrefix = "tool "
+    public static let toolPrefix = "tool "
     /// Prefix of a phase row inside a tool, e.g. `  tree walk`. The row is
     /// already counted inside that tool's total.
-    static let phasePrefix = "  "
+    public static let phasePrefix = "  "
+
+    /// Accessibility tree walk inside a tool call.
+    public static let treeWalk = phasePrefix + "tree walk"
+    /// Window capture inside a tool call.
+    public static let screenshot = phasePrefix + "screenshot"
+    /// Encoding of the captured image inside a tool call.
+    public static let imageEncode = phasePrefix + "image encode"
+    /// Size of the image handed to the model. A size row, not a duration.
+    public static let screenshotBytes = phasePrefix + "screenshot bytes"
+
+    /// The row for one whole tool call.
+    public static func tool(_ name: String) -> String {
+        toolPrefix + name
+    }
 }
 
 /// Where a single tool call spent its time.

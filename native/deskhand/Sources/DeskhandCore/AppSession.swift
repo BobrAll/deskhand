@@ -210,7 +210,7 @@ public final class AppSession {
             latestTable = scratch
             latestDiff = current.diff(from: previous)
 
-            let signature = current.restSignature
+            let signature = current.settledSignature
             if polls >= 2, signature == previousSignature { break }
             previousSignature = signature
 

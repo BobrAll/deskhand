@@ -18,7 +18,7 @@ final class AXSnapshotDiffTests: XCTestCase {
         )
     }
 
-    func testRestSignatureIsStableForAnUnchangedTree() {
+    func testSettledSignatureIsStableForAnUnchangedTree() {
         // The settle loop stops when two consecutive walks agree. If the
         // signature were unstable, it would poll until the budget expired on
         // every action; if it were too coarse, it would stop mid-update and
@@ -27,16 +27,16 @@ final class AXSnapshotDiffTests: XCTestCase {
             AXNode(index: 0, depth: 0, role: "AXWindow", title: "Inbox"),
             AXNode(index: 1, depth: 1, role: "AXButton", title: "Send"),
         ]
-        XCTAssertEqual(snapshot(nodes).restSignature, snapshot(nodes).restSignature)
+        XCTAssertEqual(snapshot(nodes).settledSignature, snapshot(nodes).settledSignature)
     }
 
-    func testRestSignatureChangesWhenANodeAppears() {
+    func testSettledSignatureChangesWhenANodeAppears() {
         let before = [AXNode(index: 0, depth: 0, role: "AXWindow", title: "Inbox")]
         let after = before + [AXNode(index: 1, depth: 1, role: "AXButton", title: "Send")]
-        XCTAssertNotEqual(snapshot(before).restSignature, snapshot(after).restSignature)
+        XCTAssertNotEqual(snapshot(before).settledSignature, snapshot(after).settledSignature)
     }
 
-    func testRestSignatureChangesWhenGeometryMoves() {
+    func testSettledSignatureChangesWhenGeometryMoves() {
         let before = [AXNode(
             index: 0, depth: 0, role: "AXButton", title: "Send",
             frame: CGRect(x: 0, y: 0, width: 40, height: 20)
@@ -45,7 +45,7 @@ final class AXSnapshotDiffTests: XCTestCase {
             index: 0, depth: 0, role: "AXButton", title: "Send",
             frame: CGRect(x: 0, y: 40, width: 40, height: 20)
         )]
-        XCTAssertNotEqual(snapshot(before).restSignature, snapshot(after).restSignature)
+        XCTAssertNotEqual(snapshot(before).settledSignature, snapshot(after).settledSignature)
     }
 
     func testSmallestNodeFindsTheInnermostMatch() {

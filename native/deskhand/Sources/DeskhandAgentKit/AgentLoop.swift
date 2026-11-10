@@ -221,7 +221,7 @@ public final class AgentLoop {
                     )
                 }
             } catch {
-                timingLog.record("llm", milliseconds: stepClock.milliseconds)
+                timingLog.record(TimingLabel.model, milliseconds: stepClock.milliseconds)
                 throw error
             }
             let llmMilliseconds = stepClock.milliseconds
@@ -235,7 +235,7 @@ public final class AgentLoop {
                     }),
                 ])
             }
-            timingLog.record("llm", milliseconds: llmMilliseconds)
+            timingLog.record(TimingLabel.model, milliseconds: llmMilliseconds)
             // The host records this as the step's cost. It is emitted before the
             // branch below so the step that ends the run is timed too: the last
             // round trip is usually the most expensive one, and a timeline that
@@ -277,7 +277,7 @@ public final class AgentLoop {
             }
             if !completion.wantsToolCalls {
                 try Task.checkCancellation()
-                timingLog.record("run total", milliseconds: runClock.milliseconds)
+                timingLog.record(TimingLabel.runTotal, milliseconds: runClock.milliseconds)
                 observer?.stepAnswered(step, narration: completion.text, calls: [])
                 // The only exit where the model decided it was done. Both other
                 // exits fall through to the return below.
@@ -473,7 +473,7 @@ public final class AgentLoop {
         failedCalls: Int,
         clock: TimingClock
     ) -> String {
-        timingLog.record("run total", milliseconds: clock.milliseconds)
+        timingLog.record(TimingLabel.runTotal, milliseconds: clock.milliseconds)
         observer?.loopStopped(reason)
         reportRun(steps: steps, calls: calls, failedCalls: failedCalls, clock: clock)
         return answer
@@ -486,8 +486,9 @@ public final class AgentLoop {
     /// describe a run that had already been accounted for.
     private func reportRun(steps: Int, calls: Int, failedCalls: Int, clock: TimingClock) {
         let rows = timingLog.grouped()
-        let llm = rows.first { $0.label == "llm" }?.total ?? 0
-        let tools = rows.filter { $0.label.hasPrefix("tool ") }.reduce(0) { $0 + $1.total }
+        let llm = rows.first { $0.label == TimingLabel.model }?.total ?? 0
+        let tools = rows.filter { $0.label.hasPrefix(TimingLabel.toolPrefix) }
+            .reduce(0) { $0 + $1.total }
         observer?.runFinished(RunReport(
             steps: steps,
             calls: calls,
@@ -501,13 +502,13 @@ public final class AgentLoop {
 
     private func recordToolTimings(_ tool: ToolTimings, name: String) {
         guard options.timings else { return }
-        if tool.tree > 0 { timingLog.record("  tree walk", milliseconds: tool.tree) }
-        if tool.capture > 0 { timingLog.record("  screenshot", milliseconds: tool.capture) }
-        if tool.encode > 0 { timingLog.record("  image encode", milliseconds: tool.encode) }
+        if tool.tree > 0 { timingLog.record(TimingLabel.treeWalk, milliseconds: tool.tree) }
+        if tool.capture > 0 { timingLog.record(TimingLabel.screenshot, milliseconds: tool.capture) }
+        if tool.encode > 0 { timingLog.record(TimingLabel.imageEncode, milliseconds: tool.encode) }
         if tool.screenshotBytes > 0 {
-            timingLog.record("  screenshot bytes", milliseconds: 0, bytes: tool.screenshotBytes)
+            timingLog.record(TimingLabel.screenshotBytes, milliseconds: 0, bytes: tool.screenshotBytes)
         }
-        timingLog.record("tool \(name)", milliseconds: tool.wall)
+        timingLog.record(TimingLabel.tool(name), milliseconds: tool.wall)
     }
 
     /// One line per step, so a stall can be attributed while it happens rather

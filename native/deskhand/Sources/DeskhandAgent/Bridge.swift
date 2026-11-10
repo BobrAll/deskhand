@@ -554,8 +554,11 @@ private final class BridgePresenter: ActionPresenter, @unchecked Sendable {
             params["x"] = .number(Double(point.x))
             params["y"] = .number(Double(point.y))
         }
-        if let target = action.target { params["target"] = Self.rect(target) }
-        if let window = action.window { params["window"] = Self.rect(window) }
+        // These two keys are the wire contract with `src/main/agent/sidecar.ts`
+        // (`AgentPresentation.target` and `.window`), so they keep their names
+        // while the properties they carry are named for what they measure.
+        if let elementFrame = action.elementFrame { params["target"] = Self.rect(elementFrame) }
+        if let windowFrame = action.windowFrame { params["window"] = Self.rect(windowFrame) }
         bridge.emit(["event": .string("present"), "params": .object(params)])
 
         queue.async {

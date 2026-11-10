@@ -66,7 +66,7 @@ public struct AXNode: Sendable {
 
     /// Everything about the node that the model can see, except its index and
     /// depth. Two snapshots agree on a node when these agree.
-    var visibleState: String {
+    var visibleStateKey: String {
         [
             role, subrole ?? "", title ?? "", label ?? "", value ?? "", identifier ?? "",
             enabled ? "1" : "0", focused ? "1" : "0",
@@ -76,9 +76,9 @@ public struct AXNode: Sendable {
         ].joined(separator: "\u{1}")
     }
 
-    /// Position and size, compared separately from `visibleState` so that a
+    /// Position and size, compared separately from `visibleStateKey` so that a
     /// scroll or a window move is reported as movement, not as a change.
-    var geometry: String {
+    var geometryKey: String {
         guard let frame else { return "none" }
         return "\(Int(frame.origin.x)),\(Int(frame.origin.y)),\(Int(frame.width)),\(Int(frame.height))"
     }

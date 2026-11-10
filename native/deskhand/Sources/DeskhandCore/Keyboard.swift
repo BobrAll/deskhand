@@ -2,6 +2,42 @@ import Foundation
 import CoreGraphics
 import ApplicationServices
 
+/// The modifier spellings every caller accepts.
+///
+/// Two callers parse modifier names: the keyboard grammar (`ctrl+shift+t`) and
+/// the click tool's `modifiers` array. They used to carry separate tables with
+/// separate synonyms, so `opt` worked in a key sequence and was silently
+/// dropped from a click. One table, so a name the model has learned means the
+/// same thing in both places.
+///
+/// Every name maps to exactly one flag, so neither caller has to disambiguate:
+/// the accepted set is the union of what the two tables took before, and no
+/// spelling changed meaning.
+enum ModifierName {
+    /// The flag a name stands for, or nil when the name is not a modifier.
+    static func flag(named name: String) -> CGEventFlags? {
+        switch name.lowercased() {
+        case "cmd", "command", "super", "meta", "win": return .maskCommand
+        case "ctrl", "control": return .maskControl
+        case "alt", "option", "opt": return .maskAlternate
+        case "shift": return .maskShift
+        case "fn", "function": return .maskSecondaryFn
+        // A lock rather than a held key, but it is still a modifier flag and
+        // the keyboard grammar has always accepted it.
+        case "capslock": return .maskAlphaShift
+        default: return nil
+        }
+    }
+
+    /// The union of the flags named in a list, ignoring entries that are not
+    /// modifiers — which is how the click tool treats an unknown name.
+    static func flags(of names: [String]) -> CGEventFlags {
+        names.reduce(into: CGEventFlags()) { flags, name in
+            if let flag = flag(named: name) { flags.insert(flag) }
+        }
+    }
+}
+
 /// Keyboard input.
 ///
 /// The syntax follows xdotool's `key` grammar because it is compact, widely
@@ -39,20 +75,9 @@ public enum Keyboard {
         var keyName: String?
 
         for part in parts {
-            switch part.lowercased() {
-            case "cmd", "command", "super", "meta", "win":
-                flags.insert(.maskCommand)
-            case "ctrl", "control":
-                flags.insert(.maskControl)
-            case "alt", "option", "opt":
-                flags.insert(.maskAlternate)
-            case "shift":
-                flags.insert(.maskShift)
-            case "fn", "function":
-                flags.insert(.maskSecondaryFn)
-            case "capslock":
-                flags.insert(.maskAlphaShift)
-            default:
+            if let modifier = ModifierName.flag(named: part) {
+                flags.insert(modifier)
+            } else {
                 keyName = part
             }
         }

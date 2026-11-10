@@ -272,7 +272,7 @@ public final class ToolExecutor: @unchecked Sendable {
     /// the app in the same place produce the same string, which is what makes
     /// "back here again" detectable without comparing whole trees.
     private func fingerprint(of snapshot: AXSnapshot) -> String {
-        "\(snapshot.appName)|\(snapshot.windowTitle ?? "")|\(snapshot.restSignature)"
+        "\(snapshot.appName)|\(snapshot.windowTitle ?? "")|\(snapshot.settledSignature)"
     }
 
     private func stateHeader(_ snapshot: AXSnapshot) -> String {
@@ -495,12 +495,12 @@ public final class ToolExecutor: @unchecked Sendable {
             appName: session.app.name,
             bundleIdentifier: session.app.bundleIdentifier,
             pid: session.pid,
-            window: session.snapshot?.windowFrame
+            windowFrame: session.snapshot?.windowFrame
         )
 
         if let index = arguments["element_index"]?.intValue,
            let node = try? session.node(at: index) {
-            action.target = node.frame
+            action.elementFrame = node.frame
             action.point = try? session.centre(of: index)
         }
 
@@ -523,11 +523,11 @@ public final class ToolExecutor: @unchecked Sendable {
         case "scroll", "press_key", "type_text":
             // No element named: the gesture belongs to the window as a whole,
             // so the middle of it is the honest place to point.
-            if action.point == nil, let frame = action.window {
+            if action.point == nil, let frame = action.windowFrame {
                 action.point = CGPoint(x: frame.midX, y: frame.midY)
             }
         case "activate_app":
-            if let frame = action.window {
+            if let frame = action.windowFrame {
                 action.point = CGPoint(x: frame.midX, y: frame.midY)
             }
         default:
@@ -923,19 +923,13 @@ public final class ToolExecutor: @unchecked Sendable {
             verify: verify)
     }
 
-    private func parseModifiers(_ value: JSONValue?) -> CGEventFlags {
-        guard let items = value?.arrayValue else { return [] }
-        var flags: CGEventFlags = []
-        for item in items {
-            switch item.stringValue?.lowercased() {
-            case "cmd", "command", "super": flags.insert(.maskCommand)
-            case "shift": flags.insert(.maskShift)
-            case "alt", "option": flags.insert(.maskAlternate)
-            case "ctrl", "control": flags.insert(.maskControl)
-            default: break
-            }
-        }
-        return flags
+    /// The `modifiers` argument of a click, as flags.
+    ///
+    /// Internal rather than private so a test can pin the spellings this tool
+    /// accepts: the table is shared with the keyboard grammar, and narrowing it
+    /// would otherwise go unnoticed until a model's `opt`-click did nothing.
+    func parseModifiers(_ value: JSONValue?) -> CGEventFlags {
+        ModifierName.flags(of: (value?.arrayValue ?? []).compactMap(\.stringValue))
     }
 }
 

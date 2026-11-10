@@ -50,10 +50,6 @@ public struct AXElement {
         return nil
     }
 
-    public func children() -> [AXElement] {
-        childrenResult().elements
-    }
-
     /// The outcome of asking an element for its children.
     ///
     /// "No children" and "this element will not say" are different facts, and
