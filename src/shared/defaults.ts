@@ -50,7 +50,7 @@ export function providerInfo(id: string): ProviderInfo | undefined {
   return PROVIDERS.find((provider) => provider.id === id)
 }
 
-type SearchModelDefaults = Pick<AppSettings, 'provider' | 'models' | 'baseUrls'>
+type SearchModelDefaults = Pick<AppSettings, 'provider' | 'models'>
 
 /**
  * What web search uses when the user left the search field empty: the same model
@@ -93,14 +93,17 @@ export function resolveBaseUrl(provider: ProviderId, configured: string | undefi
   return normalizeBaseUrl(configured) || providerInfo(provider)?.defaultBaseUrl || ''
 }
 
+/** The gateway's exact hosts: membership is a string match, not a suffix match. */
+const PLUSVIBE_HOSTS = new Set(['plusvibeapi.ru', 'gw.plusvibeapi.ru', 'plusvibeapi.com'])
+
 export function isPlusVibeApi(baseUrl: string): boolean {
   if (!URL.canParse(baseUrl)) return false
   const { hostname } = new URL(baseUrl)
-  return hostname === 'plusvibeapi.ru' || hostname === 'gw.plusvibeapi.ru' || hostname === 'plusvibeapi.com'
+  return PLUSVIBE_HOSTS.has(hostname)
 }
 
 /**
- * The local whisper models the app can download. Sizes are the exact sizes of the
+ * The local whisper models the app can download. Sizes are the real sizes of the
  * Hugging Face files, because the settings window shows them before a download
  * that may take minutes on a slow line.
  */
@@ -162,12 +165,9 @@ export const WHISPER_MODELS: WhisperModelMeta[] = [
 ]
 
 /**
- * Lookup in `WHISPER_MODELS`, the whisper-only catalog.
- *
- * Production resolves a model through `voiceModel`, which also knows the
- * non-whisper engines; this lookup is used only by `defaults-guards.test.ts`, to
- * check that every catalog id resolves and an unknown id does not. Kept rather
- * than deleted because that is the invariant it guards.
+ * Test seam: production resolves ids through `voiceModel`; this whisper-only
+ * lookup exists for `defaults-guards.test.ts` to assert that every catalog id
+ * resolves and an unknown id does not.
  */
 export function whisperModel(id: string): WhisperModelMeta | undefined {
   return WHISPER_MODELS.find((model) => model.id === id)
@@ -227,8 +227,8 @@ export const DEFAULT_VOICE: VoiceSettings = {
   // duplicates what the user is looking at, and on a long answer the voice
   // becomes the slowest part of the turn. The hands-free case is real but
   // narrower than the "every voice question is spoken back" default suggests,
-  // so it is opt-in. `system` is what the toggle turns on, because it always
-  // works: no key, no network, no cost.
+  // so it is opt-in. `system` is the mode to pick once it is wanted, because it
+  // always works: no key, no network, no cost.
   answerVoice: 'off',
   agentFeedback: true,
   minDurationMs: 300,
@@ -372,28 +372,49 @@ function sanitizeStringList(input: unknown, fallback: string[]): string[] {
   return Array.from(new Set(list))
 }
 
+/** An id that is in the catalog, or the shipped model — never a name we cannot resolve. */
+function sanitizeVoiceModel(value: unknown): string {
+  return voiceModel(String(value ?? ''))?.id ?? DEFAULT_VOICE.model
+}
+
+/** A short language code, lower-cased; `auto` passes through like any other. */
+function sanitizeLanguage(value: unknown): string {
+  return typeof value === 'string' && value.trim()
+    ? value.trim().toLowerCase().slice(0, 8)
+    : DEFAULT_VOICE.language
+}
+
+function sanitizeHotkey(value: unknown): string {
+  return typeof value === 'string' && value.trim() ? value.trim() : DEFAULT_VOICE.hotkey
+}
+
+/** `dictate` is the only second action; anything else sends the transcript to the model. */
+function sanitizeVoiceAction(value: unknown): VoiceSettings['action'] {
+  return value === 'dictate' ? 'dictate' : 'command'
+}
+
+/** Milliseconds, rounded and kept inside the window the field may hold. */
+function sanitizeDuration(value: unknown, min: number, max: number, fallback: number): number {
+  return Math.round(clamp(value, min, max, fallback))
+}
+
 function sanitizeVoice(input: unknown): VoiceSettings {
   const raw = (typeof input === 'object' && input !== null ? input : {}) as Partial<VoiceSettings> & { dialogue?: unknown }
-  const model = voiceModel(String(raw.model ?? ''))?.id ?? DEFAULT_VOICE.model
-  const language =
-    typeof raw.language === 'string' && raw.language.trim()
-      ? raw.language.trim().toLowerCase().slice(0, 8)
-      : DEFAULT_VOICE.language
   return {
     enabled: typeof raw.enabled === 'boolean' ? raw.enabled : DEFAULT_VOICE.enabled,
-    hotkey:
-      typeof raw.hotkey === 'string' && raw.hotkey.trim()
-        ? raw.hotkey.trim()
-        : DEFAULT_VOICE.hotkey,
-    model,
-    language,
-    action: raw.action === 'dictate' ? 'dictate' : 'command',
+    hotkey: sanitizeHotkey(raw.hotkey),
+    model: sanitizeVoiceModel(raw.model),
+    language: sanitizeLanguage(raw.language),
+    action: sanitizeVoiceAction(raw.action),
     answerVoice: sanitizeAnswerVoice(raw),
     agentFeedback: raw.agentFeedback !== false,
     autoSend: typeof raw.autoSend === 'boolean' ? raw.autoSend : DEFAULT_VOICE.autoSend,
-    minDurationMs: Math.round(clamp(raw.minDurationMs, 0, 5_000, DEFAULT_VOICE.minDurationMs)),
-    maxDurationMs: Math.round(
-      clamp(raw.maxDurationMs, 1_000, 10 * 60_000, DEFAULT_VOICE.maxDurationMs)
+    minDurationMs: sanitizeDuration(raw.minDurationMs, 0, 5_000, DEFAULT_VOICE.minDurationMs),
+    maxDurationMs: sanitizeDuration(
+      raw.maxDurationMs,
+      1_000,
+      10 * 60_000,
+      DEFAULT_VOICE.maxDurationMs
     )
   }
 }
@@ -426,13 +447,16 @@ function sanitizeTts(input: unknown): TtsSettings {
   }
 }
 
+/** Approvals are appended forever and persisted with settings; past this the oldest are dropped. */
+const MAX_REMEMBERED_APPROVALS = 256
+
 function sanitizeAgent(input: unknown): AgentSettings {
   const raw = (typeof input === 'object' && input !== null ? input : {}) as Partial<AgentSettings>
   const flag = (value: unknown, fallback: boolean): boolean =>
     typeof value === 'boolean' ? value : fallback
   return {
     rememberedApprovals: Array.isArray(raw.rememberedApprovals)
-      ? [...new Set(raw.rememberedApprovals.filter(value => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value)))].slice(-256)
+      ? [...new Set(raw.rememberedApprovals.filter(value => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value)))].slice(-MAX_REMEMBERED_APPROVALS)
       : [],
     enabled: flag(raw.enabled, DEFAULT_AGENT.enabled),
     // Only the floor is enforced: a typo cannot produce a zero-step run, but the

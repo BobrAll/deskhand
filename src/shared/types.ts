@@ -448,9 +448,14 @@ export interface TranscribeResult {
 
 export interface AppSettings {
   provider: ProviderId
-  /** Per-provider model id. Empty string means "use provider default". */
+  /**
+   * Per-provider model id, as the user typed it.
+   *
+   * There is no built-in default: empty means "not chosen yet", and a turn
+   * refuses to start rather than guessing an id for someone else's account.
+   */
   models: Record<ProviderId, string>
-  /** Per-provider model override for background web search. */
+  /** Per-provider model override for background web search; empty uses `models`. */
   searchModels: Record<ProviderId, string>
   /**
    * Per-provider API base URL override (no trailing slash, no endpoint path).

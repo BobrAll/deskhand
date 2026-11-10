@@ -29,10 +29,20 @@ import type {
 } from './types'
 import type { TtsResult } from './tts'
 
-export interface RunningAppInfo {
+/**
+ * One application, named the way settings store it: `bundleId` is the value that
+ * goes into `excludedApps`, `name` is what the user reads.
+ */
+export interface AppInfo {
   bundleId: string
   name: string
 }
+
+/** An app that is running right now, offered in the excluded-apps list. */
+export type RunningAppInfo = AppInfo
+
+/** The app the `.app` picker returned; it may name one that is not running. */
+export type AppPickResult = AppInfo
 
 export interface SettingsBundle {
   settings: AppSettings
@@ -51,11 +61,6 @@ export interface SettingsBundle {
 export interface ActionResult {
   ok: boolean
   message?: string
-}
-
-export interface AppPickResult {
-  bundleId: string
-  name: string
 }
 
 /** Unsubscribe callback returned by every event subscription. */

@@ -35,8 +35,8 @@ describe('parseExtraBody', () => {
 })
 
 // `models` is the one block that does not fall back to the shipped defaults: an
-// empty bag normalizes to empty model names, and an empty name means "use the
-// provider default" (see `AppSettings.models`).
+// empty bag normalizes to empty model names, and an empty name means "the user
+// has not chosen a model" — there is no built-in id to fall back to.
 const EMPTY_MODELS = { openrouter: '', openai: '', anthropic: '' }
 
 describe('normalizeSettings: empty and malformed input', () => {
