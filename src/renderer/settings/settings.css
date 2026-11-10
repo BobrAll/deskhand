@@ -658,6 +658,11 @@ input[type='range']::-webkit-slider-thumb {
   cursor: pointer;
 }
 
+/* The same row, for a model that is not on disk: nothing to click yet. */
+.model-pick:not(button) {
+  cursor: default;
+}
+
 .models .model-pick:hover:not(:disabled) {
   background: none;
   border-color: transparent;

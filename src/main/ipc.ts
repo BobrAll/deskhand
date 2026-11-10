@@ -46,7 +46,13 @@ import {
   setSettingsHeld,
   openSettingsWindow
 } from './windows'
-import { deleteModel, downloadModel, importModel, voiceStatus } from './voice/recognizer'
+import {
+  deleteModel,
+  downloadModel,
+  importModel,
+  resolveWhisperModel,
+  voiceStatus
+} from './voice/recognizer'
 
 const PROVIDER_IDS: ProviderId[] = PROVIDERS.map((provider) => provider.id)
 
@@ -167,6 +173,18 @@ async function applySettingsSideEffects(
 }
 
 export function registerIpc(deps: IpcDeps): void {
+  /**
+   * Points the voice settings at one model.
+   *
+   * One place, because three paths do it: a finished download, a finished
+   * import, and a delete that took the selected model away. The model is read
+   * from the settings at transcription time, so writing the file is enough —
+   * unlike the hotkey, nothing holds it across calls.
+   */
+  function selectModel(id: string): void {
+    patchSettings({ voice: { ...getSettings().voice, model: id } })
+  }
+
   // ---- overlay -----------------------------------------------------------
   ipcMain.handle(CH.overlay.getState, () => deps.overlay.state())
 
@@ -282,6 +300,11 @@ export function registerIpc(deps: IpcDeps): void {
     }
     try {
       await downloadModel(id, report)
+      // Downloading a model is choosing it: asking for 500 MB and then having to
+      // click the row again is a step that only exists because the two were
+      // separate. Only a successful download selects — the catch below is a
+      // failed one, and it must not change what is in use.
+      selectModel(id)
     } catch {
       /* the failure is already in the last progress event */
     }
@@ -289,7 +312,16 @@ export function registerIpc(deps: IpcDeps): void {
   })
 
   ipcMain.handle(CH.voice.deleteModel, async (_event, model: string) => {
-    await deleteModel(String(model ?? ''))
+    const id = String(model ?? '')
+    const wasSelected = getSettings().voice.model === id
+    await deleteModel(id)
+    if (wasSelected) {
+      // The selection cannot outlive the file. Ask what will actually run now —
+      // another downloaded model, a copy that is still somewhere on disk, or
+      // nothing — and point the settings at that. Leaving the id behind is how
+      // the settings window kept showing a model that had been deleted.
+      selectModel((await resolveWhisperModel()).id ?? '')
+    }
     return deps.voice.status()
   })
 
@@ -301,9 +333,7 @@ export function registerIpc(deps: IpcDeps): void {
     })
     if (picked.canceled || picked.filePaths.length === 0) return null
     try {
-      const id = await importModel(picked.filePaths[0])
-      patchSettings({ voice: { ...getSettings().voice, model: id } })
-      deps.voice.applySettings()
+      selectModel(await importModel(picked.filePaths[0]))
     } catch (error) {
       console.warn('[voice] import failed:', error)
     }

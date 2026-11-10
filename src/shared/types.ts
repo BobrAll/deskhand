@@ -417,6 +417,15 @@ export interface VoiceStatus {
   detail: string | null
   /** Model file that will actually be used, or null when none was found. */
   modelPath: string | null
+  /**
+   * The model that will actually transcribe: a catalog id, the file name of an
+   * imported model, or null when nothing on disk matches.
+   *
+   * Not the same as `settings.voice.model`: that value can point at a model the
+   * user never downloaded, and showing it as "selected" is what made a fresh
+   * install claim a model it did not have.
+   */
+  activeModel: string | null
   /** `whisper-cli` binary that will actually be used. */
   binaryPath: string | null
   /** Where models are downloaded to. */

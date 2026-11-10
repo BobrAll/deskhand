@@ -5,6 +5,7 @@ import {
   PROVIDERS,
   WHISPER_MODELS,
   normalizeBaseUrl,
+  normalizeSettings,
   providerInfo,
   resolveSearchModel,
   resolveBaseUrl,
@@ -183,5 +184,28 @@ describe('resolveSearchModel: the search model falls back to the chat model', ()
 
   it('is empty when the user has chosen nothing at all', () => {
     expect(resolveSearchModel({ ...settings, provider: 'anthropic' })).toBe('')
+  })
+})
+
+describe('sanitizeVoiceModel: a choice that exists', () => {
+  it('keeps an explicit empty value as "nothing chosen"', () => {
+    // `''` is how the app says "no model selected" after the last one was
+    // deleted. Filling it with the default is what made a fresh install claim a
+    // model that was never downloaded.
+    expect(normalizeSettings({ voice: { model: '' } }).voice.model).toBe('')
+  })
+
+  it('falls back to the shipped model when the key is absent', () => {
+    expect(normalizeSettings({ voice: {} }).voice.model).toBe('small-q5_1')
+    expect(normalizeSettings({}).voice.model).toBe('small-q5_1')
+  })
+
+  it('keeps an imported model outside the catalog', () => {
+    expect(normalizeSettings({ voice: { model: 'ggml-custom.bin' } }).voice.model)
+      .toBe('ggml-custom.bin')
+  })
+
+  it('rejects a name that is neither a catalog id nor a model file', () => {
+    expect(normalizeSettings({ voice: { model: 'large-v4' } }).voice.model).toBe('small-q5_1')
   })
 })

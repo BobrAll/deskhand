@@ -104,6 +104,15 @@ describe('the settings panes', () => {
     expect(privacy()).toContain('Исключённые приложения')
   })
 
+  it('does not call a model selected before it is on disk', () => {
+    // The status has not arrived yet in this render, so nothing is known to be
+    // installed. The settings point at a model (the default one), and that must
+    // not be shown as a selection: a fresh install has none.
+    const html = voice()
+    expect(html).toContain('Модель не выбрана')
+    expect(html).not.toContain('Выбрана «')
+  })
+
   it('tells the three states of the agent switch apart', () => {
     const render = (enabled: boolean): string =>
       renderToStaticMarkup(
