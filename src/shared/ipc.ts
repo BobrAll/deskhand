@@ -84,16 +84,16 @@ export const CH = {
   },
   /**
    * Agent mode: the mouse and the keyboard belong to the assistant for the
-   * duration of one plan.
+   * duration of one run.
    *
-   * The renderer only *reports* what it saw ("the plan is on screen") and asks
+   * The renderer only *reports* what it saw ("the run is on screen") and asks
    * to stop; every event that moves the cursor is posted by the main process
    * through the native helper, never by a page.
    */
   agent: {
     /** main -> renderer: the run changed phase, or moved to the next step. */
     event: 'agent:event',
-    /** main -> agent display layer: what the plan is doing and where to place the caption. */
+    /** main -> agent display layer: what the run is doing and where to place the caption. */
     cursor: 'agent:cursor',
     /** main -> agent display layer: where the virtual pointer is going. */
     presentation: 'agent:presentation',

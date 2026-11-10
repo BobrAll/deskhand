@@ -71,7 +71,6 @@ function declaredMethods(): string[] {
 
   const out: string[] = []
   const stack: string[] = []
-  let pendingName = ''
   let depth = 0
 
   for (const line of withoutComments.split('\n')) {
@@ -83,15 +82,14 @@ function declaredMethods(): string[] {
     if (namespace) {
       stack.push(namespace[1])
       depth += 1
-      pendingName = ''
       continue
     }
 
     const method = /^([A-Za-z]+)\s*[<(]/.exec(trimmed)
     if (method && stack.length > 0) {
       out.push(`${stack.join('.')}.${method[1]}`)
-      // Skip the rest of this signature, including a multi-line parameter list.
-      pendingName = ''
+      // A signature may open or close a brace on its own line; count it here,
+      // because this branch skips the bookkeeping below.
       depth += (trimmed.match(/\{/g) ?? []).length - (trimmed.match(/\}/g) ?? []).length
       continue
     }
@@ -103,7 +101,6 @@ function declaredMethods(): string[] {
     }
     depth += opens - closes
     if (depth <= 0) break
-    void pendingName
   }
 
   return out.sort()

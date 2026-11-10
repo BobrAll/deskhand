@@ -2,15 +2,15 @@
  * The bubble's widths, in points.
  *
  * These numbers have to agree in two processes, and they did not have a single
- * source before: `main/windows.ts` sized the window with them, and
+ * source before: `main/windows/index.ts` sized the window with them, and
  * `renderer/overlay/App.tsx` used the same three values to decide where a line
  * wraps and how wide a card to ask for. When they drift the card is either
  * clipped or jumps on the first keystroke, and nothing throws — it just looks
  * wrong on screen.
  *
- * Height and the placement gap stay in `main/windows.ts`: the renderer never
- * needs them, and moving them here would be a shared module growing for one
- * caller.
+ * Height and the placement gap stay in `main/windows/index.ts`: the renderer
+ * never needs them, and moving them here would be a shared module growing for
+ * one caller.
  */
 
 /**

@@ -3,9 +3,11 @@
  *
  * These three values are not settings: they describe how the files in
  * `src/renderer/overlay/speech/` were made, the same way a photograph records
- * its camera. They are here so that a mismatch can be detected — a line whose
- * audio was rendered by a different engine or voice must not be played as if it
- * belonged to the configured one.
+ * its camera. Only `voice` is read — `main/tts/index.ts` copies it into
+ * `TtsStatus.recordedVoice` so the settings window can name the voice the short
+ * lines are in. Nothing compares the shipped clips against the configured
+ * engine, so `model` and `style` record how they were rendered rather than
+ * feeding a check.
  *
  * Everything used at runtime comes from `AppSettings.tts`, and the key never
  * appears in this file or anywhere else in the build.

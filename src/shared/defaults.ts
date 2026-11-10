@@ -168,6 +168,14 @@ export const WHISPER_MODELS: WhisperModelMeta[] = [
   }
 ]
 
+/**
+ * Lookup in `WHISPER_MODELS`, the whisper-only catalog.
+ *
+ * Production resolves a model through `voiceModel`, which also knows the
+ * non-whisper engines; this lookup is used only by `defaults-guards.test.ts`, to
+ * check that every catalog id resolves and an unknown id does not. Kept rather
+ * than deleted because that is the invariant it guards.
+ */
 export function whisperModel(id: string): WhisperModelMeta | undefined {
   return WHISPER_MODELS.find((model) => model.id === id)
 }
