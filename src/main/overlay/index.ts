@@ -1202,6 +1202,15 @@ export function createOverlayController(host: OverlayHost) {
     }))
     if (abort.signal.aborted || session !== turnSession) return null
 
+    // What the loop had to work around — a refused screenshot is the case that
+    // exists today. Read from the run rather than from the agent event stream so
+    // the card learns it once, at the moment the answer lands.
+    const notice = agent.last()?.notice
+    if (notice && !turnSession.notices.includes(notice)) {
+      turnSession.notices = [...turnSession.notices, notice]
+      publishState()
+    }
+
     const report = run.answer.trim()
     // The agent uses this exact reply for success without caveats.
     const acknowledged = report === '[[ACTION_DONE]]' && !run.message &&

@@ -207,6 +207,15 @@ export interface AgentEvent {
   /** What is happening, in the user's language ("Нажимаю «Экспорт»"). */
   label: string
   /**
+   * Something the run had to work around and kept going through.
+   *
+   * A warning from the loop, not a failure: the run is still alive and its
+   * answer is still an answer. The card shows the first one when nothing more
+   * urgent is on screen. Right now this carries "the model refused the
+   * screenshot, so the rest of the run is without one".
+   */
+  notice?: string
+  /**
    * Set while the run is waiting for the user to allow one call.
    *
    * Its presence is the whole state: the card renders the buttons from it and

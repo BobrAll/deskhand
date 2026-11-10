@@ -48,7 +48,9 @@ const state = vi.hoisted(() => ({
   useImage: false,
   /** How the mocked provider answers: refuse the image, then succeed. */
   imageRefusedOnce: false,
-  streams: 0
+  streams: 0,
+  /** What the agent reports as a warning it worked around. */
+  agentNotice: undefined as string | undefined
 }))
 
 vi.mock('electron', () => ({ app: {}, BrowserWindow: {}, systemPreferences: { isTrustedAccessibilityClient: () => true } }))
@@ -89,7 +91,7 @@ vi.mock('../agent', () => ({
     stop: vi.fn(),
     answer: vi.fn(),
     dispose: vi.fn(),
-    last: () => ({ phase: 'idle', step: 0, total: 0, label: '' })
+    last: () => ({ phase: 'idle', step: 0, total: 0, label: '', notice: state.agentNotice })
   })
 }))
 vi.mock('../context/collect', () => ({
@@ -138,6 +140,7 @@ beforeEach(() => {
   state.useImage = false
   state.imageRefusedOnce = false
   state.streams = 0
+  state.agentNotice = undefined
   applyHistorySettings(false, [])
 })
 
@@ -356,6 +359,19 @@ describe('a provider that refuses the screenshot', () => {
 
     expect(state.streams).toBe(1)
     expect(h.send).toHaveBeenCalledWith('overlay:stream', expect.objectContaining({ type: 'error' }))
+  })
+
+  it('carries the agent’s own warning when the agent hit the same refusal', async () => {
+    state.agentReady = true
+    state.agentNotice = 'Модель не принимает изображения — продолжаю без скриншотов.'
+    const h = await harness()
+
+    await h.controller.send({ ...h.request, voice: false, prompt: 'Нажми «Экспорт»' })
+
+    const stateEvent = h.send.mock.calls
+      .filter(([channel]) => channel === 'overlay:state')
+      .at(-1)?.[1] as { warnings: string[] } | undefined
+    expect(stateEvent?.warnings.join(' ')).toContain('продолжаю без скриншотов')
   })
 })
 

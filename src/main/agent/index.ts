@@ -266,6 +266,14 @@ export function createAgentController(host: AgentHost) {
      */
     stopped: string | null
     /**
+     * What the loop warned about but worked around.
+     *
+     * Kept for the same reason as `stopped`: the warning arrives mid-run, and the
+     * host asks once at the end. Unlike `stopped` it does not colour the verdict —
+     * the run went on, so its answer is still an answer.
+     */
+    notice: string | null
+    /**
      * Whether the first streamed prose of this run has been traced.
      *
      * One event per run, not per delta: the point is the time to first token,
@@ -334,7 +342,11 @@ export function createAgentController(host: AgentHost) {
       completed: patch.completed ?? (patch.phase === 'done' ? true : undefined),
       approval: patch.approval !== undefined ? patch.approval : (lastPublished.approval ?? null),
       actions: patch.actions ?? lastPublished.actions,
-      message: patch.message
+      message: patch.message,
+      // Carried on every event rather than only the last one, so a host that
+      // redraws mid-run sees it too — and so the overlay can read it off the run
+      // without a second channel that would have to be kept in step.
+      notice: patch.notice ?? current?.notice ?? undefined
     }
     host.emit(lastPublished)
   }
@@ -422,6 +434,7 @@ export function createAgentController(host: AgentHost) {
         step: 0,
         total,
         stopped: null,
+        notice: null,
         firstToken: false,
         pending: null,
         finish: (result) => {
@@ -657,6 +670,12 @@ export function createAgentController(host: AgentHost) {
         // The loop guard fired and the run goes on. Recorded because a run that
         // needed the warning is a run that nearly failed, but it must not touch
         // `stopped`: that field is the verdict, and a warning is not one.
+        //
+        // Kept on the run as well as traced, so the host can tell the user what
+        // the run had to work around — a refused screenshot is the case that
+        // exists today, and without this the answer simply arrives with no
+        // drawing and no explanation.
+        active.notice = event.reason
         trace('agent.warned', { reason: event.reason, step: active.step })
         return
       case 'stopped':
