@@ -32,7 +32,7 @@ beforeEach(() => {
 
 describe('collectContext: the app', () => {
   it('puts the active app into the snapshot', async () => {
-    const { snapshot } = await collectContext({ excludedApps: [], captureScreenshot: false })
+    const { snapshot } = await collectContext({ excludedApps: [], wantsScreenshot: false })
 
     expect(snapshot.activeApp).toEqual(app)
     expect(snapshot.excluded).toBe(false)
@@ -42,7 +42,7 @@ describe('collectContext: the app', () => {
   it('warns when the active app cannot be determined', async () => {
     getActiveApp.mockResolvedValue(null)
 
-    const { snapshot } = await collectContext({ excludedApps: [], captureScreenshot: false })
+    const { snapshot } = await collectContext({ excludedApps: [], wantsScreenshot: false })
 
     expect(snapshot.activeApp).toBeNull()
     expect(snapshot.warnings).toContain('Не удалось определить активное приложение.')
@@ -51,19 +51,19 @@ describe('collectContext: the app', () => {
   it('never reads the selection when there is no active app', async () => {
     getActiveApp.mockResolvedValue(null)
 
-    await collectContext({ excludedApps: [], captureScreenshot: true })
+    await collectContext({ excludedApps: [], wantsScreenshot: true })
 
     expect(readSelection).not.toHaveBeenCalled()
   })
 
   it('always leaves the screenshot for the overlay to fill in', async () => {
-    const { snapshot } = await collectContext({ excludedApps: [], captureScreenshot: true })
+    const { snapshot } = await collectContext({ excludedApps: [], wantsScreenshot: true })
 
     expect(snapshot.screenshot).toBeNull()
   })
 
   it('reports how long collection took', async () => {
-    const { snapshot } = await collectContext({ excludedApps: [], captureScreenshot: false })
+    const { snapshot } = await collectContext({ excludedApps: [], wantsScreenshot: false })
 
     expect(typeof snapshot.collectedMs).toBe('number')
     expect(snapshot.collectedMs).toBeGreaterThanOrEqual(0)
@@ -76,7 +76,7 @@ describe('collectContext: an excluded app', () => {
   })
 
   it('warns and marks the snapshot as excluded', async () => {
-    const { snapshot } = await collectContext({ excludedApps: ['com.apple.Safari'], captureScreenshot: true })
+    const { snapshot } = await collectContext({ excludedApps: ['com.apple.Safari'], wantsScreenshot: true })
 
     expect(snapshot.excluded).toBe(true)
     expect(snapshot.warnings).toContain(
@@ -87,7 +87,7 @@ describe('collectContext: an excluded app', () => {
   it('does not read the selection or take a screenshot', async () => {
     const { snapshot, flags } = await collectContext({
       excludedApps: ['com.apple.Safari'],
-      captureScreenshot: true
+      wantsScreenshot: true
     })
 
     expect(readSelection).not.toHaveBeenCalled()
@@ -103,7 +103,7 @@ describe('collectContext: the flags', () => {
 
     const { snapshot, flags } = await collectContext({
       excludedApps: [],
-      captureScreenshot: true
+      wantsScreenshot: true
     })
 
     expect(snapshot.selection).toEqual({ text: 'выделено', truncated: false })
@@ -113,14 +113,14 @@ describe('collectContext: the flags', () => {
   })
 
   it('takes a screenshot when nothing is selected and the user wants one', async () => {
-    const { flags, snapshot } = await collectContext({ excludedApps: [], captureScreenshot: true })
+    const { flags, snapshot } = await collectContext({ excludedApps: [], wantsScreenshot: true })
 
     expect(flags).toEqual({ includeSelection: false, includeScreenshot: true })
     expect(snapshot.screenshotPending).toBe(true)
   })
 
   it('takes nothing when the user turned the screenshot off', async () => {
-    const { flags, snapshot } = await collectContext({ excludedApps: [], captureScreenshot: false })
+    const { flags, snapshot } = await collectContext({ excludedApps: [], wantsScreenshot: false })
 
     expect(flags).toEqual({ includeSelection: false, includeScreenshot: false })
     expect(snapshot.screenshotPending).toBe(false)
@@ -129,7 +129,7 @@ describe('collectContext: the flags', () => {
   it('swallows a failing selection read and treats it as no selection', async () => {
     readSelection.mockRejectedValue(new Error('pasteboard busy'))
 
-    const { snapshot, flags } = await collectContext({ excludedApps: [], captureScreenshot: true })
+    const { snapshot, flags } = await collectContext({ excludedApps: [], wantsScreenshot: true })
 
     expect(snapshot.selection).toBeNull()
     expect(flags).toEqual({ includeSelection: false, includeScreenshot: true })
@@ -138,7 +138,7 @@ describe('collectContext: the flags', () => {
   it('never captures a screenshot without an active app', async () => {
     getActiveApp.mockResolvedValue(null)
 
-    const { flags, snapshot } = await collectContext({ excludedApps: [], captureScreenshot: true })
+    const { flags, snapshot } = await collectContext({ excludedApps: [], wantsScreenshot: true })
 
     expect(flags).toEqual({ includeSelection: false, includeScreenshot: false })
     expect(snapshot.screenshotPending).toBe(false)

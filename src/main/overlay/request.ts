@@ -1,7 +1,7 @@
 /**
  * Everything a turn sends to the model, assembled in one place.
  *
- * This used to be the first 210 lines of `send()` in `overlay.ts`, mixed in with
+ * This used to be the head of `send()` in `overlay/index.ts`, mixed in with
  * the window, the session and the stream. It is the one part of a turn that does
  * not move the screen, so it is the one part that can be tested without an
  * Electron window — and the part where a silent change would be a behaviour
@@ -78,6 +78,25 @@ export interface TurnRequest {
   /** The request was abandoned while a screenshot was being taken. */
   abandoned: boolean
 }
+
+/**
+ * Appended to the system message when the question is about public facts, so the
+ * model knows it may answer with a search marker. Model-facing text: frozen.
+ */
+const WEB_LOOKUP_INSTRUCTION = [
+  '[Фоновый поиск в интернете]',
+  'Выбирай инструмент по тому, какой результат просит пользователь.',
+  'Для ответа, который требует найти или проверить общедоступные сведения, верни только @web.',
+  'Это относится и к просьбам «поищи» или «погугли», когда результатом должны быть сведения.',
+  'Если нужен переход на страницу или действие в конкретном интерфейсе, используй экранные инструменты.',
+  'Если сведения нужны из текущего окна, документа или личного аккаунта, используй этот контекст.',
+  'Выполняй действия только по просьбе пользователя.',
+  'Если поиск не нужен, сразу дай обычный ответ.'
+].join('\n')
+
+/** «Длиннее» at least doubles the token ceiling, and never below this floor. */
+const REFINE_MIN_TOKENS = 1024
+const REFINE_TOKEN_FACTOR = 2
 
 /**
  * Builds the request for one turn.
@@ -224,7 +243,7 @@ export async function buildTurnRequest(input: BuildTurnRequestInput): Promise<Tu
   // raised (bounded) instead of staying at whatever the summary needed.
   const maxTokens =
     refine?.direction === 'longer'
-      ? Math.min(MAX_REFINE_TOKENS, Math.max(settings.maxTokens * 2, 1024))
+      ? Math.min(MAX_REFINE_TOKENS, Math.max(settings.maxTokens * REFINE_TOKEN_FACTOR, REFINE_MIN_TOKENS))
       : settings.maxTokens
 
   return {
@@ -237,14 +256,3 @@ export async function buildTurnRequest(input: BuildTurnRequestInput): Promise<Tu
     abandoned: false
   }
 }
-
-const WEB_LOOKUP_INSTRUCTION = [
-  '[Фоновый поиск в интернете]',
-  'Выбирай инструмент по тому, какой результат просит пользователь.',
-  'Для ответа, который требует найти или проверить общедоступные сведения, верни только @web.',
-  'Это относится и к просьбам «поищи» или «погугли», когда результатом должны быть сведения.',
-  'Если нужен переход на страницу или действие в конкретном интерфейсе, используй экранные инструменты.',
-  'Если сведения нужны из текущего окна, документа или личного аккаунта, используй этот контекст.',
-  'Выполняй действия только по просьбе пользователя.',
-  'Если поиск не нужен, сразу дай обычный ответ.'
-].join('\n')

@@ -1,15 +1,21 @@
 /**
- * What the card shows, and when it is brought back on screen.
+ * The overlay controller, driven through `send()` against a mocked host, a
+ * mocked writer and a mocked agent.
  *
- * The rule this file exists to protect: a turn must never end with its result in
- * an invisible panel. That used to be about a streaming answer arriving while the
- * card was hidden for a voice turn; now it also covers the agent, whose run
- * happens with the card click-through and whose answer arrives in one piece at
- * the very end.
+ * What it covers, in the order the tests are grouped:
  *
- * The controller is driven through `send()` against a mocked host, a mocked
- * writer and a mocked agent, so what is asserted is the routing and the
- * visibility — not the internals of either engine.
+ * - routing: an action request goes to the agent, a question to the writer, and
+ *   neither pays for the other's round;
+ * - the background web lookup the model asks for;
+ * - the agent turn on the card;
+ * - voice: the transcript stays on screen while the turn is already running;
+ * - what a reopened card remembers;
+ * - the pointer glow, claimed before the work starts;
+ * - and the rule underneath all of it — a turn must never end with its result in
+ *   an invisible panel. That used to be about a streaming answer arriving while
+ *   the card was hidden for a voice turn; now it also covers the agent, whose run
+ *   happens with the card click-through and whose answer arrives in one piece at
+ *   the very end.
  */
 
 import { beforeEach, describe, expect, it, vi } from 'vitest'
