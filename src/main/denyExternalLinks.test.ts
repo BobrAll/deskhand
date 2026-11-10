@@ -82,9 +82,9 @@ describe('denyExternalLinks: the case-sensitive windows', () => {
   })
 })
 
-describe('denyExternalLinks: the caseless window (agent cursor)', () => {
+describe('denyExternalLinks: the case-insensitive window (agent cursor)', () => {
   it('opens a link whose scheme is in capitals', () => {
-    denyExternalLinks(fakeWindow(), { caseless: true })
+    denyExternalLinks(fakeWindow(), { matchSchemeCaseInsensitively: true })
     expect(open('HTTPS://example.com')).toEqual({
       action: 'deny',
       opened: 'HTTPS://example.com'
@@ -92,13 +92,13 @@ describe('denyExternalLinks: the caseless window (agent cursor)', () => {
   })
 
   it('still opens the ordinary spellings', () => {
-    denyExternalLinks(fakeWindow(), { caseless: true })
+    denyExternalLinks(fakeWindow(), { matchSchemeCaseInsensitively: true })
     expect(open('https://example.com').opened).toBe('https://example.com')
     expect(open('http://example.com').opened).toBe('http://example.com')
   })
 
   it('still denies everything else', () => {
-    denyExternalLinks(fakeWindow(), { caseless: true })
+    denyExternalLinks(fakeWindow(), { matchSchemeCaseInsensitively: true })
     expect(open('ftp://example.com').opened).toBeNull()
     expect(open('about:blank').action).toBe('deny')
   })

@@ -76,8 +76,8 @@ vi.mock('../agent/cursor', () => ({ beginAgentTurn: vi.fn(), endAgentTurn: vi.fn
 // The ghost pointer is a separate display layer with its own window; the
 // overlay's job is only to tell it when a run starts and ends.
 vi.mock('../agent/presentation', () => ({
-  presentAgentAction: vi.fn(),
-  updateAgentPointer: vi.fn()
+  paintAgentPresentation: vi.fn(),
+  updateAgentPresentation: vi.fn()
 }))
 vi.mock('../agent/sidecar', () => ({ agentBinary: () => '/tmp/deskhand-agent' }))
 vi.mock('../agent', () => ({

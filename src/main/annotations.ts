@@ -52,8 +52,6 @@ const MAX_BOX_SHARE = 0.95
 const MAX_LABEL = 90
 
 export interface ParsedLine {
-  /** The line to show in the answer, with any protocol syntax removed. */
-  text: string
   /** Shapes the line asked for (usually none). */
   annotations: Annotation[]
 }
@@ -111,7 +109,7 @@ export function parseAnnotationLine(line: string): ParsedLine | null {
 
   if (numbers.length < 2) {
     // A marker we recognised but cannot use: swallow it, draw nothing.
-    return { text: '', annotations: [] }
+    return { annotations: [] }
   }
 
   // Two numbers describe a circle centre plus a default radius; four describe a
@@ -130,9 +128,9 @@ export function parseAnnotationLine(line: string): ParsedLine | null {
   const degenerate = Math.abs(to.x - from.x) < MIN_SIDE && Math.abs(to.y - from.y) < MIN_SIDE
   // A single point is fine for a circle (a default radius is added later); for
   // everything else a zero-length shape means the model had no idea.
-  if (degenerate && kind !== 'circle') return { text: '', annotations: [] }
+  if (degenerate && kind !== 'circle') return { annotations: [] }
 
-  return { text: '', annotations: [{ kind, from, to, label }] }
+  return { annotations: [{ kind, from, to, label }] }
 }
 
 /**

@@ -92,7 +92,7 @@ function makeHost() {
     voice: [] as boolean[],
     opened: 0,
     openResult: true,
-    delivered: [] as Array<{ text: string; send: boolean }>,
+    delivered: [] as Array<{ text: string; submit: boolean }>,
     hidden: 0,
     targetValue: null as ActiveAppInfo | null,
     prewarmed: 0,
@@ -105,8 +105,8 @@ function makeHost() {
     open: async () => {
       host.opened += 1
     },
-    deliver: (text: string, send: boolean) => {
-      host.delivered.push({ text, send })
+    deliver: (text: string, options: { submit: boolean }) => {
+      host.delivered.push({ text, submit: options.submit })
     },
     hide: () => {
       host.hidden += 1
@@ -306,7 +306,7 @@ describe('createVoiceController: recognition', () => {
     const result = await voice.handleRecording({ wavBase64: 'AAAA', durationMs: 800 })
 
     expect(result).toMatchObject({ ok: true, text: 'привет' })
-    expect(host.delivered).toEqual([{ text: 'привет', send: true }])
+    expect(host.delivered).toEqual([{ text: 'привет', submit: true }])
     expect(voice.phase()).toBe('idle')
     expect(lastEvent(host).text).toBe('привет')
   })
@@ -317,7 +317,7 @@ describe('createVoiceController: recognition', () => {
 
     await voice.handleRecording({ wavBase64: 'AAAA', durationMs: 800 })
 
-    expect(host.delivered).toEqual([{ text: 'привет', send: false }])
+    expect(host.delivered).toEqual([{ text: 'привет', submit: false }])
   })
 
   it('pastes into the target app for dictation, and hides the card', async () => {

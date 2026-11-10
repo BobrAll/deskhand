@@ -28,7 +28,7 @@ import type {
 } from '@shared/types'
 import { createAgentController } from '../agent'
 import { beginAgentTurn, endAgentTurn, updateAgentCursor } from '../agent/cursor'
-import { presentAgentAction, updateAgentPointer } from '../agent/presentation'
+import { paintAgentPresentation, updateAgentPresentation } from '../agent/presentation'
 import type { AgentProvider } from '../agent/sidecar'
 import { describeScreen as readScreenOutline } from '../agent/outline'
 import { collectContext } from '../context/collect'
@@ -256,7 +256,7 @@ export function createOverlayController(host: OverlayHost) {
   const agent = createAgentController({
     setPassthrough: (active) => host.setPassthrough(active),
     emit: (event: AgentEvent) => publishAgent(event),
-    present: (action) => presentAgentAction(action)
+    present: (action) => paintAgentPresentation(action)
   })
 
   /** Keeps the card and the display layer in sync with the agent's state. */
@@ -266,7 +266,7 @@ export function createOverlayController(host: OverlayHost) {
     updateAgentCursor(event)
     // The ghost pointer follows the run, not the step: it is present from
     // `arming` to the terminal phase and waits between actions.
-    updateAgentPointer(event)
+    updateAgentPresentation(event)
   }
 
   /**
@@ -366,7 +366,6 @@ export function createOverlayController(host: OverlayHost) {
   let captureInFlight: { sessionId: string; promise: Promise<ScreenshotInfo | null> } | null = null
 
   const observedApps = new WeakMap<ScreenshotInfo, RawFrontApp>()
-  const overlayShots = new WeakSet<ScreenshotInfo>()
 
   /**
    * Is the window that was observed still the same window?
@@ -475,7 +474,6 @@ export function createOverlayController(host: OverlayHost) {
         if (shot && observed) {
           if (await windowStillMatches(observed)) {
             observedApps.set(shot, observed)
-            if (underOverlay) overlayShots.add(shot)
           }
           // The comparison above already recorded which field disagreed; this
           // line records only that the shot was dropped, without the window text.
@@ -1446,8 +1444,8 @@ export function createOverlayController(host: OverlayHost) {
    * If the open is still collecting context, the transcript waits for it: the
    * renderer would otherwise ask the *previous* session (or no session at all).
    */
-  function deliver(text: string, autoSend: boolean): void {
-    const push = (): void => sendToWindow(CH.voice.transcript, { text, send: autoSend })
+  function deliver(text: string, { submit }: { submit: boolean }): void {
+    const push = (): void => sendToWindow(CH.voice.transcript, { text, send: submit })
     if (opening) {
       void opening.then(push, push)
       return

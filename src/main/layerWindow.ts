@@ -43,7 +43,7 @@ export interface LayerWindowOptions {
    */
   acceptFirstMouse: boolean
   /** Case-insensitive `^https?:\/\/` in the window-open handler. */
-  caseless?: boolean
+  matchSchemeCaseInsensitively?: boolean
   /** Runs on `closed`, after the window's own state has been dropped. */
   onClosed?: () => void
 }
@@ -90,7 +90,7 @@ export function createLayerWindow(options: LayerWindowOptions): BrowserWindow {
 
   if (options.onClosed) win.on('closed', options.onClosed)
 
-  denyExternalLinks(win, { caseless: options.caseless })
+  denyExternalLinks(win, { matchSchemeCaseInsensitively: options.matchSchemeCaseInsensitively })
   loadPage(win, options.page)
 
   return win

@@ -51,7 +51,7 @@ const voice = createVoiceController({
   open: () => overlay.open(),
   isOpen: () => overlay.isOpen(),
   showIndicator: () => overlay.showVoiceIndicator(),
-  deliver: (text, send) => overlay.deliver(text, send),
+  deliver: (text, options) => overlay.deliver(text, options),
   hide: () => overlay.close(),
   emit: (channel, payload) => overlay.emit(channel, payload),
   // The indicator is the card itself now (see `App.tsx`): the field is replaced

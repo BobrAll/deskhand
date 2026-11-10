@@ -82,7 +82,6 @@ export class ResponseStream {
     const annotation = parseAnnotationLine(line)
     if (annotation) {
       result.annotations.push(...annotation.annotations)
-      if (annotation.text) result.text += `${annotation.text}\n`
       return
     }
     result.text += `${line}\n`

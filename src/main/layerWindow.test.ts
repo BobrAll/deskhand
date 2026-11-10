@@ -228,14 +228,18 @@ describe('createLayerWindow: the differences stay parameters', () => {
     expect(state.options[1]?.['acceptFirstMouse']).toBe(false)
   })
 
-  it('opens HTTPS:// only for the caseless layer', async () => {
+  it('opens HTTPS:// only for the case-insensitive layer', async () => {
     const { createLayerWindow } = await loadLayerWindow()
     createLayerWindow({ page: 'pointer', acceptFirstMouse: true })
-    createLayerWindow({ page: 'cursor', acceptFirstMouse: false, caseless: true })
+    createLayerWindow({
+      page: 'cursor',
+      acceptFirstMouse: false,
+      matchSchemeCaseInsensitively: true
+    })
 
-    const [sensitive, caseless] = state.handlers
+    const [sensitive, caseInsensitive] = state.handlers
     expect(sensitive?.({ url: 'HTTPS://example.com' })).toEqual({ action: 'deny' })
-    expect(caseless?.({ url: 'HTTPS://example.com' })).toEqual({ action: 'deny' })
+    expect(caseInsensitive?.({ url: 'HTTPS://example.com' })).toEqual({ action: 'deny' })
     expect(state.opened).toEqual(['HTTPS://example.com'])
   })
 

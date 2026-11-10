@@ -141,7 +141,7 @@ function restingPoint(): { x: number; y: number } {
  * is marked `idle` so the renderer does not ripple or press for a gesture that
  * has not happened yet.
  */
-export function showAgentPointer(): void {
+export function showAgentPresentation(): void {
   void reveal()
 }
 
@@ -170,7 +170,7 @@ async function reveal(): Promise<void> {
  * Draws one action. Fire-and-forget: the caller is the agent's event handler,
  * and the action it describes has already been allowed and is about to run.
  */
-export function presentAgentAction(action: AgentPresentation): void {
+export function paintAgentPresentation(action: AgentPresentation): void {
   const point = action.point ?? rectCenter(action.target) ?? rectCenter(action.window)
   // A key press into an app that was never read has no point. The window still
   // came forward (the agent does that), and inventing a position would point the
@@ -228,12 +228,12 @@ async function paint(action: AgentPresentation, point: { x: number; y: number })
  * Kept here rather than in the overlay so the lifetime has one owner and one
  * test, the same way `updateAgentCursor` owns the glow's.
  */
-export function updateAgentPointer(event: AgentEvent): void {
+export function updateAgentPresentation(event: AgentEvent): void {
   switch (event.phase) {
     case 'arming':
     case 'acting':
     case 'asking':
-      showAgentPointer()
+      showAgentPresentation()
       return
     case 'done':
     case 'aborted':

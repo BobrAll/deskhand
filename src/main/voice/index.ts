@@ -22,6 +22,12 @@ import { getSettings } from '../settings/store'
 import { VoiceKeyListener, type TapEvent } from './listen'
 import { transcribe, voiceStatus } from './recognizer'
 
+/** What happens to a recognised transcript once it lands in the card. */
+export interface DeliverOptions {
+  /** Send it as a question instead of leaving it in the field. */
+  submit: boolean
+}
+
 export interface VoiceHost {
   /** Builds the overlay renderer ahead of a turn, so the bars can be instant. */
   prewarm(): void
@@ -38,8 +44,8 @@ export interface VoiceHost {
   isOpen(): boolean
   /** Reveals the bars without activating the card or collecting context again. */
   showIndicator(): void
-  /** Puts recognised text into an open card, sending it when `send` is true. */
-  deliver(text: string, send: boolean): void
+  /** Puts recognised text into an open card. */
+  deliver(text: string, options: DeliverOptions): void
   /** Closes the card — dictation needs the user's own app in front. */
   hide(): void
   /** Raw channel emit; the controller owns the voice protocol. */
@@ -405,7 +411,7 @@ export function createVoiceController(host: VoiceHost) {
       void pasteAnswer(text, target)
       return
     }
-    host.deliver(text, settings.voice.autoSend)
+    host.deliver(text, { submit: settings.voice.autoSend })
   }
 
   /** Reports a recorder failure (no microphone, permission denied). */

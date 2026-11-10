@@ -76,7 +76,7 @@ function createWindow(): BrowserWindow {
   return createLayerWindow({
     page: 'cursor',
     acceptFirstMouse: false,
-    caseless: true,
+    matchSchemeCaseInsensitively: true,
     onClosed: () => {
       layer.window = null
       layer.loaded = null
