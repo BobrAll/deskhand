@@ -127,7 +127,7 @@ public enum WindowCapture {
         let captureMilliseconds = captureClock.milliseconds
 
         let encodeClock = TimingClock()
-        guard let data = encodePNG(image) else { throw CaptureError.encodingFailed }
+        guard let data = encodeJPEG(image) ?? encodePNG(image) else { throw CaptureError.encodingFailed }
         let encodeMilliseconds = encodeClock.milliseconds
 
         // The captured image is in device pixels; the window frame is in points.
@@ -173,16 +173,35 @@ public enum WindowCapture {
     }
 
     static func encodePNG(_ image: CGImage) -> Data? {
+        encode(image, type: UTType.png, properties: nil)
+    }
+
+    /// JPEG is what the model gets. A UI screenshot as lossless PNG is
+    /// 200–450 kB and rides along in every later request until it is trimmed;
+    /// at this quality it is a fraction of that, the text stays readable, and
+    /// the request reaches the model sooner.
+    static func encodeJPEG(_ image: CGImage, quality: Double = 0.7) -> Data? {
+        encode(image, type: UTType.jpeg, properties: [
+            kCGImageDestinationLossyCompressionQuality: quality,
+        ] as CFDictionary)
+    }
+
+    private static func encode(_ image: CGImage, type: UTType, properties: CFDictionary?) -> Data? {
         let data = NSMutableData()
         guard let destination = CGImageDestinationCreateWithData(
             data as CFMutableData,
-            UTType.png.identifier as CFString,
+            type.identifier as CFString,
             1,
             nil
         ) else { return nil }
-        CGImageDestinationAddImage(destination, image, nil)
+        CGImageDestinationAddImage(destination, image, properties)
         guard CGImageDestinationFinalize(destination) else { return nil }
         return data as Data
+    }
+
+    /// The MIME type of encoded image bytes, read from their signature.
+    public static func mimeType(of data: Data) -> String {
+        data.starts(with: [0xFF, 0xD8, 0xFF]) ? "image/jpeg" : "image/png"
     }
 }
 

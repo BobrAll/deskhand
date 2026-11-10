@@ -30,6 +30,7 @@ import type {
   AgentActionRow,
   AgentAvailability,
   AgentEvent,
+  AgentPresentation,
   AgentRunResult,
   AgentToolRequest
 } from '@shared/types'
@@ -39,12 +40,26 @@ import { AGENT_MIN_OUTPUT_TOKENS } from '@shared/defaults'
 import { classifyCall, describeCall, rememberKey } from './approval'
 import { agentBinary, AgentSidecar, type AgentProvider, type AgentSidecarEvent } from './sidecar'
 import { trace, traceWithin } from './trace'
+import { createRunTrace } from './run-trace'
 
 export interface AgentHost {
   /** Makes the card ignore the mouse while the agent works, and take it back while it asks. */
   setPassthrough(active: boolean): void
   /** Reports progress to the card. */
   emit(event: AgentEvent): void
+  /**
+   * Draws one action before it runs.
+   *
+   * Optional so a headless host (and a test) can ignore the picture. The call
+   * must not block: the action is waiting on the same thread.
+   */
+  present?(action: AgentPresentation): void
+}
+
+/** One earlier question and the answer it got, as the agent reads it. */
+export interface AgentExchange {
+  question: string
+  answer: string
 }
 
 /** What one run needs to know: the request, where it started, and the model. */
@@ -54,6 +69,17 @@ export interface AgentRunInput {
   /** The app the card was opened in, as a hint about where to look first. */
   appName: string | null
   windowTitle: string | null
+  /**
+   * What was said before this request, oldest first.
+   *
+   * «Сделай» is a complete request only in the sentence it answers. The writer
+   * already gets these turns, so a follow-up there means something; without
+   * them here the same follow-up reaches the agent as a verb with no object,
+   * and the only honest answer it can give is to ask what to do. Passing them
+   * is what makes the agent part of the same conversation rather than a fresh
+   * one that happens to start mid-sentence.
+   */
+  history?: AgentExchange[]
   /** The model the user configured, with the key only the main process holds. */
   provider: AgentProvider
 }
@@ -83,6 +109,19 @@ function ms(value: number): number {
 /** A phase's share of a total, as a whole percent; null when the total is 0. */
 function share(part: number, total: number): number | null {
   return total > 0 ? Math.round((part / total) * 100) : null
+}
+
+/**
+ * One line of streamed prose, cut to what the card can draw.
+ *
+ * The model's narration is a caption of a few words. The final answer is not —
+ * it can be a paragraph, and it arrives in the answer area at the end anyway.
+ * Letting a paragraph grow in the status row would resize the window on every
+ * token and show the same text twice.
+ */
+function caption(text: string): string {
+  const line = text.replace(/\s+/g, ' ').trim()
+  return line.length > 120 ? `${line.slice(0, 117)}…` : line
 }
 
 /**
@@ -126,6 +165,13 @@ function stopMessage(reason: string, total: number): string {
     return 'Остановился: одно и то же действие повторялось без изменений. ' +
       'Задача осталась невыполненной.'
   }
+  if (reason.includes('returning to a screen')) {
+    // Not the same as a repeated call: the run tried different things and kept
+    // arriving at the same screen. Raising the step limit would only buy more of
+    // the same, so the honest answer names the loop instead.
+    return 'Остановился: несколько шагов подряд экран не менялся — задача пошла по кругу. ' +
+      'Задача осталась невыполненной.'
+  }
   return 'Задача осталась невыполненной.'
 }
 
@@ -166,6 +212,13 @@ function roundedTiming(timing: {
 
 export function createAgentController(host: AgentHost) {
   const sidecar = new AgentSidecar()
+  const runs = new Set<Promise<AgentRunResult>>()
+  let activeTrace: ReturnType<typeof createRunTrace> | null = null
+
+  function approve(id: string, allow: boolean, reason?: string): void {
+    activeTrace?.record('approval-decision', { id, allow, reason })
+    sidecar.approve(id, allow, reason)
+  }
   let watcher: AbortWatcher | null = null
   /** Bumped by `stop()`; a run compares it and gives up. */
   let generation = 0
@@ -187,6 +240,14 @@ export function createAgentController(host: AgentHost) {
      * checkmark over a task it had not finished.
      */
     stopped: string | null
+    /**
+     * Whether the first streamed prose of this run has been traced.
+     *
+     * One event per run, not per delta: the point is the time to first token,
+     * and a trace that records every word turns a 3-second step into a thousand
+     * lines nobody reads.
+     */
+    firstToken: boolean
     /** The question waiting for the user; null when nothing is being asked. */
     pending: {
       request: AgentToolRequest
@@ -283,10 +344,37 @@ export function createAgentController(host: AgentHost) {
     // silent outside a turn by design, so a run that reached here from a path
     // that does not trace would otherwise be invisible — and an invisible run
     // is indistinguishable from one that never happened.
-    return traceWithin({ source: 'agent-controller' }, () => runTurn(input))
+    const request = traceWithin({ source: 'agent-controller' }, async () => {
+      const runTrace = createRunTrace()
+      runTrace.record('start', {
+        prompt: input.prompt,
+        appName: input.appName,
+        windowTitle: input.windowTitle,
+        // How many earlier turns came with the request, not what they said: a
+        // follow-up that arrived alone is the difference between a run that
+        // could work and one that can only ask what to do.
+        historyTurns: input.history?.length ?? 0,
+        model: input.provider.model,
+        wire: input.provider.wire
+      })
+      try {
+        const result = await runTurn(input, runTrace)
+        runTrace.record('end', result)
+        return result
+      } catch (error) {
+        runTrace.record('end', { error: error instanceof Error ? error.message : String(error) })
+        throw error
+      } finally {
+        await runTrace.close()
+      }
+    })
+    runs.add(request)
+    const forget = () => runs.delete(request)
+    void request.then(forget, forget)
+    return request
   }
 
-  async function runTurn(input: AgentRunInput): Promise<AgentRunResult> {
+  async function runTurn(input: AgentRunInput, runTrace: ReturnType<typeof createRunTrace>): Promise<AgentRunResult> {
     if (running) return { answer: '', actions: [], message: 'Агент уже выполняет действие.' }
     const settings = getSettings()
     const state = availability()
@@ -298,6 +386,7 @@ export function createAgentController(host: AgentHost) {
 
     const token = ++generation
     running = true
+    activeTrace = runTrace
     const actions: AgentActionRow[] = []
     const total = settings.agent.maxSteps
     const provider = withAgentBudget(input.provider)
@@ -308,6 +397,7 @@ export function createAgentController(host: AgentHost) {
         step: 0,
         total,
         stopped: null,
+        firstToken: false,
         pending: null,
         finish: (result) => {
           if (settled) return
@@ -340,15 +430,29 @@ export function createAgentController(host: AgentHost) {
 
     const off = sidecar.onEvent((event) => {
       if (token !== generation) return
+      if (event.kind === 'modelTrace') {
+        runTrace.record(event.event, { step: current?.step, ...event.data })
+        return
+      }
+      // The wire response carries the stream. Avoid writing every growing
+      // prefix a second time as the UI receives it.
+      if (event.kind !== 'stream') runTrace.record(event.kind, event)
       handle(event)
     })
 
     try {
+      const task = taskText(input)
+      runTrace.record('dispatch', { task, maxSteps: total, verifyActions: settings.agent.verifyResult })
       await sidecar.run({
-        task: taskText(input),
+        task,
+        traceRunId: runTrace.id,
         provider,
         maxSteps: total,
-        verifyActions: settings.agent.verifyResult
+        verifyActions: settings.agent.verifyResult,
+        // Presentation only: the same run either way. `showActions` is the
+        // switch a background mode will turn off, and the agent treats it as
+        // "describe what you are about to do", not as "do it differently".
+        visualize: settings.agent.showActions !== false
       })
       trace('agent.accepted', { maxSteps: total })
     } catch (error) {
@@ -366,6 +470,7 @@ export function createAgentController(host: AgentHost) {
     watcher = null
     running = false
     current = null
+    activeTrace = null
     // Whatever ended the run, the card takes the mouse back: leaving it
     // click-through would leave a panel nobody can press a button on.
     host.setPassthrough(false)
@@ -390,6 +495,24 @@ export function createAgentController(host: AgentHost) {
           label: last.label || 'Работаю',
           actions: rows()
         })
+        return
+      case 'stream':
+        // The same caption as `narration`, but while the model is still writing
+        // it. This is what turns the first two seconds of every step from a
+        // spinner into the model's own words.
+        if (event.text.trim()) {
+          if (!active.firstToken) {
+            active.firstToken = true
+            trace('agent.firstToken', { step: active.step, chars: event.text.length })
+          }
+          publish({
+            phase: last.phase === 'asking' ? 'acting' : last.phase,
+            step: active.step,
+            total: active.total,
+            label: caption(event.text),
+            actions: rows()
+          })
+        }
         return
       case 'narration':
         // The model's own sentence about what it is doing is a better caption
@@ -422,6 +545,12 @@ export function createAgentController(host: AgentHost) {
           }),
           actions: rows()
         })
+        return
+      case 'present':
+        // A picture, not a phase: the card's caption and the run's verdict do
+        // not change. The host draws it and returns immediately, so the action
+        // that follows is not waiting for an animation.
+        host.present?.(event.presentation)
         return
       case 'stepTiming':
         // The round trip, as the agent measured it. `promptBytes` and `history`
@@ -564,12 +693,12 @@ export function createAgentController(host: AgentHost) {
     if (!active || active.pending) return
     const decision = classifyCall(request, getSettings().agent.rememberedApprovals)
     if (decision.kind === 'allow') {
-      sidecar.approve(request.id, true)
+      approve(request.id, true)
       return
     }
     if (decision.kind === 'deny') {
       trace('agent.approval', { outcome: 'denied' })
-      sidecar.approve(request.id, false, decision.reason)
+      approve(request.id, false, decision.reason)
       active.actions.push({ tool: request.tool, label: decision.reason, ok: false })
       publish({ phase: 'acting', actions: rows() })
       return
@@ -594,7 +723,7 @@ export function createAgentController(host: AgentHost) {
           })
         }
       }
-      sidecar.approve(
+      approve(
         request.id,
         allow,
         allow ? undefined : (reason ?? 'Пользователь отклонил действие.')
@@ -649,14 +778,17 @@ export function createAgentController(host: AgentHost) {
    * it, so a stop that did not answer it would be a stop that never lands.
    */
   function stop(message = 'Остановлено.'): void {
-    if (running) trace('agent.stop')
+    if (running) {
+      trace('agent.stop')
+      activeTrace?.record('stop', { message })
+    }
     generation += 1
     const active = current
     if (active?.pending) {
       const pending = active.pending
       clearTimeout(pending.timer)
       active.pending = null
-      sidecar.approve(pending.request.id, false, 'Отменено.')
+      approve(pending.request.id, false, 'Отменено.')
     }
     sidecar.cancel()
     watcher?.stop()
@@ -674,10 +806,10 @@ export function createAgentController(host: AgentHost) {
   }
 
   /** Releases the process; called on quit so no agent outlives the window. */
-  function dispose(): void {
-    watcher?.stop()
-    watcher = null
+  async function dispose(): Promise<void> {
+    if (running) stop('Приложение закрывается.')
     sidecar.dispose()
+    await Promise.allSettled(runs)
   }
 
   return {
@@ -698,12 +830,44 @@ export function createAgentController(host: AgentHost) {
  * which app to touch by calling `get_app_state`, and telling it "the answer is in
  * this window" would be the host making a decision the screen is better placed to
  * make.
+ *
+ * Earlier turns are quoted only when there are some, and labelled as context: a
+ * bare «сделай» has no meaning on its own, but the same word after «можно ли
+ * ...? если да — сделай» does. The block is closed with «Текущая задача» so a
+ * past request, still full of imperatives, is not read as one to act on now.
  */
 function taskText(input: AgentRunInput): string {
   const lines: string[] = []
   if (input.appName) lines.push(`Приложение: ${input.appName}`)
   if (input.windowTitle) lines.push(`Окно: ${input.windowTitle}`)
   if (lines.length > 0) lines.push('')
+
+  const history = input.history?.filter((entry) => entry.question.trim()) ?? []
+  if (history.length > 0) {
+    lines.push('Разговор до этого — контекст, чтобы понять, к чему относится текущая просьба:')
+    for (const entry of history) {
+      lines.push(`Пользователь: ${clipHistory(entry.question)}`)
+      if (entry.answer.trim()) lines.push(`Ответ: ${clipHistory(entry.answer)}`)
+    }
+    lines.push('')
+    lines.push('Текущая задача:')
+  }
+
   lines.push(input.prompt.trim())
   return lines.join('\n')
+}
+
+/**
+ * How much of one earlier turn the agent needs.
+ *
+ * The whole point of the block is the noun the current request leaves out, and
+ * that noun is almost always in the first sentences. The card already trims its
+ * history; this is the second ceiling, because a long answer would otherwise be
+ * paid for on every step of the run, not once.
+ */
+const HISTORY_TURN_CHARS = 900
+
+function clipHistory(text: string): string {
+  const line = text.replace(/\s+/g, ' ').trim()
+  return line.length > HISTORY_TURN_CHARS ? `${line.slice(0, HISTORY_TURN_CHARS - 1)}…` : line
 }

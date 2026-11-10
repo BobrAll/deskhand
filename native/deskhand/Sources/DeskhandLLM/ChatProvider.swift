@@ -9,7 +9,7 @@ public struct ChatMessage: Sendable {
 
     public var role: Role
     public var text: String
-    /// Images attached to a user message, as PNG data.
+    /// Images attached to a user message, as PNG or JPEG data.
     public var images: [Data]
     /// Tool calls requested by the assistant.
     public var toolCalls: [ToolCall]
@@ -113,5 +113,20 @@ public protocol ChatProvider: Sendable {
         messages: [ChatMessage],
         tools: [ToolDefinition],
         systemPrompt: String
+    ) async throws -> Completion
+}
+
+/// A provider that can also report the assistant's prose while it is produced.
+///
+/// The loop asks for this capability rather than requiring it: a local server
+/// without SSE support still speaks the old `ChatProvider` and works, it just
+/// arrives in one piece. The callback carries *deltas*, not the growing text, so
+/// a provider never has to decide what the caller already knows.
+public protocol StreamingChatProvider: ChatProvider {
+    func complete(
+        messages: [ChatMessage],
+        tools: [ToolDefinition],
+        systemPrompt: String,
+        onText: (String) -> Void
     ) async throws -> Completion
 }

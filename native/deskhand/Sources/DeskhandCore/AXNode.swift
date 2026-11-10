@@ -250,18 +250,23 @@ public struct AXSnapshotDiff: Sendable {
 
     /// Compact text for the model: added and changed nodes are printed by role,
     /// label and value, removed ones by role and title only.
-    /// Deliberately index-free — these nodes belong to a snapshot the model has
-    /// not been given, so pointing at them by index would be a trap. Frames are
-    /// left out for the same reason: they cannot be turned into an action
-    /// without an index, they are long, and on a web page every node has one, so
-    /// they bury the one line that actually changed.
+    ///
+    /// Added and changed nodes carry their element number, because a number is
+    /// the same control for the whole session (`IndexBook`) and the walk that
+    /// produced this diff is the one the model is given. That is what lets a
+    /// model act on a dialog that just appeared without spending a round trip
+    /// on `get_app_state`. Removed nodes carry none: their number is dead, and
+    /// naming it would invite a click on nothing. Frames are left out for the
+    /// same reason as before: on a web page every node has one, so they bury the
+    /// one line that actually changed.
     public func text(limit: Int = 12) -> String {
         var lines: [String] = []
         for node in added.prefix(limit) {
-            lines.append("+ \(AXTreeRenderer.describe(node, includeFrames: false))")
+            lines.append("+ \(node.index) " + AXTreeRenderer.describe(node, includeFrames: false))
         }
         for change in changed.prefix(limit) {
-            var line = "~ \(AXTreeRenderer.describe(change.after, includeFrames: false))"
+            var line = "~ \(change.after.index) "
+                + AXTreeRenderer.describe(change.after, includeFrames: false)
             if change.before.value != change.after.value {
                 let before = AXTreeRenderer.clip(change.before.value ?? "∅", limit: 60)
                 let after = AXTreeRenderer.clip(change.after.value ?? "∅", limit: 60)

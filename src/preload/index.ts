@@ -10,6 +10,7 @@ import type {
   AgentAvailability,
   AgentCursorFrame,
   AgentEvent,
+  AgentPointerFrame,
   AnnotationsEvent,
   AppSettings,
   ContextFlags,
@@ -20,8 +21,10 @@ import type {
   ProviderId,
   SendRequest,
   StreamEvent,
+  TtsStatus,
   VoiceEvent
 } from '../shared/types'
+import type { TtsResult } from '../shared/tts'
 
 function subscribe<T>(channel: string, handler: (payload: T) => void): Unsubscribe {
   const listener = (_event: Electron.IpcRendererEvent, payload: T): void => handler(payload)
@@ -47,7 +50,8 @@ const api: SmartCursorApi = {
     clearPointer: () => ipcRenderer.send(CH.overlay.clearPointer),
     setTyping: (typing: boolean) => ipcRenderer.send(CH.overlay.typing, typing),
     close: () => ipcRenderer.send(CH.overlay.close),
-    resize: (height: number, width?: number) => ipcRenderer.send(CH.overlay.resize, height, width)
+    resize: (height: number, width?: number, pin?: boolean) =>
+      ipcRenderer.send(CH.overlay.resize, height, width, pin)
   },
   pointer: {
     onDraw: (handler) => subscribe<PointerPayload>(CH.pointer.draw, handler)
@@ -64,6 +68,9 @@ const api: SmartCursorApi = {
   },
   agentCursor: {
     onState: (handler) => subscribe<AgentCursorFrame>(CH.agent.cursor, handler)
+  },
+  agentPresenter: {
+    onState: (handler) => subscribe<AgentPointerFrame>(CH.agent.presentation, handler)
   },
   settings: {
     load: () => ipcRenderer.invoke(CH.settings.load),
@@ -106,6 +113,13 @@ const api: SmartCursorApi = {
     importModel: () => ipcRenderer.invoke(CH.voice.importModel),
     deleteModel: (id) => ipcRenderer.invoke(CH.voice.deleteModel, id),
     test: () => ipcRenderer.invoke(CH.voice.test)
+  },
+  tts: {
+    speak: (text: string) => ipcRenderer.invoke(CH.tts.speak, text) as Promise<TtsResult>,
+    status: () => ipcRenderer.invoke(CH.tts.status) as Promise<TtsStatus>,
+    setKey: (key: string) => ipcRenderer.invoke(CH.tts.setKey, key) as Promise<TtsStatus>,
+    deleteKey: () => ipcRenderer.invoke(CH.tts.deleteKey) as Promise<TtsStatus>,
+    preview: () => ipcRenderer.invoke(CH.tts.preview) as Promise<TtsResult>
   }
 }
 

@@ -53,8 +53,10 @@ function voice(): string {
   return renderToStaticMarkup(
     createElement(VoiceTab, {
       voice: DEFAULT_SETTINGS.voice,
+      tts: DEFAULT_SETTINGS.tts,
       savedModel: DEFAULT_SETTINGS.voice.model,
-      onChange: noop
+      onChange: noop,
+      onTtsChange: noop
     })
   )
 }

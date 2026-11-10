@@ -7,8 +7,32 @@ import {
   DEFAULT_SYSTEM_PROMPT,
   DEFAULT_VOICE,
   normalizeSettings,
+  parseExtraBody,
   resolveSearchModel
 } from './defaults'
+
+describe('parseExtraBody', () => {
+  it('treats empty text as no extra fields', () => {
+    expect(parseExtraBody('')).toEqual({})
+    expect(parseExtraBody('   ')).toEqual({})
+    expect(parseExtraBody(undefined)).toEqual({})
+  })
+
+  it('returns the object the user typed', () => {
+    expect(parseExtraBody('{"thinking": {"type": "disabled"}}')).toEqual({ thinking: { type: 'disabled' } })
+  })
+
+  it('rejects text that is not a JSON object', () => {
+    for (const text of ['{oops', '[1]', '"none"', '42', 'null']) {
+      expect(parseExtraBody(text), text).toBeNull()
+    }
+  })
+
+  it('drops fields that would replace the conversation or the stream', () => {
+    expect(parseExtraBody('{"stream": false, "messages": [], "model": "x", "top_p": 0.5}'))
+      .toEqual({ top_p: 0.5 })
+  })
+})
 
 // `models` is the one block that does not fall back to the shipped defaults: an
 // empty bag normalizes to empty model names (see the note in PROGRESS).
@@ -330,12 +354,13 @@ describe('normalizeSettings: agent', () => {
 
   it('keeps the flags and falls back on non-booleans', () => {
     const result = normalizeSettings({
-      agent: { enabled: true, abortOnMouseMove: 'yes', verifyResult: false }
+      agent: { enabled: true, abortOnMouseMove: 'yes', verifyResult: false, showActions: false }
     })
 
     expect(result.agent.enabled).toBe(true)
     expect(result.agent.abortOnMouseMove).toBe(DEFAULT_AGENT.abortOnMouseMove)
     expect(result.agent.verifyResult).toBe(false)
+    expect(result.agent.showActions).toBe(false)
   })
 
   it('drops a settings file written by the old plan runner', () => {
@@ -350,7 +375,7 @@ describe('normalizeSettings: agent', () => {
     })
 
     expect(Object.keys(result.agent).sort()).toEqual([
-      'abortOnMouseMove', 'enabled', 'maxSteps', 'rememberedApprovals', 'verifyResult'
+      'abortOnMouseMove', 'enabled', 'maxSteps', 'rememberedApprovals', 'showActions', 'verifyResult'
     ])
     expect(result.agent.enabled).toBe(true)
   })
@@ -373,5 +398,63 @@ describe('normalizeSettings: idempotence', () => {
     })
 
     expect(normalizeSettings(once)).toEqual(once)
+  })
+})
+
+describe('normalizeSettings: the answer voice', () => {
+  it('is off by default, so a voice question is not read aloud unasked', () => {
+    expect(normalizeSettings({}).voice.answerVoice).toBe('off')
+  })
+
+  it('accepts the three modes and rejects anything else', () => {
+    for (const mode of ['off', 'system', 'neural'] as const) {
+      expect(normalizeSettings({ voice: { answerVoice: mode } }).voice.answerVoice).toBe(mode)
+    }
+    expect(normalizeSettings({ voice: { answerVoice: 'loud' } }).voice.answerVoice).toBe('off')
+  })
+
+  it('reads the old boolean as the system voice it used to mean', () => {
+    // `dialogue: true` spoke the answer with the macOS voice; that is exactly
+    // `system` now, and an existing install must not lose the setting.
+    expect(normalizeSettings({ voice: { dialogue: true } }).voice.answerVoice).toBe('system')
+    expect(normalizeSettings({ voice: { dialogue: false } }).voice.answerVoice).toBe('off')
+  })
+})
+
+describe('normalizeSettings: live synthesis', () => {
+  it('is off and empty by default: no endpoint, no voice, no spend', () => {
+    expect(normalizeSettings({}).tts).toEqual(DEFAULT_SETTINGS.tts)
+    expect(DEFAULT_SETTINGS.tts.enabled).toBe(false)
+  })
+
+  it('keeps the configuration the user typed, trimmed', () => {
+    const tts = normalizeSettings({
+      tts: {
+        enabled: true,
+        baseUrl: ' https://speech.example/v1/audio/speech ',
+        model: ' tts-model ',
+        voice: ' Kore ',
+        style: ' дружный '
+      }
+    }).tts
+
+    expect(tts).toEqual({
+      enabled: true,
+      // The endpoint is normalised like a provider URL: a pasted path collapses
+      // to the root instead of producing `.../audio/speech/audio/speech`.
+      baseUrl: 'https://speech.example/v1',
+      model: 'tts-model',
+      voice: 'Kore',
+      style: 'дружный'
+    })
+  })
+
+  it('never carries a key: that lives in secrets, not in settings', () => {
+    const settings = normalizeSettings({
+      tts: { enabled: true, baseUrl: 'https://speech.example/v1', model: 'm', voice: 'v', key: 'sk-x' }
+    })
+
+    expect(settings.tts).not.toHaveProperty('key')
+    expect(JSON.stringify(settings)).not.toContain('sk-x')
   })
 })

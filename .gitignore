@@ -83,3 +83,8 @@ secrets.json
 *.sqlite3
 *.db
 UserData/
+
+# Detailed agent traces can contain private screen and request data.
+/agent-runs/
+/agent-dialogs/
+/agent-task-trace.json

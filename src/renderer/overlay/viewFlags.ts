@@ -40,8 +40,8 @@ export interface ViewFlags {
   blocked: boolean
   /** Everything below the field — including context tags — is folded behind the chevron. */
   showMeta: boolean
-  /** There is a finished answer to paste, and nothing is still writing over it. */
-  canPaste: boolean
+  /** There is a finished answer, and nothing is still writing over it. */
+  answerReady: boolean
   /** Mouse control is switched off — the state the app ships in. */
   agentOff: boolean
   /** It is switched on but cannot run (no permission, no helper). */
@@ -82,7 +82,7 @@ export function deriveView(state: ViewState): ViewFlags {
   return {
     blocked,
     showMeta: state.expanded && !state.hasAnswer && !state.failed,
-    canPaste: state.hasAnswer && !state.busy,
+    answerReady: state.hasAnswer && !state.busy,
     agentOff,
     agentBlocked,
     actionAsk,

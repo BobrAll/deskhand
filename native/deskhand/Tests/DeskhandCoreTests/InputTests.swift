@@ -485,7 +485,10 @@ final class AXSnapshotDiffTests: XCTestCase {
         let diff = snapshot(after).diff(from: snapshot(before))
         XCTAssertEqual(diff.added.count, 1)
         XCTAssertEqual(diff.added.first?.title, "Send")
-        XCTAssertTrue(diff.text().hasPrefix("+ AXButton"))
+        // The number is part of the line: it is the same control for the whole
+        // session, so a model can act on a dialog that just appeared without
+        // spending a round trip re-reading the tree.
+        XCTAssertTrue(diff.text().hasPrefix("+ 1 AXButton"), diff.text())
     }
 
     func testDiffOmitsCoordinatesSoTheChangeIsReadable() {

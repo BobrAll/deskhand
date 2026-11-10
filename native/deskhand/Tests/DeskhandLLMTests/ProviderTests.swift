@@ -1,4 +1,5 @@
 import XCTest
+import Foundation
 @testable import DeskhandLLM
 import DeskhandCore
 
@@ -175,6 +176,31 @@ final class OpenAIEncodingTests: XCTestCase {
         XCTAssertTrue(url.hasPrefix("data:image/png;base64,"))
     }
 
+    func testJPEGScreenshotIsLabelledAsJPEG() throws {
+        let provider = OpenAICompatibleProvider(config: ProviderConfig(apiKey: "x"))
+        let jpeg = Data([0xFF, 0xD8, 0xFF, 0xE0])
+        let encoded = provider.encodeMessages(
+            [ChatMessage(role: .user, text: "", images: [jpeg])],
+            systemPrompt: ""
+        )
+        let parts = try XCTUnwrap(encoded[0]["content"]?.arrayValue)
+        let url = try XCTUnwrap(parts[0]["image_url"]?["url"]?.stringValue)
+        XCTAssertTrue(url.hasPrefix("data:image/jpeg;base64,"))
+    }
+
+    func testExtraBodyIsMergedAndWinsOverDefaults() {
+        var config = ProviderConfig(apiKey: "x", temperature: 0.3)
+        config.extraBody = [
+            "reasoning_effort": .string("none"),
+            "temperature": .number(1),
+        ]
+        let payload = OpenAICompatibleProvider(config: config)
+            .makePayload(messages: [], tools: [], systemPrompt: "", stream: true)
+        XCTAssertEqual(payload["reasoning_effort"]?.stringValue, "none")
+        XCTAssertEqual(payload["temperature"]?.doubleValue, 1)
+        XCTAssertEqual(payload["stream"]?.boolValue, true)
+    }
+
     func testDecodesToolCallsAndUsage() throws {
         let provider = OpenAICompatibleProvider(config: ProviderConfig(apiKey: "x"))
         let json = """
@@ -263,5 +289,187 @@ final class AnthropicEncodingTests: XCTestCase {
         XCTAssertEqual(completion.toolCalls.count, 1)
         XCTAssertEqual(completion.toolCalls[0].arguments["key"]?.stringValue, "Return")
         XCTAssertEqual(completion.usage?.outputTokens, 4)
+    }
+}
+
+/// Answers any request with one scripted body, without a network.
+///
+/// `URLSession.bytes(for:)` still speaks to a URLProtocol, so this exercises the
+/// real SSE reader: the lines, the `[DONE]`, the fragmented tool arguments and
+/// the usage chunk all pass through the same code the agent uses.
+final class StreamingURLProtocol: URLProtocol {
+    nonisolated(unsafe) static var responses: [(status: Int, body: String)] = []
+    nonisolated(unsafe) static var contentType = "text/event-stream"
+
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        let next = Self.responses.isEmpty
+            ? (status: 500, body: #"{"error":{"message":"no scripted response"}}"#)
+            : Self.responses.removeFirst()
+        let data = Data(next.body.utf8)
+        let response = HTTPURLResponse(
+            url: request.url!,
+            statusCode: next.status,
+            httpVersion: "HTTP/1.1",
+            headerFields: [
+                "Content-Type": Self.contentType,
+                "Content-Length": "\(data.count)",
+            ]
+        )!
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: data)
+        client?.urlProtocolDidFinishLoading(self)
+    }
+
+    override func stopLoading() {}
+}
+
+final class StreamingProviderTests: XCTestCase {
+    private func session() -> URLSession {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [StreamingURLProtocol.self]
+        return URLSession(configuration: configuration)
+    }
+
+    override func tearDown() {
+        StreamingURLProtocol.responses = []
+        StreamingURLProtocol.contentType = "text/event-stream"
+        super.tearDown()
+    }
+
+    func testOpenAIStreamsTextAndAssemblesFragmentedToolCalls() async throws {
+        StreamingURLProtocol.responses = [(200, """
+            data: {"choices":[{"delta":{"content":"Открываю"},"finish_reason":null}]}
+
+            data: {"choices":[{"delta":{"content":" Telegram"},"finish_reason":null}]}
+
+            data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"c1","function":{"name":"click","arguments":"{\\"x\\":"}}]},"finish_reason":null}]}
+
+            data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"5}"}}]},"finish_reason":"tool_calls"}]}
+
+            data: {"choices":[],"usage":{"prompt_tokens":12,"completion_tokens":3}}
+
+            data: [DONE]
+
+            """)]
+
+        let provider = OpenAICompatibleProvider(
+            config: ProviderConfig(apiKey: "x", maxTokens: 64),
+            session: session()
+        )
+        var deltas: [String] = []
+        let completion = try await provider.complete(
+            messages: [ChatMessage(role: .user, text: "go")],
+            tools: [],
+            systemPrompt: "sys"
+        ) { deltas.append($0) }
+
+        XCTAssertEqual(deltas, ["Открываю", " Telegram"])
+        XCTAssertEqual(completion.text, "Открываю Telegram")
+        XCTAssertEqual(completion.stopReason, "tool_calls")
+        XCTAssertEqual(completion.toolCalls.count, 1)
+        XCTAssertEqual(completion.toolCalls[0].id, "c1")
+        XCTAssertEqual(completion.toolCalls[0].name, "click")
+        XCTAssertEqual(completion.toolCalls[0].arguments["x"]?.intValue, 5)
+        XCTAssertEqual(completion.usage?.inputTokens, 12)
+        XCTAssertEqual(completion.usage?.outputTokens, 3)
+    }
+
+    func testOpenAIFallsBackWhenTheGatewayRejectsStreaming() async throws {
+        // The first response is the refusal; the fallback is a normal JSON
+        // completion, exactly as a gateway that never implemented SSE answers.
+        StreamingURLProtocol.responses = [
+            (400, #"{"error":{"message":"stream not supported"}}"#),
+            (200, #"{"choices":[{"finish_reason":"stop","message":{"role":"assistant","content":"Готово"}}]}"#),
+        ]
+
+        let provider = OpenAICompatibleProvider(
+            config: ProviderConfig(apiKey: "x", maxTokens: 64),
+            session: session()
+        )
+        var deltas: [String] = []
+        let completion = try await provider.complete(
+            messages: [ChatMessage(role: .user, text: "go")],
+            tools: [],
+            systemPrompt: "sys"
+        ) { deltas.append($0) }
+
+        XCTAssertTrue(deltas.isEmpty)
+        XCTAssertEqual(completion.text, "Готово")
+        XCTAssertEqual(completion.stopReason, "stop")
+    }
+
+    func testOpenAIReadsAPlainJSONAnswerToAStreamRequest() async throws {
+        // Some gateways accept `stream: true` and answer in one piece. The
+        // content type is the only honest signal; parsing JSON as SSE would
+        // otherwise end the run with an empty answer.
+        StreamingURLProtocol.contentType = "application/json"
+        StreamingURLProtocol.responses = [
+            (200, #"{"choices":[{"finish_reason":"stop","message":{"role":"assistant","content":"Готово"}}],"usage":{"prompt_tokens":5,"completion_tokens":2}}"#),
+        ]
+
+        let provider = OpenAICompatibleProvider(
+            config: ProviderConfig(apiKey: "x", maxTokens: 64),
+            session: session()
+        )
+        var deltas: [String] = []
+        let completion = try await provider.complete(
+            messages: [ChatMessage(role: .user, text: "go")],
+            tools: [],
+            systemPrompt: "sys"
+        ) { deltas.append($0) }
+
+        XCTAssertTrue(deltas.isEmpty)
+        XCTAssertEqual(completion.text, "Готово")
+        XCTAssertEqual(completion.usage?.inputTokens, 5)
+    }
+
+    func testAnthropicStreamsTextAndToolInputFragments() async throws {
+        StreamingURLProtocol.responses = [(200, """
+            event: message_start
+            data: {"type":"message_start","message":{"usage":{"input_tokens":10,"output_tokens":1}}}
+
+            event: content_block_start
+            data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}
+
+            event: content_block_delta
+            data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Привет"}}
+
+            event: content_block_start
+            data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"t1","name":"click","input":{}}}
+
+            event: content_block_delta
+            data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\\"x\\":5}"}}
+
+            event: message_delta
+            data: {"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":7}}
+
+            event: message_stop
+            data: {"type":"message_stop"}
+
+            """)]
+
+        let provider = AnthropicProvider(
+            config: ProviderConfig(wire: .anthropic, apiKey: "x", maxTokens: 64),
+            session: session()
+        )
+        var deltas: [String] = []
+        let completion = try await provider.complete(
+            messages: [ChatMessage(role: .user, text: "go")],
+            tools: [],
+            systemPrompt: "sys"
+        ) { deltas.append($0) }
+
+        XCTAssertEqual(deltas, ["Привет"])
+        XCTAssertEqual(completion.text, "Привет")
+        XCTAssertEqual(completion.stopReason, "tool_use")
+        XCTAssertEqual(completion.toolCalls.count, 1)
+        XCTAssertEqual(completion.toolCalls[0].id, "t1")
+        XCTAssertEqual(completion.toolCalls[0].name, "click")
+        XCTAssertEqual(completion.toolCalls[0].arguments["x"]?.intValue, 5)
+        XCTAssertEqual(completion.usage?.inputTokens, 10)
+        XCTAssertEqual(completion.usage?.outputTokens, 7)
     }
 }

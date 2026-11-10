@@ -46,6 +46,8 @@ body,
      around it (see the comment in `windows.ts`). The radius matches the window's
      own corner radius so the blur never peeks out at the four corners. */
   margin: 0;
+  /* The resize edge is positioned against the card, not against the window. */
+  position: relative;
   padding: 6px 8px;
   background-color: var(--panel);
   background-image:
@@ -533,6 +535,124 @@ button.tag.clear {
   color: var(--accent);
 }
 
+/*
+ * Markdown blocks. The bubble is small enough that headings cannot be much
+ * bigger than body text — a `#` here is a label, not a title — so the levels
+ * differ by a point and by weight rather than by scale.
+ */
+.answer p,
+.answer ul,
+.answer ol,
+.answer pre {
+  margin: 0;
+}
+
+.answer > * + * {
+  margin-top: 4px;
+}
+
+.answer strong {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.answer .md-heading {
+  font-weight: 600;
+  color: var(--text);
+  font-size: 13px;
+}
+
+.answer .md-heading[data-level='1'] {
+  font-size: 13.5px;
+}
+
+.answer code {
+  padding: 0 3px;
+  border-radius: 3px;
+  background: var(--surface);
+  font-family: var(--mono);
+  font-size: 11.5px;
+}
+
+.answer pre {
+  padding: 5px 7px;
+  border-radius: 6px;
+  background: var(--surface);
+  overflow-x: auto;
+  white-space: pre;
+}
+
+.answer pre code {
+  padding: 0;
+  background: none;
+}
+
+.answer ul,
+.answer ol {
+  padding-left: 16px;
+}
+
+.answer hr {
+  height: 0;
+  margin: 6px 0;
+  border: none;
+  border-top: 1px solid var(--border);
+}
+
+/*
+ * The grid is drawn with horizontal rules only.
+ *
+ * The first version had a full cell grid on `--border`, and on a 400-point
+ * card that read as no grid at all: 12% white on the dark panel is a hint, not
+ * a line. Rather than turning every border up (which makes the table louder
+ * than the answer around it), the vertical lines are dropped and the two that
+ * carry meaning are strengthened — the frame and the header rule. That is also
+ * what keeps four columns legible in a card this narrow.
+ */
+.answer .md-table {
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+}
+
+.answer table {
+  /* Fill the card rather than the longest cell: a table that is wider than the
+     bubble has to be dragged sideways, and a card you drag is not a card you
+     read. The wrapper keeps the scroll as a last resort for a table with more
+     columns than the width can honestly hold. */
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11.5px;
+  line-height: 1.35;
+}
+
+.answer th,
+.answer td {
+  /* The answer itself is `pre-wrap`; a cell must not inherit that, or the
+     padding inside a row would be preserved as visible indentation. */
+  white-space: normal;
+  /* `anywhere`, not `break-word`: only this one lowers the cell's min-content
+     width, which is what lets a long identifier in one column stop dictating
+     the width of the whole table. */
+  overflow-wrap: anywhere;
+  padding: 3px 7px;
+  border: none;
+  text-align: left;
+  vertical-align: top;
+}
+
+.answer tr + tr td {
+  border-top: 1px solid var(--border);
+}
+
+.answer th {
+  font-weight: 600;
+  color: var(--text);
+  background: var(--surface-strong);
+  border-bottom: 1px solid var(--border-strong);
+}
+
 /* A 9px scrollbar would read as browser chrome inside a 420px bubble. */
 .answer::-webkit-scrollbar {
   width: 5px;
@@ -579,6 +699,55 @@ button.tag.clear {
 
 .spacer {
   flex: 1;
+}
+
+/*
+ * The resize edge.
+ *
+ * It is a hit target, not a decoration: the card is transparent and has no
+ * native frame, so there is nothing else to grab. Seven points is the width of
+ * the bubble's own padding, which keeps it off the answer's scrollbar — a wider
+ * strip would turn a scroll gesture into a resize halfway down a long reply.
+ *
+ * The hint is a short line that only appears under the pointer. A permanent mark
+ * on the edge of a glass card reads as a scrollbar, and the discoverable path to
+ * the same result is the «Шире» button.
+ */
+.grip {
+  position: absolute;
+  top: 3px;
+  right: 0;
+  bottom: 3px;
+  width: 7px;
+  cursor: ew-resize;
+  background: transparent;
+  /* Without this the browser claims the drag for a text selection. */
+  touch-action: none;
+}
+
+.grip::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  right: 2px;
+  width: 2px;
+  height: 14px;
+  margin-top: -7px;
+  border-radius: 1px;
+  background: var(--text-dim);
+  opacity: 0;
+  transition: opacity 120ms ease-out;
+}
+
+.grip:hover::after,
+.grip[data-dragging]::after {
+  opacity: 0.55;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .grip::after {
+    transition: none;
+  }
 }
 
 .divider {

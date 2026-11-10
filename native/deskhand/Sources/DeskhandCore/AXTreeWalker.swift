@@ -28,6 +28,12 @@ public struct AXSnapshot: Sendable {
     /// Geometry is deliberately excluded: it is compared separately, because a
     /// scroll moves everything without changing anything.
     func identities() -> [String] {
+        Self.identities(of: nodes)
+    }
+
+    /// The same keys, for a node list that has not been wrapped in a snapshot
+    /// yet — which is how a fresh walk is renumbered before anyone sees it.
+    static func identities(of nodes: [AXNode]) -> [String] {
         var seen: [String: Int] = [:]
         return nodes.map { node in
             let base = [
@@ -116,6 +122,39 @@ public struct AXSnapshot: Sendable {
     }
 }
 
+/// The element numbers one session has handed out, so a number never changes
+/// meaning.
+///
+/// Indices used to be assigned by traversal order on every walk, which made
+/// them valid only for the snapshot that produced them. That is fine for a
+/// model that re-reads the screen before every action, and a trap for one that
+/// does not: after an action the result carries a fresh tree, the numbering
+/// shifts, and the model's remembered «507 is the create button» silently
+/// becomes a checkbox in a list. Measured on a real run: the second click on a
+/// filter button landed on a message row, navigated away from a half-filled
+/// form and cost the rest of the task.
+///
+/// So a control keeps the number it was first given for as long as the session
+/// lives, and new controls are numbered above the highest number ever used. The
+/// consequence is the useful one: a number is either the same control it always
+/// was, or it is dead — and the session says so instead of acting on whatever
+/// happens to sit at that position now.
+public final class IndexBook {
+    private var byIdentity: [String: Int] = [:]
+    private var next = 0
+
+    public init() {}
+
+    /// The number this control already had, or a fresh one.
+    func number(for identity: String) -> Int {
+        if let existing = byIdentity[identity] { return existing }
+        let number = next
+        next += 1
+        byIdentity[identity] = number
+        return number
+    }
+}
+
 /// Walks an application's accessibility tree and produces a flattened,
 /// index-addressable snapshot.
 ///
@@ -124,6 +163,8 @@ public struct AXSnapshot: Sendable {
 /// * **Stability.** Indices must mean the same thing between `get_app_state`
 ///   and the next `click`. A snapshot therefore owns its element table, and
 ///   the session refuses actions whose index came from an older snapshot.
+///   Numbers handed to the model also stay with their control across walks
+///   (`IndexBook`), so an action planned from memory hits what it meant.
 /// * **Bounded cost.** Real trees are huge (browsers: tens of thousands of
 ///   nodes). The walk stops at a node budget and a depth limit, and prunes
 ///   subtrees that can never be seen or clicked.
@@ -155,7 +196,8 @@ public enum AXTreeWalker {
     public static func snapshot(
         app: AppHandle,
         options: Options = Options(),
-        elementTable: inout [Int: AXElement]
+        elementTable: inout [Int: AXElement],
+        indexBook: IndexBook? = nil
     ) -> AXSnapshot {
         let axApp = AXElement.application(pid: app.pid)
         let window = focusedWindow(of: axApp)
@@ -264,6 +306,22 @@ public enum AXTreeWalker {
             visit(window, depth: 0)
         } else {
             visit(axApp, depth: 0)
+        }
+
+        // Renumber before anyone sees the walk. The table built above is keyed
+        // by traversal order, which is only an internal detail; what the model
+        // is given is the session's number for that control, unchanged from the
+        // last time it saw it.
+        if let indexBook {
+            let identities = AXSnapshot.identities(of: nodes)
+            var stable: [Int: AXElement] = [:]
+            stable.reserveCapacity(nodes.count)
+            for (position, identity) in identities.enumerated() {
+                let number = indexBook.number(for: identity)
+                if let element = elementTable[nodes[position].index] { stable[number] = element }
+                nodes[position].index = number
+            }
+            elementTable = stable
         }
 
         return AXSnapshot(

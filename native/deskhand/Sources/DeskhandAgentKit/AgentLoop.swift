@@ -2,6 +2,17 @@ import Foundation
 import DeskhandCore
 import DeskhandLLM
 
+/// What the loop needs from the tool layer.
+///
+/// A protocol rather than the concrete executor so the loop's own decisions —
+/// when to warn, when to stop, what to keep in the history — can be tested
+/// against scripted results instead of a real window.
+public protocol ToolRunning: AnyObject, Sendable {
+    func call(name: String, arguments: JSONValue, verify: Bool, narration: String?) async -> ToolResult
+}
+
+extension ToolExecutor: ToolRunning {}
+
 /// Drives one task to completion: ask the model, run its tool calls, feed the
 /// results back, repeat.
 ///
@@ -42,7 +53,7 @@ public final class AgentLoop {
 
         public init(
             maxSteps: Int = 40,
-            keepScreenshots: Int = 2,
+            keepScreenshots: Int = 1,
             keepTrees: Int = 3,
             verbose: Bool = true,
             verifyActions: Bool = true,
@@ -58,14 +69,26 @@ public final class AgentLoop {
     }
 
     private let provider: ChatProvider
-    private let executor: ToolExecutor
+    private let executor: ToolRunning
     private let options: Options
     private let tools: [ToolDefinition]
     private let timings = Timings()
+
+    /// How long a run may keep landing on a screen it has already seen.
+    ///
+    /// A step is 3–6 s of model time, so a stall is expensive long before the
+    /// step budget notices. Six steps is enough for a legitimate back-and-forth
+    /// (open a dialog, cancel it, open it another way); twelve is not a detour,
+    /// it is a loop. Measured on a real run: 19 steps of `super+l`, read,
+    /// click, read — none of them the same call twice, so the identical-call
+    /// guard never fired.
+    private static let stallWarnSteps = 6
+    private static let stallStopSteps = 12
+
     /// Set by the host for one run; nil when nobody is watching.
     public var observer: AgentObserver?
 
-    public init(provider: ChatProvider, executor: ToolExecutor, options: Options = Options()) {
+    public init(provider: ChatProvider, executor: ToolRunning, options: Options = Options()) {
         self.provider = provider
         self.executor = executor
         self.options = options
@@ -73,101 +96,44 @@ public final class AgentLoop {
     }
 
     public static let systemPrompt = """
-        You are Deskhand, an agent that operates a macOS computer on the user's behalf.
+        You are Deskhand, an agent operating macOS for the user. Act through tools; use get_app_state \
+        for the screenshot and indexed accessibility tree.
 
-        You act by calling tools. You cannot see the screen except through get_app_state, which \
-        returns a screenshot and an indexed accessibility tree of the frontmost window of one app.
+        Batch predictable actions in one answer: send with type_text(submit: true), open URLs with \
+        super+l then type_text(submit: true), fill fields with set_value/type_text and Tab, and use \
+        press_key(repeat:) for repeated keys. Element numbers are stable for the whole run: a \
+        number always means the same control, and a control that is gone leaves a dead number the \
+        tools reject. Read once, then act; refresh only when a new window, filtered list, or \
+        unknown value changes what you must do.
+        When the last action of a batch changes the screen, its result already carries the fresh \
+        tree: act on those indices directly, without calling get_app_state again.
+        Calls execute in order; a failure stops the batch. After switching active apps, check which \
+        app received input and verify the result on a fresh screen before continuing.
 
-        ## Batch your actions
+        Accessibility actions work in the background. Real mouse clicks, scrolling, and drags need \
+        the target in front; the click tool raises it. Use activate_app only when the user asks to \
+        focus/show a window or an unobscured screenshot is needed.
 
-        Each answer you give costs a full model round trip — several seconds. The single largest \
-        speed-up available to you is putting every step you can predict into one answer. Tools in \
-        one answer run in order, and the batch stops only if a call fails.
+        Prefer indices and set_value over coordinates and pixel clicks. Coordinates are for canvas, \
+        video, maps, games, and other content absent from the tree. Treat "contents not exposed" as \
+        non-empty but inaccessible; use the suggested field, or inspect the screenshot and verify a \
+        pixel action when no addressable route exists. Use get_app_state(include_screenshot: false) \
+        for a cheap verification. Do not resend a key/click just because the tree did not change.
+        A hidden-item count confirms items exist; a suggested field is the route in: use it and \
+        submit. Use set_value to replace a specific field without relying on focus, and type_text \
+        to insert at the caret. Prefer keyboard shortcuts to menus; press_key uses xdotool syntax \
+        ("super+s", "ctrl+shift+t", "Return"). The last action's tree diff usually verifies success; \
+        refresh for new elements, visual-only effects, or uncertainty. Never repeat the same click \
+        or key more than twice. For an app absent from the running list, use \
+        list_apps(include_installed: true).
 
-        Default to batching. A lone tool call is the exception, not the pattern:
+        Do not list_apps for an already listed app. Send each key once. State irreversible actions \
+        before doing them. Alongside tools, write at most one short 2–4 word caption in the user's \
+        language, with no reasoning, plans, or repetition.
 
-        - Sending a message: type_text with submit: true — it types and presses Return in one call.
-        - Opening a URL: press_key "super+l", then type_text the URL with submit: true.
-        - Searching: set_value the search field with submit: true.
-        - Filling a form: set_value or type_text for every field, then press_key "Tab" between \
-        them, then Return — one answer.
-        - Typing into a field that is not focused: click it, then type_text, then Return.
-        - Repeating a key: press_key with repeat set, instead of several calls.
-        - Opening a known menu path: the clicks that get there, in order.
-
-        Element indices stay valid across click, type_text, press_key and scroll: those do not \
-        re-read the tree, so you can chain them without re-checking. Only get_app_state replaces \
-        the indices. This is what makes batching safe — you do not have to look between steps.
-
-        Read the tree once, then act in one answer: get_app_state, then every action the layout \
-        implies. Only stop early when the next step genuinely depends on what you have not seen \
-        yet — a new window, a filtered list, a value you must read first.
-
-        ## Working without stealing focus
-
-        Reading an app, pressing its elements, setting a value and sending it keys all work while \
-        it stays in the background, so none of that moves the user's own window. Keep it that way: \
-        it is faster and it does not interrupt whatever the user is doing.
-
-        What does need the app in front is a real mouse gesture — a click at x/y, a scroll, a \
-        drag — because the system delivers those to whatever is frontmost. The click tool raises \
-        the window by itself in that case; you do not have to ask for it.
-
-        Use activate_app only when the user asks to see or focus a window, or when a screenshot \
-        has to show it unobscured. Do not call it as a warm-up before typing.
-
-        The last action of a batch comes back with a short list of what changed in the \
-        accessibility tree. That is usually enough to confirm success; call get_app_state only \
-        when you need to see the screen or address an element that is new.
-
-        ## Rules that matter
-
-        - Call get_app_state when you do not know the app's layout, or when you need to see \
-        something visual. Do not call it after every action just to confirm.
-        - To verify cheaply, call get_app_state with include_screenshot: false. It skips the \
-        screenshot (the slow part) and still refreshes the indices.
-        - Prefer element indices over pixel coordinates. Use coordinates only for content that is \
-        not in the tree: canvas, video, maps, games, images.
-        - A node marked "(contents not exposed: ...)" is a region whose children the app refuses \
-        to list — a chat list, a table, a canvas, a custom-drawn view. Its contents are on screen \
-        but not addressable, so no index inside it exists. Do not read it as empty. When the \
-        marker gives a count ("11 items not exposed"), the region is definitely not empty: there \
-        are items there, you simply cannot address them by index. When it names an element \
-        ("type into element 16 to reach them"), that field is your way in — use it and press \
-        Return. Only when it says "no addressable way in" should you fall back to reading the \
-        screenshot and clicking a pixel, and expect to verify the result then, because a pixel \
-        inside such a region is a guess.
-        - Prefer set_value over typing when you are replacing a field's contents; prefer type_text \
-        when inserting at the caret.
-        - To put text into a specific field, do not click a pixel and then type: if the click \
-        misses, the typing lands in whatever really has focus and the result looks empty while \
-        the text went somewhere else. Use set_value with the field's index — it addresses the \
-        field directly, needs no focus, and works on an occluded window.
-        - One key press is enough. Do not send Return twice "to be sure": the first one usually \
-        did the job and the second submits an empty box or fires a shortcut. If you are unsure, \
-        read the state instead of pressing again.
-        - Keyboard shortcuts are usually more reliable than clicking menus. press_key uses \
-        xdotool syntax, e.g. "super+s", "ctrl+shift+t", "Return".
-        - The apps already running are listed below. Do not call list_apps to find an app you can \
-        already see there; call it only when you need an app that is not running, and pass \
-        include_installed: true.
-        - When a tool reports "no change in the accessibility tree", that is a hint to look, not \
-        a failure to retry. The effect may be visual only. Read the state once, decide, and do \
-        not resend the same key or click more than twice.
-        - Before any irreversible action (sending a message, deleting a file, making a purchase), \
-        state what you are about to do.
-
-        ## How to talk
-
-        Alongside a tool call, write at most one short line naming what you are doing: two to four \
-        words, no full sentences, no reasoning, no restating the task. It is a caption the user \
-        reads while watching, not a plan.
-
-        - "Открываю Telegram", "Запускаю видео", "Отправляю сообщение", "Ищу чат".
-        - Answer in the user's language.
-
-        Do not narrate what you have not done yet, and do not explain your reasoning — the tool \
-        calls already show it. Say nothing at all rather than padding the line.
+        A screen you have already seen is a sign the route is wrong, not a place to try again: \
+        when the same window and content come back, change the approach instead of repeating the \
+        sequence that led back here.
 
         """
 
@@ -187,6 +153,13 @@ public final class AgentLoop {
         var lastCallSignature: String?
         var repeatCount = 0
         let runClock = TimingClock()
+        // Progress, as distinct from activity. A run that keeps landing on the
+        // same screen is not doing anything, however many calls it makes, and
+        // without this the only bound on that is the step budget — which a real
+        // run spent 20 steps of before the user gave up and grabbed the mouse.
+        var seenStates = Set<String>()
+        var lastProgressStep = 1
+        var warnedStall = false
         // Counted here rather than read back from `timings`: the timing table is
         // opt-in and grouped by label, so it cannot answer "how many calls
         // failed" without the host parsing strings.
@@ -212,17 +185,56 @@ public final class AgentLoop {
             let promptBytes = prompt.reduce(0) { $0 + $1.text.utf8.count }
             let stepClock = TimingClock()
             let completion: Completion
+            // Streaming is reported as a growing prefix, throttled so a host
+            // that resizes a window for every token does not spend the saved
+            // latency on layout. The first delta goes out immediately: that is
+            // the one the user is waiting for.
+            var streamed = ""
+            var lastStreamAt = -1.0
+            var lastStreamLength = 0
+            let onText: (String) -> Void = { delta in
+                streamed += delta
+                let now = stepClock.milliseconds
+                if lastStreamAt < 0 || now - lastStreamAt >= 80 {
+                    lastStreamAt = now
+                    lastStreamLength = streamed.count
+                    self.observer?.stepStreamed(step, text: streamed)
+                }
+            }
             do {
-                completion = try await provider.complete(
-                    messages: prompt,
-                    tools: tools,
-                    systemPrompt: systemPrompt
-                )
+                if let streaming = provider as? StreamingChatProvider {
+                    completion = try await streaming.complete(
+                        messages: prompt,
+                        tools: tools,
+                        systemPrompt: systemPrompt,
+                        onText: onText
+                    )
+                    // The last delta may have arrived inside the throttle window.
+                    if !streamed.isEmpty, streamed.count != lastStreamLength {
+                        self.observer?.stepStreamed(step, text: streamed)
+                    }
+                } else {
+                    completion = try await provider.complete(
+                        messages: prompt,
+                        tools: tools,
+                        systemPrompt: systemPrompt
+                    )
+                }
             } catch {
                 timings.record("llm", milliseconds: stepClock.milliseconds)
                 throw error
             }
             let llmMilliseconds = stepClock.milliseconds
+            if let record = ModelTrace.record {
+                record("model-completion", [
+                    "step": .number(Double(step)),
+                    "text": .string(completion.text),
+                    "stop_reason": completion.stopReason.map(JSONValue.string) ?? .null,
+                    "tool_calls": .array(completion.toolCalls.map { call in
+                        .object(["id": .string(call.id), "name": .string(call.name), "arguments": call.arguments])
+                    }),
+                ])
+            }
             timings.record("llm", milliseconds: llmMilliseconds)
             // The host records this as the step's cost. It is emitted before the
             // branch below so the step that ends the run is timed too: the last
@@ -285,6 +297,7 @@ public final class AgentLoop {
             // The executor is asked to verify only the last call of the batch:
             // an intermediate step would pay for a tree walk nobody reads.
             let batch = completion.toolCalls
+            var stepFingerprint: String?
             batchLoop: for (position, call) in batch.enumerated() {
                 try Task.checkCancellation()
                 let isLast = position == batch.count - 1
@@ -349,6 +362,7 @@ public final class AgentLoop {
                     toolCallID: call.id,
                     toolIsError: result.isError
                 ))
+                if let fingerprint = result.stateFingerprint { stepFingerprint = fingerprint }
 
                 // A failed step invalidates the assumptions the later steps in
                 // the batch were built on: after a `super+l` that did not take,
@@ -390,6 +404,41 @@ public final class AgentLoop {
                 }
             }
 
+            // Did that step take the task anywhere? A screen the run has already
+            // stood on is the cheapest honest answer: an action that leaves the
+            // same window in the same state has not moved the task forward, and
+            // a run that keeps doing it is not going to finish. A step with no
+            // fingerprint at all (a list of apps, a refusal) says nothing about
+            // the screen, so it neither counts as progress nor as a stall.
+            if let stepFingerprint {
+                if seenStates.insert(stepFingerprint).inserted {
+                    lastProgressStep = step
+                    warnedStall = false
+                }
+                let stalled = step - lastProgressStep
+                if stalled >= Self.stallStopSteps {
+                    log("stopping: \(stalled) steps without a new screen")
+                    timings.record("run total", milliseconds: runClock.milliseconds)
+                    observer?.loopStopped("the run kept returning to a screen it had already seen")
+                    reportRun(steps: stepsRun, calls: callsRun, failed: callsFailed, clock: runClock)
+                    return "Stopped: \(stalled) steps in a row without a new screen. "
+                        + "The same route was taken again, so repeating it will not finish the task."
+                }
+                if stalled >= Self.stallWarnSteps, !warnedStall {
+                    log("warning: \(stalled) steps without a new screen")
+                    observer?.loopWarned("the run keeps returning to the same screen")
+                    warnedStall = true
+                    messages.append(ChatMessage(
+                        role: .user,
+                        text: """
+                            This is the same screen you have been on for \(stalled) steps. Nothing \
+                            has moved, so the next repetition will not move it either: try a \
+                            different route — a menu, a keyboard shortcut, or opening the page \
+                            directly — or say what is blocking the task.
+                            """
+                    ))
+                }
+            }
         }
 
         timings.record("run total", milliseconds: runClock.milliseconds)
@@ -505,6 +554,7 @@ public final class AgentLoop {
         var seenImages = 0
         var treesKeptPerApp: [String: Int] = [:]
         var keptApps: [String] = []
+        var diffsKept = 0
         var result: [ChatMessage] = []
 
         for message in messages.reversed() {
@@ -515,6 +565,19 @@ public final class AgentLoop {
                 if seenImages > options.keepScreenshots {
                     copy.images = []
                     if copy.text.isEmpty { continue }
+                }
+            }
+
+            // What an action changed is only worth its lines until the next
+            // action changes something else: a diff describes a transition, and
+            // a transition three steps back is history that no longer matches
+            // anything on screen. They are also the second-biggest thing in a
+            // long run — measured 44 KB of a 169 KB prompt on a 30-step run —
+            // and every byte is paid again on every following round trip.
+            if copy.role == .tool, copy.text.contains(Self.diffMarkerPrefix) {
+                diffsKept += 1
+                if diffsKept > 1 {
+                    copy.text = Self.compactDiff(in: copy.text)
                 }
             }
 
@@ -559,6 +622,24 @@ public final class AgentLoop {
 
     static let treeMarkerPrefix = "Accessibility tree ("
 
+    /// Where a tool result starts describing what the action changed.
+    static let diffMarkerPrefix = "Changed after "
+
+    /// Cuts the "what changed" block out of a result that a later action has
+    /// already superseded.
+    ///
+    /// The tree below it, if any, is left alone: it is either the newest tree of
+    /// its app — which the model still needs — or it is compacted by its own
+    /// rule a few lines down.
+    static func compactDiff(in text: String) -> String {
+        guard let start = text.range(of: diffMarkerPrefix) else { return text }
+        let tree = text.range(of: treeMarkerPrefix, range: start.lowerBound..<text.endIndex)
+        let end = tree?.lowerBound ?? text.endIndex
+        return String(text[text.startIndex..<start.lowerBound])
+            + "Changed after that: the details are superseded by a later action.\n"
+            + String(text[end...])
+    }
+
     /// Cuts the tree section out of a tool result, keeping the cheap header.
     ///
     /// The tree is always the last block of a `get_app_state` result, so
@@ -566,8 +647,8 @@ public final class AgentLoop {
     static func compactTree(in text: String) -> String {
         guard let range = text.range(of: treeMarkerPrefix) else { return text }
         let header = text[text.startIndex..<range.lowerBound]
-        return header + "Accessibility tree omitted: it is stale, and its element indices no "
-            + "longer resolve. Use the newest tree in the conversation."
+        return header + "Accessibility tree omitted to keep the prompt small. Element numbers "
+            + "are stable, so the indices you already used still mean the same controls."
     }
 
     private func preview(_ arguments: JSONValue) -> String {

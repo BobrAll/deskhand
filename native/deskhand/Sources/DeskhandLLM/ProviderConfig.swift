@@ -1,4 +1,5 @@
 import Foundation
+import DeskhandCore
 
 /// Configuration for any OpenAI-compatible or Anthropic-compatible endpoint.
 ///
@@ -25,6 +26,10 @@ public struct ProviderConfig: Sendable, Equatable {
     public var extraHeaders: [String: String]
     /// Some local servers ignore the auth header entirely; when true we omit it.
     public var omitAuthHeader: Bool
+    /// Fields merged into every request body, as the host passed them. This is
+    /// how a gateway-specific switch reaches the wire without the agent knowing
+    /// the gateway. Applied after the agent's own fields, so a user value wins.
+    public var extraBody: [String: JSONValue] = [:]
 
     public init(
         wire: Wire = .openAICompatible,

@@ -157,11 +157,38 @@ function contextLines(app: ActiveAppInfo | null): string[] {
   return lines
 }
 
-const OVERLAY_BASE = 'Формат ответа: краткий разбор для показа в оверлее. Markdown разрешён.'
+/**
+ * What the card can render.
+ *
+ * Short on purpose. The renderer understands headings, lists, fenced code,
+ * tables, bold, italics, inline code and links — and nothing else — so the model
+ * is told exactly that much and no more. A longer paragraph about Markdown is
+ * prompt spent on formatting instead of on the answer.
+ *
+ * The table half is not decoration: a list of prices or models written as
+ * `a — b · c · d` lines is a table that lost its columns, and the card can draw
+ * a real one for the same tokens.
+ */
+const MARKDOWN_NOTE =
+  'Разметка: заголовки, списки, таблицы (несколько однотипных вещей — таблицей), ' +
+  '`код`, **жирный**, *курсив*, ссылки.'
 
+const OVERLAY_BASE = `Формат ответа: краткий разбор для показа в оверлее. ${MARKDOWN_NOTE}`
+
+/**
+ * The insert mode is the one place where Markdown is a compromise.
+ *
+ * The text is meant to be pasted into someone else's input field, and a table
+ * pasted into a plain text box arrives as pipes. Structure is still allowed
+ * because the card is what the user reads first and a comparison that is not a
+ * table is unreadable — but decoration (headings, bold, italics) is not: it
+ * survives the paste as literal asterisks and helps nobody.
+ */
 const INSERT_BASE =
-  'Формат ответа: только готовый текст для вставки в поле ввода. Без markdown-разметки, ' +
-  'без кавычек вокруг всего ответа, без пояснений и вступлений.'
+  'Формат ответа: только готовый текст для вставки в поле ввода, без кавычек вокруг ' +
+  'всего ответа, без пояснений и вступлений. Разметку используй только там, где она ' +
+  'несёт структуру: списки и таблицы. Заголовки, жирный и курсив не нужны.'
+
 
 /**
  * The note that turns a request into a follow-up.

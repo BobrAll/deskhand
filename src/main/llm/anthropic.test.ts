@@ -142,7 +142,8 @@ describe('AnthropicProvider: the body', () => {
       temperature: 0.7,
       system: 'Ты помощник.',
       messages: [{ role: 'user', content: [{ type: 'text', text: 'Что тут?' }] }],
-      stream: true
+      stream: true,
+      thinking: { type: 'disabled' }
     })
   })
 

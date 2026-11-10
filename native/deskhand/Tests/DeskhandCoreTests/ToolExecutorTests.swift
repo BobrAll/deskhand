@@ -59,9 +59,29 @@ final class ToolExecutorTests: XCTestCase {
         )
         XCTAssertTrue(result.isError)
         XCTAssertTrue(
-            result.plainText.contains("not part of the current snapshot")
+            result.plainText.contains("is not on screen any more")
                 || result.plainText.contains("no running or installed app")
         )
+    }
+
+    func testANumberNeverBecomesADifferentControl() {
+        // The failure this prevents, measured on a real run: a model pressed a
+        // filter button, the result carried a renumbered tree, and its second
+        // click on the same number landed on a message row and navigated away
+        // from a half-filled form.
+        let book = IndexBook()
+        let create = book.number(for: "AXButton|Create")
+        XCTAssertEqual(book.number(for: "AXButton|Create"), create, "same control, same number")
+
+        let confirm = book.number(for: "AXButton|Confirm")
+        XCTAssertNotEqual(confirm, create, "a new control gets a number of its own")
+
+        // The create button is gone from the next walk; its number must not be
+        // handed to anything else, or an action planned from memory would hit
+        // the wrong control instead of failing honestly.
+        let other = book.number(for: "AXCell|")
+        XCTAssertNotEqual(other, create)
+        XCTAssertNotEqual(other, confirm)
     }
 
     func testInvalidScrollDirectionIsRejected() async {

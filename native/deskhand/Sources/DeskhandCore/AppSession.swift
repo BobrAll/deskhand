@@ -54,6 +54,15 @@ public final class AppSession {
     /// The tree the next diff is computed against. It advances after every
     /// diff, so each action's report covers only what that action changed.
     private var diffBaseline: AXSnapshot?
+    /// The element table of the walk behind `diffBaseline`, kept so that the
+    /// walk can be adopted as the current snapshot without walking again.
+    private var diffBaselineTable: [Int: AXElement]?
+    /// The numbers already given to controls in this app.
+    ///
+    /// Owned by the session, not by a walk: that is what makes an index mean the
+    /// same control from one snapshot to the next, so an action planned a step
+    /// ago still lands on what the model meant.
+    private let indexBook = IndexBook()
     /// The accessibility window the current snapshot was read from.
     ///
     /// Kept as an element, not just as a frame, because bringing the app forward
@@ -89,11 +98,13 @@ public final class AppSession {
 
         var table: [Int: AXElement] = [:]
         let treeClock = TimingClock()
-        let snap = AXTreeWalker.snapshot(app: app, options: treeOptions, elementTable: &table)
+        let snap = AXTreeWalker.snapshot(
+            app: app, options: treeOptions, elementTable: &table, indexBook: indexBook)
         timings.tree = treeClock.milliseconds
         snapshot = snap
         elementTable = table
         diffBaseline = snap
+        diffBaselineTable = nil
 
         // A refresh without a screenshot must not change the coordinate space.
         // The model reads pixels off the last screenshot it was given, and that
@@ -151,9 +162,12 @@ public final class AppSession {
     /// type, then press Return" in a single answer safe. Rebuilding the table
     /// here would invalidate the very indices the model is still using.
     ///
-    /// The cost of that choice: nodes that only just appeared are not
-    /// addressable by index until the model calls `get_app_state`. The diff
-    /// text states this, so the model knows when it must re-read.
+    /// Numbers survive the walk for a second reason: `IndexBook` renumbers each
+    /// fresh walk back onto the numbers already handed out, so a control that
+    /// is still on screen keeps its index across snapshots. What is *not* yet
+    /// addressable is a control that only just appeared — it has its number, but
+    /// the number enters the element table when the walk is adopted
+    /// (`adoptPreview`), which the executor does as part of the same result.
     @discardableResult
     public func previewDiff(
         treeOptions: AXTreeWalker.Options = .init(),
@@ -173,6 +187,7 @@ public final class AppSession {
         let clock = TimingClock()
         var treeMilliseconds = 0.0
         var latest = previous
+        var latestTable: [Int: AXElement] = [:]
         var latestDiff = AXSnapshotDiff()
         var previousSignature: Int?
         var polls = 0
@@ -184,11 +199,13 @@ public final class AppSession {
         while true {
             let walkClock = TimingClock()
             var scratch: [Int: AXElement] = [:]
-            let current = AXTreeWalker.snapshot(app: app, options: treeOptions, elementTable: &scratch)
+            let current = AXTreeWalker.snapshot(
+                app: app, options: treeOptions, elementTable: &scratch, indexBook: indexBook)
             treeMilliseconds += walkClock.milliseconds
             polls += 1
 
             latest = current
+            latestTable = scratch
             latestDiff = current.diff(from: previous)
 
             let signature = current.restSignature
@@ -201,10 +218,30 @@ public final class AppSession {
         }
 
         diffBaseline = latest
+        diffBaselineTable = latestTable
         return (
             latestDiff,
             ToolTimings(wall: clock.milliseconds, tree: treeMilliseconds)
         )
+    }
+
+    /// Makes the walk taken by the last `previewDiff` the current snapshot.
+    ///
+    /// Called after the last action of a batch, when nothing else is still
+    /// holding indices from the old tree. The model gets the new tree in the
+    /// action's own result instead of spending a round trip on `get_app_state`,
+    /// and the walk is reused rather than taken again. Returns nil when there
+    /// is no preview walk to adopt.
+    public func adoptPreview() -> AXSnapshot? {
+        guard let latest = diffBaseline, let table = diffBaselineTable else { return nil }
+        snapshot = latest
+        elementTable = table
+        diffBaselineTable = nil
+        if let frame = latest.windowFrame {
+            mapper = Self.mapperAfterTreeWalk(existing: mapper, windowFrame: frame)
+        }
+        windowElement = AXTreeWalker.focusedWindow(of: AXElement.application(pid: app.pid))
+        return latest
     }
 
     /// The smallest node whose frame contains a screen point.

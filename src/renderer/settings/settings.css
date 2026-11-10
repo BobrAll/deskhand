@@ -382,6 +382,17 @@ textarea {
   min-height: 84px;
 }
 
+/* The extra request body is usually one short object, so it starts at the height
+   of a text field. `field-sizing` keeps it multiline and lets it grow as the JSON
+   wraps, instead of reserving a two-line box that looks like it wants a sentence. */
+textarea.extra-body {
+  min-height: 0;
+  field-sizing: content;
+  resize: none;
+  max-height: 160px;
+  overflow-y: auto;
+}
+
 /* A budget is three or four digits, not a paragraph: a full-width box made the
    field look like it wanted a sentence, and the native steppers ate the space
    the digits needed. Arrow keys still step the value. */

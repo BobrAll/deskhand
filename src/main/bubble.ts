@@ -73,6 +73,15 @@ export interface BubbleAnchor {
    * The side is the part that stays.
    */
   right: boolean
+  /**
+   * The horizontal edge belongs to the user: they dragged the card, or pulled its
+   * edge to make it wider.
+   *
+   * Once set, the left edge is kept and only the far edge moves. A card that
+   * jumped back to the pointer the moment its content reflowed would undo the
+   * drag under the hand that made it.
+   */
+  pinned?: boolean
 }
 
 export function clamp(value: number, min: number, max: number): number {
@@ -164,6 +173,12 @@ export function boundsFor(anchor: BubbleAnchor, height: number, width: number): 
  * sides it was placed on — so the card grows away from the pointer instead of
  * crawling out from under it.
  *
+ * `pin` says the horizontal edge is the user's: they dragged the card or pulled
+ * its edge. The left edge then stays where it is and only the far edge moves,
+ * which is the only way a right-edge drag can keep the edge under the pointer.
+ * The anchor remembers the decision (`pinned`), because the next content-driven
+ * resize must not pull the card back to the pointer mid-answer.
+ *
  * `workAreaAt` is the caller's `screen.getDisplayNearestPoint(...).workArea`: the
  * pointer may have been on another display when the bubble opened, and a card the
  * user dragged away has to stay inside the work area of *that* display.
@@ -173,12 +188,15 @@ export function resizeAnchor(
   bounds: BubbleRect,
   height: number,
   width: number,
-  workAreaAt: (point: BubblePoint) => BubbleRect
+  workAreaAt: (point: BubblePoint) => BubbleRect,
+  pin = false
 ): BubbleAnchor {
   const placed: BubbleAnchor = { ...anchor, point: { ...anchor.point } }
   placed.area = workAreaAt(placed.point)
 
   const dragged =
+    pin ||
+    Boolean(anchor.pinned) ||
     Math.abs(bounds.x - placed.x) > DRAG_SLACK ||
     Math.abs(bounds.y - yFor(placed, bounds.height)) > DRAG_SLACK
 
@@ -195,6 +213,9 @@ export function resizeAnchor(
       x: placed.point.x,
       y: placed.above ? bounds.y + bounds.height + BUBBLE_GAP : bounds.y - BUBBLE_GAP
     }
+    // From here on the horizontal edge belongs to the user, including a resize
+    // that happens after the drag has ended.
+    if (pin) placed.pinned = true
   } else {
     const room = roomAround(placed.point, placed.area)
     if (height > room.below && height <= room.above) placed.above = true

@@ -14,7 +14,7 @@
 
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { AGENT_MIN_OUTPUT_TOKENS } from '@shared/defaults'
-import type { AgentEvent, AgentToolRequest } from '@shared/types'
+import type { AgentEvent, AgentPresentation, AgentToolRequest } from '@shared/types'
 
 const state = vi.hoisted(() => ({
   enabled: true,
@@ -25,6 +25,7 @@ const state = vi.hoisted(() => ({
   maxSteps: 8,
   abortOnMouseMove: true,
   verifyResult: true,
+  showActions: true,
   /** Events the controller will receive, pushed by each test. */
   emit: (_event: unknown) => {},
   runRejects: null as Error | null,
@@ -58,6 +59,7 @@ vi.mock('../settings/store', () => ({
       maxSteps: state.maxSteps,
       abortOnMouseMove: state.abortOnMouseMove,
       verifyResult: state.verifyResult,
+      showActions: state.showActions,
       rememberedApprovals: state.remembered
     }
   }),
@@ -111,22 +113,26 @@ const PROVIDER = {
 function harness(options: { maxTokens?: number } = {}) {
   const events: AgentEvent[] = []
   const passthrough: boolean[] = []
+  const presentations: AgentPresentation[] = []
   const controller = createAgentController({
     emit: (event) => events.push(event),
-    setPassthrough: (active) => passthrough.push(active)
+    setPassthrough: (active) => passthrough.push(active),
+    present: (action) => presentations.push(action)
   })
   return {
     controller,
     events,
     passthrough,
+    presentations,
     /** The last thing the card was told. */
     last: () => events.at(-1)!,
     /** Everything this run asked the trace to record. */
     trace: () => state.traceEvents.filter((line) => line.event !== 'agent.start'),
-    run: (prompt = 'Нажми «Купить»') => controller.run({
+    run: (prompt = 'Нажми «Купить»', history?: { question: string; answer: string }[]) => controller.run({
       prompt,
       appName: 'Safari',
       windowTitle: 'Магазин',
+      ...(history ? { history } : {}),
       provider: { ...PROVIDER, ...(options.maxTokens ? { maxTokens: options.maxTokens } : {}) }
     })
   }
@@ -141,6 +147,7 @@ beforeEach(() => {
   state.maxSteps = 8
   state.abortOnMouseMove = true
   state.verifyResult = true
+  state.showActions = true
   state.emit = () => {}
   state.runRejects = null
   state.approvals = []
@@ -297,6 +304,22 @@ describe('a run that gave up', () => {
     expect(result.message).toContain('повторялось')
   })
 
+  it('names a run that kept returning to the same screen', async () => {
+    // Different from a repeated call: every step tried something new and still
+    // ended up on the same screen. Sending the user to the step limit would be
+    // wrong advice — more steps would only repeat the loop.
+    const h = harness()
+    const running = h.run()
+
+    await vi.waitFor(() => expect(state.runs).toHaveLength(1))
+    state.emit({ kind: 'stopped', reason: 'the run kept returning to a screen it had already seen' })
+    state.emit({ kind: 'done', complete: false, answer: 'Stopped.' })
+
+    const result = await running
+    expect(result.incomplete).toBe(true)
+    expect(result.message).toContain('по кругу')
+  })
+
   it('names the output limit when that is what stopped it', async () => {
     // A different failure from running out of steps, and a different fix: the
     // run had budget left, but every reply was cut in half. Telling the user to
@@ -386,6 +409,85 @@ describe('a run that works', () => {
       // where to look by calling its own tool.
       task: 'Приложение: Safari\nОкно: Магазин\n\nНажми «Купить»'
     })
+  })
+
+  it('gives the agent the turns a follow-up refers to', async () => {
+    const h = harness()
+    const running = h.run('сделай', [
+      {
+        question: 'можно ли сделать так, чтобы чеки попадали в отдельную папку? если да — сделай',
+        answer: 'Да, можно: создайте фильтр в настройках Gmail.'
+      }
+    ])
+
+    await vi.waitFor(() => expect(state.runs).toHaveLength(1))
+    state.emit({ kind: 'done', complete: true, answer: '' })
+    await running
+
+    const task = (state.runs[0] as { task: string }).task
+    // The bare imperative is still the request; the earlier turn is what makes
+    // it mean something.
+    expect(task).toContain('Разговор до этого')
+    expect(task).toContain('Пользователь: можно ли сделать так, чтобы чеки')
+    expect(task).toContain('Ответ: Да, можно')
+    expect(task.endsWith('Текущая задача:\nсделай')).toBe(true)
+  })
+
+  it('does not add a history block to a first request', async () => {
+    const h = harness()
+    const running = h.run('Нажми «Купить»', [])
+
+    await vi.waitFor(() => expect(state.runs).toHaveLength(1))
+    state.emit({ kind: 'done', complete: true, answer: '' })
+    await running
+
+    expect((state.runs[0] as { task: string }).task).not.toContain('Разговор до этого')
+  })
+
+  it('forwards the picture of an action without turning it into a phase', async () => {
+    const h = harness()
+    const running = h.run()
+
+    await vi.waitFor(() => expect(state.runs).toHaveLength(1))
+    const presentation: AgentPresentation = {
+      tool: 'click',
+      gesture: 'click',
+      app: 'Safari',
+      point: { x: 120, y: 300 },
+      target: { x: 100, y: 290, width: 40, height: 20 }
+    }
+    state.emit({ kind: 'present', presentation })
+
+    expect(h.presentations).toEqual([presentation])
+    // A picture is not progress: the card is still where the run left it.
+    expect(h.last().phase).toBe('arming')
+
+    state.emit({ kind: 'done', complete: true, answer: '' })
+    await running
+  })
+
+  it('passes the presentation switch through to the agent', async () => {
+    state.showActions = false
+    const h = harness()
+    const running = h.run()
+
+    await vi.waitFor(() => expect(state.runs).toHaveLength(1))
+    state.emit({ kind: 'done', complete: true, answer: '' })
+    await running
+
+    // Same run, no picture. This is the seam a background mode uses.
+    expect(state.runs[0]).toMatchObject({ visualize: false })
+  })
+
+  it('asks for the picture when the user left the switch on', async () => {
+    const h = harness()
+    const running = h.run()
+
+    await vi.waitFor(() => expect(state.runs).toHaveLength(1))
+    state.emit({ kind: 'done', complete: true, answer: '' })
+    await running
+
+    expect(state.runs[0]).toMatchObject({ visualize: true })
   })
 
   it('gives an agent step more output room than the writer’s 1024', async () => {

@@ -9,10 +9,15 @@
  *
  * Keyboard: Enter sends, Cmd/Ctrl+Enter pastes, Esc closes, Cmd/Ctrl+C copies the
  * answer when nothing is selected.
+ *
+ * Width is the one thing the card lets a person overrule. It sizes itself to its
+ * content up to `FULL_WIDTH`, which is right for a sentence and wrong for a table;
+ * the right edge can be dragged, and «Шире» does the same thing in one click. The
+ * decision itself lives in `cardWidth.ts`.
  */
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
-import type { CSSProperties } from 'react'
+import type { CSSProperties, PointerEvent as ReactPointerEvent } from 'react'
 import type {
   AgentEvent,
   AgentToolRequest,
@@ -35,7 +40,6 @@ import {
   REFINE_HINT,
   REFINE_LABEL,
   STOP_CHROME,
-  VOICE_WIDTH,
   clamp
 } from './metrics'
 import { useSpeech } from './useSpeech'
@@ -46,6 +50,8 @@ import { deriveView } from './viewFlags'
 import { agentLabel, agentMark } from './agentRow'
 import { keyPolicy, type KeyAction } from './keyPolicy'
 import { routeStream } from './streamRouting'
+import { Markdown } from './markdownText'
+import { draggedWidth, expandedWidth, resolveWidth } from './cardWidth'
 
 interface Failure {
   message: string
@@ -144,6 +150,18 @@ export function App() {
    * over drawing: the card goes back to full density and the drawing stays.
    */
   const [typing, setTyping] = useState(false)
+  /**
+   * The width the user chose for this card, or `null` while it sizes itself.
+   *
+   * It is state of the card and not of the settings: widening is something a
+   * person does while reading one answer, and a preference that outlived the
+   * answer would open the next short reply as a 560-point panel.
+   */
+  const [userWidth, setUserWidth] = useState<number | null>(null)
+  /** A width drag is in flight; `report` outlives a render, so it reads a ref. */
+  const draggingRef = useRef(false)
+  const dragRef = useRef<{ startX: number; startWidth: number; width: number } | null>(null)
+  const [dragging, setDragging] = useState(false)
   /**
    * The bubble opens as a single small field. Everything else — context tags,
    * status rows and the answer's action strip — lives behind the
@@ -350,7 +368,6 @@ export function App() {
       setAnswer(action.text)
       return
     }
-
     const speechCurrent = requestIdRef.current === event.requestId
     requestIdRef.current = null
     replaceOnChunkRef.current = false
@@ -397,6 +414,7 @@ export function App() {
       setDrawn(0)
       setTyping(false)
       setExpanded(false)
+      setUserWidth(null)
       requestIdRef.current = null
       replaceOnChunkRef.current = false
       spokenPromptRef.current = false
@@ -525,7 +543,10 @@ export function App() {
     : 0
   const actionsWidth = hasAnswer
     ? Math.ceil(measureLine(
-        speech.speaking ? 'Остановить озвучку Вставить' : 'Прослушать Вставить',
+        // The widest the strip can get, measured once so the card does not grow
+        // when the answer finishes and the remaining buttons appear. «Вернуть» is
+        // the longer of the two width labels, so it is the one measured.
+        `${speech.speaking ? 'Остановить озвучку' : 'Прослушать'} Вернуть Скопировать`,
         FIELD_FONT.replace('13px', '11px')
       )) + ACTIONS_CHROME
     : 0
@@ -534,13 +555,34 @@ export function App() {
       AGENT_ROW_CHROME + (agentRunning ? 0 : AGENT_STATUS_INSET) + CARET_SLACK
     : 0
   const inputWidth = agentRunning ? NARROW_WIDTH : composedWidth
-  const contentWidth = clamp(Math.max(inputWidth, answerWidth, actionsWidth, agentWidth), NARROW_WIDTH, FULL_WIDTH)
-  const cardWidth = listening ? VOICE_WIDTH : wantsWide ? FULL_WIDTH : contentWidth
+  /**
+   * What the content would like, before any cap.
+   *
+   * Kept unclamped because «Шире» has to know how much room the answer actually
+   * wants: the capped number is always `FULL_WIDTH` once the answer is long, and
+   * a button that opens the card to the same width for every long reply is the
+   * bug it was reported as.
+   */
+  const naturalWidth = Math.max(inputWidth, answerWidth, actionsWidth, agentWidth)
+  const contentWidth = clamp(naturalWidth, NARROW_WIDTH, FULL_WIDTH)
+  // While a drag runs the width lives in a ref, because updating state a hundred
+  // times a second re-renders the answer for nothing. But a render can still
+  // happen mid-drag — the next chunk of a streaming answer is exactly that — and
+  // React would then write its own width over the dragged one. Reading the live
+  // value here makes such a render agree with the edge instead of fighting it.
+  const cardWidth = resolveWidth({
+    listening,
+    wantsWide,
+    contentWidth,
+    userWidth: dragRef.current?.width ?? userWidth,
+    availWidth: window.screen.availWidth
+  })
 
   // Keep a single line throughout the sideways motion. Wrapping before there is
-  // room would briefly add rows that disappear as the window catches up.
-  const wrapped =
-    textWidth + chromeWidth + CARET_SLACK > FULL_WIDTH && cardWidth === FULL_WIDTH
+  // room would briefly add rows that disappear as the window catches up. The
+  // question wraps at the card's own width, so a card the user widened holds a
+  // longer line and one they narrowed wraps sooner.
+  const wrapped = textWidth + chromeWidth + CARET_SLACK > cardWidth
 
   // Measure layout, not the entrance transform. getBoundingClientRect includes
   // the appear animation's scale, which used to feed false heights back to macOS.
@@ -556,7 +598,9 @@ export function App() {
       if (width === lastWidth && height === lastHeight) return
       lastWidth = width
       lastHeight = height
-      window.smartCursor.overlay.resize(height, width)
+      // `pin` while a drag is in flight: the right edge is under the pointer, so
+      // the card has to grow away from its left edge instead of from the anchor.
+      window.smartCursor.overlay.resize(height, width, draggingRef.current)
     }
     const onFocus = (): void => {
       lastWidth = lastHeight = 0
@@ -613,6 +657,9 @@ export function App() {
     setAnswer('')
     setFailure(null)
     setNotice(null)
+    // A new question is a new card: a width chosen while reading the previous
+    // answer must not decide how wide this one opens.
+    setUserWidth(null)
     // A plan from the previous turn is not a state of this one. Without this the
     // "Готово" row would sit under a fresh question until the new answer arrives.
     setAgent(null)
@@ -791,6 +838,83 @@ export function App() {
     await window.smartCursor.overlay.copy(answer)
     setNotice('Скопировано в буфер обмена')
   }, [answer])
+
+  /**
+   * The width the content itself wants, and the one «Шире» opens to.
+   *
+   * `null` means the content already fits the card: there is nothing to widen,
+   * so the button is not shown. `userWidth` set means the person has taken the
+   * width over, and «Вернуть» gives it back to the content.
+   */
+  const wanted = expandedWidth(naturalWidth, window.screen.availWidth)
+
+  const toggleWidth = useCallback(() => {
+    setUserWidth(userWidth === null ? wanted : null)
+  }, [userWidth, wanted])
+
+  /**
+   * Dragging the card's right edge.
+   *
+   * Three things make this feel like an edge and not like a slider:
+   *
+   * - The delta comes from the pointer's *screen* position, not from its position
+   *   inside the window. The window moves and resizes while the drag runs, so a
+   *   client-space delta would fold the card's own motion back into the pointer
+   *   and the edge would slide away from the hand pulling it.
+   * - The width is written straight onto the element and never through React.
+   *   A state update per pointer move re-renders the whole card — the answer's
+   *   Markdown included — a hundred times a second, and the card lags behind the
+   *   hand by exactly that much. State is committed once, on release.
+   * - The window follows from the element: the `ResizeObserver` in `report` sees
+   *   the new width and resizes the window with `pin`, so the left edge stays put
+   *   and the right edge tracks the pointer. There is one resize path, not two.
+   */
+  const gripDown = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      if (event.button !== 0) return
+      const node = rootNode
+      if (!node) return
+      event.preventDefault()
+      event.currentTarget.setPointerCapture(event.pointerId)
+      dragRef.current = { startX: event.screenX, startWidth: node.offsetWidth, width: node.offsetWidth }
+      draggingRef.current = true
+      setDragging(true)
+    },
+    [rootNode]
+  )
+
+  const gripMove = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    const drag = dragRef.current
+    const node = rootNode
+    if (!drag || !node) return
+    // The drawer's buttons need the full width, so an unfolded card cannot be
+    // dragged narrower than that: it would snap back on release.
+    const floor = wantsWide ? FULL_WIDTH : undefined
+    const width = draggedWidth(
+      drag.startWidth,
+      event.screenX - drag.startX,
+      window.screen.availWidth,
+      floor
+    )
+    if (width === drag.width) return
+    drag.width = width
+    node.style.width = `${width}px`
+  }, [rootNode, wantsWide])
+
+  const gripUp = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    const drag = dragRef.current
+    if (!drag) return
+    dragRef.current = null
+    draggingRef.current = false
+    setDragging(false)
+    // One commit for the whole gesture. Until this render the element carries the
+    // dragged width imperatively, so React writing the same number changes
+    // nothing on screen.
+    setUserWidth(drag.width)
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId)
+    }
+  }, [])
 
   /**
    * Performs what `keyPolicy` decided.
@@ -989,7 +1113,7 @@ export function App() {
    */
   const {
     showMeta,
-    canPaste,
+    answerReady,
     agentOff,
     agentBlocked,
     actionAsk,
@@ -1178,7 +1302,7 @@ export function App() {
           {agentStatus && (
             <div className="agent-head" role="status">
               <span className="agent-dot" aria-hidden />
-              <span className="agent-label" key={agentStatus}>{agentStatus}</span>
+              <span className="agent-label" key={`${agent.step}:${agent.phase}`}>{agentStatus}</span>
             </div>
           )}
 
@@ -1255,32 +1379,50 @@ export function App() {
       */}
       {hasAnswer && (
         <div ref={answerRef} className="answer">
-          {busy ? answer : answer
-            .split(/(\[[^\]\n]+\]\(https?:\/\/[^\s)]+\)|https?:\/\/[^\s<>()\]]+)/gi)
-            .map((part, index) => {
-              if (index % 2 === 0) return part
-              const markdown = /^\[([^\]]+)\]\((https?:\/\/.+)\)$/i.exec(part)
-              return <a key={index} href={markdown?.[2] ?? part} target="_blank" rel="noreferrer">
-                {markdown?.[1] ?? part}
-              </a>
-            })}
-          {busy && <span className="caret" />}
+          <Markdown text={answer} streaming={busy} caret={busy} />
         </div>
       )}
 
-      {/* Keep the everyday actions on one row; rewrites live in the drawer. */}
-      {hasAnswer && (!busy || speech.speaking || canPaste) && (
+      {/*
+        The everyday actions, on one row; rewrites live in the drawer.
+
+        Pasting is not here. It is the one action that takes the card away from
+        you — it activates another app, sends a keystroke and comes back — and
+        behind a button in the corner it fired by accident. ⌘⏎ is the same
+        action, reached on purpose.
+      */}
+      {hasAnswer && (!busy || speech.speaking) && (
         <div className="foot answer-actions">
           {(!busy || speech.speaking) && (
             <button className="link" onClick={() => speech.speaking ? speech.stop() : speech.speak(answer)}>
               {speech.speaking ? 'Остановить озвучку' : 'Прослушать'}
             </button>
           )}
-          {canPaste && (
+          {answerReady && (
             <>
               <span className="spacer" />
-              <button className="link primary" title="Вставить (⌘⏎)" onClick={() => void paste()}>
-                {selection ? 'Заменить' : 'Вставить'}
+              {/*
+                The one-click half of the drag. It is in the action row rather
+                than behind the chevron because the moment you notice a table is
+                cramped is the moment you are looking at it.
+
+                Only shown when the content is actually wider than the card: a
+                «Шире» that widens a two-word answer is a button that does
+                nothing, and a person who presses it once and sees no change
+                stops trusting the edge.
+              */}
+              {userWidth !== null && (
+                <button className="link" title="Вернуть ширину по содержимому" onClick={toggleWidth}>
+                  Вернуть
+                </button>
+              )}
+              {userWidth === null && wanted !== null && (
+                <button className="link" title="Развернуть по содержимому" onClick={toggleWidth}>
+                  Шире
+                </button>
+              )}
+              <button className="link" title="Скопировать ответ" onClick={() => void copy()}>
+                Скопировать
               </button>
             </>
           )}
@@ -1302,16 +1444,31 @@ export function App() {
                   {REFINE_LABEL[direction]}
                 </button>
               ))}
-              <span className="divider" />
-              <button className="link" onClick={() => void copy()}>
-                Копировать
-              </button>
             </>
           )}
         </div>
       )}
 
       {notice && <div className="line">{notice}</div>}
+
+      {/*
+        The resize edge. It sits on the card's outermost right column, over the
+        bubble's padding and outside the answer's scrollbar, so pulling it never
+        fights a scroll gesture or a text selection.
+      */}
+      {hasAnswer && (
+        <div
+          className="grip"
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Изменить ширину"
+          data-dragging={dragging || undefined}
+          onPointerDown={gripDown}
+          onPointerMove={gripMove}
+          onPointerUp={gripUp}
+          onPointerCancel={gripUp}
+        />
+      )}
     </div>
   )
 }

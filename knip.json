@@ -4,8 +4,8 @@
     "electron.vite.config.ts",
     "src/main/index.ts",
     "src/preload/index.ts",
-    "src/renderer/{overlay,pointer,cursor,settings,onboarding}/index.html",
-    "src/renderer/{overlay,pointer,cursor,settings,onboarding}/main.ts*",
+    "src/renderer/{overlay,pointer,cursor,presenter,settings,onboarding}/index.html",
+    "src/renderer/{overlay,pointer,cursor,presenter,settings,onboarding}/main.ts*",
     "scripts/*.mjs"
   ],
   "project": ["src/**/*.{ts,tsx,css}", "scripts/*.mjs"]

@@ -56,6 +56,13 @@ describe('looksLikeAction: an action asked for mid-sentence', () => {
     // `[^а-яё]` is the stand-in for a word boundary; a Latin prefix is one.
     expect(looksLikeAction('ok нажми')).toBe(true)
   })
+
+  it('lets an explicit «сделай» answer a question that came before it', () => {
+    expect(looksLikeAction(
+      'можно ли сделать так, чтобы чеки попадали в отдельную папку? если да — сделай'
+    )).toBe(true)
+    expect(looksLikeAction('а что, так можно? тогда сделайте')).toBe(true)
+  })
 })
 
 describe('looksLikeAction: what is a question, not an action', () => {

@@ -15,6 +15,12 @@ import DeskhandLLM
 public protocol AgentObserver: AnyObject, Sendable {
     /// A model turn is about to start.
     func stepStarted(_ step: Int, of total: Int)
+    /// The model's prose so far, while the turn is still running.
+    ///
+    /// The text is the whole prefix, not a delta: a host can replace its caption
+    /// without keeping a buffer of its own, and a dropped callback costs a word
+    /// rather than the sentence.
+    func stepStreamed(_ step: Int, text: String)
     /// The model answered: `narration` is its caption, `calls` what it wants to run.
     func stepAnswered(_ step: Int, narration: String, calls: [ToolCall])
     /// What the round trip cost, once per step, whether or not it had anything to say.
@@ -115,6 +121,7 @@ public struct RunReport: Sendable {
 
 public extension AgentObserver {
     func stepStarted(_ step: Int, of total: Int) {}
+    func stepStreamed(_ step: Int, text: String) {}
     func stepAnswered(_ step: Int, narration: String, calls: [ToolCall]) {}
     func stepTimed(_ step: Int, timing: StepTiming) {}
     func toolStarted(_ step: Int, call: ToolCall, narration: String) {}

@@ -51,7 +51,7 @@ describe('deriveView: before the session lands', () => {
 
     expect(flags.blocked).toBe(false)
     expect(flags.showMeta).toBe(false)
-    expect(flags.canPaste).toBe(false)
+    expect(flags.answerReady).toBe(false)
     expect(flags.agentOff).toBe(false)
     expect(flags.agentBlocked).toBe(false)
     expect(flags.actionAsk).toBe(false)
@@ -83,14 +83,14 @@ describe('deriveView: the drawer', () => {
   })
 })
 
-describe('deriveView: pasting', () => {
-  it('offers paste only for a finished answer', () => {
-    expect(deriveView(view({ hasAnswer: true })).canPaste).toBe(true)
-    expect(deriveView(view({ hasAnswer: false })).canPaste).toBe(false)
+describe('deriveView: a finished answer', () => {
+  it('is ready only for a finished answer', () => {
+    expect(deriveView(view({ hasAnswer: true })).answerReady).toBe(true)
+    expect(deriveView(view({ hasAnswer: false })).answerReady).toBe(false)
   })
 
-  it('does not offer paste while the answer is still being written', () => {
-    expect(deriveView(view({ hasAnswer: true, busy: true })).canPaste).toBe(false)
+  it('is not ready while the answer is still being written', () => {
+    expect(deriveView(view({ hasAnswer: true, busy: true })).answerReady).toBe(false)
   })
 })
 

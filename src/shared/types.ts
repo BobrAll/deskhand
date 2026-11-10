@@ -30,14 +30,46 @@ export interface VoiceSettings {
   action: VoiceAction
   /** `command` only: send the recognised wording at once instead of filling the field. */
   autoSend: boolean
-  /** Opt-in spoken replies to voice commands. */
-  dialogue: boolean
-  /** Short local acknowledgement while an agent command is pending. */
+  /**
+   * What speaks the answer itself, as opposed to the short recorded lines.
+   *
+   * `off` — the answer is read, not heard; the card is the channel.
+   * `system` — the macOS voice, free and local, but it reads like a log.
+   * `neural` — the voice configured in `tts`, which costs a request per answer
+   * and needs a key. Falls back to `system` when it is not configured.
+   */
+  answerVoice: AnswerVoice
+  /** Short acknowledgement while an agent command is pending. */
   agentFeedback: boolean
   /** A shorter press is treated as an accidental tap and thrown away. */
   minDurationMs: number
   /** Hard cap so a stuck key cannot record forever. */
   maxDurationMs: number
+}
+
+export type AnswerVoice = 'off' | 'system' | 'neural'
+
+/**
+ * Live speech synthesis for lines that were not recorded in advance.
+ *
+ * The app ships with its short lines already rendered, so this is not needed for
+ * the assistant to have a voice at all. It exists for two cases: reading an
+ * answer aloud in the same voice, and re-recording a line in a different voice.
+ *
+ * Every field is the user's: the endpoint, the model, the voice and the delivery
+ * instruction. Nothing here is baked into the build, and the key is not part of
+ * this object at all — it lives encrypted in `secrets` and never reaches a
+ * renderer.
+ */
+export interface TtsSettings {
+  /** Off means "use the shipped recordings only". */
+  enabled: boolean
+  /** API root without a trailing slash, e.g. `https://host/v1`. */
+  baseUrl: string
+  model: string
+  voice: string
+  /** Free-form delivery instruction, sent as `instructions`. */
+  style: string
 }
 
 /**
@@ -79,6 +111,16 @@ export interface AgentSettings {
    * success. Off, the agent takes its own word for it.
    */
   verifyResult: boolean
+  /**
+   * Show each action on screen: the target window comes forward and a pointer
+   * travels to the element before it is pressed.
+   *
+   * Purely a presentation flag. The action runs through the same accessibility
+   * and event APIs either way; with this off the agent is the same agent, only
+   * unseen — which is what a future background mode will use. It is not a
+   * per-app or per-tool switch, so nothing has to be taught about a new app.
+   */
+  showActions: boolean
 }
 
 /**
@@ -246,6 +288,71 @@ export interface AgentCursorFrame {
   total: number
 }
 
+/**
+ * What kind of gesture an action will look like.
+ *
+ * Mirrors the Swift `ActionPresentation.Gesture`. The layer uses it to choose
+ * an animation, never to decide whether the action is allowed: the host has
+ * already approved the call by the time this arrives.
+ */
+export type AgentGesture =
+  | 'click'
+  | 'secondary'
+  | 'type'
+  | 'value'
+  | 'select'
+  | 'key'
+  | 'scroll'
+  | 'drag'
+  | 'activate'
+
+/**
+ * One action, in screen terms, as the agent reports it just before acting.
+ *
+ * This is a picture, not an instruction: coordinates are global screen points,
+ * and every field except `tool` and `gesture` is optional because a valid
+ * action can have no element to point at. The agent never waits for the layer
+ * to draw this, which is what keeps the visualisation from costing time.
+ */
+export interface AgentPresentation {
+  tool: string
+  gesture: AgentGesture
+  app?: string
+  bundleId?: string
+  pid?: number
+  /** Where the action is aimed, in global screen points. */
+  point?: { x: number; y: number }
+  /** The element's frame in global screen points. */
+  target?: ScreenRect
+  /** The window the action belongs to, in global screen points. */
+  window?: ScreenRect
+}
+
+/** One frame of the virtual pointer the agent's layer draws. */
+export interface AgentPointerFrame {
+  /** `false` plays the fade-out; the window is hidden right after it. */
+  visible: boolean
+  /** Where the pointer is going, inside the layer. */
+  point: { x: number; y: number }
+  /**
+   * Where to start, when the layer was hidden or moved to another display.
+   * Absent on a normal step: the pointer then travels from where it already is.
+   */
+  from?: { x: number; y: number }
+  /**
+   * True while the pointer only waits for the next action.
+   *
+   * The mark is on screen for the whole run, so most frames describe a pause
+   * rather than a gesture. An idle frame must not ripple or press: nothing is
+   * happening yet, and an animation would say otherwise.
+   */
+  idle?: boolean
+  /** The gesture being shown. Absent while the pointer is idle. */
+  gesture?: AgentGesture
+  /** The element being acted on, inside the layer. */
+  target?: ScreenRect
+}
+
 /** Lifecycle of one push-to-talk turn, mirrored into the overlay. */
 export type VoicePhase = 'idle' | 'listening' | 'transcribing'
 
@@ -293,6 +400,27 @@ export interface DownloadProgress {
   error?: string
 }
 
+/**
+ * Whether the assistant can speak a line that was not recorded in advance.
+ *
+ * `configured: false` is not a broken app: the shipped lines still play, and an
+ * answer is read with the macOS voice or not at all, depending on
+ * `voice.answerVoice`.
+ */
+export interface TtsStatus {
+  /** Live synthesis is switched on and has everything it needs. */
+  configured: boolean
+  /** Why not, when `configured` is false. */
+  reason: string | null
+  /** The voice that will speak live lines, as configured. */
+  voice: string
+  model: string
+  /** Whether an API key is stored for this endpoint. */
+  keyConfigured: boolean
+  /** The voice the shipped recordings were made with; always available. */
+  recordedVoice: string
+}
+
 
 export interface TranscribeResult {
   ok: boolean
@@ -313,6 +441,12 @@ export interface AppSettings {
    * Empty string means "use the provider default" — see `ProviderInfo.defaultBaseUrl`.
    */
   baseUrls: Record<ProviderId, string>
+  /**
+   * Per-provider JSON object merged into every model request body, as typed.
+   * Lets a user pass what their gateway understands (e.g. a switch that turns
+   * reasoning off) without the app knowing about that gateway. Empty = nothing.
+   */
+  extraBody: Record<ProviderId, string>
   temperature: number
   maxTokens: number
   systemPrompt: string
@@ -328,6 +462,8 @@ export interface AppSettings {
   onboardingCompleted: boolean
   /** Push-to-talk voice input (local whisper). */
   voice: VoiceSettings
+  /** Live synthesis for lines that were not recorded in advance. */
+  tts: TtsSettings
   /** Mouse-and-keyboard control ("агент"). Off by default. */
   agent: AgentSettings
 }

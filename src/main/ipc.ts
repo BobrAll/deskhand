@@ -29,8 +29,16 @@ import {
   requestMicrophonePermission,
   requestPermissions
 } from './permissions'
-import { deleteApiKey, encryptionAvailable, keyStatuses, setApiKey } from './settings/secrets'
+import {
+  deleteApiKey,
+  deleteTtsKey,
+  encryptionAvailable,
+  keyStatuses,
+  setApiKey,
+  setTtsKey
+} from './settings/secrets'
 import { getSettings, patchSettings } from './settings/store'
+import { speechStatus, synthesize } from './tts'
 import {
   closeOnboardingWindow,
   closeSettingsWindow,
@@ -40,6 +48,15 @@ import {
 import { deleteModel, downloadModel, importModel, voiceStatus } from './voice/whisper'
 
 const PROVIDER_IDS: ProviderId[] = PROVIDERS.map((provider) => provider.id)
+
+/**
+ * What the settings pane plays when the user asks to hear the voice.
+ *
+ * A fixed line, not user text: it has to be short enough to judge a voice by and
+ * stable enough to be cached, and the pane has no business sending arbitrary
+ * text to a service on a button press.
+ */
+const PREVIEW_LINE = 'Так, посмотрим. Сейчас разберусь и всё сделаю.'
 
 function isProvider(value: unknown): value is ProviderId {
   return typeof value === 'string' && (PROVIDER_IDS as string[]).includes(value)
@@ -108,8 +125,8 @@ export function registerIpc(deps: IpcDeps): void {
   ipcMain.on(CH.overlay.setFlags, (_event, flags: ContextFlags) => deps.overlay.setFlags(flags))
   ipcMain.on(CH.overlay.clearPointer, () => deps.overlay.clearPointer())
   ipcMain.on(CH.overlay.typing, (_event, typing: boolean) => deps.overlay.setTyping(Boolean(typing)))
-  ipcMain.on(CH.overlay.resize, (_event, height: number, width?: number) =>
-    deps.overlay.resize(height, width)
+  ipcMain.on(CH.overlay.resize, (_event, height: number, width?: number, pin?: boolean) =>
+    deps.overlay.resize(height, width, Boolean(pin))
   )
   ipcMain.on(CH.overlay.close, () => deps.overlay.close())
 
@@ -279,6 +296,24 @@ export function registerIpc(deps: IpcDeps): void {
       message: status.ready ? 'Можно удерживать горячую клавишу и говорить.' : (status.detail ?? undefined)
     }
   })
+
+  // ---- the assistant's voice ---------------------------------------------
+  // Synthesis lives in the main process because that is where the key is: the
+  // overlay asks for a line and gets a clip back, never a credential. The key
+  // itself is written once and never read back through any channel.
+  ipcMain.handle(CH.tts.speak, (_event, text: unknown) =>
+    synthesize(typeof text === 'string' ? text : '')
+  )
+  ipcMain.handle(CH.tts.status, () => speechStatus())
+  ipcMain.handle(CH.tts.setKey, (_event, key: unknown) => {
+    setTtsKey(typeof key === 'string' ? key : '')
+    return speechStatus()
+  })
+  ipcMain.handle(CH.tts.deleteKey, () => {
+    deleteTtsKey()
+    return speechStatus()
+  })
+  ipcMain.handle(CH.tts.preview, () => synthesize(PREVIEW_LINE))
 
   // ---- agent (mouse and keyboard control) --------------------------------
   // The card can ask whether the assistant may press anything, can stop a run and

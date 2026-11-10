@@ -3,6 +3,7 @@
  */
 
 import { traceModelUsage } from '../agent/trace'
+import { disabledReasoning } from './reasoning'
 import { ProviderError, type ChatMessage, type ContentPart, type LlmProvider, type StreamChunk, type StreamEnd, type StreamOptions } from './provider'
 import {
   readSse,
@@ -73,6 +74,8 @@ export class OpenAIProvider implements LlmProvider {
       model: options.model,
       temperature: options.temperature,
       max_tokens: options.maxTokens,
+      ...disabledReasoning(this.endpoint(options), options.model),
+      ...options.extraBody,
       stream: true,
       messages: messages.map((message): OpenAiMessage => ({
         role: message.role,

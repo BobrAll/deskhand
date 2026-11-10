@@ -24,8 +24,15 @@ export interface OverlayHost {
    * overlay would become the "active app" the context is collected from.
    */
   showInactive(height: number, width?: number): void
-  /** Resizes the window, keeping it on screen. */
-  resize(height: number, width?: number): void
+  /**
+   * Resizes the window, keeping it on screen.
+   *
+   * `pin` keeps the card's left edge and lets the far edge move. That is what a
+   * drag on the right edge means: the edge under the pointer has to follow the
+   * pointer, and only the card's own anchor would otherwise decide which side
+   * grows.
+   */
+  resize(height: number, width?: number, pin?: boolean): void
   /**
    * Tells the window whether shapes are painted on the screen right now, so it
    * can drop its native blur while they are: a frosted card over the very spot

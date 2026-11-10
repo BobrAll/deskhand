@@ -185,6 +185,7 @@ const MAIN_TO_RENDERER = new Set<string>([
   CH.pointer.draw,
   CH.agent.event,
   CH.agent.cursor,
+  CH.agent.presentation,
   CH.voice.event,
   CH.voice.record,
   CH.voice.stop,
@@ -277,7 +278,14 @@ describe('registerIpc: the handlers reach their dependency', () => {
     expect(deps.overlay.setTyping).toHaveBeenCalledWith(true)
 
     electron.ons.get(CH.overlay.resize)!({}, 120, 360)
-    expect(deps.overlay.resize).toHaveBeenCalledWith(120, 360)
+    expect(deps.overlay.resize).toHaveBeenCalledWith(120, 360, false)
+
+    // A drag pins the left edge; anything else is coerced, because the renderer
+    // is not trusted with the type.
+    electron.ons.get(CH.overlay.resize)!({}, 120, 480, true)
+    expect(deps.overlay.resize).toHaveBeenCalledWith(120, 480, true)
+    electron.ons.get(CH.overlay.resize)!({}, 120, 480, 'yes')
+    expect(deps.overlay.resize).toHaveBeenCalledWith(120, 480, true)
   })
 
   it('answers the agent availability question from the overlay', async () => {

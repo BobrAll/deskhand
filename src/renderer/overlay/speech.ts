@@ -13,6 +13,16 @@ export function speechText(text: string): string {
     .trim()
 }
 
+/**
+ * What to say when the answer itself cannot be read aloud.
+ *
+ * It is a line from the recorded bank, so it is spoken instantly and in the
+ * assistant's voice rather than the system one. Exported because the streaming
+ * path has to recognise it: a placeholder must never be streamed as if it were
+ * the answer's first sentence.
+ */
+export const ANSWER_FALLBACK = 'Ответ готов.'
+
 export function requestedReading(prompt: string): boolean {
   return /прочитай|зачитай|озвучь|вслух|read aloud/i.test(prompt)
 }
@@ -30,6 +40,6 @@ export function automaticSpeech(prompt: string, answer: string, failed = false):
     result += sentence
   }
   // Don't cut a sentence into a misleading half-statement.
-  if (!result.trim() && clean) return 'Ответ готов. Подробности в карточке.'
+  if (!result.trim() && clean) return ANSWER_FALLBACK
   return result.trim()
 }

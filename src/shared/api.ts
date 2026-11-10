@@ -6,6 +6,7 @@ import type {
   AgentAvailability,
   AgentCursorFrame,
   AgentEvent,
+  AgentPointerFrame,
   AnnotationsEvent,
   AppSettings,
   ContextFlags,
@@ -21,10 +22,12 @@ import type {
   StreamEvent,
   TestKeyResult,
   TranscribeResult,
+  TtsStatus,
   VoiceEvent,
   VoicePhase,
   VoiceStatus
 } from './types'
+import type { TtsResult } from './tts'
 
 export interface RunningAppInfo {
   bundleId: string
@@ -97,8 +100,12 @@ export interface SmartCursorApi {
      * Reports the laid-out card. The width is optional because the folded bubble
      * is narrower than the one that shows an answer; omitting it keeps the full
      * width.
+     *
+     * `pin` keeps the card's left edge and lets the far edge move, which is what
+     * dragging the right edge means: the edge under the pointer has to follow the
+     * pointer, and the anchor would otherwise decide which side grows.
      */
-    resize(height: number, width?: number): void
+    resize(height: number, width?: number, pin?: boolean): void
   }
   /** Used only by the transparent drawing layer. */
   pointer: {
@@ -110,6 +117,15 @@ export interface SmartCursorApi {
    */
   agentCursor: {
     onState(handler: (frame: AgentCursorFrame) => void): Unsubscribe
+  }
+  /**
+   * The virtual pointer that shows where the agent is about to act.
+   *
+   * Same contract as the drawing layer: it receives geometry and paints it. It
+   * cannot press anything, and the action itself has already been decided.
+   */
+  agentPresenter: {
+    onState(handler: (frame: AgentPointerFrame) => void): Unsubscribe
   }
   settings: {
     load(): Promise<SettingsBundle>
@@ -216,5 +232,21 @@ export interface SmartCursorApi {
     deleteModel(id: string): Promise<VoiceStatus>
     /** Records a short clip and transcribes it, so the user can hear the quality. */
     test(): Promise<TranscribeResult>
+  }
+  /**
+   * The assistant's own voice.
+   *
+   * Separate from `voice`, which is the microphone. The card asks for a clip and
+   * plays it; the main process owns the provider key and the disk cache, so a
+   * repeated line is never paid for twice.
+   */
+  tts: {
+    speak(text: string): Promise<TtsResult>
+    status(): Promise<TtsStatus>
+    /** Stores the key encrypted; an empty string removes it. */
+    setKey(key: string): Promise<TtsStatus>
+    deleteKey(): Promise<TtsStatus>
+    /** Renders a short sample with the current settings, for listening in the pane. */
+    preview(): Promise<TtsResult>
   }
 }

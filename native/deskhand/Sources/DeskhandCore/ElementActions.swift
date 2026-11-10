@@ -15,7 +15,9 @@ public enum ElementActions {
         public var description: String {
             switch self {
             case .staleIndex(let index):
-                return "element index \(index) is not part of the current snapshot; call get_app_state again"
+                return "element index \(index) is not on screen any more: that control is gone, and"
+                    + " numbers are never reused for a different one. Read the app state again to"
+                    + " find where the control moved to."
             case .unsupported(let what): return what
             case .failed(let what): return what
             }
@@ -150,6 +152,14 @@ public enum ElementActions {
             }
         }
         if element.setValue(text, for: kAXValueAttribute) { return }
+        // Some apps apply the value and still report an error. Calling that a
+        // failure makes the model type the text again, and the field ends up
+        // holding it twice.
+        if element.value == text { return }
+        if let current = element.value, !current.isEmpty {
+            throw ActionError.failed(
+                "the app rejected the new value; the field now holds \"\(current.prefix(80))\"")
+        }
         throw ActionError.failed("the app rejected the new value")
     }
 

@@ -12,13 +12,14 @@
 
 import { createServer, type Server } from 'node:http'
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { AddressInfo } from 'node:net'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import type { AgentEvent } from '@shared/types'
+import { flushTrace } from './trace'
 
 const BINARY = fileURLToPath(
   new URL('../../../native/deskhand/.build/release/deskhand-agent', import.meta.url)
@@ -36,10 +37,11 @@ vi.mock('electron', () => ({
   app: {
     getPath: () => state.traceDirectory,
     getVersion: () => '0.0.0',
+    isPackaged: false,
     // `agentBinary()` resolves the sidecar relative to the app path; mocking it
     // as missing would make the run fail before it started, which is the exact
     // failure this test exists to catch elsewhere.
-    getAppPath: () => '/tmp'
+    getAppPath: () => join(state.traceDirectory, 'project')
   }
 }))
 vi.mock('../native/helper', () => ({
@@ -65,13 +67,15 @@ const { createAgentController } = await import('./index')
 let server: Server
 let baseUrl: string
 let round = 0
+const modelRequests: unknown[] = []
 
 beforeAll(async () => {
   if (!built) return
   server = createServer((request, response) => {
-    // The body is drained and ignored; the stub answers by turn number.
-    request.resume()
+    const chunks: Buffer[] = []
+    request.on('data', (chunk: Buffer) => chunks.push(chunk))
     request.on('end', () => {
+      modelRequests.push(JSON.parse(Buffer.concat(chunks).toString('utf8')))
       round += 1
       const message = round === 1
         ? {
@@ -125,7 +129,7 @@ async function runAndReport(): Promise<{ events: AgentEvent[]; lines: Record<str
         apiKey: 'test', maxTokens: 512, temperature: 0
       }
     })
-    controller.dispose()
+    await controller.dispose()
 
     const path = join(directory, 'agent-trace.jsonl')
     // The writer queues its appends; give it a moment rather than reading a
@@ -142,6 +146,7 @@ async function runAndReport(): Promise<{ events: AgentEvent[]; lines: Record<str
     )
     return { events, lines }
   } finally {
+    await flushTrace()
     vi.unstubAllEnvs()
     rmSync(directory, { recursive: true, force: true })
   }
@@ -204,6 +209,61 @@ describe.skipIf(!built)('a run’s timings reach the trace file', () => {
     expect(raw).not.toContain('Running applications')
   })
 
+  it('records exact request bodies in a separate file for each task on the same sidecar', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'smart-cursor-detailed-trace-'))
+    state.traceDirectory = directory
+    const controller = createAgentController({
+      emit: () => undefined,
+      setPassthrough: () => undefined
+    })
+    try {
+      const runDirectory = join(directory, 'project', 'agent-runs')
+      const dialogueDirectory = join(directory, 'project', 'agent-dialogs')
+      const seen = new Set<string>()
+      for (const prompt of ['Тестовая задача А', 'Тестовая задача Б']) {
+        round = 0
+        modelRequests.length = 0
+        await controller.run({
+          prompt,
+          appName: null,
+          windowTitle: null,
+          provider: {
+            wire: 'openai', baseUrl, model: 'stub',
+            apiKey: 'fixture-secret', maxTokens: 512, temperature: 0
+          }
+        })
+        const filename = readdirSync(runDirectory).find((name) => !seen.has(name))!
+        expect(filename).toBeTruthy()
+        seen.add(filename)
+        const raw = readFileSync(join(runDirectory, filename), 'utf8')
+        expect(filename).toMatch(/\.json$/)
+        expect(raw).toContain('\n    "event": "start"')
+        const rows: { event: string; data: Record<string, unknown> }[] = JSON.parse(raw)
+        expect(rows[0]).toMatchObject({ event: 'start', data: { prompt } })
+        expect(rows.filter((row) => row.event === 'model-request').map((row) => row.data.body))
+          .toEqual(modelRequests)
+        expect(modelRequests).toHaveLength(2)
+        expect(rows.map((row) => row.event)).toEqual(expect.arrayContaining([
+          'model-response', 'model-completion', 'tool', 'result'
+        ]))
+        expect(rows.at(-1)).toMatchObject({ event: 'end', data: { answer: 'Готово: посмотрел.' } })
+        expect(raw).not.toContain('fixture-secret')
+        const dialogue = JSON.parse(readFileSync(join(dialogueDirectory, filename), 'utf8'))
+        expect(dialogue).toEqual(rows.filter(({ event }) =>
+          event === 'model-request' || event === 'model-response'
+        ))
+        expect(dialogue.map(({ event }: { event: string }) => event)).toEqual([
+          'model-request', 'model-response', 'model-request', 'model-response'
+        ])
+      }
+      expect(readdirSync(runDirectory)).toHaveLength(2)
+      expect(readdirSync(dialogueDirectory).sort()).toEqual([...seen].sort())
+    } finally {
+      await controller.dispose()
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
+
   it('produces a timeline the report script can read', async () => {
     const directory = mkdtempSync(join(tmpdir(), 'smart-cursor-e2e-report-'))
     state.traceDirectory = directory
@@ -223,7 +283,7 @@ describe.skipIf(!built)('a run’s timings reach the trace file', () => {
           apiKey: 'test', maxTokens: 512, temperature: 0
         }
       })
-      controller.dispose()
+      await controller.dispose()
       const path = join(directory, 'agent-trace.jsonl')
       await vi.waitFor(() => {
         expect(existsSync(path) && readFileSync(path, 'utf8').includes('agent.report')).toBe(true)
@@ -239,6 +299,7 @@ describe.skipIf(!built)('a run’s timings reach the trace file', () => {
       expect(output).toContain('tok')
       expect(output).toContain('timings (total')
     } finally {
+      await flushTrace()
       vi.unstubAllEnvs()
       rmSync(directory, { recursive: true, force: true })
     }

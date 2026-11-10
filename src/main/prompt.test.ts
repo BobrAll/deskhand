@@ -213,6 +213,25 @@ describe('buildRequest: mode instruction', () => {
     )
   })
 
+  it('names the markdown the card can actually render', () => {
+    // The card draws tables, lists, code and links; anything else the model
+    // invents arrives as literal asterisks. Saying which markers exist is what
+    // turns "a — b · c · d" lines into a table.
+    const note = request({ mode: 'analyze', draw: false }).modeInstruction
+
+    expect(note).toContain('таблицы')
+    expect(note).toContain('списки')
+    expect(note).toContain('ссылки')
+  })
+
+  it('keeps the insert format about structure, not decoration', () => {
+    const note = request({ mode: 'insert', draw: false }).modeInstruction
+
+    expect(note).toContain('только готовый текст для вставки')
+    expect(note).toContain('списки и таблицы')
+    expect(note).toContain('жирный и курсив не нужны')
+  })
+
   it('uses the insert format for insert', () => {
     expect(request({ mode: 'insert', draw: false }).modeInstruction).toContain(
       'только готовый текст для вставки'
