@@ -129,15 +129,23 @@
 | WP8 | документация | готово (`ef1cd8d`) | ссылки сверены с кодом |
 | WP9 | переименования через границы | готово (`f6a9066`) | 1241 тест, снапшоты не менялись |
 | WP10 | Swift, вторая волна | готово (`2fe48bb`) | 92+45 тестов, +10 новых |
+| WP11 | `renderer`, остатки | готово (`8c40c67`) | 195 тестов, снапшоты не менялись |
+| WP12 | `main`, остатки | готово (`813d0a1`) | 923 теста, 16 предсуществующих падений |
+
+Отдельно, уже вне косметики (§8): встроенные модели убраны и отказ модели от
+картинки больше не роняет ход — `2ca7e31`, `42f9df5`.
 
 Итоговые проверки:
 
 - [x] `npm run typecheck` — чисто
 - [x] `npm run lint` — чисто
-- [x] `npm test` — 1241 проходит, 16 падений только в двух integration-файлах
-- [x] `swift test` в `native/deskhand` — 137 тестов, 1 предсуществующее падение
+- [x] `npm test` — 1242 проходит, 16 падений только в двух integration-файлах
+- [x] `swift test` в `native/deskhand` — 92 + 45, одно предсуществующее падение
 - [x] `npm run build:agent` — сайдкар собирается
 - [x] `npm run build` — приложение собирается
+
+Что осталось незакрытым и почему — списки «Отложено (RISKY)» в каждом пакете.
+Ни один из них не потерян: это вход для следующего, поведенческого прохода.
 
 ## 4. Пакеты работ
 
@@ -258,52 +266,52 @@
 
 **Переименования**
 
-- [ ] `AgentLoop.swift:75` — `timings` (сборщик) конфликтует с `options.timings`
+- [x] `AgentLoop.swift:75` — `timings` (сборщик) конфликтует с `options.timings`
       (флаг) → `timingLog`.
-- [ ] `AgentLoop.swift:469` — `reportRun(steps:calls:failed:)` → `failedCalls`
+- [x] `AgentLoop.swift:469` — `reportRun(steps:calls:failed:)` → `failedCalls`
       (совпадает с `RunReport.failedCalls`).
-- [ ] `AgentLoop.swift:553` `trim` → `trimmedHistory`; `:654,659`
+- [x] `AgentLoop.swift:553` `trim` → `trimmedHistory`; `:654,659`
       `preview`/`previewText` → `argumentPreview`/`textPreview`;
       `:615` `appKey(ofTreeMessage:)` → `appKey(forTreeMessage:)`.
-- [ ] `AgentObserver.swift:38` — `isError: Bool` → параметр `didFail:`
+- [x] `AgentObserver.swift:38` — `isError: Bool` → параметр `didFail:`
       (тип не менять).
-- [ ] `ChatProvider.swift:19` `toolIsError` / `ToolResult.isError` /
+- [x] `ChatProvider.swift:19` `toolIsError` / `ToolResult.isError` /
       `toolFinished(isError:)` — одно слово `isError`.
-- [ ] `ChatProvider.swift:78` `Usage` → `TokenUsage`.
-- [ ] `ProviderConfig.swift:56` `endpointURL()` — чистое чтение → свойство;
+- [x] `ChatProvider.swift:78` `Usage` → `TokenUsage`.
+- [x] `ProviderConfig.swift:56` `endpointURL()` — чистое чтение → свойство;
       `:36-37` дефолты в `defaultBaseURL`/`defaultModel`.
-- [ ] `AnthropicProvider.swift:30` `encodeBlocks` vs `openai.ts:34`
+- [x] `AnthropicProvider.swift:30` `encodeBlocks` vs `openai.ts:34`
       `encodeParts` — выбрать одно имя (в Swift — `encodeBlocks`).
-- [ ] `Bridge.swift:88` `handle(line:)` → `handleRequest(_:)`; `:53`
+- [x] `Bridge.swift:88` `handle(line:)` → `handleRequest(_:)`; `:53`
       `ApprovalWait.value()` → свойство.
 
 **Комментарии**
 
-- [ ] `main.swift:7-16` — doc-комментарий разрезан оператором
+- [x] `main.swift:7-16` — doc-комментарий разрезан оператором
       `_ = NSApplication.shared`.
-- [ ] `main.swift:88-93` — секция `USAGE` напечатана дважды.
+- [x] `main.swift:88-93` — секция `USAGE` напечатана дважды.
 
 **Константы**
 
-- [ ] `AnthropicProvider.swift:146` / `OpenAICompatibleProvider.swift:155` —
+- [x] `AnthropicProvider.swift:146` / `OpenAICompatibleProvider.swift:155` —
       `"Deskhand/0.1"` литерал дважды; `:90`/`:93` `[400, 404, 422]` дважды →
       общие константы DeskhandLLM.
-- [ ] `Bridge.swift:291,299` — таймауты `600` и `0.1` → имена.
-- [ ] `Bridge.swift:478` `2000` → `maximumResultTextLength`.
+- [x] `Bridge.swift:291,299` — таймауты `600` и `0.1` → имена.
+- [x] `Bridge.swift:478` `2000` → `maximumResultTextLength`.
 
 **Мёртвый код**
 
-- [ ] `ProviderConfig.swift:70` `redactedDescription` без вызовов.
-- [ ] `ProviderConfig.swift:139,190` — список truthy дублирован → один хелпер.
-- [ ] `Bridge.swift:37-39` `RunHandle` оборачивает один `CancelToken` и ничего
+- [x] `ProviderConfig.swift:70` `redactedDescription` без вызовов.
+- [x] `ProviderConfig.swift:139,190` — список truthy дублирован → один хелпер.
+- [x] `Bridge.swift:37-39` `RunHandle` оборачивает один `CancelToken` и ничего
       не добавляет.
 
 **Извлечения**
 
-- [ ] `AgentLoop.swift:444-447` — тройка «записать total → loopStopped →
+- [x] `AgentLoop.swift:444-447` — тройка «записать total → loopStopped →
       reportRun» повторена 4 раза → приватный `finishRun(reason:answer:)`.
       Порядок эффектов сохранить.
-- [ ] `AnthropicProvider.swift:157-161` и
+- [x] `AnthropicProvider.swift:157-161` и
       `OpenAICompatibleProvider.swift:166-170` — `ToolCallBuilder` скопирован
       дословно → один внутренний тип.
 
@@ -552,94 +560,94 @@
 
 **Переименования**
 
-- [ ] `ipc.ts:65-68` — `sanitizeSettings` ничего не валидирует, это голый каст
+- [x] `ipc.ts:65-68` — `sanitizeSettings` ничего не валидирует, это голый каст
       → `asSettingsPatch`.
-- [ ] `ipc.ts:70-77` `bundle()` → `loadSettingsBundle()`.
-- [ ] `ipc.ts:207` — канал `settings.hold`, обработчик `markSettingsBusy`,
+- [x] `ipc.ts:70-77` `bundle()` → `loadSettingsBundle()`.
+- [x] `ipc.ts:207` — канал `settings.hold`, обработчик `markSettingsBusy`,
       состояние `settingsBusy` — одно слово (канал не менять).
-- [ ] `response.ts:31-33,73,91` — одно понятие под тремя именами (`shapes`,
+- [x] `response.ts:31-33,73,91` — одно понятие под тремя именами (`shapes`,
       `collected()`, `remember()`) → `annotations`.
-- [ ] `turnStream.ts` — `onShapes` → `onAnnotations`.
-- [ ] `voice/whisper.ts:89` — `resolveModel` конфликтует по имени с
+- [x] `turnStream.ts` — `onShapes` → `onAnnotations`.
+- [x] `voice/whisper.ts:89` — `resolveModel` конфликтует по имени с
       `llm/index.ts:27` → `resolveWhisperModel`.
-- [ ] `voice/listen.ts:16` — `VOICE_KEY_CODES as KEY_CODES` скрывает источник;
+- [x] `voice/listen.ts:16` — `VOICE_KEY_CODES as KEY_CODES` скрывает источник;
       `:72,80` — поле `current` и геттер `accelerator` об одном.
-- [ ] `llm/webSearch.ts:48` — `const responses = ...` — булево с именем
+- [x] `llm/webSearch.ts:48` — `const responses = ...` — булево с именем
       коллекции → `useResponsesApi`.
-- [ ] `tray.ts:11` — `toggle` не говорит, что включает → `openAssistant`.
-- [ ] `hotkey.ts:10` — `current` → `registeredAccelerator`.
-- [ ] `card.ts:113,121` — `xFor`/`yFor` → `horizontalEdgeFor`/`verticalEdgeFor`.
-- [ ] `windows/settings.ts:111` — `settingsWindows()` → `openAppWindows()`,
+- [x] `tray.ts:11` — `toggle` не говорит, что включает → `openAssistant`.
+- [x] `hotkey.ts:10` — `current` → `registeredAccelerator`.
+- [x] `card.ts:113,121` — `xFor`/`yFor` → `horizontalEdgeFor`/`verticalEdgeFor`.
+- [x] `windows/settings.ts:111` — `settingsWindows()` → `openAppWindows()`,
       отфильтровать `null` внутри.
 
 **Комментарии**
 
-- [ ] `turnStream.ts:1-16` — doc-модуля между двумя блоками импортов.
-- [ ] `index.ts:4,206,239`, `tray.ts:2`, `windows/index.ts:474` — «tray-only
+- [x] `turnStream.ts:1-16` — doc-модуля между двумя блоками импортов.
+- [x] `index.ts:4,206,239`, `tray.ts:2`, `windows/index.ts:474` — «tray-only
       (no Dock icon)», что противоречит `index.ts:35-39`. Переписать.
-- [ ] `windows/index.ts:41` — «три ширины» в `@shared/metrics`, а там пять.
-- [ ] `llm/reasoning.ts:1` — комментарий говорит «не отправляем неподдерживаемые
+- [x] `windows/index.ts:41` — «три ширины» в `@shared/metrics`, а там пять.
+- [x] `llm/reasoning.ts:1` — комментарий говорит «не отправляем неподдерживаемые
       параметры», а функция отправляет `reasoning_effort: 'none'`.
-- [ ] `paths.ts:7-12`, `native/helper.ts:38-51`, `voice/whisper.ts:56-65` —
+- [x] `paths.ts:7-12`, `native/helper.ts:38-51`, `voice/whisper.ts:56-65` —
       список кандидатов ресурса трижды; зафиксировать разницу фолбэков
       комментарием.
-- [ ] `windows/index.ts:226-275` — JSDoc на локальной `const` вместо функции.
-- [ ] `layerWindow.ts` — все правки этого файла делает WP3.
+- [x] `windows/index.ts:226-275` — JSDoc на локальной `const` вместо функции.
+- [x] `layerWindow.ts` — все правки этого файла делает WP3.
 
 **Константы**
 
-- [ ] `ipc.ts:79-88` — `4000` → `BUNDLE_ID_TIMEOUT_MS`.
-- [ ] `paste/index.ts:58` — `delay(40)` → `PASTEBOARD_SETTLE_MS`; `:29-34` —
+- [x] `ipc.ts:79-88` — `4000` → `BUNDLE_ID_TIMEOUT_MS`.
+- [x] `paste/index.ts:58` — `delay(40)` → `PASTEBOARD_SETTLE_MS`; `:29-34` —
       `1500`, `50` → имена.
-- [ ] `settings.ts:48,55,57` — `1200` и `80` → `CLOSE_GRACE_MS`, `CLOSE_POLL_MS`.
-- [ ] `voice/index.ts:84,90` — `5000`/`30_000` → единый стиль разделителей.
-- [ ] `voice/whisper.ts:202,259,278,315,333,336` — потоки, лимиты stderr,
+- [x] `settings.ts:48,55,57` — `1200` и `80` → `CLOSE_GRACE_MS`, `CLOSE_POLL_MS`.
+- [x] `voice/index.ts:84,90` — `5000`/`30_000` → единый стиль разделителей.
+- [x] `voice/whisper.ts:202,259,278,315,333,336` — потоки, лимиты stderr,
       таймауты, троттлинг → имена.
-- [ ] `native/helper.ts:58,100,265` — `4000` трижды; `:325` `30_000`;
+- [x] `native/helper.ts:58,100,265` — `4000` трижды; `:325` `30_000`;
       `4_000 + text.length * 40` → имена.
-- [ ] `tts/index.ts:59` — `'\u0000'` разделитель ключа кэша → имя.
-- [ ] `llm/webSearch.ts:45,57,62,68,78` — `512`, `3`, `5`/`10`, `45_000` → имена.
-- [ ] `llm/testKey.ts:12,32` — `12_000` и `160` → имена.
-- [ ] `card.ts` — `'#0f1115'`, позиция светофора, `16`/`18` → имена.
-- [ ] `util.ts:20-32` — `intervalMs = 40` → `DEFAULT_POLL_MS`.
+- [x] `tts/index.ts:59` — `'\u0000'` разделитель ключа кэша → имя.
+- [x] `llm/webSearch.ts:45,57,62,68,78` — `512`, `3`, `5`/`10`, `45_000` → имена.
+- [x] `llm/testKey.ts:12,32` — `12_000` и `160` → имена.
+- [x] `card.ts` — `'#0f1115'`, позиция светофора, `16`/`18` → имена.
+- [x] `util.ts:20-32` — `intervalMs = 40` → `DEFAULT_POLL_MS`.
 
 **Мёртвый код**
 
-- [ ] `paste/index.ts:37-41` — `putOnClipboard` дословно равен `copyText`
+- [x] `paste/index.ts:37-41` — `putOnClipboard` дословно равен `copyText`
       → удалить и вызывать `copyText`.
-- [ ] `native/helper.ts:227-230` `helperOpenBrowser` без вызовов.
-- [ ] `settings/store.ts:85` `settingsWereRecovered` — если только тесты,
+- [x] `native/helper.ts:227-230` `helperOpenBrowser` без вызовов.
+- [x] `settings/store.ts:85` `settingsWereRecovered` — если только тесты,
       задокументировать или убрать.
-- [ ] `hotkey.ts:12-16,58` — `RegisterResult.accelerator`, `currentHotkey()`
+- [x] `hotkey.ts:12-16,58` — `RegisterResult.accelerator`, `currentHotkey()`
       только в тестах.
-- [ ] `permissions.ts:91` `openMicrophonePane` только через
+- [x] `permissions.ts:91` `openMicrophonePane` только через
       `openPermissionPane` и тесты.
 
 **Извлечения**
 
-- [ ] `native/helper.ts` — 513 строк, семь обязанностей → `native/process.ts`,
+- [x] `native/helper.ts` — 513 строк, семь обязанностей → `native/process.ts`,
       `native/ax.ts`, `native/input.ts`, `native/apps.ts`. Чистые move,
       экспорты те же.
-- [ ] `settings/secrets.ts:35-46,76-87` — `getApiKey`/`getTtsKey` и ещё две
+- [x] `settings/secrets.ts:35-46,76-87` — `getApiKey`/`getTtsKey` и ещё две
       пары идентичны кроме слота → `readSlot`/`writeSlot`/`deleteSlot`.
-- [ ] `windows/settings.ts:12-66` vs `:68-90` — создание окна скопировано →
+- [x] `windows/settings.ts:12-66` vs `:68-90` — создание окна скопировано →
       `openAppWindow({ title, width, height, page, resizable })`.
-- [ ] `index.ts:124-222` — `bootstrap()` → `buildApplicationMenu()` +
+- [x] `index.ts:124-222` — `bootstrap()` → `buildApplicationMenu()` +
       `reportStartupPermissions()`.
-- [ ] `ipc.ts:146-180` — извлечь `applySettingsSideEffects(previous, next)`.
-- [ ] `voice/index.ts:236-311` — `onTap` ~75 строк →
+- [x] `ipc.ts:146-180` — извлечь `applySettingsSideEffects(previous, next)`.
+- [x] `voice/index.ts:236-311` — `onTap` ~75 строк →
       `onPress`/`onRelease`/`onCancel`.
-- [ ] `tts/index.ts:105` — динамический импорт `node:fs/promises` при
+- [x] `tts/index.ts:105` — динамический импорт `node:fs/promises` при
       статическом сверху → добавить в статический.
-- [ ] `llm/anthropic.ts:50-52` vs `openai.ts:64-66` — `endpoint()` идентичен →
+- [x] `llm/anthropic.ts:50-52` vs `openai.ts:64-66` — `endpoint()` идентичен →
       `apiRoot` в `http.ts`; `:107-118` vs `openai.ts:105-115` — разбор
       «malformed» дублирован.
-- [ ] `permissions.ts:20-41` — три одинаковых try/catch → `safe(fn, fallback)`.
-- [ ] `tray.ts:30-42` и `index.ts:125-153` — подписи меню и акселераторы
+- [x] `permissions.ts:20-41` — три одинаковых try/catch → `safe(fn, fallback)`.
+- [x] `tray.ts:30-42` и `index.ts:125-153` — подписи меню и акселераторы
       дублированы → общие константы. Строки не менять.
-- [ ] `card.ts:38-48` — `ScreenPoint`/`CardRect` дублируют
+- [x] `card.ts:38-48` — `ScreenPoint`/`CardRect` дублируют
       `Point01`/`ScreenRect` → переиспользовать; `:87` `clamp` → в `util.ts`.
-- [ ] `windows/index.ts:470` — `passthrough` объявлена через ~250 строк после
+- [x] `windows/index.ts:470` — `passthrough` объявлена через ~250 строк после
       первого чтения → перенести к `drawing`/`voice`.
 
 **Отложено (RISKY)**
@@ -743,101 +751,101 @@
 
 **Мёртвый код и враньё в комментариях**
 
-- [ ] `overlay/keyPolicy.ts:54` — `KeyInput.hasRequestId` объявлен, передаётся
+- [x] `overlay/keyPolicy.ts:54` — `KeyInput.hasRequestId` объявлен, передаётся
       из `App.tsx:972,1065` и тестов, но политика его не читает. Удалить поле и
       аргументы.
-- [ ] `overlay/markdown.ts:5` — заголовок говорит, что таблиц нет, а
+- [x] `overlay/markdown.ts:5` — заголовок говорит, что таблиц нет, а
       `tableAt`/`Block.table`/`CellAlign` реализуют таблицы; там же
       «420-point card» при `FULL_WIDTH = 360`. Переписать.
-- [ ] `overlay/viewFlags.ts:71` — `blocked` возвращается и не потребляется;
+- [x] `overlay/viewFlags.ts:71` — `blocked` возвращается и не потребляется;
       `App.tsx:1026` заново выводит то же → добавить `blocked` в
       деструктуризацию `deriveView` и удалить дубль.
-- [ ] `settings/App.tsx:115` — doc-блок `ApplyState` висит над
+- [x] `settings/App.tsx:115` — doc-блок `ApplyState` висит над
       `export function App()`, а тип живёт в `ApplyStatus.tsx:14`.
-- [ ] `settings/AgentTab.tsx:57` — комментарий про «сохраняется только по
+- [x] `settings/AgentTab.tsx:57` — комментарий про «сохраняется только по
       кнопке», а кнопки сохранения в этом окне нет (автосейв).
-- [ ] `settings/HotkeyField.tsx:84` — `buttonRef` присоединён и не читается.
-- [ ] `settings/HotkeyField.tsx:72` — `prettyHotkey` — обёртка на одну строку
+- [x] `settings/HotkeyField.tsx:84` — `buttonRef` присоединён и не читается.
+- [x] `settings/HotkeyField.tsx:72` — `prettyHotkey` — обёртка на одну строку
       вокруг `prettyAccelerator`, её импортирует onboarding из
       модуля-компонента.
-- [ ] `useVoice.ts:46` — `available` вычисляется, возвращается и никем не
+- [x] `useVoice.ts:46` — `available` вычисляется, возвращается и никем не
       читается. Удалить поле, вызов `status()` оставить.
-- [ ] `useVoice.ts:112` — JSDoc с отступом в один пробел.
-- [ ] `cursor/cursor.ts:13` — третья копия `clamp` в renderer, с другим guard.
-- [ ] `presenter/presenter.ts:14` — `NS` дублирует `pointer/draw.ts:5`.
-- [ ] `overlay/App.tsx:74` — `ruler` объявлен ниже `measureLine` → поднять выше.
+- [x] `useVoice.ts:112` — JSDoc с отступом в один пробел.
+- [x] `cursor/cursor.ts:13` — третья копия `clamp` в renderer, с другим guard.
+- [x] `presenter/presenter.ts:14` — `NS` дублирует `pointer/draw.ts:5`.
+- [x] `overlay/App.tsx:74` — `ruler` объявлен ниже `measureLine` → поднять выше.
 
 **Одно имя на понятие**
 
-- [ ] `overlay/App.tsx:639`, `useSpeech.ts:232` — слово `voice` означает
+- [x] `overlay/App.tsx:639`, `useSpeech.ts:232` — слово `voice` означает
       «промпт был произнесён», а `useVoice()` — микрофон. Внутренние имена →
       `spoken`/`fromSpeech`. Поле `SendRequest.voice` — IPC, не трогать.
-- [ ] `overlay/metrics.ts:28` — `NARROW_WIDTH`/`VOICE_WIDTH`/`FULL_WIDTH` —
+- [x] `overlay/metrics.ts:28` — `NARROW_WIDTH`/`VOICE_WIDTH`/`FULL_WIDTH` —
       алиасы `CARD_*` → переименовать модуль (`cardMetrics.ts`) и использовать
       `CARD_*` везде.
-- [ ] `overlay/viewFlags.ts:50,54,76` — `actionAsk` → `promptLooksLikeAction`;
+- [x] `overlay/viewFlags.ts:50,54,76` — `actionAsk` → `promptLooksLikeAction`;
       `alert` → `needsAttention`; `agentNotice` → инлайн.
-- [ ] `overlay/cardWidth.ts:31` `manualCeiling` → `userWidthCeiling`; `:72`
+- [x] `overlay/cardWidth.ts:31` `manualCeiling` → `userWidthCeiling`; `:72`
       `listening` → `showingVoiceBars`.
-- [ ] `overlay/markdown.ts:46,50` — `NUMBER` → `ORDERED`; `WORD` →
+- [x] `overlay/markdown.ts:46,50` — `NUMBER` → `ORDERED`; `WORD` →
       `LETTER_OR_DIGIT`.
-- [ ] `overlay/markdownText.tsx:19` — `tail?: boolean` → `withCaret`.
-- [ ] `overlay/useVoice.ts:68` — `pendingStopRef` → `pendingStopTranscribeRef`.
-- [ ] `settings/App.tsx:135` — локальная `hotkeyError` (строка) vs
+- [x] `overlay/markdownText.tsx:19` — `tail?: boolean` → `withCaret`.
+- [x] `overlay/useVoice.ts:68` — `pendingStopRef` → `pendingStopTranscribeRef`.
+- [x] `settings/App.tsx:135` — локальная `hotkeyError` (строка) vs
       `SettingsBundle.hotkeyError` (булев флаг) — разные имена.
-- [ ] `settings/App.tsx:129`, `onboarding/App.tsx:28` — `banner`/`notice`/
+- [x] `settings/App.tsx:129`, `onboarding/App.tsx:28` — `banner`/`notice`/
       `status` — четыре имени для временного сообщения.
-- [ ] `settings/sections/ProviderSection.tsx:51` — `status` → `keyStatus`.
-- [ ] `settings/VoiceTab.tsx:44` — `refresh`/`refreshSpeech`/`check`/`preview`
+- [x] `settings/sections/ProviderSection.tsx:51` — `status` → `keyStatus`.
+- [x] `settings/VoiceTab.tsx:44` — `refresh`/`refreshSpeech`/`check`/`preview`
       → по смыслу; `:105` `deleteButton` → `renderDeleteButton`.
-- [ ] `settings/VoiceTab.tsx:22` — `onChange`/`onTtsChange` →
+- [x] `settings/VoiceTab.tsx:22` — `onChange`/`onTtsChange` →
       `onVoiceChange`/`onTtsChange`.
-- [ ] `settings/PermissionRow.tsx:14` — проп `description` → `hint`.
-- [ ] `settings/ApplyStatus.tsx:20` — `bad: boolean` → `isProblem`.
-- [ ] `overlay/speechAudio.ts:38,42` — `key()` → `normalizeForLookup`;
+- [x] `settings/PermissionRow.tsx:14` — проп `description` → `hint`.
+- [x] `settings/ApplyStatus.tsx:20` — `bad: boolean` → `isProblem`.
+- [x] `overlay/speechAudio.ts:38,42` — `key()` → `normalizeForLookup`;
       `byText` → `clipsByText`.
-- [ ] `overlay/waiting.ts:9` — `waitingTips` → `WAITING_TIPS`; `:19` union
+- [x] `overlay/waiting.ts:9` — `waitingTips` → `WAITING_TIPS`; `:19` union
       стадии → `WaitStage`; `:7` `WAIT_VOICE_COOLDOWN_MS` относится к озвучке.
-- [ ] `onboarding/App.tsx:50,90` — `request`/`finish` →
+- [x] `onboarding/App.tsx:50,90` — `request`/`finish` →
       `requestPermissions`/`completeOnboarding`.
-- [ ] `overlay/App.tsx:589` — `reportRef`/`report` → `resizeWindowToLayout`.
+- [x] `overlay/App.tsx:589` — `reportRef`/`report` → `resizeWindowToLayout`.
 
 **Магические числа**
 
-- [ ] `overlay/App.tsx:485` — `0.62 + voice.level * 0.55`; `:1007` —
+- [x] `overlay/App.tsx:485` — `0.62 + voice.level * 0.55`; `:1007` —
       `[0,1,2,3,4]`; `:550-554` — `FIELD_FONT.replace('13px','11px')` и
       `'11.5px'`.
-- [ ] `overlay/speech.ts:24` — `ANSWER_FALLBACK` дублирует
+- [x] `overlay/speech.ts:24` — `ANSWER_FALLBACK` дублирует
       `speechBank.ts:108`; `:36` — 3 предложения и 420 символов.
-- [ ] `overlay/recorder.ts:26` — `MAX_SECONDS = 120` повторяет
+- [x] `overlay/recorder.ts:26` — `MAX_SECONDS = 120` повторяет
       `DEFAULT_VOICE.maxDurationMs`; `:147` — паддинги `-5`/`+6`; `:285` —
       гейн `6`.
-- [ ] `overlay/useSpeech.ts:145,152` — 220 символов чанка и `1.3`.
-- [ ] `settings/App.tsx:250,264,386,395` — четыре таймаута баннера без имён;
+- [x] `overlay/useSpeech.ts:145,152` — 220 символов чанка и `1.3`.
+- [x] `settings/App.tsx:250,264,386,395` — четыре таймаута баннера без имён;
       `:299` — «450 мс» нигде не названо.
-- [ ] `settings/VoiceTab.tsx:26` — `1024 * 1024` дважды.
-- [ ] `onboarding/App.tsx:46` — `1500`.
-- [ ] `pointer/draw.ts:59-191` — 14, 16, 0.42, 6, 4, 8, 240, 4/45; `:103` и
+- [x] `settings/VoiceTab.tsx:26` — `1024 * 1024` дважды.
+- [x] `onboarding/App.tsx:46` — `1500`.
+- [x] `pointer/draw.ts:59-191` — 14, 16, 0.42, 6, 4, 8, 240, 4/45; `:103` и
       `:110` два разных `gap` с одним именем.
-- [ ] `presenter/presenter.ts:28` — `(5 / 26) * 20` с безымянными 20 и 26.
+- [x] `presenter/presenter.ts:28` — `(5 / 26) * 20` с безымянными 20 и 26.
 
 **Чистые извлечения**
 
-- [ ] `overlay/markdown.ts:147` — `parseMarkdown` ~105 строк → `parseFence`,
+- [x] `overlay/markdown.ts:147` — `parseMarkdown` ~105 строк → `parseFence`,
       `parseTable`, `parseList`, `parseParagraph`.
-- [ ] `pointer/draw.ts:110` — `placeLabel` 38 строк, `best!` в конце.
-- [ ] `overlay/App.tsx:97` — `LiveThumb` → `overlay/LiveThumb.tsx`.
-- [ ] `settings/VoiceTab.tsx:31` — 496 строк и четыре обязанности →
+- [x] `pointer/draw.ts:110` — `placeLabel` 38 строк, `best!` в конце.
+- [x] `overlay/App.tsx:97` — `LiveThumb` → `overlay/LiveThumb.tsx`.
+- [x] `settings/VoiceTab.tsx:31` — 496 строк и четыре обязанности →
       `ModelList`, `TtsSection`, `ReadinessSection` (пропсы те же).
 
 **Тесты**
 
-- [ ] `overlay/viewFlags.test.ts:4` — «1300-line render», сейчас ~1474.
-- [ ] `settings/applyGate.test.ts:31` — фикстура ставит `model: 'gpt-4o-mini'`,
+- [x] `overlay/viewFlags.test.ts:4` — «1300-line render», сейчас ~1474.
+- [x] `settings/applyGate.test.ts:31` — фикстура ставит `model: 'gpt-4o-mini'`,
       такого поля в `AppSettings` нет; каст `as AppSettings` это прячет.
-- [ ] `overlay/cardWidth.test.ts:16` — `Partial<Parameters<...>>` вместо
+- [x] `overlay/cardWidth.test.ts:16` — `Partial<Parameters<...>>` вместо
       `WidthInputs`.
-- [ ] `overlay/keyPolicy.test.ts:22` — передаёт `hasRequestId`.
+- [x] `overlay/keyPolicy.test.ts:22` — передаёт `hasRequestId`.
 
 **Отложено (RISKY)**
 
@@ -848,13 +856,13 @@
 
 Файлы: `docs/*.md`, `AGENTS.md`, `README`-подобные тексты.
 
-- [ ] `docs/style.md:115` — ссылается на `src/renderer/hud/hud.css`, которого
+- [x] `docs/style.md:115` — ссылается на `src/renderer/hud/hud.css`, которого
       нет.
-- [ ] `docs/agent-reliability.md` — сверить имена событий трассы с
+- [x] `docs/agent-reliability.md` — сверить имена событий трассы с
       `agent/trace.ts` после WP3.
-- [ ] `AGENTS.md` — сверить с фактическим поведением (сайдкар, `ToolPolicy`,
+- [x] `AGENTS.md` — сверить с фактическим поведением (сайдкар, `ToolPolicy`,
       `ActionPresenter`) после WP3/WP5.
-- [ ] Комментарии, ссылающиеся на переименованные файлы/функции, обновляются
+- [x] Комментарии, ссылающиеся на переименованные файлы/функции, обновляются
       **в том же пакете**, который переименовал, а не отдельным проходом.
 
 ## 5. Порядок и зависимости
@@ -865,7 +873,8 @@
 | --- | --- | --- |
 | 1 | WP1 (Swift Core), WP3 (agent/TS + слои), WP4 (overlay/context), WP7 (renderer) | четыре непересекающихся дерева |
 | 2 | WP2 (Swift Agent/LLM/Bridge), WP5 (остальной main), WP6 (shared/preload) | WP1 и WP3/WP4 закончили, Swift-пакеты не конкурируют за `.build` |
-| 3 | WP8 (документация) | ссылается на итоговые имена |
+| 3 | WP8 (документация), WP9, WP10 | ссылаются на итоговые имена; WP9/WP10 — то, что первый проход отложил из-за границ |
+| 4 | WP11 (renderer, остатки), WP12 (main, остатки) | дерево зафиксировано, пакеты снова непересекающиеся |
 
 Правила нарезки:
 
@@ -889,10 +898,10 @@
 
 Финальная проверка после WP8:
 
-- [ ] полный `npm test` + `swift test`
-- [ ] `npm run build:agent` — сайдкар собирается
-- [ ] `npm run build` — приложение собирается
-- [ ] прогон по `docs/agent-acceptance-cases.json` — вне автоматики, отдельным
+- [x] полный `npm test` + `swift test`
+- [x] `npm run build:agent` — сайдкар собирается
+- [x] `npm run build` — приложение собирается
+- [x] прогон по `docs/agent-acceptance-cases.json` — вне автоматики, отдельным
       шагом, если потребуется
 
 ## 8. Поведение, изменённое после прохода
