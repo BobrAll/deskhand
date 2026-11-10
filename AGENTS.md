@@ -10,7 +10,7 @@
 - Fix the underlying capability or decision rule. Use specific apps, sites, and prompts as regression cases. Keep names and aliases out of runtime routing and tool instructions.
 - Use web search for public information, browser navigation for an explicitly requested destination, and screen input for an observed interface.
 - After the active app changes, confirm which app received input and verify the result on a fresh screen before continuing.
-- Log timings and tool decisions. Exclude queries, typed content, and screenshots.
+- Log timings and tool decisions. The aggregate trace (`agent-trace.jsonl`) excludes queries, typed content and screenshots; the per-run trace (`agent-runs/`, `agent-dialogs/`) keeps the exact request bodies on purpose, so it is gitignored and never shared.
 
 ## Sidecar contracts
 
