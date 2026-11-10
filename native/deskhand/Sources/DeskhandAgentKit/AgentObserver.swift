@@ -34,8 +34,8 @@ public protocol AgentObserver: AnyObject, Sendable {
     /// One tool call finished. `text` is what the model will see.
     ///
     /// `timings` splits the call into the phases that have different fixes: the
-    /// accessibility walk, the window capture and the PNG encode.
-    func toolFinished(_ step: Int, call: ToolCall, text: String, isError: Bool, timings: ToolTimings)
+    /// accessibility walk, the window capture and the image encode.
+    func toolFinished(_ step: Int, call: ToolCall, text: String, didFail: Bool, timings: ToolTimings)
     /// The loop stopped for a reason other than success.
     ///
     /// Only ever emitted when the run actually ends: a host can treat it as a
@@ -125,7 +125,7 @@ public extension AgentObserver {
     func stepAnswered(_ step: Int, narration: String, calls: [ToolCall]) {}
     func stepTimed(_ step: Int, timing: StepTiming) {}
     func toolStarted(_ step: Int, call: ToolCall, narration: String) {}
-    func toolFinished(_ step: Int, call: ToolCall, text: String, isError: Bool, timings: ToolTimings) {}
+    func toolFinished(_ step: Int, call: ToolCall, text: String, didFail: Bool, timings: ToolTimings) {}
     func loopStopped(_ reason: String) {}
     func loopWarned(_ reason: String) {}
     func runFinished(_ report: RunReport) {}

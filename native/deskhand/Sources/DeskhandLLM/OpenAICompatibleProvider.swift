@@ -90,7 +90,7 @@ public struct OpenAICompatibleProvider: StreamingChatProvider {
             // chat-completions endpoint. Nothing has been shown yet, so falling
             // back to the one-shot shape is invisible to the user and keeps
             // local servers and older proxies usable.
-            if [400, 404, 422].contains(http.statusCode) {
+            if ProviderHTTP.streamingFallbackStatuses.contains(http.statusCode) {
                 return try await complete(messages: messages, tools: tools, systemPrompt: systemPrompt)
             }
             throw LLMError.http(
@@ -149,10 +149,10 @@ public struct OpenAICompatibleProvider: StreamingChatProvider {
     }
 
     private func makeRequest(payload: [String: JSONValue]) -> URLRequest {
-        var request = URLRequest(url: config.endpointURL())
+        var request = URLRequest(url: config.endpointURL)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("Deskhand/0.1", forHTTPHeaderField: "User-Agent")
+        request.setValue(ProviderHTTP.userAgent, forHTTPHeaderField: "User-Agent")
         if let key = config.apiKey, !config.omitAuthHeader {
             request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
         }
@@ -161,12 +161,6 @@ public struct OpenAICompatibleProvider: StreamingChatProvider {
         }
         request.httpBody = JSONValue.object(payload).serializedData()
         return request
-    }
-
-    private struct ToolCallBuilder {
-        var id = ""
-        var name = ""
-        var arguments = ""
     }
 
     /// Reads the `text/event-stream` body.
@@ -183,7 +177,7 @@ public struct OpenAICompatibleProvider: StreamingChatProvider {
         var text = ""
         var builders: [Int: ToolCallBuilder] = [:]
         var stopReason: String?
-        var usage: Usage?
+        var usage: TokenUsage?
         var sawDone = false
 
         var lines: [JSONValue] = []
@@ -202,7 +196,7 @@ public struct OpenAICompatibleProvider: StreamingChatProvider {
                 throw LLMError.provider(message)
             }
             if let usageValue = value["usage"] {
-                usage = Usage(
+                usage = TokenUsage(
                     inputTokens: usageValue["prompt_tokens"]?.intValue ?? 0,
                     outputTokens: usageValue["completion_tokens"]?.intValue ?? 0
                 )
@@ -373,9 +367,9 @@ public struct OpenAICompatibleProvider: StreamingChatProvider {
             }
         }
 
-        var usage: Usage?
+        var usage: TokenUsage?
         if let usageValue = root["usage"] {
-            usage = Usage(
+            usage = TokenUsage(
                 inputTokens: usageValue["prompt_tokens"]?.intValue ?? 0,
                 outputTokens: usageValue["completion_tokens"]?.intValue ?? 0
             )

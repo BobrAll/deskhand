@@ -6,14 +6,15 @@ import DeskhandAgentKit
 
 /// `deskhand-agent` — a standalone BYOK agent that drives the desktop.
 ///
-/// The window server requires an initialized Cocoa app before any CGEvent or
-/// ScreenCaptureKit call; without this the process aborts with `CGS_REQUIRE_INIT`.
-_ = NSApplication.shared
-///
 /// Usage:
 ///   deskhand-agent "open Safari and search for the weather"
 ///   deskhand-agent --base-url http://localhost:11434/v1 --model qwen2.5-vl "…"
 ///   deskhand-agent --config ./my.toml "…"
+///
+/// The window server requires an initialized Cocoa app before any CGEvent or
+/// ScreenCaptureKit call; without this the process aborts with `CGS_REQUIRE_INIT`.
+_ = NSApplication.shared
+
 struct CLI {
     var task: String?
     var configPath: String?
@@ -84,9 +85,6 @@ func parseArguments() throws -> CLI {
 func printUsage() {
     print("""
         deskhand-agent — drive a macOS app with any vision-capable model (BYOK)
-
-        USAGE
-          deskhand-agent [options] "<task>"
 
         USAGE
           deskhand-agent --serve           (driven by Deskhand over stdin/stdout)
@@ -175,7 +173,7 @@ do {
 if cli.showConfig || cli.dryRun {
     print("wire:      \(config.wire.rawValue)")
     print("base_url:  \(config.baseURL.absoluteString)")
-    print("endpoint:  \(config.endpointURL().absoluteString)")
+    print("endpoint:  \(config.endpointURL.absoluteString)")
     print("model:     \(config.model)")
     print("api_key:   \(config.apiKey == nil ? "unset" : "set")")
     print("max_tokens:\(config.maxTokens)")
@@ -188,7 +186,7 @@ if cli.showConfig || cli.dryRun {
 if !cli.quietAboutDefaults, config.baseURL.absoluteString == ProviderConfig().baseURL.absoluteString {
     FileHandle.standardError.write(Data("""
 
-        note: no base_url configured, so requests go to \(config.endpointURL().absoluteString).
+        note: no base_url configured, so requests go to \(config.endpointURL.absoluteString).
               To use another endpoint, pass --base-url / -b, set DESKHAND_BASE_URL, or add
               base_url to ~/.deskhand/config.toml.
 

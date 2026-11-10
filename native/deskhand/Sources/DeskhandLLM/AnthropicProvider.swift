@@ -87,7 +87,7 @@ public struct AnthropicProvider: StreamingChatProvider {
             exchange?.response(body, status: http.statusCode)
             // Same fallback as the OpenAI wire: a proxy that refuses `stream`
             // can still answer in one piece, and nothing has been shown yet.
-            if [400, 404, 422].contains(http.statusCode) {
+            if ProviderHTTP.streamingFallbackStatuses.contains(http.statusCode) {
                 return try await complete(messages: messages, tools: tools, systemPrompt: systemPrompt)
             }
             throw LLMError.http(
@@ -139,11 +139,11 @@ public struct AnthropicProvider: StreamingChatProvider {
     }
 
     private func makeRequest(payload: [String: JSONValue]) -> URLRequest {
-        var request = URLRequest(url: config.endpointURL())
+        var request = URLRequest(url: config.endpointURL)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue(Self.apiVersion, forHTTPHeaderField: "anthropic-version")
-        request.setValue("Deskhand/0.1", forHTTPHeaderField: "User-Agent")
+        request.setValue(ProviderHTTP.userAgent, forHTTPHeaderField: "User-Agent")
         if let key = config.apiKey, !config.omitAuthHeader {
             request.setValue(key, forHTTPHeaderField: "x-api-key")
         }
@@ -152,12 +152,6 @@ public struct AnthropicProvider: StreamingChatProvider {
         }
         request.httpBody = JSONValue.object(payload).serializedData()
         return request
-    }
-
-    private struct ToolCallBuilder {
-        var id = ""
-        var name = ""
-        var arguments = ""
     }
 
     /// Reads Anthropic's block-based `text/event-stream`.
@@ -261,7 +255,7 @@ public struct AnthropicProvider: StreamingChatProvider {
 
         let usage = (inputTokens == nil && outputTokens == nil)
             ? nil
-            : Usage(inputTokens: inputTokens ?? 0, outputTokens: outputTokens ?? 0)
+            : TokenUsage(inputTokens: inputTokens ?? 0, outputTokens: outputTokens ?? 0)
         return Completion(text: text, toolCalls: calls, stopReason: stopReason, usage: usage)
     }
 
@@ -351,7 +345,7 @@ public struct AnthropicProvider: StreamingChatProvider {
                     "type": .string("tool_result"),
                     "tool_use_id": .string(message.toolCallID ?? ""),
                     "content": .string(message.text),
-                    "is_error": .bool(message.toolIsError),
+                    "is_error": .bool(message.isError),
                 ])
                 appendMerging(role: "user", blocks: [block])
             }
@@ -392,9 +386,9 @@ public struct AnthropicProvider: StreamingChatProvider {
             }
         }
 
-        var usage: Usage?
+        var usage: TokenUsage?
         if let usageValue = root["usage"] {
-            usage = Usage(
+            usage = TokenUsage(
                 inputTokens: usageValue["input_tokens"]?.intValue ?? 0,
                 outputTokens: usageValue["output_tokens"]?.intValue ?? 0
             )

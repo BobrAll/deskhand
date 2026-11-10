@@ -44,7 +44,7 @@ public final class AgentLoop {
         /// spending a whole turn on `get_app_state`.
         public var verifyActions: Bool
         /// Print how long each phase took: model round trip, accessibility
-        /// walk, window capture, PNG encode.
+        /// walk, window capture, image encode.
         ///
         /// On by default. A run that feels slow is almost always waiting on one
         /// specific thing, and without the split every phase looks equally
@@ -72,7 +72,7 @@ public final class AgentLoop {
     private let executor: ToolRunning
     private let options: Options
     private let tools: [ToolDefinition]
-    private let timings = Timings()
+    private let timingLog = Timings()
 
     /// How long a run may keep landing on a screen it has already seen.
     ///
@@ -160,7 +160,7 @@ public final class AgentLoop {
         var seenStates = Set<String>()
         var lastProgressStep = 1
         var warnedStall = false
-        // Counted here rather than read back from `timings`: the timing table is
+        // Counted here rather than read back from `timingLog`: the timing table is
         // opt-in and grouped by label, so it cannot answer "how many calls
         // failed" without the host parsing strings.
         var stepsRun = 0
@@ -181,7 +181,7 @@ public final class AgentLoop {
             stepsRun = step
             log("step \(step): asking \(provider.config.model)")
 
-            let prompt = trim(messages)
+            let prompt = trimmedHistory(messages)
             let promptBytes = prompt.reduce(0) { $0 + $1.text.utf8.count }
             let stepClock = TimingClock()
             let completion: Completion
@@ -221,7 +221,7 @@ public final class AgentLoop {
                     )
                 }
             } catch {
-                timings.record("llm", milliseconds: stepClock.milliseconds)
+                timingLog.record("llm", milliseconds: stepClock.milliseconds)
                 throw error
             }
             let llmMilliseconds = stepClock.milliseconds
@@ -235,7 +235,7 @@ public final class AgentLoop {
                     }),
                 ])
             }
-            timings.record("llm", milliseconds: llmMilliseconds)
+            timingLog.record("llm", milliseconds: llmMilliseconds)
             // The host records this as the step's cost. It is emitted before the
             // branch below so the step that ends the run is timed too: the last
             // round trip is usually the most expensive one, and a timeline that
@@ -270,19 +270,19 @@ public final class AgentLoop {
             // fix on the user's side is one number in the settings.
             if completion.truncated {
                 log("reply truncated at the token limit")
-                timings.record("run total", milliseconds: runClock.milliseconds)
-                observer?.loopStopped("the model's reply was cut off at the token limit")
-                reportRun(steps: stepsRun, calls: callsRun, failed: callsFailed, clock: runClock)
-                return "Stopped: the model's reply was cut off at the token limit."
+                return finishRun(
+                    reason: "the model's reply was cut off at the token limit",
+                    answer: "Stopped: the model's reply was cut off at the token limit.",
+                    steps: stepsRun, calls: callsRun, failedCalls: callsFailed, clock: runClock)
             }
             if !completion.wantsToolCalls {
                 try Task.checkCancellation()
-                timings.record("run total", milliseconds: runClock.milliseconds)
+                timingLog.record("run total", milliseconds: runClock.milliseconds)
                 observer?.stepAnswered(step, narration: completion.text, calls: [])
                 // The only exit where the model decided it was done. Both other
                 // exits fall through to the return below.
                 finished = true
-                reportRun(steps: stepsRun, calls: callsRun, failed: callsFailed, clock: runClock)
+                reportRun(steps: stepsRun, calls: callsRun, failedCalls: callsFailed, clock: runClock)
                 return completion.text
             }
 
@@ -329,12 +329,12 @@ public final class AgentLoop {
                         role: .tool,
                         text: warning,
                         toolCallID: call.id,
-                        toolIsError: true
+                        isError: true
                     ))
                     continue
                 }
 
-                log("tool \(call.name) \(preview(call.arguments))")
+                log("tool \(call.name) \(argumentPreview(call.arguments))")
                 observer?.toolStarted(step, call: call, narration: completion.text)
                 let callClock = TimingClock()
                 let result = await executor.call(
@@ -349,8 +349,8 @@ public final class AgentLoop {
                 recordToolTimings(result.timings, name: call.name)
                 observer?.toolFinished(
                     step, call: call, text: result.plainText,
-                    isError: result.isError, timings: result.timings)
-                log("  -> \(result.isError ? "error: " : "")\(previewText(result.plainText))")
+                    didFail: result.isError, timings: result.timings)
+                log("  -> \(result.isError ? "error: " : "")\(textPreview(result.plainText))")
                 if options.timings, !result.timings.describe().isEmpty {
                     log("  ~ \(TimingFormat.duration(wall)): \(result.timings.describe())")
                 }
@@ -360,7 +360,7 @@ public final class AgentLoop {
                     role: .tool,
                     text: text.isEmpty ? "(no output)" : text,
                     toolCallID: call.id,
-                    toolIsError: result.isError
+                    isError: result.isError
                 ))
                 if let fingerprint = result.stateFingerprint { stepFingerprint = fingerprint }
 
@@ -382,7 +382,7 @@ public final class AgentLoop {
                                 role: .tool,
                                 text: note,
                                 toolCallID: skipped.id,
-                                toolIsError: true
+                                isError: true
                             ))
                         }
                         log("batch stopped after \(call.name) failed (\(remaining) skipped)")
@@ -393,7 +393,7 @@ public final class AgentLoop {
                 // Screenshots ride on their own user turn, right after the tool
                 // result they belong to: the OpenAI and Anthropic schemas both
                 // reject images inside tool messages, but both accept them in a
-                // user message. `trim` drops the older ones.
+                // user message. `trimmedHistory` drops the older ones.
                 let images = result.isError ? [] : result.images
                 if !images.isEmpty {
                     messages.append(ChatMessage(
@@ -418,11 +418,11 @@ public final class AgentLoop {
                 let stalled = step - lastProgressStep
                 if stalled >= Self.stallStopSteps {
                     log("stopping: \(stalled) steps without a new screen")
-                    timings.record("run total", milliseconds: runClock.milliseconds)
-                    observer?.loopStopped("the run kept returning to a screen it had already seen")
-                    reportRun(steps: stepsRun, calls: callsRun, failed: callsFailed, clock: runClock)
-                    return "Stopped: \(stalled) steps in a row without a new screen. "
-                        + "The same route was taken again, so repeating it will not finish the task."
+                    return finishRun(
+                        reason: "the run kept returning to a screen it had already seen",
+                        answer: "Stopped: \(stalled) steps in a row without a new screen. "
+                            + "The same route was taken again, so repeating it will not finish the task.",
+                        steps: stepsRun, calls: callsRun, failedCalls: callsFailed, clock: runClock)
                 }
                 if stalled >= Self.stallWarnSteps, !warnedStall {
                     log("warning: \(stalled) steps without a new screen")
@@ -441,10 +441,10 @@ public final class AgentLoop {
             }
         }
 
-        timings.record("run total", milliseconds: runClock.milliseconds)
-        observer?.loopStopped("the step budget ran out")
-        reportRun(steps: stepsRun, calls: callsRun, failed: callsFailed, clock: runClock)
-        return "Stopped after \(options.maxSteps) steps without finishing the task."
+        return finishRun(
+            reason: "the step budget ran out",
+            answer: "Stopped after \(options.maxSteps) steps without finishing the task.",
+            steps: stepsRun, calls: callsRun, failedCalls: callsFailed, clock: runClock)
     }
 
     /// Whether the last run ended because the model finished, rather than
@@ -458,38 +458,56 @@ public final class AgentLoop {
 
     /// The timing table, for the CLI to print after the run.
     public func timingReport() -> String {
-        timings.report()
+        timingLog.report()
+    }
+
+    /// Ends the run on a path the loop chose rather than one the model chose.
+    ///
+    /// The order is the contract: the total is recorded before the report reads
+    /// it back, and the verdict reaches the host before the report does.
+    private func finishRun(
+        reason: String,
+        answer: String,
+        steps: Int,
+        calls: Int,
+        failedCalls: Int,
+        clock: TimingClock
+    ) -> String {
+        timingLog.record("run total", milliseconds: clock.milliseconds)
+        observer?.loopStopped(reason)
+        reportRun(steps: steps, calls: calls, failedCalls: failedCalls, clock: clock)
+        return answer
     }
 
     /// Hands the host the run's totals exactly once.
     ///
-    /// Called at both exits of the loop and nowhere else: a report emitted from a
+    /// Called at every exit of the loop and nowhere else: a report emitted from a
     /// cancellation path as well would arrive twice, and the second one would
     /// describe a run that had already been accounted for.
-    private func reportRun(steps: Int, calls: Int, failed: Int, clock: TimingClock) {
-        let rows = timings.grouped()
+    private func reportRun(steps: Int, calls: Int, failedCalls: Int, clock: TimingClock) {
+        let rows = timingLog.grouped()
         let llm = rows.first { $0.label == "llm" }?.total ?? 0
         let tools = rows.filter { $0.label.hasPrefix("tool ") }.reduce(0) { $0 + $1.total }
         observer?.runFinished(RunReport(
             steps: steps,
             calls: calls,
-            failedCalls: failed,
+            failedCalls: failedCalls,
             totalMilliseconds: clock.milliseconds,
             llmMilliseconds: llm,
             toolMilliseconds: tools,
-            table: options.timings ? timings.report() : ""
+            table: options.timings ? timingLog.report() : ""
         ))
     }
 
     private func recordToolTimings(_ tool: ToolTimings, name: String) {
         guard options.timings else { return }
-        if tool.tree > 0 { timings.record("  tree walk", milliseconds: tool.tree) }
-        if tool.capture > 0 { timings.record("  screenshot", milliseconds: tool.capture) }
-        if tool.encode > 0 { timings.record("  png encode", milliseconds: tool.encode) }
+        if tool.tree > 0 { timingLog.record("  tree walk", milliseconds: tool.tree) }
+        if tool.capture > 0 { timingLog.record("  screenshot", milliseconds: tool.capture) }
+        if tool.encode > 0 { timingLog.record("  image encode", milliseconds: tool.encode) }
         if tool.screenshotBytes > 0 {
-            timings.record("  screenshot bytes", milliseconds: 0, bytes: tool.screenshotBytes)
+            timingLog.record("  screenshot bytes", milliseconds: 0, bytes: tool.screenshotBytes)
         }
-        timings.record("tool \(name)", milliseconds: tool.wall)
+        timingLog.record("tool \(name)", milliseconds: tool.wall)
     }
 
     /// One line per step, so a stall can be attributed while it happens rather
@@ -550,7 +568,7 @@ public final class AgentLoop {
     /// newest tree of each app preserves the "indices stay valid" promise
     /// across switches while still bounding growth by `keepTrees` apps, most
     /// recently seen first.
-    func trim(_ messages: [ChatMessage]) -> [ChatMessage] {
+    func trimmedHistory(_ messages: [ChatMessage]) -> [ChatMessage] {
         var seenImages = 0
         var treesKeptPerApp: [String: Int] = [:]
         var keptApps: [String] = []
@@ -582,7 +600,7 @@ public final class AgentLoop {
             }
 
             if copy.role == .tool, copy.text.contains(Self.treeMarkerPrefix) {
-                let app = Self.appKey(ofTreeMessage: copy.text)
+                let app = Self.appKey(forTreeMessage: copy.text)
                 let seen = treesKeptPerApp[app, default: 0]
                 let appAlreadyCounted = keptApps.contains(app)
                 if !appAlreadyCounted {
@@ -612,7 +630,7 @@ public final class AgentLoop {
     /// The header is `Name [bundle.id] — window "Title"`, so the bracketed
     /// bundle identifier is the stable key. Falling back to the whole header
     /// keeps unparseable results from all sharing one bucket.
-    static func appKey(ofTreeMessage text: String) -> String {
+    static func appKey(forTreeMessage text: String) -> String {
         guard let close = text.firstIndex(of: "]"),
               let open = text[text.startIndex..<close].lastIndex(of: "[") else {
             return String(text.prefix(40))
@@ -651,12 +669,12 @@ public final class AgentLoop {
             + "are stable, so the indices you already used still mean the same controls."
     }
 
-    private func preview(_ arguments: JSONValue) -> String {
+    private func argumentPreview(_ arguments: JSONValue) -> String {
         let text = arguments.serialized()
         return text.count > 220 ? String(text.prefix(220)) + "…" : text
     }
 
-    private func previewText(_ text: String) -> String {
+    private func textPreview(_ text: String) -> String {
         let single = text.replacingOccurrences(of: "\n", with: " ⏎ ")
         return single.count > 200 ? String(single.prefix(200)) + "…" : single
     }
