@@ -35,6 +35,19 @@ export function PrivacySection({
   setBundle,
   onAddExcluded
 }: PrivacySectionProps) {
+  /**
+   * Asks macOS for both grants at once.
+   *
+   * The main process has one call for the pair (it prompts for Accessibility and
+   * Screen Recording together), so both rows use it. Pressing either row's
+   * «Разрешить» therefore shows both prompts — the rows differ in what they
+   * explain, not in what they trigger.
+   */
+  async function requestSystemPermissions(): Promise<void> {
+    const next = await window.deskhand.permissions.request()
+    setBundle((prev) => (prev ? { ...prev, permissions: next } : prev))
+  }
+
   return (
     <div className="pane">
       <Group title="Доступ">
@@ -42,20 +55,14 @@ export function PrivacySection({
           title="Универсальный доступ"
           hint="Читать выделенный текст и вставлять ответ; управлять мышью — только если включён режим «Агент»."
           granted={permissions?.accessibility ?? false}
-          onRequest={async () => {
-            const next = await window.deskhand.permissions.request()
-            setBundle((prev) => (prev ? { ...prev, permissions: next } : prev))
-          }}
+          onRequest={requestSystemPermissions}
           onOpen={() => window.deskhand.permissions.open('accessibility')}
         />
         <PermissionRow
           title="Запись экрана"
           hint="Скриншот активного окна."
           granted={permissions?.screenRecording ?? false}
-          onRequest={async () => {
-            const next = await window.deskhand.permissions.request()
-            setBundle((prev) => (prev ? { ...prev, permissions: next } : prev))
-          }}
+          onRequest={requestSystemPermissions}
           onOpen={() => window.deskhand.permissions.open('screenRecording')}
         />
         <PermissionRow

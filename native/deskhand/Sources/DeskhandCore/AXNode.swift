@@ -3,8 +3,9 @@ import CoreGraphics
 import ApplicationServices
 
 /// One node of the flattened accessibility tree that gets handed to the model.
-/// Indices are assigned during a single traversal and are only valid for the
-/// snapshot that produced them.
+/// Indices come from the session's `IndexBook`, so a number belongs to the same
+/// control for as long as the session lives: a control that is gone leaves a
+/// dead number, never one that now means something else.
 public struct AXNode: Sendable {
     public var index: Int
     public var depth: Int

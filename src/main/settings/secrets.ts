@@ -39,9 +39,18 @@ function readSlot(slot: string): string | null {
   const [scheme, payload] = raw.split(':', 2)
   if (!payload) return null
   if (scheme === 'plain') return Buffer.from(payload, 'base64').toString('utf8')
+  // Anything that is not a scheme this app writes is not a key: it is a slot
+  // some other build left behind, and there is nothing to decrypt.
+  if (scheme !== 'enc') return null
   try {
     return safeStorage.decryptString(Buffer.from(payload, 'base64'))
-  } catch {
+  } catch (error) {
+    // The slot exists but cannot be opened: a Keychain reset, or a settings file
+    // copied from another Mac. Returning null keeps the caller's contract ("no
+    // usable key"), and the card then asks for the key again — but without this
+    // line the ciphertext is silently orphaned and nothing says why the key that
+    // was entered a minute ago is being asked for.
+    console.warn(`[secrets] stored key "${slot}" cannot be decrypted; asking for it again`, error)
     return null
   }
 }

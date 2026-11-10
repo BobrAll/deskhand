@@ -1,5 +1,5 @@
 /**
- * The two layer windows (`pointer.ts` and `agent/cursor.ts`) shared 20 of their
+ * The two layer windows (`drawing.ts` and `agent/cursor.ts`) shared 20 of their
  * 23 window-option lines; `layerWindow.ts` is that intersection. These tests pin
  * the intersection *and* the three lines that must stay different, because a
  * silent unification is exactly the failure mode the extraction could introduce.
@@ -93,7 +93,7 @@ function fakeWindow(): BrowserWindow {
 describe('createLayerWindow: the shared contract', () => {
   it('creates a frameless, transparent, unfocusable, taskbar-less layer', async () => {
     const { createLayerWindow } = await loadLayerWindow()
-    createLayerWindow({ page: 'pointer', acceptFirstMouse: true })
+    createLayerWindow({ page: 'drawing', acceptFirstMouse: true })
 
     expect(state.options[0]).toMatchObject({
       show: false,
@@ -110,7 +110,7 @@ describe('createLayerWindow: the shared contract', () => {
 
   it('keeps webPreferences exactly as both callers had them', async () => {
     const { createLayerWindow } = await loadLayerWindow()
-    createLayerWindow({ page: 'pointer', acceptFirstMouse: true })
+    createLayerWindow({ page: 'drawing', acceptFirstMouse: true })
 
     expect(state.options[0]?.['webPreferences']).toEqual({
       preload: expect.stringContaining('preload/index.js'),
@@ -122,7 +122,7 @@ describe('createLayerWindow: the shared contract', () => {
 
   it('applies all four pieces of chrome to every layer', async () => {
     const { createLayerWindow } = await loadLayerWindow()
-    createLayerWindow({ page: 'pointer', acceptFirstMouse: true })
+    createLayerWindow({ page: 'drawing', acceptFirstMouse: true })
     createLayerWindow({ page: 'cursor', acceptFirstMouse: false })
 
     expect(state.calls).toEqual([
@@ -139,11 +139,11 @@ describe('createLayerWindow: the shared contract', () => {
 
   it('loads the page it was given, and only that page', async () => {
     const { createLayerWindow } = await loadLayerWindow()
-    createLayerWindow({ page: 'pointer', acceptFirstMouse: true })
+    createLayerWindow({ page: 'drawing', acceptFirstMouse: true })
     createLayerWindow({ page: 'cursor', acceptFirstMouse: false })
 
     expect(state.loaded).toEqual([
-      expect.stringContaining('/pointer/index.html'),
+      expect.stringContaining("/drawing/index.html"),
       expect.stringContaining('/cursor/index.html')
     ])
   })
@@ -151,7 +151,7 @@ describe('createLayerWindow: the shared contract', () => {
   it('runs onClosed when the window closes, and wires nothing when omitted', async () => {
     const { createLayerWindow } = await loadLayerWindow()
     const closed = vi.fn()
-    createLayerWindow({ page: 'pointer', acceptFirstMouse: true, onClosed: closed })
+    createLayerWindow({ page: 'drawing', acceptFirstMouse: true, onClosed: closed })
     createLayerWindow({ page: 'cursor', acceptFirstMouse: false })
 
     expect(state.closedHandlers).toHaveLength(1)
@@ -221,7 +221,7 @@ describe('sameScreenRect', () => {
 describe('createLayerWindow: the differences stay parameters', () => {
   it('passes acceptFirstMouse through instead of unifying it', async () => {
     const { createLayerWindow } = await loadLayerWindow()
-    createLayerWindow({ page: 'pointer', acceptFirstMouse: true })
+    createLayerWindow({ page: 'drawing', acceptFirstMouse: true })
     createLayerWindow({ page: 'cursor', acceptFirstMouse: false })
 
     expect(state.options[0]?.['acceptFirstMouse']).toBe(true)
@@ -230,7 +230,7 @@ describe('createLayerWindow: the differences stay parameters', () => {
 
   it('opens HTTPS:// only for the case-insensitive layer', async () => {
     const { createLayerWindow } = await loadLayerWindow()
-    createLayerWindow({ page: 'pointer', acceptFirstMouse: true })
+    createLayerWindow({ page: 'drawing', acceptFirstMouse: true })
     createLayerWindow({
       page: 'cursor',
       acceptFirstMouse: false,
@@ -245,7 +245,7 @@ describe('createLayerWindow: the differences stay parameters', () => {
 
   it('never navigates in-window: every url is denied', async () => {
     const { createLayerWindow } = await loadLayerWindow()
-    createLayerWindow({ page: 'pointer', acceptFirstMouse: true })
+    createLayerWindow({ page: 'drawing', acceptFirstMouse: true })
 
     for (const url of ['https://example.com', 'file:///etc/passwd', 'javascript:1']) {
       expect(state.handlers[0]?.({ url })).toEqual({ action: 'deny' })

@@ -5,10 +5,11 @@ import {
   PROVIDERS,
   WHISPER_MODELS,
   normalizeBaseUrl,
+  normalizeSettings,
   providerInfo,
   resolveSearchModel,
   resolveBaseUrl,
-  whisperModel
+  voiceModel
 } from './defaults'
 
 describe('providerInfo: the lookup that guards a provider id', () => {
@@ -58,17 +59,21 @@ describe('PROVIDERS: the catalog itself', () => {
   })
 })
 
-describe('whisperModel: the lookup that guards a model id', () => {
-  it('finds every catalog model by id', () => {
+describe('voiceModel: the lookup that guards a model id', () => {
+  it('finds every whisper catalog model by id', () => {
+    // The whisper entries are wrapped into `VOICE_MODELS` with an engine and a
+    // download URL, so the identity check is on what the wrapper copies over.
     for (const model of WHISPER_MODELS) {
-      expect(whisperModel(model.id)).toBe(model)
+      const resolved = voiceModel(model.id)
+      expect(resolved?.file, model.id).toBe(model.file)
+      expect(resolved?.engine, model.id).toBe('whisper')
     }
   })
 
   it('returns undefined for an unknown id', () => {
-    expect(whisperModel('')).toBeUndefined()
-    expect(whisperModel('large-v4')).toBeUndefined()
-    expect(whisperModel('Small')).toBeUndefined()
+    expect(voiceModel('')).toBeUndefined()
+    expect(voiceModel('large-v4')).toBeUndefined()
+    expect(voiceModel('Small')).toBeUndefined()
   })
 
   it('has unique ids and unique file names ending in .bin', () => {
@@ -179,5 +184,28 @@ describe('resolveSearchModel: the search model falls back to the chat model', ()
 
   it('is empty when the user has chosen nothing at all', () => {
     expect(resolveSearchModel({ ...settings, provider: 'anthropic' })).toBe('')
+  })
+})
+
+describe('sanitizeVoiceModel: a choice that exists', () => {
+  it('keeps an explicit empty value as "nothing chosen"', () => {
+    // `''` is how the app says "no model selected" after the last one was
+    // deleted. Filling it with the default is what made a fresh install claim a
+    // model that was never downloaded.
+    expect(normalizeSettings({ voice: { model: '' } }).voice.model).toBe('')
+  })
+
+  it('falls back to the shipped model when the key is absent', () => {
+    expect(normalizeSettings({ voice: {} }).voice.model).toBe('small-q5_1')
+    expect(normalizeSettings({}).voice.model).toBe('small-q5_1')
+  })
+
+  it('keeps an imported model outside the catalog', () => {
+    expect(normalizeSettings({ voice: { model: 'ggml-custom.bin' } }).voice.model)
+      .toBe('ggml-custom.bin')
+  })
+
+  it('rejects a name that is neither a catalog id nor a model file', () => {
+    expect(normalizeSettings({ voice: { model: 'large-v4' } }).voice.model).toBe('small-q5_1')
   })
 })

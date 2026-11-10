@@ -290,7 +290,7 @@ describe('[OI]Provider: failures', () => {
     respond(null, 401)
 
     await expect(drain(provider().stream(messages, '', options()))).rejects.toThrow(
-      'Ключ [OI] не принят. Проверьте ключ в настройках.'
+      'Ключ [OI] не принят. Проверь ключ в настройках.'
     )
   })
 
@@ -367,7 +367,7 @@ describe('OpenRouterProvider: the same dialect plus attribution', () => {
 
     await expect(
       drain(new OpenRouterProvider().stream(messages, 'sk-or', options()))
-    ).rejects.toThrow('Недостаточно средств на счёте OpenRouter.')
+    ).rejects.toThrow('Ключ OpenRouter действителен, но на счёте нет средств.')
   })
 
   it('reads the stream exactly as [OI] does', async () => {

@@ -15,7 +15,7 @@
  */
 
 import { CH } from '@shared/ipc'
-import type { TranscribeResult, VoiceEvent, VoicePhase } from '@shared/types'
+import type { TranscribeResult, VoiceErrorCode, VoiceEvent, VoicePhase } from '@shared/types'
 import { pasteAnswer } from '../paste'
 import { helperBinary } from '../native/helper'
 import { getSettings } from '../settings/store'
@@ -126,12 +126,16 @@ export function createVoiceController(host: VoiceHost) {
       phase: event.phase,
       level: event.level ?? level,
       text: event.text,
-      error: event.error
+      error: event.error,
+      code: event.code
     }
     host.emit(CH.voice.event, payload)
   }
 
-  function setPhase(next: VoicePhase, extra?: { text?: string; error?: string }): void {
+  function setPhase(
+    next: VoicePhase,
+    extra?: { text?: string; error?: string; code?: VoiceErrorCode }
+  ): void {
     phase = next
     startedAt = Date.now()
     level = 0
@@ -178,7 +182,7 @@ export function createVoiceController(host: VoiceHost) {
           return
         }
         if (Date.now() - startedAt < getSettings().voice.maxDurationMs) return
-        abortTurnWithError('Запись остановлена: слишком долго.')
+        abortTurnWithError('Запись остановлена: слишком долго.', 'recordTooLong')
       }, WATCHDOG_MS)
       return
     }
@@ -193,8 +197,9 @@ export function createVoiceController(host: VoiceHost) {
       if (mine !== turn) return
       abortTurnWithError(
         busy
-          ? 'Распознавание не ответило — попробуйте ещё раз.'
-          : 'Запись не дошла до распознавания — попробуйте ещё раз.'
+          ? 'Распознавание не ответило — попробуй ещё раз.'
+          : 'Запись не дошла до распознавания — попробуй ещё раз.',
+        busy ? 'transcribeFailed' : 'recordFailed'
       )
     }, limit)
   }
@@ -206,14 +211,14 @@ export function createVoiceController(host: VoiceHost) {
    * is the ordinary ending, for a turn that produced a transcript or was
    * dismissed.
    */
-  function abortTurnWithError(message: string): void {
+  function abortTurnWithError(message: string, code?: VoiceErrorCode): void {
     turn += 1
     if (phase === 'listening') host.emit(CH.voice.stop, { transcribe: false })
     abort?.abort()
     abort = null
     busy = false
     console.warn('[voice]', message)
-    finishIdle({ error: message })
+    finishIdle({ error: message, code })
   }
 
   /**
@@ -230,7 +235,7 @@ export function createVoiceController(host: VoiceHost) {
   }
 
   /** Ends the turn: one event carries both the new phase and its explanation. */
-  function finishIdle(payload: { text?: string; error?: string }): void {
+  function finishIdle(payload: { text?: string; error?: string; code?: VoiceErrorCode }): void {
     host.setVoice(false)
     // Dictation never leaves anything on screen: the words went into the user's
     // own app, so a card would have nothing to show and would sit there as an
@@ -349,14 +354,14 @@ export function createVoiceController(host: VoiceHost) {
     if (!result) {
       // No recorder at all: the microphone never opened.
       busy = false
-      finishIdle({ error: 'Запись не удалась — микрофон недоступен.' })
+      finishIdle({ error: 'Запись не удалась — микрофон недоступен.', code: 'noMic' })
       return { ok: false, text: '', ms: 0, message: 'Запись не удалась.' }
     }
     if (!result.wavBase64) {
       // The recorder ran but found no speech: silence, or a press too short to be
       // a phrase. An error message would be wrong — nothing failed.
       busy = false
-      finishIdle({ error: 'Ничего не расслышал — попробуйте ещё раз.' })
+      finishIdle({ error: 'Ничего не расслышал — попробуй ещё раз.', code: 'notHeard' })
       return { ok: false, text: '', ms: 0, message: 'Речь не распознана.' }
     }
 
@@ -384,7 +389,7 @@ export function createVoiceController(host: VoiceHost) {
         return transcribed
       }
       if (!transcribed.ok) {
-        finishIdle({ error: transcribed.message })
+        finishIdle({ error: transcribed.message, code: 'transcribeFailed' })
         return transcribed
       }
       applyTranscript(transcribed.text)
@@ -392,7 +397,7 @@ export function createVoiceController(host: VoiceHost) {
       return transcribed
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Распознавание не удалось.'
-      if (mine === turn) finishIdle({ error: message })
+      if (mine === turn) finishIdle({ error: message, code: 'transcribeFailed' })
       return { ok: false, text: '', ms: 0, message }
     } finally {
       busy = false
@@ -417,7 +422,7 @@ export function createVoiceController(host: VoiceHost) {
   /** Reports a recorder failure (no microphone, permission denied). */
   function failed(message: string): void {
     busy = false
-    finishIdle({ error: message })
+    finishIdle({ error: message, code: 'noMic' })
   }
 
   /** Loudness tick from the renderer, forwarded as-is into the overlay event. */

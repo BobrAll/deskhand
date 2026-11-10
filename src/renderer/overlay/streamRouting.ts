@@ -27,7 +27,14 @@ export type StreamAction =
   /** The turn ended; this is the authoritative text. */
   | { kind: 'done'; text: string; clearSpoken: boolean }
   /** The turn ended in a failure. */
-  | { kind: 'error'; message: string; retryable: boolean; clearSpoken: boolean }
+  | {
+      kind: 'error'
+      message: string
+      retryable: boolean
+      /** Present when the failure has a kind the card reacts to differently. */
+      code?: Extract<StreamEvent, { type: 'error' }>['code']
+      clearSpoken: boolean
+    }
   /** Not ours, or a chunk that arrived after the card stopped waiting. */
   | { kind: 'ignore' }
 
@@ -72,5 +79,11 @@ export function routeStream(event: StreamEvent, state: StreamState): StreamActio
     return { kind: 'done', text: event.text, clearSpoken }
   }
 
-  return { kind: 'error', message: event.message, retryable: event.retryable, clearSpoken }
+  return {
+    kind: 'error',
+    message: event.message,
+    retryable: event.retryable,
+    code: event.code,
+    clearSpoken
+  }
 }

@@ -1,5 +1,4 @@
 import Foundation
-import AppKit
 import ApplicationServices
 import CoreGraphics
 
@@ -11,8 +10,6 @@ public enum SystemPermissions {
     public struct Status: Sendable {
         public var accessibility: Bool
         public var screenRecording: Bool
-
-        public var allGranted: Bool { accessibility && screenRecording }
 
         public var summary: String {
             var missing: [String] = []
@@ -43,12 +40,5 @@ public enum SystemPermissions {
     public static func requestScreenRecording() -> Bool {
         if CGPreflightScreenCaptureAccess() { return true }
         return CGRequestScreenCaptureAccess()
-    }
-
-    public static func openAccessibilityPrivacySettings() {
-        let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")
-        if let url {
-            NSWorkspace.shared.open(url)
-        }
     }
 }

@@ -19,7 +19,8 @@ import { cpus, homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pipeline } from 'node:stream/promises'
 import { app } from 'electron'
-import { VOICE_MODELS, voiceModel, WHISPER_MODELS } from '@shared/defaults'
+import { isVoiceModelFile, VOICE_MODELS, voiceModel, WHISPER_MODELS } from '@shared/defaults'
+import { resourceCandidates } from '../paths'
 import type { DownloadProgress, TranscribeResult, VoiceStatus } from '@shared/types'
 import { getSettings } from '../settings/store'
 
@@ -67,17 +68,11 @@ export function modelsDir(): string {
  */
 export function resolveBinary(engine: 'whisper' | 'transcribe' = 'whisper'): string | null {
   const name = binaryName(engine)
-  const bundled = app.isPackaged
-    ? [join(process.resourcesPath, name)]
-    : [join(app.getAppPath(), 'resources', name), join(process.cwd(), 'resources', name)]
-  for (const candidate of [...bundled, join('/opt/homebrew/bin', name), join('/usr/local/bin', name)]) {
-    if (existsSync(candidate)) return candidate
-  }
-  return null
-}
-
-function isModelFile(name: string): boolean {
-  return /^ggml-[^/\\]*\.bin$/.test(name)
+  const candidates = resourceCandidates(name, [
+    join('/opt/homebrew/bin', name),
+    join('/usr/local/bin', name)
+  ])
+  return candidates.find((candidate) => existsSync(candidate)) ?? null
 }
 
 /** Ids of the catalog models that are already on disk. */
@@ -90,7 +85,29 @@ export async function installedModels(): Promise<string[]> {
   }
   const present = new Set(entries)
   const catalog = VOICE_MODELS.filter((model) => present.delete(model.file)).map((model) => model.id)
-  return [...catalog, ...Array.from(present).filter(isModelFile).sort()]
+  return [...catalog, ...Array.from(present).filter(isVoiceModelFile).sort()]
+}
+
+/**
+ * The model that will actually be used, and which one that is.
+ *
+ * `id` is the catalog id of the resolved file, or the file name for a model the
+ * app does not know (an imported `ggml-*.bin`), or `null` when nothing resolves.
+ * The settings can point at a model that is not on disk; this is what says what
+ * will really run, so the settings window can show a selection that exists
+ * instead of one that does not.
+ */
+export interface ResolvedModel {
+  path: string | null
+  /** True when the configured model was missing and another one was picked. */
+  auto: boolean
+  id: string | null
+}
+
+/** The catalog id for a model file, or the file name when it is not in the catalog. */
+function modelIdFor(path: string): string {
+  const file = path.split('/').pop() ?? path
+  return VOICE_MODELS.find((model) => model.file === file)?.id ?? file
 }
 
 /**
@@ -100,14 +117,14 @@ export async function installedModels(): Promise<string[]> {
  */
 export async function resolveWhisperModel(
   configured = voiceModel(getSettings().voice.model)
-): Promise<{ path: string | null; auto: boolean }> {
+): Promise<ResolvedModel> {
   if (configured) {
     const inAppDir = join(modelsDir(), configured.file)
-    if (existsSync(inAppDir)) return { path: inAppDir, auto: false }
-    if (configured.engine === 'transcribe') return { path: null, auto: false }
+    if (existsSync(inAppDir)) return { path: inAppDir, auto: false, id: configured.id }
+    if (configured.engine === 'transcribe') return { path: null, auto: false, id: null }
     for (const dir of MODEL_SEARCH_DIRS) {
       const candidate = join(dir, configured.file)
-      if (existsSync(candidate)) return { path: candidate, auto: true }
+      if (existsSync(candidate)) return { path: candidate, auto: true, id: configured.id }
     }
   }
 
@@ -120,7 +137,7 @@ export async function resolveWhisperModel(
       continue
     }
     for (const entry of entries) {
-      if (!isModelFile(entry)) continue
+      if (!isVoiceModelFile(entry)) continue
       const path = join(dir, entry)
       try {
         found.push({ path, size: (await stat(path)).size })
@@ -130,7 +147,8 @@ export async function resolveWhisperModel(
     }
   }
   found.sort((a, b) => b.size - a.size)
-  return { path: found[0]?.path ?? null, auto: true }
+  const path = found[0]?.path ?? null
+  return { path, auto: true, id: path ? modelIdFor(path) : null }
 }
 
 export async function voiceStatus(): Promise<VoiceStatus> {
@@ -143,15 +161,23 @@ export async function voiceStatus(): Promise<VoiceStatus> {
   if (!binary) {
     detail =
       engine === 'transcribe'
-        ? 'Не найден transcribe-cli — выполните npm run build:transcribe.'
-        : 'Не найден whisper-cli — пересоберите приложение (npm run build:whisper).'
+        ? 'Не найден transcribe-cli — выполни npm run build:transcribe.'
+        : 'Не найден whisper-cli — пересобери приложение (npm run build:whisper).'
+  } else if (!model.path) {
+    // Say which model is missing when the settings point at one: "выбери её"
+    // is useless advice if the user already chose it and only the file is gone.
+    detail = configured
+      ? `Модель «${configured.label}» не скачана — скачай её в настройках.`
+      : 'Не скачана модель распознавания — выбери её в настройках.'
   }
-  else if (!model.path) detail = 'Не скачана модель распознавания — выберите её в настройках.'
   return {
     ready: Boolean(binary && model.path),
     enabled: voice.enabled,
     detail,
     modelPath: model.path,
+    // What will actually transcribe. A selection that is not on disk is not a
+    // selection, and the settings window shows this rather than the setting.
+    activeModel: model.id,
     binaryPath: binary,
     modelsDir: modelsDir(),
     installed: await installedModels(),
@@ -227,7 +253,7 @@ export async function transcribe(options: TranscribeOptions): Promise<Transcribe
     if (!text) {
       // Silence is not alarming, but it must not look like a successful empty
       // answer either: the card would sit there with nothing in it.
-      return { ok: false, text: '', ms, message: 'Речь не распознана — попробуйте ещё раз.' }
+      return { ok: false, text: '', ms, message: 'Речь не распознана — попробуй ещё раз.' }
     }
     return { ok: true, text, ms }
   } catch (error) {
@@ -322,7 +348,7 @@ export function downloadModel(
   const task = (async (): Promise<void> => {
     await mkdir(modelsDir(), { recursive: true })
     const controller = new AbortController()
-    const timeout = new Error('Сервер загрузки модели не отвечает. Попробуйте снова.')
+    const timeout = new Error('Сервер загрузки модели не отвечает. Попробуй снова.')
     const abort = (): void => controller.abort(timeout)
     let timer = setTimeout(abort, DOWNLOAD_IDLE_TIMEOUT_MS)
     let received = 0
@@ -358,7 +384,7 @@ export function downloadModel(
 
       await pipeline(chunks(), createWriteStream(part), { signal: controller.signal })
       if (!received || (contentLength && !response.headers.has('content-encoding') && received !== contentLength)) {
-        throw new Error('Файл модели загрузился не полностью. Попробуйте снова.')
+        throw new Error('Файл модели загрузился не полностью. Попробуй снова.')
       }
     } catch (error) {
       if (controller.signal.aborted) throw timeout
@@ -393,9 +419,9 @@ export function downloadModel(
 /** Removes only model files stored in the app's models directory. */
 export async function deleteModel(id: string): Promise<void> {
   const model = voiceModel(id) ?? WHISPER_MODELS.find((model) => model.file === id)
-  if (model && isDownloading(model.id)) throw new Error('Дождитесь окончания загрузки модели.')
+  if (model && isDownloading(model.id)) throw new Error('Дождись окончания загрузки модели.')
   const file = model?.file ?? id
-  if (!model && !isModelFile(file)) throw new Error('Неизвестная модель распознавания.')
+  if (!model && !isVoiceModelFile(file)) throw new Error('Неизвестная модель распознавания.')
   await rm(join(modelsDir(), file), { force: true })
 }
 
@@ -405,7 +431,7 @@ export async function deleteModel(id: string): Promise<void> {
  */
 export async function importModel(source: string): Promise<string> {
   const name = source.split('/').pop() ?? ''
-  if (!isModelFile(name)) throw new Error('Нужен файл модели whisper: ggml-*.bin.')
+  if (!isVoiceModelFile(name)) throw new Error('Нужен файл модели whisper: ggml-*.bin.')
   await mkdir(modelsDir(), { recursive: true })
   await copyFile(source, join(modelsDir(), name))
   return WHISPER_MODELS.find((model) => model.file === name)?.id ?? name

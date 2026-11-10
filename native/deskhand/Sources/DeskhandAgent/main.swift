@@ -25,8 +25,9 @@ struct CLI {
     var maxSteps: Int = 40
     var verbose = true
     var quietAboutDefaults = false
-    var dryRun = false
-    var showConfig = false
+    /// Print the resolved config and exit. `--dry-run` is the same request under
+    /// the older name, so both set this.
+    var printResolvedConfig = false
     var timings = true
     /// Serve the app instead of running one task from the command line.
     var serve = false
@@ -55,13 +56,17 @@ func parseArguments() throws -> CLI {
             cli.verbose = false
         case "--quiet-about-defaults":
             cli.quietAboutDefaults = true
-        case "--dry-run":
-            cli.dryRun = true
-        case "--show-config":
-            cli.showConfig = true
+        case "--dry-run", "--show-config":
+            // Kept as two spellings of one behaviour: `--dry-run` predates
+            // `--show-config`, and both mean "resolve the config, print it, do
+            // not run a task". No script breaks, and neither flag needs its own
+            // branch.
+            cli.printResolvedConfig = true
         case "--serve":
             cli.serve = true
         case "--timings":
+            // Timings are on by default; the flag exists so a wrapper script can
+            // ask for them explicitly after a `--no-timings` in an alias.
             cli.timings = true
         case "--no-timings":
             cli.timings = false
@@ -98,10 +103,13 @@ func printUsage() {
           -w, --wire WIRE      openai (default) or anthropic
           -c, --config PATH    config file (default ~/.deskhand/config.toml)
               --max-steps N    stop after N model turns (default 40)
-              --dry-run        print the resolved config and exit
+              --dry-run        print the resolved config and exit (same as --show-config)
+              --show-config    print the resolved config and exit
+              --timings        show per-step and per-phase timings (default)
               --no-timings     hide per-step and per-phase timings
           -q, --quiet          only print the final answer
-              --show-config    print the resolved config and exit
+              --quiet-about-defaults
+                               do not warn when no base_url is configured
 
         ENVIRONMENT
           DESKHAND_API_KEY, OPENAI_API_KEY, ANTHROPIC_API_KEY
@@ -121,10 +129,19 @@ func printUsage() {
 
 func buildConfig(_ cli: CLI) throws -> ProviderConfig {
     var config = try ConfigLoader.load(path: cli.configPath)
-    if let wire = cli.wire, let parsed = ProviderConfig.Wire(rawValue: wire) {
+    if let wire = cli.wire {
+        guard let parsed = ProviderConfig.Wire(rawValue: wire) else {
+            throw ConfigError.invalidValue("--wire \"\(wire)\" — use \"openai\" or \"anthropic\"")
+        }
         config.wire = parsed
     }
-    if let base = cli.baseURL, let url = URL(string: base) {
+    if let base = cli.baseURL {
+        // Same rule as the config file: a base URL that does not parse must not
+        // be dropped, because the fallback is api.openai.com and the user's key
+        // would go there instead of the endpoint they asked for.
+        guard let url = URL(string: base), url.scheme != nil, url.host != nil else {
+            throw ConfigError.invalidValue("--base-url \"\(base)\" is not a URL")
+        }
         config.baseURL = url
     }
     if let model = cli.model {
@@ -170,7 +187,7 @@ do {
     exit(2)
 }
 
-if cli.showConfig || cli.dryRun {
+if cli.printResolvedConfig {
     print("wire:      \(config.wire.rawValue)")
     print("base_url:  \(config.baseURL.absoluteString)")
     print("endpoint:  \(config.endpointURL.absoluteString)")

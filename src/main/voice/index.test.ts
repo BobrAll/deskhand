@@ -367,7 +367,7 @@ describe('createVoiceController: recognition', () => {
     const result = await voice.handleRecording({ wavBase64: '', durationMs: 800 })
 
     expect(result.message).toBe('Речь не распознана.')
-    expect(lastEvent(host).error).toBe('Ничего не расслышал — попробуйте ещё раз.')
+    expect(lastEvent(host).error).toBe('Ничего не расслышал — попробуй ещё раз.')
     expect(voice.phase()).toBe('idle')
   })
 
@@ -606,7 +606,7 @@ describe('createVoiceController: the watchdogs', () => {
     vi.advanceTimersByTime(5000)
 
     expect(voice.phase()).toBe('idle')
-    expect(lastEvent(host).error).toBe('Запись не дошла до распознавания — попробуйте ещё раз.')
+    expect(lastEvent(host).error).toBe('Запись не дошла до распознавания — попробуй ещё раз.')
   })
 
   it('closes a turn whose recognition hangs, with the longer budget', async () => {
@@ -622,7 +622,7 @@ describe('createVoiceController: the watchdogs', () => {
     await vi.advanceTimersByTimeAsync(30_000)
 
     expect(voice.phase()).toBe('idle')
-    expect(lastEvent(host).error).toBe('Распознавание не ответило — попробуйте ещё раз.')
+    expect(lastEvent(host).error).toBe('Распознавание не ответило — попробуй ещё раз.')
   })
 
   it('drops the watchdog of a superseded turn', () => {

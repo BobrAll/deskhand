@@ -50,18 +50,21 @@ public enum ElementActions {
         return element.focused()
     }
 
+    /// Presses an element through an accessibility action.
+    ///
+    /// `AXPressAction` is the normal route. `AXConfirmAction` — the default
+    /// button of a sheet — is only tried after the element advertised a press
+    /// that the app refused; the click path only calls this for elements that
+    /// expose `AXPressAction` at all.
+    ///
+    /// There is deliberately no focus fallback. Focusing is not pressing, and
+    /// returning success for it made the caller report "Pressed element N" for
+    /// an element that had merely taken focus.
     @discardableResult
     public static func press(_ element: AXElement) throws -> Bool {
         let actions = element.actionNames()
-        if actions.contains(kAXPressAction) {
-            if element.perform(kAXPressAction) { return true }
-        }
-        if actions.contains(kAXConfirmAction) {
-            if element.perform(kAXConfirmAction) { return true }
-        }
-        if element.setValue(true, for: kAXFocusedAttribute) {
-            return true
-        }
+        if actions.contains(kAXPressAction), element.perform(kAXPressAction) { return true }
+        if actions.contains(kAXConfirmAction), element.perform(kAXConfirmAction) { return true }
         throw ActionError.failed(
             "element does not support a press action (actions: \(actions.joined(separator: ", ")))")
     }
@@ -200,20 +203,27 @@ public enum ElementActions {
         _ = element.setValue(true, for: kAXFocusedAttribute)
         Thread.sleep(forTimeInterval: 0.05)
 
-        let nsRange = NSRange(location: range.lowerBound, length: range.count)
+        // `locate` counts Characters because that is the unit the model sees and
+        // the unit arrow keys move by; `AXSelectedTextRange` counts UTF-16 code
+        // units. The two agree on ASCII and diverge from the first emoji, so the
+        // conversion happens here, at the boundary.
+        let nsRange = utf16Range(range, in: fullText)
         // Try the precise accessibility range first: it is instant and does not
         // disturb the user's selection elsewhere.
         if let selected = element.setSelectedTextRange(nsRange) {
             if mode == .text { return }
             // For caret placement, collapse the selection.
-            let caret = mode == .cursorBefore ? range.lowerBound : range.upperBound
+            let caret = mode == .cursorBefore ? nsRange.location : nsRange.location + nsRange.length
             if element.setSelectedTextRange(NSRange(location: caret, length: 0)) != nil {
                 return
             }
             _ = selected
         }
 
-        // Fallback: keyboard navigation from a known caret position.
+        // Fallback: keyboard navigation from a known caret position. Arrow keys
+        // move by grapheme cluster, which is the unit `locate` already counted,
+        // so this deliberately keeps the Character offsets rather than the
+        // UTF-16 range.
         try navigateToRange(
             start: range.lowerBound,
             length: mode == .text ? range.count : 0
@@ -251,6 +261,19 @@ public enum ElementActions {
         let lower = text.distance(from: text.startIndex, to: chosen.lowerBound)
         let upper = text.distance(from: text.startIndex, to: chosen.upperBound)
         return lower..<upper
+    }
+
+    /// A range of Character offsets as the UTF-16 range `AXSelectedTextRange`
+    /// expects.
+    ///
+    /// `locate` counts grapheme clusters; the accessibility attribute counts
+    /// UTF-16 code units. With a non-BMP character before the target the two
+    /// disagree — in "😀 cat" the target starts at Character 2 but at UTF-16 3
+    /// — and using the Character offset as the location selects the wrong text.
+    static func utf16Range(_ range: Range<Int>, in text: String) -> NSRange {
+        let start = text.index(text.startIndex, offsetBy: range.lowerBound)
+        let end = text.index(text.startIndex, offsetBy: range.upperBound)
+        return NSRange(start..<end, in: text)
     }
 
     /// Keyboard fallback for elements that do not expose `AXSelectedTextRange`

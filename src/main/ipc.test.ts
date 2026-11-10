@@ -45,7 +45,7 @@ vi.mock('electron', () => ({
     }
   },
   dialog: {
-    showOpenDialog: async () => ({ canceled: true, filePaths: [] })
+    showOpenDialog: vi.fn(async () => ({ canceled: true, filePaths: [] }))
   },
   shell: {
     openExternal: async () => undefined,
@@ -94,7 +94,10 @@ vi.mock('./settings/store', async () => {
   const { DEFAULT_SETTINGS } = await import('@shared/defaults')
   return {
     getSettings: () => DEFAULT_SETTINGS,
-    patchSettings: (patch: Partial<typeof DEFAULT_SETTINGS>) => ({ ...DEFAULT_SETTINGS, ...patch }),
+    patchSettings: vi.fn((patch: Partial<typeof DEFAULT_SETTINGS>) => ({
+      ...DEFAULT_SETTINGS,
+      ...patch
+    })),
     storeRecovered: () => false
   }
 })
@@ -116,15 +119,18 @@ vi.mock('./native/helper', () => ({
 }))
 
 vi.mock('./voice/recognizer', () => ({
-  downloadModel: async () => undefined,
-  importModel: async () => 'tiny',
-  deleteModel: async () => undefined,
+  downloadModel: vi.fn(async () => undefined),
+  importModel: vi.fn(async () => 'tiny'),
+  deleteModel: vi.fn(async () => undefined),
+  resolveWhisperModel: vi.fn(async () => ({ path: null, auto: true, id: null })),
   voiceStatus: async () => ({ ready: true, model: 'tiny', detail: null })
 }))
 
 vi.mock('./llm/testKey', () => ({ testApiKey: async () => ({ ok: true }) }))
 
 import { registerIpc, type IpcDeps } from './ipc'
+import { getSettings, patchSettings } from './settings/store'
+import { deleteModel, downloadModel, importModel, resolveWhisperModel } from './voice/recognizer'
 
 /** Every method of `IpcDeps`, each a spy: the wiring is what is under test. */
 function fakeDeps(): IpcDeps {
@@ -134,7 +140,7 @@ function fakeDeps(): IpcDeps {
       send: vi.fn(async () => undefined),
       cancel: vi.fn(),
       setFlags: vi.fn(),
-      clearPointer: vi.fn(),
+      clearDrawing: vi.fn(),
       setTyping: vi.fn(),
       resize: vi.fn(),
       close: vi.fn(),
@@ -182,7 +188,7 @@ const MAIN_TO_RENDERER = new Set<string>([
   CH.overlay.contextUpdate,
   CH.overlay.stream,
   CH.overlay.annotations,
-  CH.pointer.draw,
+  CH.drawing.draw,
   CH.agent.event,
   CH.agent.cursor,
   CH.agent.presentation,
@@ -369,5 +375,106 @@ describe('registerIpc: onboarding completion', () => {
     const complete = electron.handles.get(CH.onboarding.complete)!
     await complete()
     expect(deps.quit).not.toHaveBeenCalled()
+  })
+})
+
+describe('registerIpc: choosing a recognition model', () => {
+  /** A download reports progress to the window that asked; nothing else is read. */
+  const window = { sender: { isDestroyed: () => true, send: () => undefined } }
+
+  it('selects a model as soon as its download finishes', async () => {
+    const deps = fakeDeps()
+    electron.reset()
+    registerIpc(deps)
+    vi.mocked(downloadModel).mockClear()
+    vi.mocked(patchSettings).mockClear()
+
+    const download = electron.handles.get(CH.voice.download)!
+    await download(window, 'large-v3-turbo-q5_0')
+
+    // Asking for the file and then having to click the row again is a step that
+    // only existed because the two were separate.
+    expect(patchSettings).toHaveBeenCalledWith({
+      voice: expect.objectContaining({ model: 'large-v3-turbo-q5_0' })
+    })
+  })
+
+  it('leaves the selection alone when the download failed', async () => {
+    const deps = fakeDeps()
+    electron.reset()
+    registerIpc(deps)
+    vi.mocked(downloadModel).mockRejectedValueOnce(new Error('offline'))
+    vi.mocked(patchSettings).mockClear()
+
+    const download = electron.handles.get(CH.voice.download)!
+    await download(window, 'large-v3-turbo-q5_0')
+
+    expect(patchSettings).not.toHaveBeenCalled()
+  })
+
+  it('selects an imported model', async () => {
+    const deps = fakeDeps()
+    electron.reset()
+    registerIpc(deps)
+    vi.mocked(importModel).mockResolvedValueOnce('ggml-custom.bin')
+    vi.mocked(patchSettings).mockClear()
+    const { dialog } = await import('electron')
+    vi.mocked(dialog.showOpenDialog).mockResolvedValueOnce({
+      canceled: false,
+      filePaths: ['/tmp/ggml-custom.bin']
+    } as never)
+
+    const picker = electron.handles.get(CH.voice.importModel)!
+    await picker()
+
+    expect(patchSettings).toHaveBeenCalledWith({
+      voice: expect.objectContaining({ model: 'ggml-custom.bin' })
+    })
+  })
+
+  it('moves the selection off a model it just deleted', async () => {
+    const deps = fakeDeps()
+    electron.reset()
+    registerIpc(deps)
+    vi.mocked(deleteModel).mockClear()
+    vi.mocked(resolveWhisperModel).mockResolvedValueOnce({ path: '/x/ggml-tiny.bin', auto: true, id: 'tiny' })
+    vi.mocked(patchSettings).mockClear()
+    // The defaults point at small-q5_1, which is the model being removed.
+    expect(getSettings().voice.model).toBe('small-q5_1')
+
+    const remove = electron.handles.get(CH.voice.deleteModel)!
+    await remove({}, 'small-q5_1')
+
+    expect(patchSettings).toHaveBeenCalledWith({
+      voice: expect.objectContaining({ model: 'tiny' })
+    })
+  })
+
+  it('clears the selection when the deleted model was the last one', async () => {
+    const deps = fakeDeps()
+    electron.reset()
+    registerIpc(deps)
+    vi.mocked(resolveWhisperModel).mockResolvedValueOnce({ path: null, auto: true, id: null })
+    vi.mocked(patchSettings).mockClear()
+
+    const remove = electron.handles.get(CH.voice.deleteModel)!
+    await remove({}, 'small-q5_1')
+
+    // `''` is "nothing chosen", and it is what the pane shows as such.
+    expect(patchSettings).toHaveBeenCalledWith({
+      voice: expect.objectContaining({ model: '' })
+    })
+  })
+
+  it('does not touch the selection when another model was deleted', async () => {
+    const deps = fakeDeps()
+    electron.reset()
+    registerIpc(deps)
+    vi.mocked(patchSettings).mockClear()
+
+    const remove = electron.handles.get(CH.voice.deleteModel)!
+    await remove({}, 'tiny')
+
+    expect(patchSettings).not.toHaveBeenCalled()
   })
 })

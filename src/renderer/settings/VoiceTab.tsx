@@ -34,6 +34,13 @@ function megabytes(bytes: number): string {
 interface ModelListProps {
   /** The model the settings point at. */
   model: string
+  /**
+   * The model that will actually transcribe, from the main process.
+   *
+   * `null` when nothing on disk matches — the settings can point at a model that
+   * was never downloaded, and that must not read as "selected".
+   */
+  activeModel: string | null
   installed: ReadonlySet<string>
   progress: DownloadProgress | null
   deleting: string | null
@@ -47,6 +54,7 @@ interface ModelListProps {
 /** Which recognition models are on disk, and the ways to get more of them. */
 function ModelList({
   model,
+  activeModel,
   installed,
   progress,
   deleting,
@@ -56,7 +64,23 @@ function ModelList({
   onImport,
   onRemove
 }: ModelListProps) {
-  const selected = voiceModel(model)
+  const configured = voiceModel(model)
+  const active = voiceModel(activeModel ?? '')
+  /**
+   * What the footer says about the selection.
+   *
+   * Three cases, and they are different things: a model that is on disk and in
+   * use; a chosen model that is missing while another one covers for it; and
+   * nothing at all. Saying "выбрана" in the second case is what made a fresh
+   * install claim a model it did not have.
+   */
+  const selectionHint = activeModel === null
+    ? 'Модель не выбрана — скачай одну из списка.'
+    : !active
+      ? `Используется файл «${activeModel}».`
+      : configured && configured.id !== activeModel
+        ? `«${configured.label}» не скачана — используется «${active.label}».`
+        : `Выбрана «${active.label}».`
 
   function renderDeleteButton(id: string, label: string) {
     return (
@@ -83,17 +107,34 @@ function ModelList({
           const modelReady = installed.has(entry.id)
           const downloadingThisModel = progress?.model === entry.id && !progress.done
           const share = progress && progress.total > 0 ? progress.received / progress.total : 0
+          const name = (
+            <>
+              <span className="model-name">
+                {entry.label}
+                {entry.recommended && <span className="badge">рекомендовано</span>}
+              </span>
+              <span className="model-meta">
+                {entry.mb} МБ · {entry.note}
+              </span>
+            </>
+          )
           return (
-            <div key={entry.id} className="model-row" data-active={model === entry.id}>
-              <button className="model-pick" onClick={() => onPick(entry.id)}>
-                <span className="model-name">
-                  {entry.label}
-                  {entry.recommended && <span className="badge">рекомендовано</span>}
-                </span>
-                <span className="model-meta">
-                  {entry.mb} МБ · {entry.note}
-                </span>
-              </button>
+            <div key={entry.id} className="model-row" data-active={activeModel === entry.id}>
+              {/*
+                A model that is not on disk cannot be chosen: picking it would
+                store a selection with no file behind it, which is exactly the
+                state that made this pane claim a model that was never there. So
+                the name is only a button once the file is; until then the way to
+                get it is «Скачать» on the same row. A disabled button would also
+                dim the description, and a fresh install has every row like that.
+              */}
+              {modelReady ? (
+                <button className="model-pick" onClick={() => onPick(entry.id)}>
+                  {name}
+                </button>
+              ) : (
+                <div className="model-pick">{name}</div>
+              )}
               {modelReady ? (
                 <div className="model-actions">
                   <span className="model-state ok">Готово</span>
@@ -123,7 +164,10 @@ function ModelList({
           )
         })}
         {Array.from(installed).filter((id) => !voiceModel(id)).map((file) => (
-          <div key={file} className="model-row">
+          // An imported model the catalog does not know: it has no description
+          // and no «Скачать», but it can be the one in use, and then it is the
+          // highlighted row like any other.
+          <div key={file} className="model-row" data-active={activeModel === file}>
             <span className="model-name">{file}</span>
             {renderDeleteButton(file, file)}
           </div>
@@ -131,7 +175,7 @@ function ModelList({
       </div>
       <div className="row-actions">
         <span className="row-hint">
-          {selected ? `Выбрана «${selected.label}».` : 'Модель не выбрана.'}
+          {selectionHint}
         </span>
         <button
           className="ghost"
@@ -180,7 +224,7 @@ function TtsSection({
       <Group title="Озвучка">
         <ToggleRow
           title="Короткие реплики агента"
-          hint="Подтверждать долгую обработку голосом. Не чаще раза в 45 секунд."
+          hint="Что происходит с управлением: старт, долгая работа, вопрос о разрешении, итог. Не чаще раза в 45 секунд."
           checked={voice.agentFeedback}
           onChange={(agentFeedback) => onVoiceChange({ agentFeedback })}
         />
@@ -230,7 +274,7 @@ function TtsSection({
       >
         <ToggleRow
           title="Включить синтез"
-          hint="Endpoint, модель, голос и стиль — ваши. Ключ хранится в Keychain и не показывается."
+          hint="Endpoint, модель, голос и стиль — твои. Ключ хранится в Keychain и не показывается."
           checked={tts.enabled}
           onChange={(enabled) => onTtsChange({ enabled })}
         />
@@ -312,7 +356,7 @@ function TtsSection({
             previewError
               ? previewError
               : !speech?.configured
-                ? (speech?.reason ?? 'Заполните адрес, модель, голос и ключ.')
+                ? (speech?.reason ?? 'Заполни адрес, модель, голос и ключ.')
                 : speech.reason
                   ? `Последний синтез не удался: ${speech.reason}`
                   : 'Прозвучит короткий пример текущим голосом.'
@@ -428,24 +472,52 @@ export function VoiceTab({ voice, tts, savedModel, onVoiceChange, onTtsChange }:
 
   const installed = useMemo(() => new Set(status?.installed ?? []), [status])
 
+  /**
+   * Makes the draft agree with the model the main process says is in use.
+   *
+   * The settings window edits a draft and writes it on a debounce, so a draft
+   * that still pointed at the old model would write it back over the change on
+   * the next keystroke — the selection would look right until the user touched
+   * anything else. Called only after an action the user took, never on a plain
+   * status read: a read must not edit their settings.
+   */
+  const adoptSelection = useCallback(
+    (next: VoiceStatus | null) => {
+      if (!next) return
+      const model = next.activeModel ?? ''
+      if (model !== voice.model) onVoiceChange({ model })
+    },
+    [onVoiceChange, voice.model]
+  )
+
   const download = useCallback(
     async (id: string) => {
       setDownloadError(null)
       setProgress({ model: id, received: 0, total: 0, done: false })
       try {
-        setStatus(await window.deskhand.voice.download(id))
+        const next = await window.deskhand.voice.download(id)
+        setStatus(next)
+        adoptSelection(next)
       } catch {
-        setDownloadError('Не удалось скачать модель. Проверьте соединение и попробуйте снова.')
+        setDownloadError('Не удалось скачать модель. Проверь соединение и попробуй снова.')
       } finally {
         setProgress(null)
       }
     },
-    []
+    [adoptSelection]
   )
 
   async function importModel(): Promise<void> {
-    const next = await window.deskhand.voice.importModel()
-    if (next) setStatus(next)
+    setDownloadError(null)
+    try {
+      const next = await window.deskhand.voice.importModel()
+      if (next) {
+        setStatus(next)
+        adoptSelection(next)
+      }
+    } catch {
+      setDownloadError('Не удалось импортировать модель. Попробуй снова.')
+    }
   }
 
   async function remove(id: string, label: string): Promise<void> {
@@ -453,9 +525,13 @@ export function VoiceTab({ voice, tts, savedModel, onVoiceChange, onTtsChange }:
     setDownloadError(null)
     setDeleting(id)
     try {
-      setStatus(await window.deskhand.voice.deleteModel(id))
+      const next = await window.deskhand.voice.deleteModel(id)
+      setStatus(next)
+      // The selection cannot outlive the file: main moves it to whatever is
+      // still on disk, or to nothing, and the draft follows.
+      adoptSelection(next)
     } catch {
-      setDownloadError('Не удалось удалить модель. Попробуйте снова.')
+      setDownloadError('Не удалось удалить модель. Попробуй снова.')
     } finally {
       setDeleting(null)
     }
@@ -467,12 +543,21 @@ export function VoiceTab({ voice, tts, savedModel, onVoiceChange, onTtsChange }:
       const result = await window.deskhand.voice.test()
       setTestError(result.ok ? null : (result.message ?? 'Голосовой ввод не готов.'))
       refreshVoice()
+    } catch (error) {
+      setTestError(error instanceof Error ? error.message : 'Голосовой ввод не готов.')
     } finally {
       setChecking(false)
     }
   }, [refreshVoice])
 
-  const selected = voiceModel(voice.model)
+  /**
+   * The model whose properties apply to the settings below.
+   *
+   * The one that will actually transcribe, not the one the settings point at: a
+   * language that a model fixes in place has to come from the model in use, or
+   * the row would describe a file that is not on disk.
+   */
+  const selected = voiceModel(status?.activeModel ?? voice.model)
 
   /** Stores the synthesis key; the value never comes back from the main process. */
   const saveTtsKey = useCallback(async () => {
@@ -519,7 +604,7 @@ export function VoiceTab({ voice, tts, savedModel, onVoiceChange, onTtsChange }:
       <Group title="Ввод">
         <ToggleRow
           title="Включить голосовой ввод"
-          hint="Удерживайте клавишу. Распознавание локальное — звук не покидает Mac."
+          hint="Удерживай клавишу. Распознавание локальное — звук не покидает Mac."
           checked={voice.enabled}
           onChange={(enabled) => onVoiceChange({ enabled })}
         />
@@ -584,6 +669,7 @@ export function VoiceTab({ voice, tts, savedModel, onVoiceChange, onTtsChange }:
 
         <ModelList
           model={voice.model}
+          activeModel={status?.activeModel ?? null}
           installed={installed}
           progress={progress}
           deleting={deleting}

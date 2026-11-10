@@ -27,6 +27,7 @@ import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { app } from 'electron'
 import type { AgentGesture, AgentPresentation, AgentToolRequest, ScreenRect } from '@shared/types'
+import { resourceCandidates } from '../paths'
 import { trace } from './trace'
 
 const BINARY_NAME = 'deskhand-agent'
@@ -58,13 +59,11 @@ let cachedPath: string | null | undefined
 /** Path to the agent binary, or null when it was not built into the bundle. */
 export function agentBinary(): string | null {
   if (cachedPath !== undefined) return cachedPath
-  const candidates = app.isPackaged
-    ? [join(process.resourcesPath, BINARY_NAME)]
-    : [
-        join(app.getAppPath(), 'resources', BINARY_NAME),
-        join(app.getAppPath(), 'native', 'deskhand', '.build', 'release', BINARY_NAME),
-        join(process.cwd(), 'resources', BINARY_NAME)
-      ]
+  const candidates = resourceCandidates(BINARY_NAME, [
+    // A dev checkout that built the sidecar with `npm run build:agent` has it
+    // here, next to the sources rather than in `resources/`.
+    join(app.getAppPath(), 'native', 'deskhand', '.build', 'release', BINARY_NAME)
+  ])
   cachedPath = candidates.find((candidate) => existsSync(candidate)) ?? null
   if (!cachedPath) console.warn('[agent] deskhand-agent not found; run `npm run build:agent`')
   return cachedPath
@@ -265,7 +264,7 @@ export class AgentSidecar {
   private spawnProcess(): Promise<void> {
     const binary = agentBinary()
     if (!binary) {
-      return Promise.reject(new Error('Компонент агента не собран. Выполните `npm run build:agent`.'))
+      return Promise.reject(new Error('Компонент агента не собран. Выполни `npm run build:agent`.'))
     }
     this.buffer = ''
     const child = spawn(binary, ['--serve'], {

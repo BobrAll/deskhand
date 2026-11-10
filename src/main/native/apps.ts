@@ -16,9 +16,6 @@ import {
   type HelperPayload
 } from './process'
 
-/** Starting an app can wait for a cold launch; every other app call uses the default. */
-const LAUNCH_TIMEOUT_MS = 15_000
-
 export interface RawFrontApp {
   bundleId: string
   name: string
@@ -83,36 +80,11 @@ export async function helperFrontWindow(): Promise<RawFrontApp | null> {
  *
  * The window half of `front` costs a cold Accessibility round trip (35-45 ms)
  * plus an enumeration of every on-screen window. Callers that only need the
- * identity of the application — the plan's working app, a launch check, a focus
- * guard — should not pay for a fact they do not read, and most of them do not.
+ * identity of the application — the plan's working app, a focus guard — should
+ * not pay for a fact they do not read, and most of them do not.
  */
 export async function helperFrontApplication(): Promise<RawFrontApp | null> {
   return mapFront(await runHelper(['front-quick']))
-}
-
-/** What an application launch reported: enough to verify it against the screen. */
-export interface HelperLaunched {
-  pid: number
-  bundleId: string
-  name: string
-}
-
-/**
- * Opens an application by name, starting it if it is not already running.
- *
- * Returns what came forward, so the caller can check the screen instead of
- * trusting the call: a launch that reports success but leaves another window in
- * front is a failed step, not a completed one.
- */
-export async function helperLaunch(name: string, signal?: AbortSignal): Promise<HelperLaunched | null> {
-  if (!name) return null
-  const payload = await runHelper(['launch', name], LAUNCH_TIMEOUT_MS, signal)
-  if (!payload?.ok) return null
-  return {
-    pid: Number(payload.pid) || 0,
-    bundleId: typeof payload.bundleId === 'string' ? payload.bundleId : '',
-    name: typeof payload.name === 'string' ? payload.name : ''
-  }
 }
 
 /** Brings a previously remembered application back to the front. */

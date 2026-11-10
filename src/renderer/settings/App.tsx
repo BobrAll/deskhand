@@ -127,6 +127,33 @@ export function App() {
   const [tab, setTab] = useState<Tab>('provider')
   const [notice, setNotice] = useState<Notice | null>(null)
   const [applyState, setApplyState] = useState<ApplyState>('idle')
+  /**
+   * The banner's own timer, so a newer notice is not cleared by an older one.
+   *
+   * Each banner sets its own expiry. Without a shared handle, a key-test result
+   * that appears right after a write error inherits the error's timer and
+   * disappears early — and a banner whose timer outlives the window fires into
+   * an unmounted component.
+   */
+  const noticeTimerRef = useRef<number | null>(null)
+
+  const showNotice = useCallback((next: Notice | null, clearAfterMs?: number) => {
+    if (noticeTimerRef.current !== null) window.clearTimeout(noticeTimerRef.current)
+    noticeTimerRef.current = null
+    setNotice(next)
+    if (!next || clearAfterMs === undefined) return
+    noticeTimerRef.current = window.setTimeout(() => {
+      noticeTimerRef.current = null
+      setNotice(null)
+    }, clearAfterMs)
+  }, [])
+
+  useEffect(
+    () => () => {
+      if (noticeTimerRef.current !== null) window.clearTimeout(noticeTimerRef.current)
+    },
+    []
+  )
 
   const [keyInput, setKeyInput] = useState('')
   const [testing, setTesting] = useState(false)
@@ -246,9 +273,8 @@ export function App() {
     writtenRef.current = null
     setHotkeyMessage('Комбинация занята — оставлена прежняя.')
     setApplyState('error')
-    setNotice({ kind: 'err', text: 'Не удалось назначить горячую клавишу.' })
-    window.setTimeout(() => setNotice(null), BANNER_WRITE_ERROR_MS)
-  }, [])
+    showNotice({ kind: 'err', text: 'Не удалось назначить горячую клавишу.' }, BANNER_WRITE_ERROR_MS)
+  }, [showNotice])
 
   /**
    * Writes one snapshot of the draft.
@@ -278,12 +304,11 @@ export function App() {
         writtenRef.current = null
         failedRef.current = written
         setApplyState('error')
-        setNotice({ kind: 'err', text: 'Не удалось сохранить настройки.' })
-        window.setTimeout(() => setNotice(null), BANNER_WRITE_ERROR_MS)
+        showNotice({ kind: 'err', text: 'Не удалось сохранить настройки.' }, BANNER_WRITE_ERROR_MS)
         return false
       }
     },
-    [reconcileSavedBundle, reportHotkeyRejected]
+    [reconcileSavedBundle, reportHotkeyRejected, showNotice]
   )
 
   /**
@@ -393,28 +418,26 @@ export function App() {
         draft.baseUrls[draft.provider]
       )
       if (!test.ok) {
-        setNotice({ kind: 'err', text: test.message })
+        showNotice({ kind: 'err', text: test.message }, BANNER_KEY_TEST_MS)
         return
       }
       const next = await window.deskhand.settings.setKey(draft.provider, keyInput)
       setBundle(next)
       setKeyInput('')
-      setNotice({ kind: 'ok', text: test.message })
+      showNotice({ kind: 'ok', text: test.message }, BANNER_KEY_TEST_MS)
     } catch {
-      setNotice({ kind: 'err', text: 'Не удалось сохранить ключ.' })
+      showNotice({ kind: 'err', text: 'Не удалось сохранить ключ.' }, BANNER_KEY_TEST_MS)
     } finally {
       setTesting(false)
-      window.setTimeout(() => setNotice(null), BANNER_KEY_TEST_MS)
     }
-  }, [draft, keyInput])
+  }, [draft, keyInput, showNotice])
 
   const removeKey = useCallback(async () => {
     if (!draft) return
     const next = await window.deskhand.settings.deleteKey(draft.provider)
     setBundle(next)
-    setNotice({ kind: 'ok', text: 'Ключ удалён' })
-    window.setTimeout(() => setNotice(null), BANNER_KEY_REMOVED_MS)
-  }, [draft])
+    showNotice({ kind: 'ok', text: 'Ключ удалён' }, BANNER_KEY_REMOVED_MS)
+  }, [draft, showNotice])
 
   const addExcluded = useCallback(
     async (picked: AppPickResult | null) => {

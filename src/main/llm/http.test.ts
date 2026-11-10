@@ -135,40 +135,42 @@ describe('toProviderError: the status map', () => {
 
   it('maps 401 to a rejected key', async () => {
     const error = await errorFor(401)
-    expect(error.message).toBe('Ключ OpenAI не принят. Проверьте ключ в настройках.')
+    expect(error.message).toBe('Ключ OpenAI не принят. Проверь ключ в настройках.')
     expect(error.retryable).toBe(false)
     expect(error.status).toBe(401)
   })
 
   it('maps 403 the same way as 401', async () => {
     const error = await errorFor(403)
-    expect(error.message).toBe('Ключ OpenAI не принят. Проверьте ключ в настройках.')
+    expect(error.message).toBe('Ключ OpenAI не принят. Проверь ключ в настройках.')
     expect(error.retryable).toBe(false)
     expect(error.status).toBe(403)
   })
 
   it('maps 402 to a balance problem', async () => {
     const error = await errorFor(402)
-    expect(error.message).toBe('Недостаточно средств на счёте OpenAI.')
+    expect(error.message).toBe('Ключ OpenAI действителен, но на счёте нет средств.')
     expect(error.retryable).toBe(false)
     expect(error.status).toBe(402)
   })
 
   it('maps 404 to a model name problem', async () => {
     const error = await errorFor(404)
-    expect(error.message).toBe('Модель не найдена у OpenAI. Проверьте название модели.')
+    expect(error.message).toBe('Модель не найдена у OpenAI. Проверь название модели.')
     expect(error.retryable).toBe(false)
   })
 
   it('maps 413 to a context size problem', async () => {
     const error = await errorFor(413)
-    expect(error.message).toBe('Контекст слишком большой: уменьшите скриншот или выделение.')
+    expect(error.message).toBe('Контекст слишком большой: уменьши скриншот или выделение.')
     expect(error.retryable).toBe(false)
   })
 
   it('maps 429 to a rate limit, and marks it retryable', async () => {
     const error = await errorFor(429)
-    expect(error.message).toBe('Лимит запросов OpenAI исчерпан. Подождите немного и повторите.')
+    expect(error.message).toBe(
+      'Ключ OpenAI действителен, но лимит запросов исчерпан. Попробуй позже.'
+    )
     expect(error.retryable).toBe(true)
     expect(error.status).toBe(429)
   })
@@ -193,7 +195,7 @@ describe('toProviderError: the status map', () => {
 
   it('substitutes the provider label it is given', async () => {
     expect((await errorFor(401, '', 'OpenRouter')).message).toBe(
-      'Ключ OpenRouter не принят. Проверьте ключ в настройках.'
+      'Ключ OpenRouter не принят. Проверь ключ в настройках.'
     )
   })
 })
@@ -203,7 +205,7 @@ describe('toProviderError: the detail in the body', () => {
     const text = JSON.stringify({ error: { message: 'model not found', type: 'x' } })
     const error = await toProviderError(new Response(text, { status: 404 }), 'OpenAI')
     expect(error.message).toBe(
-      'Модель не найдена у OpenAI. Проверьте название модели. (model not found)'
+      'Модель не найдена у OpenAI. Проверь название модели. (model not found)'
     )
   })
 
@@ -228,7 +230,7 @@ describe('toProviderError: the detail in the body', () => {
 
   it('adds no parentheses when the body is empty', async () => {
     const error = await toProviderError(new Response('', { status: 404 }), 'OpenAI')
-    expect(error.message).toBe('Модель не найдена у OpenAI. Проверьте название модели.')
+    expect(error.message).toBe('Модель не найдена у OpenAI. Проверь название модели.')
   })
 
   it('appends the detail to the generic error with a colon', async () => {

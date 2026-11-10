@@ -164,15 +164,6 @@ export const WHISPER_MODELS: WhisperModelMeta[] = [
   }
 ]
 
-/**
- * Test seam: production resolves ids through `voiceModel`; this whisper-only
- * lookup exists for `defaults-guards.test.ts` to assert that every catalog id
- * resolves and an unknown id does not.
- */
-export function whisperModel(id: string): WhisperModelMeta | undefined {
-  return WHISPER_MODELS.find((model) => model.id === id)
-}
-
 export interface VoiceModelMeta extends WhisperModelMeta {
   engine: 'whisper' | 'transcribe'
   url: string
@@ -209,6 +200,17 @@ export const VOICE_MODELS: VoiceModelMeta[] = [
 
 export function voiceModel(id: string): VoiceModelMeta | undefined {
   return VOICE_MODELS.find((model) => model.id === id)
+}
+
+/**
+ * Whether a name is a whisper model file the app can load.
+ *
+ * The one spelling of the rule: the main process lists what is on disk with it,
+ * and the settings accept an imported model by it, so a file the app lists can
+ * always be chosen and a chosen name is always one the app can find.
+ */
+export function isVoiceModelFile(name: string): boolean {
+  return /^ggml-[^/\\]*\.bin$/.test(name)
 }
 
 /** Key held to talk, language and what to do with the transcript. */
@@ -372,9 +374,24 @@ function sanitizeStringList(input: unknown, fallback: string[]): string[] {
   return Array.from(new Set(list))
 }
 
-/** An id that is in the catalog, or the shipped model — never a name we cannot resolve. */
+/**
+ * The chosen model: a catalog id, the file name of an imported model, or `''`.
+ *
+ * `''` is a real value — "nothing chosen yet" — and not a gap to fill with a
+ * default. Filling it in made a fresh install claim a model it had never
+ * downloaded: the settings window showed it as selected while the file was
+ * absent, and the only way to notice was a failed press. A *missing* key still
+ * gets the default, which is how existing installs keep their model.
+ */
 function sanitizeVoiceModel(value: unknown): string {
-  return voiceModel(String(value ?? ''))?.id ?? DEFAULT_VOICE.model
+  if (value === undefined || value === null) return DEFAULT_VOICE.model
+  const id = String(value).trim()
+  if (id === '') return ''
+  if (voiceModel(id)) return id
+  // An imported model outside the catalog is still a valid choice: the file is
+  // what matters, and `resolveWhisperModel` reports it by name.
+  if (isVoiceModelFile(id)) return id
+  return DEFAULT_VOICE.model
 }
 
 /** A short language code, lower-cased; `auto` passes through like any other. */

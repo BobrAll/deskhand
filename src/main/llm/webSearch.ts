@@ -104,7 +104,7 @@ export async function searchWeb(
     result = await response.json() as SearchResponse
   } catch (error) {
     if (timeout.aborted && !turnSignal.aborted) {
-      throw new ProviderError('Веб-поиск не успел ответить. Попробуйте ещё раз.', true)
+      throw new ProviderError('Веб-поиск не успел ответить. Попробуй ещё раз.', true)
     }
     if (error instanceof ProviderError) {
       throw new ProviderError(`Веб-поиск: ${error.message}`, error.retryable, error.status)

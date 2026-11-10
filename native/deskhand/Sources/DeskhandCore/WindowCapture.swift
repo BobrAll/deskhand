@@ -26,8 +26,6 @@ public enum WindowCapture {
         /// screen points -> pixels in the returned image
         public let scale: Double
         public let windowFrame: CGRect
-        /// Wall time spent in ScreenCaptureKit.
-        public let captureMilliseconds: Double
         /// Wall time spent encoding the image.
         public let encodeMilliseconds: Double
     }
@@ -125,7 +123,6 @@ public enum WindowCapture {
         configuration.shouldBeOpaque = true
 
         let image: CGImage
-        let captureClock = TimingClock()
         do {
             image = try await SCScreenshotManager.captureImage(
                 contentFilter: filter,
@@ -134,7 +131,6 @@ public enum WindowCapture {
         } catch {
             throw CaptureError.captureFailed(error.localizedDescription)
         }
-        let captureMilliseconds = captureClock.milliseconds
 
         let encodeClock = TimingClock()
         guard let data = encodeJPEG(image) ?? encodePNG(image) else { throw CaptureError.encodingFailed }
@@ -151,7 +147,6 @@ public enum WindowCapture {
             pixelHeight: image.height,
             scale: scale,
             windowFrame: window.frame,
-            captureMilliseconds: captureMilliseconds,
             encodeMilliseconds: encodeMilliseconds
         )
     }

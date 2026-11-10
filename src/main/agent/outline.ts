@@ -80,6 +80,17 @@ const ROLE_WORD: Record<string, string> = {
   AXComboBox: 'поле'
 }
 
+/**
+ * Roles the system treats as a place to type.
+ *
+ * Mirrors `axRoleIsField` in `src/main/native/helper.m`, which is what sets
+ * `editable` on the wire. The outline used to keep only the first two, so a
+ * search field and a combo box — both editable, both named in `ROLE_WORD` below
+ * — were never listed: the model could not address them by name and had to
+ * measure them by eye, which is exactly what this list exists to avoid.
+ */
+const TYPING_ROLES = new Set(['AXTextField', 'AXTextArea', 'AXSearchField', 'AXComboBox'])
+
 function visibleName(element: AxElementInfo): string {
   const text = (nameTexts(element)[0] ?? '').replace(/\s+/g, ' ').trim()
   return text.length > MAX_NAME ? `${text.slice(0, MAX_NAME - 1)}…` : text
@@ -103,9 +114,9 @@ function inside(frame: ScreenRect, area: ScreenRect): boolean {
  *
  * The two callers start here and then diverge, and the difference is kept rather
  * than unified: `formatOutline` also requires a visible name and lists an
- * editable only when it is a text field, while the grounding set keeps every
- * editable — a checkbox carries a name the model may quote even though it is not
- * a place to type.
+ * editable only when the role is one a person can type into, while the grounding
+ * set keeps every editable — a checkbox carries a name the model may quote even
+ * though it is not a place to type.
  */
 function isListable(
   element: AxElementInfo,
@@ -137,9 +148,7 @@ export function formatOutline(
   for (const element of probe.targets) {
     if (!isListable(element, captureArea, windowBounds)) continue
     const rect = element.frame
-    if (element.editable && element.role !== 'AXTextField' && element.role !== 'AXTextArea') {
-      continue
-    }
+    if (element.editable && !TYPING_ROLES.has(element.role)) continue
     const name = visibleName(element)
     if (!name) continue
     const kind = ROLE_WORD[element.role] ?? ''
@@ -184,7 +193,7 @@ export async function describeScreen(
   captureArea: ScreenRect,
   onDrawingTargets?: (targets: AxElementInfo[]) => void
 ): Promise<string | null> {
-  const probe = await helperProbe(pid, null)
+  const probe = await helperProbe(pid)
   if (!probe || probe.targets.length === 0) return null
   onDrawingTargets?.(probe.targets
     .filter((element) => isListable(element, captureArea, windowBounds))

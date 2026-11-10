@@ -7,7 +7,9 @@
  * the report because a name did not match. This test runs the thing end to end
  * and reads the file the app would have written.
  *
- * Skipped without a built binary, so a fresh checkout still runs the suite.
+ * Skipped without a built binary, and without the Accessibility grant the
+ * sidecar requires before it accepts a run: a machine that has neither should
+ * see "skipped", not a wall of failures that says nothing about the code.
  */
 
 import { createServer, type Server } from 'node:http'
@@ -19,6 +21,7 @@ import { fileURLToPath } from 'node:url'
 import type { AddressInfo } from 'node:net'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import type { AgentEvent } from '@shared/types'
+import { agentAcceptsRuns } from './grant'
 import { flushTrace } from './trace'
 
 const BINARY = fileURLToPath(
@@ -26,6 +29,7 @@ const BINARY = fileURLToPath(
 )
 const REPORT = fileURLToPath(new URL('../../../scripts/agent-trace-report.mjs', import.meta.url))
 const built = existsSync(BINARY)
+const canRun = built && (await agentAcceptsRuns(BINARY))
 
 const state = vi.hoisted(() => ({
   enabled: true,
@@ -70,7 +74,7 @@ let round = 0
 const modelRequests: unknown[] = []
 
 beforeAll(async () => {
-  if (!built) return
+  if (!canRun) return
   server = createServer((request, response) => {
     const chunks: Buffer[] = []
     request.on('data', (chunk: Buffer) => chunks.push(chunk))
@@ -156,7 +160,7 @@ async function runAndReport(): Promise<{ events: AgentEvent[]; lines: Record<str
 // milliseconds. The default timeout is for pure functions.
 vi.setConfig({ testTimeout: 60_000 })
 
-describe.skipIf(!built)('a run’s timings reach the trace file', () => {
+describe.skipIf(!canRun)('a run’s timings reach the trace file', () => {
   it('records a step, its round trip, the call and the totals', async () => {
     const { lines } = await runAndReport()
     const kinds = lines.map((line) => line.event)

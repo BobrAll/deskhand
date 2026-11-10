@@ -21,8 +21,9 @@ body,
 }
 
 :root {
-  /* The same blue as the cursor layer and the overlay accent, used sparingly. */
-  --ghost-accent: #7f95ff;
+  /* The cursor layer's blue, a step brighter than `--accent`, because these
+     marks live for a fraction of a second over content of any colour. */
+  --ghost-accent: 127 149 255;
   --ghost-ink: 255 255 255;
 }
 
@@ -46,7 +47,7 @@ body,
     transform 280ms cubic-bezier(0.22, 0.61, 0.36, 1),
     opacity 300ms ease-out;
   filter:
-    drop-shadow(0 0 5px rgb(127 149 255 / 0.55))
+    drop-shadow(0 0 5px rgb(var(--ghost-accent) / 0.55))
     drop-shadow(0 1px 2px rgb(0 0 0 / 0.4));
   will-change: transform, opacity;
 }
@@ -94,9 +95,9 @@ body,
 .target-ring {
   position: absolute;
   opacity: 0;
-  border: 1px solid rgb(127 149 255 / 0.55);
+  border: 1px solid rgb(var(--ghost-accent) / 0.55);
   border-radius: 10px;
-  background: rgb(127 149 255 / 0.05);
+  background: rgb(var(--ghost-accent) / 0.05);
   transition: opacity 220ms ease-out;
   pointer-events: none;
 }
@@ -110,7 +111,7 @@ body,
   width: 22px;
   height: 22px;
   margin: -11px 0 0 -11px;
-  border: 1px solid rgb(127 149 255 / 0.75);
+  border: 1px solid rgb(var(--ghost-accent) / 0.75);
   border-radius: 50%;
   animation: ghost-ripple 520ms ease-out forwards;
   pointer-events: none;

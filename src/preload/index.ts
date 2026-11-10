@@ -17,7 +17,7 @@ import type {
   ContextSnapshot,
   DownloadProgress,
   OverlayState,
-  PointerPayload,
+  DrawingPayload,
   ProviderId,
   SendRequest,
   StreamEvent,
@@ -56,14 +56,14 @@ const api: DeskhandApi = {
     cancel: (requestId: string) => ipcRenderer.send(CH.overlay.cancel, requestId),
     copy: (text: string) => ipcRenderer.invoke(CH.overlay.copy, text),
     paste: (text: string) => ipcRenderer.invoke(CH.overlay.paste, text),
-    clearPointer: () => ipcRenderer.send(CH.overlay.clearPointer),
+    clearDrawing: () => ipcRenderer.send(CH.overlay.clearDrawing),
     setTyping: (typing: boolean) => ipcRenderer.send(CH.overlay.typing, typing),
     close: () => ipcRenderer.send(CH.overlay.close),
     resize: (height: number, width?: number, pin?: boolean) =>
       ipcRenderer.send(CH.overlay.resize, height, width, pin)
   },
-  pointer: {
-    onDraw: (handler) => subscribe<PointerPayload>(CH.pointer.draw, handler)
+  drawing: {
+    onDraw: (handler) => subscribe<DrawingPayload>(CH.drawing.draw, handler)
   },
   agent: {
     onEvent: (handler) => subscribe<AgentEvent>(CH.agent.event, handler),

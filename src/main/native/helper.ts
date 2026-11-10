@@ -4,41 +4,30 @@
  * Electron cannot (a) reliably synthesize Cmd+C/Cmd+V into a *foreign*
  * application, (b) enumerate the focused window of another process, or
  * (c) query the TCC permission state. The helper covers exactly those gaps.
- * Context and clipboard helpers can fall back to osascript. Agent input
- * requires the native binary.
+ * Context and clipboard helpers can fall back to osascript.
  *
  * This module is the public surface. The helper's work is split by concern:
- * `process.ts` spawns it, `ax.ts` maps Accessibility, `input.ts` posts input and
- * `apps.ts` enumerates applications. Everything is re-exported here so callers
- * keep importing from one place.
+ * `process.ts` spawns it, `ax.ts` maps Accessibility, `input.ts` sends the
+ * copy/paste keystroke and `apps.ts` enumerates applications. Everything is
+ * re-exported here so callers keep importing from one place.
  */
 
 import { spawn } from 'node:child_process'
 import { createInterface } from 'node:readline'
 import type { PermissionState } from '@shared/types'
-import { helperBinary, numberOf, runHelper } from './process'
+import { helperBinary, runHelper } from './process'
 
 export { helperBinary } from './process'
 export {
   helperActivate,
   helperFrontApplication,
   helperFrontWindow,
-  helperLaunch,
   helperRunningApps,
   helperWindow
 } from './apps'
-export type { HelperLaunched, RawFrontApp, RunningApp } from './apps'
-export { helperFocused, helperProbe } from './ax'
-export {
-  helperClick,
-  helperDrag,
-  helperMoveMouse,
-  helperPressKey,
-  helperScroll,
-  helperSendKey,
-  helperTypeText
-} from './input'
-export type { HelperClickButton, NativeInputTarget } from './input'
+export type { RawFrontApp, RunningApp } from './apps'
+export { helperProbe } from './ax'
+export { helperSendKey } from './input'
 
 /**
  * What the watcher listens to.
@@ -106,12 +95,3 @@ export async function helperPermissions(
   }
 }
 
-/** Mouse position in top-left screen coordinates (used when Electron's own API is unavailable). */
-export async function helperCursor(): Promise<{ x: number; y: number } | null> {
-  const payload = await runHelper(['cursor'])
-  if (!payload?.ok) return null
-  const x = numberOf(payload.x)
-  const y = numberOf(payload.y)
-  if (x === null || y === null) return null
-  return { x, y }
-}

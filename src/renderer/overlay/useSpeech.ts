@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { WAIT_STATUS_MS, waitingPhrases } from './waiting'
 import { looksLikeAction } from '@shared/intent'
-import type { AnswerVoice } from '@shared/types'
+import type { AnswerVoice, VoiceSettings } from '@shared/types'
+import type { SpeechCue } from '@shared/speechBank'
+import { speechLine, speaksCue } from './speechCues'
 import {
   ANSWER_FALLBACK,
   SPEECH_COOLDOWN_MS,
@@ -72,6 +74,22 @@ export function useSpeech() {
   const waitingVoice = useRef(false)
   const lastAcknowledgement = useRef(-Infinity)
   const phraseIndex = useRef(0)
+  /**
+   * Rotation position per state, so two cues never consume each other's.
+   *
+   * A state with several recordings is meant to sound different each time it
+   * happens; one counter shared by every state would let "Готово." eat the turn
+   * of "Не получилось." and repeat the same line back to back.
+   */
+  const cueIndex = useRef<Partial<Record<SpeechCue, number>>>({})
+  /**
+   * The voice settings, read once per turn rather than once per line.
+   *
+   * `say` is called at state transitions, some of which arrive several times a
+   * run; asking the main process for the settings each time would be a round
+   * trip per spoken word.
+   */
+  const voiceSettings = useRef<Promise<VoiceSettings | null> | null>(null)
   /**
    * Whether new lines may go to the live engine.
    *
@@ -153,7 +171,7 @@ export function useSpeech() {
       voice = pick()
     }
     if (!synth || !voice) {
-      setError('Нет доступного системного голоса для этого языка. Добавьте голос в настройках macOS.')
+      setError('Нет доступного системного голоса для этого языка. Добавь голос в настройках macOS.')
       return
     }
 
@@ -225,6 +243,38 @@ export function useSpeech() {
     }).catch(() => undefined)
   }, [prepare, playAudio, playSystem])
 
+  /**
+   * Says one line for a state, if that state is one worth saying.
+   *
+   * The decision is `speaksCue` — a pure function, tested on its own — so the
+   * callers only have to say what happened: which cue, whether the request was
+   * spoken, and whether it asked the machine to do something. Whether the
+   * settings allow it is read here, in one place, rather than at every call site.
+   */
+  const say = useCallback(
+    (cue: SpeechCue, context: { spoken?: boolean; action?: boolean } = {}) => {
+      voiceSettings.current ??= window.deskhand.settings
+        .load()
+        .then(({ settings }) => settings.voice)
+        .catch(() => null)
+      void voiceSettings.current.then((voice) => {
+        if (!voice) return
+        const allowed = speaksCue(cue, {
+          spoken: context.spoken === true,
+          action: context.action === true,
+          agentFeedback: voice.agentFeedback !== false,
+          answerVoice: voice.answerVoice ?? 'off'
+        })
+        if (!allowed) return
+        const index = cueIndex.current[cue] ?? 0
+        cueIndex.current[cue] = index + 1
+        const line = speechLine(cue, index)
+        if (line) enqueue(line.text)
+      })
+    },
+    [enqueue]
+  )
+
   /** Manual playback: the user asked for this one line, and the system voice is immediate. */
   const speak = useCallback((text: string) => {
     stop()
@@ -251,6 +301,9 @@ export function useSpeech() {
     // Read the preference while the model is thinking, not after its answer.
     const action = looksLikeAction(prompt)
     const preferences = window.deskhand.settings.load().then(({ settings }) => settings.voice)
+    // `say` reads the same settings; caching this read saves a round trip per
+    // cue, and a turn is exactly when they can have changed.
+    voiceSettings.current = preferences.catch(() => null)
     // `off` means the answer is read on the card, not heard. A recorded line is
     // still spoken for an action, because that is feedback about the machine,
     // not a repeat of text the user can already see. An absent value is treated
@@ -314,10 +367,32 @@ export function useSpeech() {
     clearWaiting()
     turn.current = null
     const spoken = automaticSpeech(current.prompt, text, failed)
+    if (spoken === ANSWER_FALLBACK) {
+      // The answer exists but cannot be read — code, a table, markup. The bank
+      // line says it is ready, and the group rotates so a run of such answers
+      // does not repeat one sentence. `ANSWER_FALLBACK` itself stays the
+      // sentinel the streaming path compares against.
+      const index = cueIndex.current.answerReady ?? 0
+      cueIndex.current.answerReady = index + 1
+      const line = speechLine('answerReady', index)
+      if (line) enqueue(line.text)
+      return
+    }
     // Final text normally extends the streamed prefix. Never repeat that prefix.
     if (spoken.startsWith(current.spoken)) {
       const rest = spoken.slice(current.spoken.length).trim()
       if (rest) enqueue(rest)
+      else if (!spoken && !failed && text.trim()) {
+        // The answer exists and was deliberately not read. Two cases share this
+        // branch and they are not the same sentence: a text task is reviewed on
+        // the card ("Текст готов."), while an answer with nothing readable in it
+        // — code, a table — is just ready ("Ответ готов.").
+        const cue = speechText(text) ? 'textReady' : 'answerReady'
+        const index = cueIndex.current[cue] ?? 0
+        cueIndex.current[cue] = index + 1
+        const line = speechLine(cue, index)
+        if (line) enqueue(line.text)
+      }
     } else if (failed) {
       stop()
       enqueue(spoken)
@@ -343,5 +418,5 @@ export function useSpeech() {
       window.removeEventListener('keydown', key)
     }
   }, [stop])
-  return { speaking, error, speak, stop, begin, append, finish }
+  return { speaking, error, speak, say, stop, begin, append, finish }
 }

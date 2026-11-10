@@ -148,10 +148,14 @@ function plural(count: number, one: string, few: string, many: string): string {
  * limit"), and they are matched here rather than compared whole because each
  * one carries the numbers of the run it happened in. These strings are the
  * contract with the loop: change them only together with the Swift side.
+ *
+ * There are exactly three: `AgentLoop.finishRun` is the only caller of
+ * `loopStopped`, and it has three call sites. A repeated call is not one of
+ * them — the guard warns and lets the run continue (`loopWarned`), so a run
+ * that repeats itself either recovers or ends on one of these.
  */
 const STOP_BUDGET = 'budget'
 const STOP_TOKEN_LIMIT = 'token limit'
-const STOP_REPEATED = 'repeated'
 const STOP_RETURNING_TO_SCREEN = 'returning to a screen'
 
 /**
@@ -175,19 +179,15 @@ const UNKNOWN_STOP = 'incomplete'
 function stopMessage(reason: string, total: number): string {
   if (reason.includes(STOP_BUDGET)) {
     return `Не успел за ${total} ${plural(total, 'шаг', 'шага', 'шагов')} — задача осталась ` +
-      'невыполненной. Увеличьте лимит шагов в настройках или уточните запрос.'
+      'невыполненной. Увеличь лимит шагов в настройках или уточни запрос.'
   }
   if (reason.includes(STOP_TOKEN_LIMIT)) {
     // Not the same problem as running out of steps: the run had budget left, but
     // every answer was cut in half, so the model never got to say what it wanted
     // to do. Raising the step limit would not help — the fix is the output
     // length.
-    return 'Остановился: ответ модели обрывался по лимиту длины. Увеличьте максимум ' +
+    return 'Остановился: ответ модели обрывался по лимиту длины. Увеличь максимум ' +
       'токенов в настройках — задача осталась невыполненной.'
-  }
-  if (reason.includes(STOP_REPEATED)) {
-    return 'Остановился: одно и то же действие повторялось без изменений. ' +
-      'Задача осталась невыполненной.'
   }
   if (reason.includes(STOP_RETURNING_TO_SCREEN)) {
     // Not the same as a repeated call: the run tried different things and kept
@@ -306,7 +306,7 @@ export function createAgentController(host: AgentHost) {
       return {
         enabled: true,
         ready: false,
-        reason: 'Компонент агента не собран — выполните `npm run build:agent`.'
+        reason: 'Компонент агента не собран — выполни `npm run build:agent`.'
       }
     }
     if (!helperBinary()) {
@@ -320,7 +320,7 @@ export function createAgentController(host: AgentHost) {
       return {
         enabled: true,
         ready: false,
-        reason: 'Нужен доступ «Универсальный доступ», иначе macOS не даст нажимать за вас.'
+        reason: 'Нужен доступ «Универсальный доступ», иначе macOS не даст нажимать за тебя.'
       }
     }
     return { enabled: true, ready: true, reason: null }
@@ -337,6 +337,7 @@ export function createAgentController(host: AgentHost) {
       approval: patch.approval !== undefined ? patch.approval : (lastPublished.approval ?? null),
       actions: patch.actions ?? lastPublished.actions,
       message: patch.message,
+      code: patch.code,
       // Carried on every event rather than only the last one, so a host that
       // redraws mid-run sees it too — and so the overlay can read it off the run
       // without a second channel that would have to be kept in step.
@@ -411,7 +412,7 @@ export function createAgentController(host: AgentHost) {
     const state = availability()
     if (!state.ready) {
       const message = state.reason ?? 'Агентный режим недоступен.'
-      publish({ phase: 'error', step: 0, total: 0, label: '', message })
+      publish({ phase: 'error', step: 0, total: 0, label: '', message, code: 'blocked' })
       return { answer: '', actions: [], message, blocked: true }
     }
 
@@ -503,7 +504,7 @@ export function createAgentController(host: AgentHost) {
     watcher = watchForAbort(options.abortOnMouseMove ? 'mouse' : 'key', (reason) => {
       if (token !== generation) return
       trace('agent.abort', { reason })
-      stop(reason === 'mousemove' ? 'Остановлено: вы взяли мышь.' : 'Остановлено по Escape.')
+      stop(reason === 'mousemove' ? 'Остановлено: ты взял мышь.' : 'Остановлено по Escape.')
     })
 
     const off = sidecar.onEvent((event) => {
@@ -764,7 +765,7 @@ export function createAgentController(host: AgentHost) {
       trace('agent.approval', { outcome: 'denied' })
       approve(request.id, false, decision.reason)
       active.actions.push({ tool: request.tool, label: decision.reason, ok: false })
-      publish({ phase: 'acting', actions: actionRows() })
+      publish({ phase: 'acting', actions: actionRows(), code: 'secret' })
       return
     }
 

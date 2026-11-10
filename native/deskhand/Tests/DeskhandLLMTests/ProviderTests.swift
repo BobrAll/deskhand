@@ -110,6 +110,41 @@ final class ProviderConfigTests: XCTestCase {
         XCTAssertEqual(config.apiKey, "env-key")
     }
 
+    func testRejectsABaseURLThatWouldFallBackToOpenAI() {
+        // The default base URL is api.openai.com, so a value that does not parse
+        // must fail loudly: dropping it would send the user's key to a provider
+        // they never chose.
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("deskhand-tests-\(UUID().uuidString)")
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let path = directory.appendingPathComponent("config.toml")
+        try? """
+            [provider]
+            base_url = "not a url"
+            """.write(to: path, atomically: true, encoding: .utf8)
+
+        XCTAssertThrowsError(try ConfigLoader.load(path: path.path, environment: [:])) { error in
+            XCTAssertTrue("\(error)".contains("base_url"))
+        }
+        try? FileManager.default.removeItem(at: directory)
+    }
+
+    func testRejectsAnUnknownWire() {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("deskhand-tests-\(UUID().uuidString)")
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let path = directory.appendingPathComponent("config.toml")
+        try? """
+            [provider]
+            wire = "gemini"
+            """.write(to: path, atomically: true, encoding: .utf8)
+
+        XCTAssertThrowsError(try ConfigLoader.load(path: path.path, environment: [:])) { error in
+            XCTAssertTrue("\(error)".contains("gemini"))
+        }
+        try? FileManager.default.removeItem(at: directory)
+    }
+
     func testKeyDiscoveryPerWire() {
         let openAI = ProviderConfig(wire: .openAICompatible)
         XCTAssertEqual(

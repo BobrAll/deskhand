@@ -7,13 +7,13 @@
  * it, without a reconciliation pass getting in the way.
  */
 
-import './pointer.css'
+import './drawing.css'
 import { render } from './draw'
-import type { PointerPayload } from '@shared/types'
+import type { DrawingPayload } from '@shared/types'
 
 const root = document.getElementById('root')
 if (!root) throw new Error('root element is missing')
 
-window.deskhand.pointer.onDraw((payload: PointerPayload) => {
+window.deskhand.drawing.onDraw((payload: DrawingPayload) => {
   render(root, payload)
 })

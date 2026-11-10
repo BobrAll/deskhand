@@ -31,7 +31,7 @@ export const CH = {
     copy: 'overlay:copy',
     paste: 'overlay:paste',
     /** Removes the drawings from the screen without closing the card. */
-    clearPointer: 'overlay:clear-pointer',
+    clearDrawing: 'overlay:clear-drawing',
     /**
      * renderer -> main: the user is writing in the card, so it has to come back
      * to its normal density — and its native blur — even while shapes are up.
@@ -39,9 +39,9 @@ export const CH = {
     typing: 'overlay:typing',
     close: 'overlay:close'
   },
-  pointer: {
+  drawing: {
     /** main -> drawing layer: shapes to show (or to fade out). */
-    draw: 'pointer:draw'
+    draw: 'drawing:draw'
   },
   settings: {
     load: 'settings:load',

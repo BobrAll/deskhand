@@ -70,9 +70,9 @@ describe('automatic speech lifecycle', () => {
     await flush()
     expect(speak).toHaveBeenCalledOnce()
     expect(speak.mock.calls[0][0].rate).toBe(1.3)
-    await speech.finish('one', 'Справа сверху. Затем откройте меню.')
+    await speech.finish('one', 'Справа сверху. Затем открой меню.')
     await flush()
-    expect(speak.mock.calls.map(call => call[0].text)).toEqual(['Справа сверху.', 'Затем откройте меню.'])
+    expect(speak.mock.calls.map(call => call[0].text)).toEqual(['Справа сверху.', 'Затем открой меню.'])
   })
   it('waits for the verified result of an action', async () => {
     const speech = useSpeech()
@@ -213,5 +213,65 @@ describe('agent feedback independent of the answer voice', () => {
     await vi.advanceTimersByTimeAsync(200)
     await flush()
     expect(speak).toHaveBeenCalledOnce()
+  })
+})
+
+describe('say: the recorded line for a state', () => {
+  it('speaks the line for the state when the settings allow it', async () => {
+    const speech = useSpeech()
+    speech.say('done', { action: true })
+    await flush()
+    expect(speak.mock.calls[0][0].text).toBe('Готово.')
+  })
+
+  it('rotates inside the group instead of repeating one line', async () => {
+    const speech = useSpeech()
+    speech.say('done', { action: true })
+    await flush()
+    speech.say('done', { action: true })
+    await flush()
+    const spoken = speak.mock.calls.map((call) => call[0].text)
+    expect(spoken).toHaveLength(2)
+    expect(spoken[0]).not.toBe(spoken[1])
+  })
+
+  it('keeps a written outcome silent while answers are not read aloud', async () => {
+    window.deskhand.settings.load = vi.fn().mockResolvedValue({
+      settings: { voice: { answerVoice: 'off', agentFeedback: true } }
+    })
+    const speech = useSpeech()
+    speech.say('failed', { action: false })
+    await flush()
+    expect(speak).not.toHaveBeenCalled()
+  })
+
+  it('still speaks an action outcome with the same settings', async () => {
+    window.deskhand.settings.load = vi.fn().mockResolvedValue({
+      settings: { voice: { answerVoice: 'off', agentFeedback: true } }
+    })
+    const speech = useSpeech()
+    speech.say('done', { action: true })
+    await flush()
+    expect(speak).toHaveBeenCalledOnce()
+  })
+
+  it('says nothing when the cue is not one the voice owns', async () => {
+    const speech = useSpeech()
+    speech.say('acknowledge', { spoken: true })
+    await flush()
+    expect(speak).not.toHaveBeenCalled()
+  })
+})
+
+describe('say: an answer that cannot be read', () => {
+  it('speaks a rotating "answer is ready" line instead of the text', async () => {
+    const speech = useSpeech()
+    speech.begin('one', 'Объясни это', true)
+    // One sentence longer than the spoken limit: there is no readable part, so
+    // the bank line stands in for the answer.
+    await speech.finish('one', 'слово '.repeat(80))
+    await flush()
+    expect(speak).toHaveBeenCalledOnce()
+    expect(speak.mock.calls[0][0].text).toMatch(/^Ответ готов\.$/)
   })
 })

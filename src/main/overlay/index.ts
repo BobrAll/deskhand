@@ -24,7 +24,8 @@ import type {
   ScreenshotInfo,
   ScreenRect,
   SendRequest,
-  StreamEvent
+  StreamEvent,
+  StreamEventCode
 } from '@shared/types'
 import { createAgentController } from '../agent'
 import { beginAgentTurn, endAgentTurn, updateAgentCursor } from '../agent/cursor'
@@ -38,7 +39,7 @@ import { getProvider, resolveChatModel } from '../llm'
 import { ProviderError, type ChatMessage } from '../llm/provider'
 import { searchWeb } from '../llm/webSearch'
 import { copyText, pasteAnswer } from '../paste'
-import { hideAnnotations, showAnnotations } from '../pointer'
+import { hideAnnotations, showAnnotations } from '../drawing'
 import { buildTurnRequest, type Exchange } from './request'
 import { readPreviousCommand, saveCommand } from './history'
 import { timed, trace, traceTurn } from '../agent/trace'
@@ -50,6 +51,7 @@ import { sameObservedWindow } from '../agent/observation'
 import { helperActivate, helperFrontApplication, helperFrontWindow, helperWindow, type RawFrontApp } from '../native/helper'
 import { getApiKey } from '../settings/secrets'
 import { getSettings, patchSettings } from '../settings/store'
+import { sameScreenRect } from '../layerWindow'
 import { delay } from '../util'
 
 interface CardExchange extends Exchange {
@@ -85,7 +87,6 @@ interface Session {
   id: string
   snapshot: ContextSnapshot
   flags: ContextFlags
-  defaults: ContextFlags
   /** The app that was frontmost when the hotkey fired. */
   target: ActiveAppInfo | null
   abort: AbortController | null
@@ -110,12 +111,6 @@ interface Session {
    * it is now, not as it was at the moment the overlay opened.
    */
   live: { timer: NodeJS.Timeout | null; inFlight: boolean }
-  /**
-   * How many "look at the screen and continue" rounds this turn has already
-   * taken. Lives on the session, not on the request, because a continuation is
-   * one turn with several requests and the budget is per turn.
-   */
-  rounds: number
   /**
    * What went wrong during this turn but did not stop it.
    *
@@ -181,12 +176,6 @@ const TURN_DEADLINE_MS = 120_000
 const OPENROUTER_ATTRIBUTION = {
   'HTTP-Referer': 'https://github.com/BobrAll/deskhand',
   'X-Title': 'Deskhand'
-}
-
-/** Do two recorded rectangles cover the same area? A missing one never matches. */
-function sameScreenRect(a: ScreenRect | null | undefined, b: ScreenRect | null | undefined): boolean {
-  if (!a || !b) return false
-  return a.x === b.x && a.y === b.y && a.width === b.width && a.height === b.height
 }
 
 /**
@@ -293,15 +282,13 @@ export function createOverlayController(host: OverlayHost) {
     if (!resolveChatModel(settings)) {
       return {
         kind: 'warning',
-        message: `Выберите модель ${label} в настройках.`,
-        action: 'openSettings'
+        message: `Выбери модель ${label} в настройках.`
       }
     }
     if (!getApiKey(settings.provider)) {
       return {
         kind: 'warning',
-        message: `Добавьте ключ ${label} в настройках, чтобы получать ответы.`,
-        action: 'openSettings'
+        message: `Добавь ключ ${label} в настройках, чтобы получать ответы.`
       }
     }
     return null
@@ -314,7 +301,6 @@ export function createOverlayController(host: OverlayHost) {
       sessionId: session.id,
       context: session.snapshot,
       flags: session.flags,
-      defaults: session.defaults,
       setupNotice: setupNotice(),
       warnings,
       agent: agent.availability()
@@ -404,7 +390,9 @@ export function createOverlayController(host: OverlayHost) {
       observedHasWindowId: observed.windowId !== null,
       backgroundHasWindowId: (background?.windowId ?? null) !== null,
       titleMatches: (observed.windowTitle ?? null) === (background?.windowTitle ?? null),
-      boundsMatch: sameScreenRect(observedBounds, backgroundBounds),
+      // A missing rectangle on either side never matches; `sameScreenRect`
+      // compares the two as they are, without rounding.
+      boundsMatch: backgroundBounds ? sameScreenRect(observedBounds, backgroundBounds) : false,
       selfPid: process.pid
     })
     if (!same) return false
@@ -430,13 +418,13 @@ export function createOverlayController(host: OverlayHost) {
    * Concurrent callers (live tick + a question asked at the same moment) share
    * one capture instead of queueing two.
    */
-  function captureFor(target: Session, fresh = false): Promise<ScreenshotInfo | null> {
+  function captureFor(target: Session): Promise<ScreenshotInfo | null> {
     if (captureInFlight) {
-      if (!fresh && captureInFlight.sessionId === target.id) {
+      if (captureInFlight.sessionId === target.id) {
         trace('screen.captureJoined')
         return captureInFlight.promise
       }
-      const next = (): Promise<ScreenshotInfo | null> | null => session === target ? captureFor(target, fresh) : null
+      const next = (): Promise<ScreenshotInfo | null> | null => session === target ? captureFor(target) : null
       return captureInFlight.promise.then(next, next)
     }
 
@@ -452,9 +440,11 @@ export function createOverlayController(host: OverlayHost) {
         }
         const front = settings.agent.enabled ? await helperFrontWindow() : null
         const underOverlay = front?.pid === process.pid
-        const observed = underOverlay && target.rounds === 0 && target.target
-          ? await helperWindow(target.target.pid)
-          : underOverlay ? null : front
+        // Under our own card the frontmost window is not the one being acted on:
+        // read the remembered target's window instead.
+        const observed = underOverlay
+          ? (target.target ? await helperWindow(target.target.pid) : null)
+          : front
         if (observed && settings.excludedApps.includes(observed.bundleId)) {
           target.snapshot.screenshot = null
           return null
@@ -713,7 +703,6 @@ export function createOverlayController(host: OverlayHost) {
       id,
       snapshot,
       flags,
-      defaults: { ...flags },
       target: snapshot.activeApp,
       abort: null,
       requestId: null,
@@ -721,7 +710,6 @@ export function createOverlayController(host: OverlayHost) {
       annotations: [],
       history: [],
       live: { timer: null, inFlight: false },
-      rounds: 0,
       notices: []
     }
 
@@ -818,7 +806,7 @@ export function createOverlayController(host: OverlayHost) {
     // The card's own density and the window's vibrancy both follow this number;
     // routing them through here keeps the two from ever disagreeing.
     syncDrawing()
-    sendToWindow(CH.overlay.annotations, { count, visible: count > 0 })
+    sendToWindow(CH.overlay.annotations, { count })
   }
 
   /** Removes the drawings but keeps the card and the answer. */
@@ -967,19 +955,19 @@ export function createOverlayController(host: OverlayHost) {
     const model = resolveChatModel(settings)
     const apiKey = getApiKey(settings.provider)
 
-    const fail = (message: string, retryable: boolean): void => {
-      const event: StreamEvent = { type: 'error', requestId: request.requestId, message, retryable }
+    const fail = (message: string, retryable: boolean, code?: StreamEventCode): void => {
+      const event: StreamEvent = { type: 'error', requestId: request.requestId, message, retryable, code }
       sendToWindow(CH.overlay.stream, event)
       if (request.voice) host.showInactive(INITIAL_HEIGHT)
     }
 
     if (!model) {
-      fail('Модель не выбрана. Откройте настройки и укажите модель.', false)
+      fail('Модель не выбрана. Открой настройки и укажи модель.', false)
       return
     }
     if (!apiKey) {
       trace('turn.outcome', { outcome: 'blocked', reason: 'missing-key' })
-      fail('Не задан ключ API. Откройте настройки и добавьте ключ.', false)
+      fail('Не задан ключ API. Открой настройки и добавь ключ.', false)
       return
     }
 
@@ -988,15 +976,14 @@ export function createOverlayController(host: OverlayHost) {
     const refine = request.refine ?? null
     const baseAnswer = refine ? refine.baseAnswer.trim() : ''
     if (refine && !baseAnswer) {
-      fail('Пока нечего переписывать — сначала получите ответ.', false)
+      fail('Пока нечего переписывать — сначала получи ответ.', false)
       return
     }
 
     session.abort?.abort()
-    // A new question is a new turn: the round budget is per turn, and a plan from
-    // the previous answer must not be able to keep clicking into this one.
+    // A new question is a new turn: a plan from the previous answer must not be
+    // able to keep clicking into this one.
     agent.stop()
-    session.rounds = 0
 
     const abort = new AbortController()
     session.abort = abort
@@ -1023,7 +1010,7 @@ export function createOverlayController(host: OverlayHost) {
      */
     const isActionRequest = !refine && availability.ready && looksLikeAction(request.prompt)
     // Claim before screenshot/AX/model work, including cancellation mid-turn.
-    const glowTurn = beginAgentTurn(isActionRequest ? 'Задача принята · готовлю действия…' : undefined)
+    const glowTurn = beginAgentTurn(isActionRequest)
     const turnSession = session
     let outcome = 'abandoned'
     let reason = 'session-changed'
@@ -1148,7 +1135,7 @@ export function createOverlayController(host: OverlayHost) {
         outcome = abort.signal.reason === 'deadline' ? 'timeout' : 'cancelled'
         reason = outcome === 'timeout' ? 'deadline' : abort.signal.reason === STOP_AGENT ? 'agent-stop' : 'turn-abort'
         if (session === turnSession && turnSession.abort === abort) {
-          if (outcome === 'timeout') fail('Время выполнения истекло. Результат не подтверждён.', true)
+          if (outcome === 'timeout') fail('Время выполнения истекло. Результат не подтверждён.', true, 'timeout')
           else if (abort.signal.reason === STOP_AGENT) {
             if (agent.last().phase !== 'aborted') publishAgent({
               phase: 'aborted', step: 0, total: 0, label: '', message: 'Остановлено.'
@@ -1158,7 +1145,7 @@ export function createOverlayController(host: OverlayHost) {
         }
       }
       trace('turn.outcome', { outcome, reason })
-      trace('turn.finished', { aborted: abort.signal.aborted, rounds: turnSession.rounds })
+      trace('turn.finished', { aborted: abort.signal.aborted })
       if (turnSession.abort === abort) turnSession.abort = null
       if (voiceTurn === abort) voiceTurn = null
       endAgentTurn(glowTurn)
@@ -1458,7 +1445,7 @@ export function createOverlayController(host: OverlayHost) {
     close,
     state: overlayState,
     setFlags,
-    clearPointer: clearAnnotations,
+    clearDrawing: clearAnnotations,
     setTyping,
     setVoice,
     showVoiceIndicator: () => host.showInactive(INITIAL_HEIGHT),

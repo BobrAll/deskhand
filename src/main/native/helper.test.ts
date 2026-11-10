@@ -26,8 +26,7 @@ const state = vi.hoisted(() => ({
   watchKilled: 0,
   watchClosed: 0,
   watchSpawnError: false,
-  watchLineHandler: null as null | ((line: string) => void),
-  inputProcess: null as null | { close?: (error: Error | null, stdout: string) => void; signals: string[] }
+  watchLineHandler: null as null | ((line: string) => void)
 }))
 
 /** `process.resourcesPath` does not exist outside Electron; the module reads it. */
@@ -54,11 +53,6 @@ vi.mock('node:child_process', () => ({
     callback: (error: Error | null, stdout: string) => void
   ) => {
     state.calls.push({ file, args, options })
-    if (state.inputProcess && args[0] === 'input') {
-      const input = state.inputProcess
-      input.close = callback
-      return { kill: (signal: string) => input.signals.push(signal) }
-    }
     const answer = state.handler?.(file, args, options) ?? { error: new Error('no handler') }
     // Answer on a later tick, as the real call does.
     queueMicrotask(() => callback(answer.error ?? null, answer.stdout ?? ''))
@@ -184,13 +178,13 @@ describe('helperBinary: where the binary is looked up', () => {
 
 describe('runHelper: the shared call shape', () => {
   it('passes the arguments through with a timeout and an 8 MB buffer', async () => {
-    answerWith({ cursor: { stdout: '{"ok":true,"x":1,"y":2}' } })
+    answerWith({ 'front-quick': { stdout: '{"ok":true,"bundleId":"a","pid":1}' } })
 
-    await helper.helperCursor()
+    await helper.helperFrontApplication()
 
     expect(helperCalls()).toHaveLength(1)
     const call = helperCalls()[0]
-    expect(call.args).toEqual(['cursor'])
+    expect(call.args).toEqual(['front-quick'])
     expect(call.options.timeout).toBe(4000)
     expect(call.options.maxBuffer).toBe(8 * 1024 * 1024)
   })
@@ -199,32 +193,32 @@ describe('runHelper: the shared call shape', () => {
     state.existing = new Set()
     helper = await load()
 
-    expect(await helper.helperCursor()).toBeNull()
+    expect(await helper.helperFrontApplication()).toBeNull()
     expect(state.calls).toHaveLength(0)
   })
 
   it('turns a non-zero exit into null', async () => {
-    answerWith({ cursor: { error: new Error('exit 1'), stdout: '{"ok":true}' } })
+    answerWith({ 'front-quick': { error: new Error('exit 1'), stdout: '{"ok":true}' } })
 
-    expect(await helper.helperCursor()).toBeNull()
+    expect(await helper.helperFrontApplication()).toBeNull()
   })
 
   it('turns invalid JSON into null', async () => {
-    answerWith({ cursor: { stdout: 'not json at all' } })
+    answerWith({ 'front-quick': { stdout: 'not json at all' } })
 
-    expect(await helper.helperCursor()).toBeNull()
+    expect(await helper.helperFrontApplication()).toBeNull()
   })
 
   it('turns an empty answer into null', async () => {
-    answerWith({ cursor: { stdout: '   ' } })
+    answerWith({ 'front-quick': { stdout: '   ' } })
 
-    expect(await helper.helperCursor()).toBeNull()
+    expect(await helper.helperFrontApplication()).toBeNull()
   })
 
   it('reads a payload with a `false` ok as a failure, not as a crash', async () => {
-    answerWith({ cursor: { stdout: '{"ok":false,"error":"accessibility-denied"}' } })
+    answerWith({ 'front-quick': { stdout: '{"ok":false,"error":"accessibility-denied"}' } })
 
-    expect(await helper.helperCursor()).toBeNull()
+    expect(await helper.helperFrontApplication()).toBeNull()
   })
 })
 
@@ -397,102 +391,15 @@ describe('helperSendKey and helperActivate', () => {
   })
 })
 
-describe('input posting: rounding and arguments', () => {
-  it('rounds coordinates', async () => {
-    answerWith({
-      move: { stdout: '{"ok":true}' },
-      click: { stdout: '{"ok":true}' },
-      drag: { stdout: '{"ok":true}' },
-      scroll: { stdout: '{"ok":true}' }
-    })
-
-    await helper.helperMoveMouse(10.6, 20.4)
-    await helper.helperClick(1.5, 2.5)
-    await helper.helperDrag({ x: 3.4, y: 4.6 }, { x: 5.5, y: 6.5 })
-    await helper.helperScroll(-12.7, 33.2)
-
-    expect(helperCalls().map((call) => call.args)).toEqual([
-      ['move', '11', '20'],
-      ['click', '2', '3', 'left'],
-      ['drag', '3', '5', '6', '7'],
-      ['scroll', '-13', '33']
-    ])
-  })
-
-  it('passes the click button through', async () => {
-    answerWith({ click: { stdout: '{"ok":true}' } })
-
-    await helper.helperClick(1, 2, 'double')
-
-    expect(helperCalls()[0].args).toEqual(['click', '1', '2', 'double'])
-  })
-
-  it('sends typed text as base64 so Unicode survives argv', async () => {
-    answerWith({ type: { stdout: '{"ok":true}' } })
-
-    await helper.helperTypeText('привет')
-
-    const args = helperCalls()[0].args
-    expect(args[0]).toBe('type')
-    expect(Buffer.from(args[1], 'base64').toString('utf8')).toBe('привет')
-  })
-
-  it('binds input to the observed window and waits for process close after cancellation', async () => {
-    const process: NonNullable<typeof state.inputProcess> = { signals: [] }
-    state.inputProcess = process
-    try {
-      const controller = new AbortController()
-      let settled = false
-      const input = helper.helperTypeText('🙂', {
-        pid: 42, windowId: 11, bounds: { x: 1, y: 2, width: 300, height: 200 }, signal: controller.signal
-      }).then((ok) => { settled = true; return ok })
-      expect(helperCalls()[0].args.slice(0, 5)).toEqual(['input', '42', '11', '1,2,300,200', 'type'])
-      controller.abort()
-      expect(process.signals).toEqual(['SIGTERM'])
-      await Promise.resolve()
-      expect(settled).toBe(false)
-      process.close?.(null, '{"ok":false,"error":"interrupted"}')
-      await expect(input).resolves.toBe(false)
-    } finally {
-      state.inputProcess = null
-    }
-  })
-
-  it('extends the timeout with the text length, capped at 30 s', async () => {
-    answerWith({ type: { stdout: '{"ok":true}' } })
-
-    await helper.helperTypeText('a'.repeat(10))
-    await helper.helperTypeText('a'.repeat(5000))
-
-    expect(helperCalls()[0].options.timeout).toBe(4400)
-    expect(helperCalls()[1].options.timeout).toBe(30_000)
-  })
-
-  it('sends nothing at all for empty text, and still reports success', async () => {
-    expect(await helper.helperTypeText('')).toBe(true)
-    expect(state.calls).toHaveLength(0)
-  })
-
-  it('sends a key code and a modifier mask', async () => {
-    answerWith({ key: { stdout: '{"ok":true}' } })
-
-    expect(await helper.helperPressKey(1, 0x100000)).toBe(true)
-    expect(helperCalls()[0].args).toEqual(['key', '1', '1048576'])
-  })
-})
-
-describe('helperProbe and helperFocused', () => {
+describe('helperProbe', () => {
   const probePayload = {
     ok: true,
     pid: 42,
-    app: 'Safari',
-    chain: [{ role: 'AXButton', title: 'ok', frame: { x: 0, y: 0, width: 10, height: 10 } }],
     targets: [
       { role: 'AXButton', title: 'ok', frame: { x: 0, y: 0, width: 10, height: 10 }, pressable: 1 },
       { role: '', title: 'no role', frame: { x: 0, y: 0, width: 10, height: 10 } },
       { role: 'AXStaticText', title: 'no frame' }
     ],
-    focused: { role: 'AXTextField', title: 'поле', value: 'текст' },
     elapsedMs: 12
   }
 
@@ -503,14 +410,6 @@ describe('helperProbe and helperFocused', () => {
 
     expect(helperCalls()[0].args).toEqual(['probe', '42'])
     expect(helperCalls()[0].options.timeout).toBe(3000)
-  })
-
-  it('sends a rounded point when one is given', async () => {
-    answerWith({ probe: { stdout: JSON.stringify(probePayload) } })
-
-    await helper.helperProbe(42, { x: 10.6, y: 20.2 })
-
-    expect(helperCalls()[0].args).toEqual(['probe', '42', '11', '20'])
   })
 
   it('sends pid 0 for a null, zero or negative pid', async () => {
@@ -529,12 +428,9 @@ describe('helperProbe and helperFocused', () => {
     const probe = await helper.helperProbe(42)
 
     expect(probe?.pid).toBe(42)
-    expect(probe?.app).toBe('Safari')
     expect(probe?.elapsedMs).toBe(12)
-    expect(probe?.chain).toHaveLength(1)
     expect(probe?.targets).toHaveLength(1)
     expect(probe?.targets[0].pressable).toBe(true)
-    expect(probe?.focused?.value).toBe('текст')
   })
 
   it('treats a missing elapsed time as 0', async () => {
@@ -553,39 +449,6 @@ describe('helperProbe and helperFocused', () => {
     answerWith({ probe: { stdout: '{"ok":true}' } })
 
     expect(await helper.helperProbe(1)).toBeNull()
-  })
-
-  it('reads the focused element and its flag values', async () => {
-    answerWith({
-      focused: {
-        stdout: JSON.stringify({
-          ok: true,
-          focused: { role: 'AXTextField', editable: 1, pressable: true, actions: ['AXPress', 5] }
-        })
-      }
-    })
-
-    const focused = await helper.helperFocused(42)
-
-    expect(focused?.editable).toBe(true)
-    expect(focused?.pressable).toBe(true)
-    expect(focused?.actions).toEqual(['AXPress'])
-  })
-
-  it('returns null for a focused element without a role, or a failed call', async () => {
-    answerWith({ focused: { stdout: '{"ok":true,"focused":{"title":"x"}}' } })
-    expect(await helper.helperFocused(1)).toBeNull()
-
-    answerWith({ focused: { stdout: '{"ok":false}' } })
-    expect(await helper.helperFocused(1)).toBeNull()
-  })
-
-  it('sends pid 0 when the focused call has no pid', async () => {
-    answerWith({ focused: { stdout: '{"ok":true,"focused":{"role":"AXButton"}}' } })
-
-    await helper.helperFocused(null)
-
-    expect(helperCalls()[0].args).toEqual(['focused', '0'])
   })
 })
 
@@ -656,7 +519,7 @@ describe('watchForAbort: the long-lived watcher', () => {
   })
 })
 
-describe('helperPermissions and helperCursor', () => {
+describe('helperPermissions', () => {
   it('asks for the plain or the requesting command', async () => {
     answerWith({
       permissions: { stdout: '{"ok":true,"accessibility":true,"screenRecording":false}' },
@@ -680,18 +543,6 @@ describe('helperPermissions and helperCursor', () => {
     answerWith({ permissions: { stdout: '{"ok":false}' } })
 
     expect(await helper.helperPermissions(false)).toBeNull()
-  })
-
-  it('reads the cursor position', async () => {
-    answerWith({ cursor: { stdout: '{"ok":true,"x":100,"y":200}' } })
-
-    expect(await helper.helperCursor()).toEqual({ x: 100, y: 200 })
-  })
-
-  it('returns null when a coordinate is not a number', async () => {
-    answerWith({ cursor: { stdout: '{"ok":true,"x":100}' } })
-
-    expect(await helper.helperCursor()).toBeNull()
   })
 })
 

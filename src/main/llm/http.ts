@@ -3,6 +3,7 @@
  */
 
 import { ProviderError, type StreamOptions } from './provider'
+import { describeProviderStatus } from './statusText'
 
 /** Request base URL: the per-request override wins over the built-in default. */
 export function apiRoot(options: StreamOptions, fallback: string): string {
@@ -93,41 +94,13 @@ export async function toProviderError(response: Response, providerLabel: string)
   }
 
   const status = response.status
-  switch (status) {
-    case 401:
-    case 403:
-      return new ProviderError(
-        `Ключ ${providerLabel} не принят. Проверьте ключ в настройках.`,
-        false,
-        status
-      )
-    case 402:
-      return new ProviderError(`Недостаточно средств на счёте ${providerLabel}.`, false, status)
-    case 404:
-      return new ProviderError(
-        `Модель не найдена у ${providerLabel}. Проверьте название модели.${detail ? ` (${detail})` : ''}`,
-        false,
-        status
-      )
-    case 413:
-      return new ProviderError('Контекст слишком большой: уменьшите скриншот или выделение.', false, status)
-    case 429:
-      return new ProviderError(
-        `Лимит запросов ${providerLabel} исчерпан. Подождите немного и повторите.`,
-        true,
-        status
-      )
-    default:
-      if (status >= 500) {
-        return new ProviderError(`Сервис ${providerLabel} временно недоступен (${status}).`, true, status)
-      }
-      return new ProviderError(
-        `Ошибка ${providerLabel} (${status})${detail ? `: ${detail}` : ''}`,
-        true,
-        status,
-        (status === 400 || status === 422) && IMAGE_REJECTION.test(detail)
-      )
-  }
+  const described = describeProviderStatus(status, { label: providerLabel, detail })
+  return new ProviderError(
+    described.message,
+    described.retryable,
+    status,
+    (status === 400 || status === 422) && IMAGE_REJECTION.test(detail)
+  )
 }
 
 /** Maps a fetch/abort failure to a user-facing message. */

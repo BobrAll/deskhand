@@ -1,14 +1,15 @@
 /**
  * Turns a `data:` URL into an image part for the model.
  *
- * The screenshot comes back from `screencapture`-based capture as a data URL, and
- * the three requests of one turn — the question, a `@look` continuation, and the
- * verification check — each have to carry it as `{ type: 'image', mimeType,
- * base64 }`. That extraction was written out three times in `overlay.ts` with the
- * same regex and the same `parts.push`; it lives here once now.
+ * The screenshot comes back from `screencapture`-based capture as a data URL,
+ * and a request that carries it needs it as `{ type: 'image', mimeType, base64 }`
+ * rather than the raw string. The extraction lives here, out of the request
+ * builder, because it is the only part of building a message that is pure string
+ * work: the caller decides *whether* there is an image, this decides whether the
+ * URL can become one.
  *
  * Returns `null` for anything that is not a base64 image data URL, which is the
- * same "no image" answer the callers already handled by skipping the push.
+ * same "no image" answer the caller already handles.
  */
 
 import type { ContentPart } from './llm/provider'

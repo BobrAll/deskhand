@@ -28,6 +28,7 @@ import type {
   StreamEvent
 } from '@shared/types'
 import { CARD_NARROW_WIDTH, CARD_WIDTH } from '@shared/metrics'
+import { looksLikeAction } from '@shared/intent'
 import {
   ANSWER_CHROME,
   ACTIONS_CHROME,
@@ -63,6 +64,14 @@ const VOICE_BARS = 5
 /** The bars' resting height and how much of the microphone level they add. */
 const VOICE_AMP_BASE = 0.62
 const VOICE_AMP_PER_LEVEL = 0.55
+
+/**
+ * How long an agent run works before the voice says it is still going.
+ *
+ * Long enough that a normal run never reaches it, short enough that a person
+ * waiting on a stuck step hears something before they conclude it died.
+ */
+const AGENT_PROGRESS_MS = 45_000
 
 function newRequestId(): string {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
@@ -163,6 +172,28 @@ export function App() {
   const promptRef = useRef('')
   /** Latest agent phase, so the key handler does not resubscribe on every tick. */
   const agentRef = useRef<AgentEvent | null>(null)
+  /**
+   * The answer on screen, readable from callbacks that must stay stable.
+   *
+   * The answer grows once per streamed chunk, so any callback that closes over
+   * it is rebuilt on every chunk. The key handler is one of those callbacks:
+   * depending on the answer would re-register the window listener hundreds of
+   * times per reply.
+   */
+  const answerTextRef = useRef('')
+  /**
+   * What the turn in flight is: spoken or typed, an action or a question.
+   *
+   * The speech gate needs it after the turn is over — by the time a run ends,
+   * the card no longer holds the prompt that started it.
+   */
+  const turnKindRef = useRef({ spoken: false, action: false })
+  /** True when the user ended the run themselves, so its stop is not news. */
+  const stoppedByUserRef = useRef(false)
+  /** The approval question already announced, so a repaint does not repeat it. */
+  const approvalSaidRef = useRef<string | null>(null)
+  /** Pending "still working" line for a long agent run; one per acting phase. */
+  const progressTimerRef = useRef<number | null>(null)
   const busyRef = useRef(false)
   const requestIdRef = useRef<string | null>(null)
   /**
@@ -229,6 +260,7 @@ export function App() {
 
   stateRef.current = state
   promptRef.current = prompt
+  answerTextRef.current = answer
   busyRef.current = busy
   agentRef.current = agent
 
@@ -252,6 +284,31 @@ export function App() {
     window.setTimeout(() => sendRef.current(text, true), 0)
   }, [])
 
+  /**
+   * Everything one turn leaves behind, cleared in one place.
+   *
+   * Both ways a card can be replaced — a fresh session (`reset`) and a session
+   * that has not been collected yet (`onPreparing`) — have to drop the same
+   * fields, and a width the person dragged belongs to the card they dragged it
+   * on, not to the next one.
+   */
+  const clearTurn = useCallback((typing: boolean) => {
+    setAnswer('')
+    setFailure(null)
+    setNotice(null)
+    setBusy(false)
+    setDrawn(0)
+    setTyping(typing)
+    setExpanded(false)
+    setUserWidth(null)
+    requestIdRef.current = null
+    replaceOnChunkRef.current = false
+    spokenPromptRef.current = false
+    turnKindRef.current = { spoken: false, action: false }
+    stoppedByUserRef.current = false
+    setAgent(null)
+  }, [])
+
   const reset = useCallback(
     (next: OverlayState) => {
       /**
@@ -270,20 +327,11 @@ export function App() {
       stateRef.current = next
       setState(next)
       if (!typedWhileEmpty) setPrompt('')
-      setAnswer('')
-      setFailure(null)
-      setNotice(null)
-      setBusy(false)
-      setDrawn(0)
-      setTyping(typedWhileEmpty)
-      setExpanded(false)
-      requestIdRef.current = null
-      replaceOnChunkRef.current = false
-      setAgent(null)
+      clearTurn(typedWhileEmpty)
       inputRef.current?.focus()
       resumePendingSend()
     },
-    [resumePendingSend]
+    [clearTurn, resumePendingSend]
   )
 
   const applyState = useCallback(
@@ -339,10 +387,48 @@ export function App() {
     setBusy(false)
     if (action.kind === 'done') {
       const result = agentRef.current
-      if (speechCurrent) void speechRef.current.finish(event.requestId, action.text || (result?.completed ? 'Готово.' : result?.message ?? ''), result?.phase === 'error' || result?.completed === false)
+      if (result) {
+        // An agent turn: the answer is read when there is one, and the recorded
+        // line says how the run ended when there is not. The line comes from the
+        // bank rather than from a literal, so it rotates and so a run that ended
+        // without an answer is not read as «Готово» by a different voice.
+        if (action.text.trim()) {
+          if (speechCurrent) {
+            void speechRef.current.finish(
+              event.requestId,
+              action.text,
+              result.phase === 'error' || result.completed === false
+            )
+          }
+        } else {
+          if (speechCurrent) {
+            void speechRef.current.finish(event.requestId, '')
+            // A stop the user asked for is not news: they pressed Escape or the
+            // stop button and are looking at the card.
+            if (!(result.phase === 'aborted' && stoppedByUserRef.current)) {
+              const cue = result.phase === 'aborted' ? 'stopped'
+                : result.phase === 'error' ? 'failed'
+                : result.completed ? 'done' : 'incomplete'
+              speechRef.current.say(cue, turnKindRef.current)
+            }
+          }
+        }
+      } else if (speechCurrent) {
+        void speechRef.current.finish(event.requestId, action.text, false)
+      }
       setAnswer(action.text)
     } else {
-      if (speechCurrent) void speechRef.current.finish(event.requestId, action.message, true)
+      if (speechCurrent) {
+        if (action.code === 'timeout') {
+          // The recorded line already says "the result is not confirmed, check
+          // what happened", which is the whole point of C7 — and it plays
+          // instantly, unlike a synthesised sentence.
+          void speechRef.current.finish(event.requestId, '')
+          speechRef.current.say('timeout', turnKindRef.current)
+        } else {
+          void speechRef.current.finish(event.requestId, action.message, true)
+        }
+      }
       setFailure({ message: action.message, retryable: action.retryable })
     }
   }, [])
@@ -371,18 +457,7 @@ export function App() {
       stateRef.current = null
       setState(null)
       if (!joinedCollecting) setPrompt('')
-      setAnswer('')
-      setFailure(null)
-      setNotice(null)
-      setBusy(false)
-      setAgent(null)
-      setDrawn(0)
-      setTyping(false)
-      setExpanded(false)
-      setUserWidth(null)
-      requestIdRef.current = null
-      replaceOnChunkRef.current = false
-      spokenPromptRef.current = false
+      clearTurn(false)
     })
     const offContext = window.deskhand.overlay.onContextUpdate((snapshot: ContextSnapshot) => {
       setState((prev) => (prev ? { ...prev, context: snapshot } : prev))
@@ -394,6 +469,27 @@ export function App() {
     const offAgent = window.deskhand.agent.onEvent((event) => {
       agentRef.current = event.phase === 'idle' ? null : event
       setAgent(agentRef.current)
+      // The voice follows the states the card does not announce by itself. What
+      // may actually be said is decided by `speaksCue`, from the settings.
+      const kind = turnKindRef.current
+      if (event.code === 'secret') speechRef.current.say('secret', kind)
+      else if (event.code === 'blocked') speechRef.current.say('agentBlocked', kind)
+      if (event.phase === 'asking' && event.approval) {
+        // Once per question: a repaint of the same approval is not a new one.
+        if (approvalSaidRef.current !== event.approval.id) {
+          approvalSaidRef.current = event.approval.id
+          speechRef.current.say('approval', kind)
+        }
+      }
+      if (event.phase === 'acting') {
+        progressTimerRef.current ??= window.setTimeout(() => {
+          progressTimerRef.current = null
+          speechRef.current.say('agentProgress', turnKindRef.current)
+        }, AGENT_PROGRESS_MS)
+      } else if (progressTimerRef.current !== null) {
+        window.clearTimeout(progressTimerRef.current)
+        progressTimerRef.current = null
+      }
     })
 
     return () => {
@@ -403,6 +499,8 @@ export function App() {
       offStream()
       offAnnotations()
       offAgent()
+      if (progressTimerRef.current !== null) window.clearTimeout(progressTimerRef.current)
+      progressTimerRef.current = null
     }
   }, [applyState, onStream])
 
@@ -471,6 +569,23 @@ export function App() {
   // size to their content.
   const waiting = useWaiting(requestIdRef.current, busy && !failure && !listening)
   const waitStage = waiting.stage
+
+  /**
+   * A2: a wait long enough that the card may have been forgotten.
+   *
+   * Only a spoken turn reaches this: a typed question leaves the card on screen
+   * with the same sentence already in it, and `speaksCue` says so.
+   */
+  useEffect(() => {
+    if (waitStage !== 'long') return
+    speechRef.current.say('longWait', turnKindRef.current)
+  }, [waitStage])
+
+  /** D1–D5: the press is over and the user is waiting to hear what happened. */
+  useEffect(() => {
+    if (!voice.code) return
+    speechRef.current.say(voice.code)
+  }, [voice.code, voice.at])
   const agentRunning = busy && agent !== null
   const agentStatus = agent && agentLabel(agent, answer)
   const agentDone = !busy && !hasAnswer && agent !== null && agentMark(agent) === 'done'
@@ -487,6 +602,16 @@ export function App() {
   const chromeWidth = CHROME_WIDTH + (busy ? STOP_CHROME : 0)
 
   /**
+   * The line the field wants, in whole points.
+   *
+   * Rounded once and used for both decisions — how wide the card opens and
+   * whether the question wraps — because two roundings of the same measurement
+   * disagree at the boundary: a line that exactly fills the card would wrap
+   * while the width said it fits.
+   */
+  const wantedLineWidth = Math.ceil(textWidth) + chromeWidth + CARET_SLACK
+
+  /**
    * The width the card needs for the question being written.
    *
    * Nothing is added for empty space: the field gets as many points as the
@@ -496,11 +621,7 @@ export function App() {
    * open to a panel the moment you start typing — the latter is loud in precisely
    * the moment a person is still deciding whether they want to say anything.
    */
-  const composedWidth = clamp(
-    Math.ceil(textWidth) + chromeWidth + CARET_SLACK,
-    CARD_NARROW_WIDTH,
-    CARD_WIDTH
-  )
+  const composedWidth = clamp(wantedLineWidth, CARD_NARROW_WIDTH, CARD_WIDTH)
 
   // Recompute from current content so a shorter answer shrinks the card again.
   const answerWidth = hasAnswer
@@ -547,7 +668,7 @@ export function App() {
   // room would briefly add rows that disappear as the window catches up. The
   // question wraps at the card's own width, so a card the user widened holds a
   // longer line and one they narrowed wraps sooner.
-  const wrapped = textWidth + chromeWidth + CARET_SLACK > cardWidth
+  const wrapped = wantedLineWidth > cardWidth
 
   // Measure layout, not the entrance transform. getBoundingClientRect includes
   // the appear animation's scale, which used to feed false heights back to macOS.
@@ -617,6 +738,9 @@ export function App() {
     const usedMode = sendMode ?? 'insert'
     const requestId = newRequestId()
     requestIdRef.current = requestId
+    // What this turn is, for the speech gate at the end of it.
+    turnKindRef.current = { spoken, action: looksLikeAction(value) }
+    stoppedByUserRef.current = false
     speechRef.current.begin(requestId, value, spoken)
     setBusy(true)
     setAnswer('')
@@ -713,8 +837,8 @@ export function App() {
     window.deskhand.overlay.setFlags(flags)
   }, [])
 
-  const clearPointer = useCallback(() => {
-    window.deskhand.overlay.clearPointer()
+  const clearDrawing = useCallback(() => {
+    window.deskhand.overlay.clearDrawing()
   }, [])
 
   /**
@@ -744,7 +868,7 @@ export function App() {
       // cannot retroactively become an action. Saying that out loud is the
       // difference between "включил и ничего не изменилось" and a user who
       // presses «Повторить».
-      setNotice('Управление включено. Повторите просьбу — теперь я её выполню.')
+      setNotice('Управление включено. Повтори просьбу — теперь я её выполню.')
     }
   }, [])
 
@@ -761,6 +885,12 @@ export function App() {
   const answerAgent = useCallback(
     async (request: AgentToolRequest, allow: boolean, remember: boolean) => {
       await window.deskhand.agent.answer(request.id, allow, remember)
+      // The decision is the user's, so the line confirms it rather than the
+      // agent's judgement — and the click that made it is already on the card.
+      speechRef.current.say(
+        allow ? (remember ? 'remembered' : 'approved') : 'denied',
+        turnKindRef.current
+      )
     },
     []
   )
@@ -793,16 +923,18 @@ export function App() {
   }, [])
 
   const paste = useCallback(async () => {
-    if (!answer.trim()) return
-    const result = await window.deskhand.overlay.paste(answer)
+    const text = answerTextRef.current
+    if (!text.trim()) return
+    const result = await window.deskhand.overlay.paste(text)
     if (!result.ok && result.message) setNotice(result.message)
-  }, [answer])
+  }, [])
 
   const copy = useCallback(async () => {
-    if (!answer.trim()) return
-    await window.deskhand.overlay.copy(answer)
+    const text = answerTextRef.current
+    if (!text.trim()) return
+    await window.deskhand.overlay.copy(text)
     setNotice('Скопировано в буфер обмена')
-  }, [answer])
+  }, [])
 
   /**
    * The width the content itself wants, and the one «Шире» opens to.
@@ -883,35 +1015,50 @@ export function App() {
   }, [])
 
   /**
+   * Stops the answer in flight.
+   *
+   * The order matters: the request is marked ignored *before* it is cancelled, so
+   * a chunk already on its way cannot land on a card that has stopped waiting for
+   * it.
+   *
+   * `closeWhenIdle` is the one difference between the two ways in. Escape on a
+   * card with nothing running dismisses the card; the «Стоп» button only exists
+   * while an answer is streaming and has nothing to dismiss.
+   */
+  const cancelRequest = useCallback((closeWhenIdle: boolean) => {
+    speechRef.current.stop()
+    const id = requestIdRef.current
+    if (!id) {
+      if (closeWhenIdle) window.deskhand.overlay.close()
+      return
+    }
+    ignoredRequestRef.current = id
+    requestIdRef.current = null
+    setBusy(false)
+    window.deskhand.overlay.cancel(id)
+  }, [])
+
+  /**
    * Performs what `keyPolicy` decided.
    *
    * The decision is a pure function of the key and the card's state; the effects
-   * need the live component, so they stay here. `cancel` is the one branch with
-   * real work in it, and it is spelled out because the order matters: the request
-   * is marked ignored *before* it is cancelled, so a chunk already in flight
-   * cannot land on a card that stopped waiting for it.
+   * need the live component, so they stay here.
    */
   const perform = useCallback(
     (action: Exclude<KeyAction, null>) => {
-      if (action === 'close' || action === 'cancel' || action === 'stopAgent') speechRef.current.stop()
+      if (action === 'close' || action === 'stopAgent') speechRef.current.stop()
       if (action === 'close') {
         window.deskhand.overlay.close()
         return
       }
       if (action === 'stopAgent') {
+        // The user ended this one, so the voice does not report it back to them.
+        stoppedByUserRef.current = true
         void window.deskhand.agent.stop()
         return
       }
       if (action === 'cancel') {
-        const id = requestIdRef.current
-        if (!id) {
-          window.deskhand.overlay.close()
-          return
-        }
-        ignoredRequestRef.current = id
-        requestIdRef.current = null
-        setBusy(false)
-        window.deskhand.overlay.cancel(id)
+        cancelRequest(true)
         return
       }
       if (action === 'paste') {
@@ -922,9 +1069,9 @@ export function App() {
         void copy()
         return
       }
-      send(prompt)
+      send(promptRef.current)
     },
-    [copy, paste, prompt, send]
+    [cancelRequest, copy, paste, send]
   )
 
   useEffect(() => {
@@ -936,7 +1083,7 @@ export function App() {
         tagName: (event.target as HTMLElement | null)?.tagName ?? null,
         agentPhase: agentRef.current?.phase ?? null,
         hasSelection: Boolean(window.getSelection()?.toString()),
-        hasAnswer: Boolean(answer.trim())
+        hasAnswer: Boolean(answerTextRef.current.trim())
       })
       if (!action) return
       // ⌘C without a selection is ours; with one, `keyPolicy` has already said
@@ -947,7 +1094,7 @@ export function App() {
 
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [answer, perform])
+  }, [perform])
 
   // Nothing at all until the renderer knows whether a turn is running — see
   // `ready` in `useVoice`.
@@ -1114,16 +1261,7 @@ export function App() {
             <button
               className="stop"
               title="Остановить ответ"
-              onClick={() => {
-                const id = requestIdRef.current
-                // The main process stops writing as soon as it is aborted and emits
-                // nothing more, so the "busy" state has to be cleared here.
-                speechRef.current.stop()
-                ignoredRequestRef.current = id
-                requestIdRef.current = null
-                setBusy(false)
-                if (id) window.deskhand.overlay.cancel(id)
-              }}
+              onClick={() => cancelRequest(false)}
             >
               <span aria-hidden />
             </button>
@@ -1189,7 +1327,7 @@ export function App() {
             {drawn > 0 && (
               <button
                 className="tag clear"
-                onClick={clearPointer}
+                onClick={clearDrawing}
                 title="Убрать рисунок с экрана"
               >
                 Рисунок {drawn} ×
@@ -1227,8 +1365,8 @@ export function App() {
         <div className="line" data-tone={promptLooksLikeAction ? 'warn' : undefined}>
           <span>
             {promptLooksLikeAction
-              ? 'Это можно было сделать, а не показать: включите управление — и я нажму сам.'
-              : 'Могу и нажать за вас — управление мышью пока выключено.'}
+              ? 'Это можно было сделать, а не показать: включи управление — и я нажму сам.'
+              : 'Могу и нажать за тебя — управление мышью пока выключено.'}
           </span>
           <button className="tag" onClick={() => void setAgentEnabled(true)}>
             Включить
@@ -1310,7 +1448,7 @@ export function App() {
 
       {showWaiting && (
         <div className="waiting" role="status" aria-live="polite">
-          {!agent && !hasAnswer && <div className="waiting-label">Готовлю ответ…</div>}
+          <div className="waiting-label">Готовлю ответ…</div>
           {waitStage === 'long' ? (
             <div>Ответ занимает больше времени. Esc — остановить.</div>
           ) : waitStage === 'tip' ? (
@@ -1360,11 +1498,9 @@ export function App() {
       */}
       {hasAnswer && (!busy || speech.speaking) && (
         <div className="foot answer-actions">
-          {(!busy || speech.speaking) && (
-            <button className="link" onClick={() => speech.speaking ? speech.stop() : speech.speak(answer)}>
-              {speech.speaking ? 'Остановить озвучку' : 'Прослушать'}
-            </button>
-          )}
+          <button className="link" onClick={() => speech.speaking ? speech.stop() : speech.speak(answer)}>
+            {speech.speaking ? 'Остановить озвучку' : 'Прослушать'}
+          </button>
           {answerReady && (
             <>
               <span className="spacer" />

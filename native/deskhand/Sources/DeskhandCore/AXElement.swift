@@ -159,7 +159,10 @@ public struct AXElement {
     /// Screen-space frame, if the element exposes position and size.
     public func frame() -> CGRect? {
         guard let posValue = copy(kAXPositionAttribute),
-              let sizeValue = copy(kAXSizeAttribute) else { return nil }
+              let sizeValue = copy(kAXSizeAttribute),
+              CFGetTypeID(posValue) == AXValueGetTypeID(),
+              CFGetTypeID(sizeValue) == AXValueGetTypeID()
+        else { return nil }
         var point = CGPoint.zero
         var size = CGSize.zero
         guard AXValueGetValue(posValue as! AXValue, .cgPoint, &point) else { return nil }

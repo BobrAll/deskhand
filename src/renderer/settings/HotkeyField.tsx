@@ -145,7 +145,7 @@ export function HotkeyField({ value, onChange }: HotkeyFieldProps) {
           setError(null)
         }}
       >
-        {recording ? 'Нажмите комбинацию…' : prettyAccelerator(value)}
+        {recording ? 'Нажми комбинацию…' : prettyAccelerator(value)}
       </button>
       {recording && <span className="hint">Esc — отмена</span>}
       {error && <span className="hint err">{error}</span>}

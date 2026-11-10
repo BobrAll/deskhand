@@ -193,7 +193,8 @@ describe('resolveWhisperModel', () => {
 
     expect(await recognizer.resolveWhisperModel()).toEqual({
       path: '/userdata/models/ggml-small-q5_1.bin',
-      auto: false
+      auto: false,
+      id: 'small-q5_1'
     })
   })
 
@@ -202,7 +203,8 @@ describe('resolveWhisperModel', () => {
 
     expect(await recognizer.resolveWhisperModel()).toEqual({
       path: '/opt/homebrew/share/whisper.cpp/models/ggml-small-q5_1.bin',
-      auto: true
+      auto: true,
+      id: 'small-q5_1'
     })
   })
 
@@ -213,7 +215,8 @@ describe('resolveWhisperModel', () => {
 
     expect(await recognizer.resolveWhisperModel()).toEqual({
       path: '/userdata/models/ggml-large-v3-turbo-q5_0.bin',
-      auto: true
+      auto: true,
+      id: 'large-v3-turbo-q5_0'
     })
   })
 
@@ -225,7 +228,7 @@ describe('resolveWhisperModel', () => {
   })
 
   it('returns null when nothing is on disk', async () => {
-    expect(await recognizer.resolveWhisperModel()).toEqual({ path: null, auto: true })
+    expect(await recognizer.resolveWhisperModel()).toEqual({ path: null, auto: true, id: null })
   })
 })
 
@@ -262,17 +265,30 @@ describe('voiceStatus', () => {
 
     expect(status.ready).toBe(false)
     expect(status.detail).toBe(
-      'Не найден whisper-cli — пересоберите приложение (npm run build:whisper).'
+      'Не найден whisper-cli — пересобери приложение (npm run build:whisper).'
     )
   })
 
-  it('explains a missing model when the binary is there', async () => {
+  it('names the model the settings point at when it is missing', async () => {
     state.existing = new Set(['/app/resources/whisper-cli'])
 
     const status = await recognizer.voiceStatus()
 
     expect(status.ready).toBe(false)
-    expect(status.detail).toBe('Не скачана модель распознавания — выберите её в настройках.')
+    // "Выбери её" is useless advice for someone who already chose it and only
+    // lost the file, so the sentence names the model.
+    expect(status.detail).toBe('Модель «Small · q5_1» не скачана — скачай её в настройках.')
+    expect(status.activeModel).toBeNull()
+  })
+
+  it('reports no selection when nothing is on disk', async () => {
+    state.existing = new Set(['/app/resources/whisper-cli'])
+    state.settings = { ...state.settings, voice: { ...state.settings.voice, model: '' } }
+
+    const status = await recognizer.voiceStatus()
+
+    expect(status.detail).toBe('Не скачана модель распознавания — выбери её в настройках.')
+    expect(status.activeModel).toBeNull()
   })
 })
 
@@ -409,7 +425,7 @@ describe('transcribe', () => {
     expect(await recognizer.transcribe({ wav: WAV })).toMatchObject({
       ok: false,
       text: '',
-      message: 'Речь не распознана — попробуйте ещё раз.'
+      message: 'Речь не распознана — попробуй ещё раз.'
     })
   })
 

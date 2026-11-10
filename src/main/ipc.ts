@@ -7,7 +7,7 @@
  */
 
 import { execFile } from 'node:child_process'
-import { app, dialog, ipcMain } from 'electron'
+import { dialog, ipcMain } from 'electron'
 import { CH } from '@shared/ipc'
 import { PROVIDERS } from '@shared/defaults'
 import type {
@@ -46,7 +46,13 @@ import {
   setSettingsHeld,
   openSettingsWindow
 } from './windows'
-import { deleteModel, downloadModel, importModel, voiceStatus } from './voice/recognizer'
+import {
+  deleteModel,
+  downloadModel,
+  importModel,
+  resolveWhisperModel,
+  voiceStatus
+} from './voice/recognizer'
 
 const PROVIDER_IDS: ProviderId[] = PROVIDERS.map((provider) => provider.id)
 
@@ -100,7 +106,7 @@ function readBundleId(appPath: string): Promise<string | null> {
 
 async function pickApplication(): Promise<AppPickResult | null> {
   const result = await dialog.showOpenDialog({
-    title: 'Выберите приложение',
+    title: 'Выбери приложение',
     defaultPath: '/Applications',
     properties: ['openFile'],
     filters: [{ name: 'Приложения', extensions: ['app'] }]
@@ -167,6 +173,18 @@ async function applySettingsSideEffects(
 }
 
 export function registerIpc(deps: IpcDeps): void {
+  /**
+   * Points the voice settings at one model.
+   *
+   * One place, because three paths do it: a finished download, a finished
+   * import, and a delete that took the selected model away. The model is read
+   * from the settings at transcription time, so writing the file is enough —
+   * unlike the hotkey, nothing holds it across calls.
+   */
+  function selectModel(id: string): void {
+    patchSettings({ voice: { ...getSettings().voice, model: id } })
+  }
+
   // ---- overlay -----------------------------------------------------------
   ipcMain.handle(CH.overlay.getState, () => deps.overlay.state())
 
@@ -175,7 +193,7 @@ export function registerIpc(deps: IpcDeps): void {
   })
   ipcMain.on(CH.overlay.cancel, (_event, requestId: string) => deps.overlay.cancel(requestId))
   ipcMain.on(CH.overlay.setFlags, (_event, flags: ContextFlags) => deps.overlay.setFlags(flags))
-  ipcMain.on(CH.overlay.clearPointer, () => deps.overlay.clearPointer())
+  ipcMain.on(CH.overlay.clearDrawing, () => deps.overlay.clearDrawing())
   ipcMain.on(CH.overlay.typing, (_event, typing: boolean) => deps.overlay.setTyping(Boolean(typing)))
   ipcMain.on(CH.overlay.resize, (_event, height: number, width?: number, pin?: boolean) =>
     deps.overlay.resize(height, width, Boolean(pin))
@@ -282,6 +300,11 @@ export function registerIpc(deps: IpcDeps): void {
     }
     try {
       await downloadModel(id, report)
+      // Downloading a model is choosing it: asking for 500 MB and then having to
+      // click the row again is a step that only exists because the two were
+      // separate. Only a successful download selects — the catch below is a
+      // failed one, and it must not change what is in use.
+      selectModel(id)
     } catch {
       /* the failure is already in the last progress event */
     }
@@ -289,21 +312,28 @@ export function registerIpc(deps: IpcDeps): void {
   })
 
   ipcMain.handle(CH.voice.deleteModel, async (_event, model: string) => {
-    await deleteModel(String(model ?? ''))
+    const id = String(model ?? '')
+    const wasSelected = getSettings().voice.model === id
+    await deleteModel(id)
+    if (wasSelected) {
+      // The selection cannot outlive the file. Ask what will actually run now —
+      // another downloaded model, a copy that is still somewhere on disk, or
+      // nothing — and point the settings at that. Leaving the id behind is how
+      // the settings window kept showing a model that had been deleted.
+      selectModel((await resolveWhisperModel()).id ?? '')
+    }
     return deps.voice.status()
   })
 
   ipcMain.handle(CH.voice.importModel, async () => {
     const picked = await dialog.showOpenDialog({
-      title: 'Выберите модель whisper',
+      title: 'Выбери модель whisper',
       properties: ['openFile'],
       filters: [{ name: 'Модель whisper', extensions: ['bin'] }]
     })
     if (picked.canceled || picked.filePaths.length === 0) return null
     try {
-      const id = await importModel(picked.filePaths[0])
-      patchSettings({ voice: { ...getSettings().voice, model: id } })
-      deps.voice.applySettings()
+      selectModel(await importModel(picked.filePaths[0]))
     } catch (error) {
       console.warn('[voice] import failed:', error)
     }
@@ -363,9 +393,5 @@ export function registerIpc(deps: IpcDeps): void {
   ipcMain.handle(CH.agent.answer, (_event, id: unknown, allow: unknown, remember: unknown) => {
     if (typeof id !== 'string' || !id) return
     deps.overlay.answerAgent(id, allow === true, remember === true)
-  })
-
-  app.on('second-instance', () => {
-    void deps.overlay.open()
   })
 }

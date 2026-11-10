@@ -69,10 +69,18 @@ vi.mock('../native/helper', () => ({
   watchForAbort: vi.fn(() => ({ stop: vi.fn() }))
 }))
 vi.mock('../paste', () => ({ copyText: vi.fn(), pasteAnswer: vi.fn() }))
-vi.mock('../pointer', () => ({ hideAnnotations: vi.fn(), showAnnotations: vi.fn() }))
+vi.mock('../drawing', () => ({ hideAnnotations: vi.fn(), showAnnotations: vi.fn() }))
 vi.mock('../context/screenshot', () => ({ captureScreenshot: vi.fn() }))
 vi.mock('../agent/outline', () => ({ describeScreen: vi.fn() }))
-vi.mock('../agent/cursor', () => ({ beginAgentTurn: vi.fn(), endAgentTurn: vi.fn(), updateAgentCursor: vi.fn() }))
+// Only the three functions that paint or own the display layer are replaced:
+// everything else in the module stays real, so a new export cannot silently
+// disappear from the controller's view of it.
+vi.mock('../agent/cursor', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../agent/cursor')>()),
+  beginAgentTurn: vi.fn(),
+  endAgentTurn: vi.fn(),
+  updateAgentCursor: vi.fn()
+}))
 // The ghost pointer is a separate display layer with its own window; the
 // overlay's job is only to tell it when a run starts and ends.
 vi.mock('../agent/presentation', () => ({
@@ -556,7 +564,7 @@ describe('feedback before request preparation', () => {
     // released, or the pointer glow would outlive the run that claimed it.
     state.agentResult = { answer: '', actions: [], message: 'Context unavailable' }
     await h.controller.send({ ...h.request, voice: false, prompt: 'Открой новую вкладку' })
-    expect(beginAgentTurn).toHaveBeenCalledWith('Задача принята · готовлю действия…')
+    expect(beginAgentTurn).toHaveBeenCalledWith(true)
     expect(endAgentTurn).toHaveBeenCalledWith(42)
     expect(h.send).toHaveBeenCalledWith('overlay:stream', expect.objectContaining({
       type: 'done', text: 'Context unavailable'

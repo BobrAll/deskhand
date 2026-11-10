@@ -31,7 +31,7 @@ export default defineConfig({
       rollupOptions: {
         input: {
           overlay: resolve(__dirname, 'src/renderer/overlay/index.html'),
-          pointer: resolve(__dirname, 'src/renderer/pointer/index.html'),
+          drawing: resolve(__dirname, 'src/renderer/drawing/index.html'),
           cursor: resolve(__dirname, 'src/renderer/cursor/index.html'),
           presenter: resolve(__dirname, 'src/renderer/presenter/index.html'),
           settings: resolve(__dirname, 'src/renderer/settings/index.html'),

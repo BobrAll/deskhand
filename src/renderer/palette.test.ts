@@ -27,7 +27,8 @@ const WINDOWS: Record<string, string[]> = {
   settings: ['styles/base.css', 'settings/settings.css'],
   onboarding: ['styles/base.css', 'onboarding/onboarding.css'],
   cursor: ['styles/base.css', 'cursor/cursor.css'],
-  pointer: ['styles/base.css', 'pointer/pointer.css']
+  presenter: ['styles/base.css', 'presenter/presenter.css'],
+  drawing: ['styles/base.css', 'drawing/drawing.css']
 }
 
 type Variables = Record<string, string>
@@ -166,7 +167,7 @@ describe('palette: per-window colours', () => {
     // The layer paints over arbitrary content and relies on a white halo for
     // contrast; a per-appearance ink would break that.
     const ink = (appearance: 'dark' | 'light'): string | undefined => {
-      const sheet = readSheet('pointer/pointer.css')
+      const sheet = readSheet('drawing/drawing.css')
       const source = appearance === 'light' ? sheet : withoutLightBlock(sheet)
       return /--ink\s*:\s*([^;]+);/.exec(source)?.[1].trim()
     }
@@ -201,7 +202,7 @@ describe('palette: no dangling references', () => {
         for (const [, name] of sheet.matchAll(/var\(\s*(--[a-z0-9-]+)\s*\)/g)) used.add(name)
       }
       for (const name of used) {
-        // Variables set from JS at runtime (the pointer's per-shape delay, the
+        // Variables set from JS at runtime (the drawing layer's per-shape delay, the
         // cursor's coordinates) have no CSS declaration on purpose.
         if (['--delay', '--x', '--y'].includes(name)) continue
         if (!declared.has(name)) missing.push(`${window}: ${name}`)

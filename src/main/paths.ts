@@ -5,20 +5,37 @@ import { join } from 'node:path'
 import { app } from 'electron'
 
 /**
+ * Where a shipped file may be, in the order it is looked for.
+ *
+ * Four places in main resolve a bundled binary, and each had its own copy of
+ * this packaged/dev branch. The copies had already drifted: the agent also looks
+ * in its Swift build directory, whisper also looks in Homebrew. Those extra
+ * places are what `extra` is for — the rule that a packaged build only has
+ * `resources/`, and that a dev checkout looks in the app and then in the working
+ * directory, is the same rule everywhere and belongs in one place.
+ *
+ * What each caller does when nothing is found is deliberately *not* shared:
+ * `resourcePath` returns a path anyway (the tray draws an empty image for a file
+ * that is absent), `native/process.ts` and `agent/sidecar.ts` return `null` and
+ * warn, and `voice/recognizer.ts` simply returns `null`. Forcing one of those on
+ * the other two would change behaviour.
+ */
+export function resourceCandidates(name: string, extra: string[] = []): string[] {
+  if (app.isPackaged) return [join(process.resourcesPath, name)]
+  return [
+    join(app.getAppPath(), 'resources', name),
+    ...extra,
+    join(process.cwd(), 'resources', name)
+  ]
+}
+
+/**
  * Finds one shipped file, packaged or in dev.
  *
- * Main has three such candidate lists, and they are deliberately not one:
- * `native/process.ts` returns `null` when the helper binary is missing (the
- * caller then falls back to `osascript`) and warns; `voice/recognizer.ts` appends
- * the Homebrew `whisper-cli` locations after the bundled ones, because a user may
- * already have installed it; this one returns a path even when nothing exists,
- * because its callers — the tray and window images — take a path and draw an empty
- * image for a file that is absent. Unifying the lists would force one of those
- * three behaviours on the other two.
+ * Returns a path even when nothing exists: its callers — the tray and window
+ * images — take a path and draw an empty image for a file that is absent.
  */
 export function resourcePath(name: string): string {
-  const candidates = app.isPackaged
-    ? [join(process.resourcesPath, name)]
-    : [join(app.getAppPath(), 'resources', name), join(process.cwd(), 'resources', name)]
+  const candidates = resourceCandidates(name)
   return candidates.find((candidate) => existsSync(candidate)) ?? candidates[0]
 }

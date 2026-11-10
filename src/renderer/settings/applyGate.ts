@@ -24,11 +24,11 @@ import { PROVIDERS, SETTINGS_BOUNDS, normalizeBaseUrl } from '@shared/defaults'
  * The write waits until the user finishes editing the field.
  */
 export const HOLD_REASON = {
-  baseUrl: 'Проверьте адрес API — изменения не применены.',
+  baseUrl: 'Проверь адрес API — изменения не применены.',
   maxTokens: `Максимум токенов: от ${SETTINGS_BOUNDS.maxTokens.min} до ${SETTINGS_BOUNDS.maxTokens.max}.`,
   prompt: 'Пустой системный промпт оставлен прежним.',
   hotkey: 'Горячая клавиша не задана.',
-  ttsBaseUrl: 'Проверьте адрес сервиса синтеза — изменения не применены.'
+  ttsBaseUrl: 'Проверь адрес сервиса синтеза — изменения не применены.'
 } as const
 
 /** The providers whose base URL override is not an address, and so cannot be stored. */

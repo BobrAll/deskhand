@@ -128,13 +128,20 @@ public enum ConfigLoader {
                 throw ConfigError.unreadable(filePath)
             }
             let parsed = try MiniTOML.parse(text)
-            apply(parsed, to: &config)
+            try apply(parsed, to: &config)
         }
 
-        if let wire = environment["DESKHAND_WIRE"], let parsed = ProviderConfig.Wire(rawValue: wire) {
+        if let wire = environment["DESKHAND_WIRE"] {
+            guard let parsed = ProviderConfig.Wire(rawValue: wire) else {
+                throw ConfigError.invalidValue(
+                    "DESKHAND_WIRE \"\(wire)\" — use \"openai\" or \"anthropic\"")
+            }
             config.wire = parsed
         }
-        if let base = environment["DESKHAND_BASE_URL"], let url = URL(string: base) {
+        if let base = environment["DESKHAND_BASE_URL"] {
+            guard let url = URL(string: base), url.scheme != nil, url.host != nil else {
+                throw ConfigError.invalidValue("DESKHAND_BASE_URL \"\(base)\" is not a URL")
+            }
             config.baseURL = url
         }
         if let model = environment["DESKHAND_MODEL"] {
@@ -178,13 +185,23 @@ public enum ConfigLoader {
         ["1", "true", "yes"].contains(value.lowercased())
     }
 
-    static func apply(_ parsed: [String: [String: String]], to config: inout ProviderConfig) {
+    static func apply(_ parsed: [String: [String: String]], to config: inout ProviderConfig) throws {
         let provider = parsed["provider"] ?? parsed[""] ?? [:]
-        if let wireName = provider["wire"] ?? provider["type"] ?? provider["provider"],
-           let wire = ProviderConfig.Wire(rawValue: wireName) {
+        if let wireName = provider["wire"] ?? provider["type"] ?? provider["provider"] {
+            guard let wire = ProviderConfig.Wire(rawValue: wireName) else {
+                throw ConfigError.invalidValue(
+                    "unknown wire \"\(wireName)\" — use \"openai\" or \"anthropic\"")
+            }
             config.wire = wire
         }
-        if let base = provider["base_url"] ?? provider["base"], let url = URL(string: base) {
+        if let base = provider["base_url"] ?? provider["base"] {
+            // A base URL that does not parse must not be dropped: the default is
+            // api.openai.com, so ignoring a typo would send the user's key to a
+            // provider they did not choose.
+            guard let url = URL(string: base), url.scheme != nil, url.host != nil else {
+                throw ConfigError.invalidValue(
+                    "base_url \"\(base)\" is not a URL (expected something like https://host/v1)")
+            }
             config.baseURL = url
         }
         if let model = provider["model"] {

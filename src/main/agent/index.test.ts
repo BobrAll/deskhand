@@ -291,7 +291,10 @@ describe('a run that gave up', () => {
     expect(h.trace().some((line) => line.event === 'agent.stopped')).toBe(false)
   })
 
-  it('names the loop guard when that is what stopped it', async () => {
+  it('still reports a run unfinished when it stops for a reason it does not recognise', async () => {
+    // The loop can only send three reasons, but a sidecar built before a wording
+    // change would send something else. The card must still say the task was not
+    // finished rather than inventing advice about a limit.
     const h = harness()
     const running = h.run()
 
@@ -301,7 +304,7 @@ describe('a run that gave up', () => {
 
     const result = await running
     expect(result.incomplete).toBe(true)
-    expect(result.message).toContain('повторялось')
+    expect(result.message).toBe('Задача осталась невыполненной.')
   })
 
   it('names a run that kept returning to the same screen', async () => {
@@ -608,7 +611,7 @@ describe('the question in the card', () => {
     })
 
     expect(state.approvals).toEqual([
-      { id: 'call-1', allow: false, reason: 'Секреты и пароли введите вручную.' }
+      { id: 'call-1', allow: false, reason: 'Секреты и пароли введи вручную.' }
     ])
     // A refusal that is not the user's decision must not lift the click-through.
     expect(h.passthrough).toEqual([true])
@@ -641,13 +644,13 @@ describe('stopping', () => {
     await vi.waitFor(() => expect(h.passthrough).toEqual([true]))
     state.emit({ kind: 'approval', request: call() })
 
-    h.controller.stop('Остановлено: вы взяли мышь.')
+    h.controller.stop('Остановлено: ты взял мышь.')
 
     // A stop that did not answer the question would be a stop that never lands:
     // the agent is blocked on it.
     expect(state.approvals).toEqual([{ id: 'call-1', allow: false, reason: 'Отменено.' }])
     expect(state.cancels).toBe(1)
-    expect(h.last()).toMatchObject({ phase: 'aborted', message: 'Остановлено: вы взяли мышь.' })
+    expect(h.last()).toMatchObject({ phase: 'aborted', message: 'Остановлено: ты взял мышь.' })
 
     const result = await running
     expect(result.aborted).toBe(true)

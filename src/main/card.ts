@@ -29,9 +29,6 @@
 import type { ScreenRect } from '@shared/types'
 import { clamp } from './util'
 
-// Re-exported for existing callers; `util.ts` owns the implementation.
-export { clamp }
-
 /** Clearance between the pointer and the card, in points. */
 export const CARD_GAP = 10
 

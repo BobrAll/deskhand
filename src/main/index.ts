@@ -12,7 +12,7 @@ import { createVoiceController } from './voice'
 import { registerHotkey, unregisterHotkey } from './hotkey'
 import { registerIpc } from './ipc'
 import { createTray, destroyTray, refreshTray } from './tray'
-import { destroyPointer } from './pointer'
+import { destroyDrawing } from './drawing'
 import { destroyAgentCursor } from './agent/cursor'
 import { destroyAgentPresentation } from './agent/presentation'
 import { flushTrace } from './agent/trace'
@@ -245,6 +245,10 @@ if (!app.requestSingleInstanceLock()) {
   console.warn('[app] another copy is already running; this launch will exit')
   app.quit()
 } else {
+  // The only `second-instance` handler: `ipc.ts` used to register a second one
+  // that called the same `open()`. It was invisible, because `open()` coalesces
+  // an open that is already collecting, but it meant two places owned one
+  // lifecycle event.
   app.on('second-instance', () => {
     void overlay.open()
   })
@@ -306,7 +310,7 @@ if (!app.requestSingleInstanceLock()) {
     // otherwise drop the line that says how the run ended.
     await flushTrace()
     destroyTray()
-    destroyPointer()
+    destroyDrawing()
     destroyAgentCursor()
     destroyAgentPresentation()
   }

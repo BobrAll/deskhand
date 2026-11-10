@@ -293,7 +293,7 @@ describe('VoiceKeyListener: reading helper events', () => {
     state.children[0].stdout.emit('{"error":"tap-create-failed"}')
 
     expect(errors).toEqual([
-      'Не удалось перехватить клавиатуру: проверьте «Универсальный доступ» и перезапустите приложение.'
+      'Не удалось перехватить клавиатуру: проверь «Универсальный доступ» и перезапусти приложение.'
     ])
   })
 
@@ -393,7 +393,7 @@ describe('VoiceKeyListener: restart and stop', () => {
     state.children[0].exit(1)
 
     expect(errors).toEqual([
-      'Слушатель клавиатуры не запустился — проверьте «Универсальный доступ».'
+      'Слушатель клавиатуры не запустился — проверь «Универсальный доступ».'
     ])
     expect(state.timers).toHaveLength(0)
   })

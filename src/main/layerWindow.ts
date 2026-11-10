@@ -1,5 +1,5 @@
 /**
- * Creates one of the "layer" windows: the drawing layer (`pointer.ts`), the
+ * Creates one of the "layer" windows: the drawing layer (`drawing.ts`), the
  * agent's cursor highlight (`agent/cursor.ts`) and the agent's virtual pointer
  * (`agent/presentation.ts`).
  *
@@ -35,10 +35,10 @@ import { loadPage } from './pageLoad'
 const LOAD_TIMEOUT_MS = 1500
 
 export interface LayerWindowOptions {
-  /** Renderer entry to load: `'pointer'`, `'cursor'` or `'presenter'`. */
+  /** Renderer entry to load: `'drawing'`, `'cursor'` or `'presenter'`. */
   page: string
   /**
-   * Whether the layer accepts the first click. `pointer.ts` passes `true`;
+   * Whether the layer accepts the first click. `drawing.ts` passes `true`;
    * the agent's two layers pass `false`. The values are not unified.
    */
   acceptFirstMouse: boolean

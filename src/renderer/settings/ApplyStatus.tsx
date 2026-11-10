@@ -40,7 +40,7 @@ export function applyStatusText(
   if (state === 'saving') return { text: 'Сохраняю…', isProblem: false }
   if (state === 'saved') return { text: 'Применено', isProblem: false }
   if (state === 'held') return { text: holdReason ?? 'Изменения не применены', isProblem: true }
-  return { text: 'Не применено — попробуйте ещё раз', isProblem: true }
+  return { text: 'Не применено — попробуй ещё раз', isProblem: true }
 }
 
 export function ApplyStatus(props: { state: ApplyState; holdReason: string | null }) {

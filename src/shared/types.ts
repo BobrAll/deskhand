@@ -233,6 +233,14 @@ export interface AgentEvent {
   actions?: AgentActionRow[]
   /** Set on `error` / `aborted`: why the run stopped. */
   message?: string
+  /**
+   * A machine-readable reason for the few events the card reacts to differently.
+   *
+   * `blocked` is "the run never started", which the card should not report as a
+   * failure of the work; `secret` is the policy refusing to type a password. Both
+   * used to be recognisable only by matching the Russian sentence.
+   */
+  code?: 'blocked' | 'secret'
 }
 
 /** One finished agent call, as the card lists it. */
@@ -288,21 +296,14 @@ export interface AgentRunResult {
  */
 export type AgentCursorPhase = 'arming' | 'acting' | 'waiting' | 'success'
 
-/** State of the agent’s screen glow and its caption at the pointer. */
+/** State of the agent's screen glow at the pointer. */
 export interface AgentCursorFrame {
   /** `false` plays the fade-out; the window is hidden right after it. */
   visible: boolean
   /** Pointer position *inside* the layer, in points. */
   anchor: { x: number; y: number }
-  /** Which side of the pointer the caption hangs on. */
-  side: 'above' | 'below'
   /** What the glow is doing; see `AgentCursorPhase` for how it maps to `AgentPhase`. */
   phase: AgentCursorPhase
-  /** What is happening, in the user's language ("Клик: «Экспорт»"). */
-  label: string
-  /** 1-based index of the running step; 0 while arming. */
-  step: number
-  total: number
 }
 
 /**
@@ -374,6 +375,21 @@ export interface AgentPointerFrame {
 export type VoicePhase = 'idle' | 'listening' | 'transcribing'
 
 /** One turn of the voice pipeline: what the overlay needs to animate. */
+/**
+ * Why a voice turn ended without text.
+ *
+ * The card shows `error` as written, so the reason exists twice: once as a
+ * sentence for the person reading it, and once as a code for the part that
+ * decides whether to say something out loud. Matching on the sentence would
+ * break the moment the wording changes.
+ */
+export type VoiceErrorCode =
+  | 'notHeard'
+  | 'recordFailed'
+  | 'transcribeFailed'
+  | 'noMic'
+  | 'recordTooLong'
+
 export interface VoiceEvent {
   phase: VoicePhase
   /** 0..1 loudness of the last audio block; opens the bars on the chip. */
@@ -382,6 +398,8 @@ export interface VoiceEvent {
   text?: string
   /** Set on `idle` when the turn failed instead of producing text. */
   error?: string
+  /** Set alongside `error`, so the reason does not have to be matched by text. */
+  code?: VoiceErrorCode
 }
 
 export interface VoiceStatus {
@@ -399,6 +417,15 @@ export interface VoiceStatus {
   detail: string | null
   /** Model file that will actually be used, or null when none was found. */
   modelPath: string | null
+  /**
+   * The model that will actually transcribe: a catalog id, the file name of an
+   * imported model, or null when nothing on disk matches.
+   *
+   * Not the same as `settings.voice.model`: that value can point at a model the
+   * user never downloaded, and showing it as "selected" is what made a fresh
+   * install claim a model it did not have.
+   */
+  activeModel: string | null
   /** `whisper-cli` binary that will actually be used. */
   binaryPath: string | null
   /** Where models are downloaded to. */
@@ -535,12 +562,12 @@ export interface Annotation {
 }
 
 /** An annotation that already has an id, so the renderer can animate it in once. */
-export interface PointerShape extends Annotation {
+export interface DrawingShape extends Annotation {
   id: string
 }
 
 /** What the transparent drawing layer renders. */
-export interface PointerPayload {
+export interface DrawingPayload {
   /** Layer size in points; shapes are scaled to it, not to the capture. */
   width: number
   height: number
@@ -548,7 +575,7 @@ export interface PointerPayload {
   revision: number
   /** `false` drives the fade-out before the window is hidden. */
   visible: boolean
-  shapes: PointerShape[]
+  shapes: DrawingShape[]
 }
 
 /**
@@ -591,18 +618,12 @@ export interface AxElementInfo {
 /**
  * What the Accessibility API reported for one look at the screen.
  *
- * `chain` is the element under a concrete point and its ancestors (a static text
- * inside a button inside a toolbar), `targets` is the flat list of everything
- * actionable in the focused window and the menu bar, and `focused` is what has
- * the keyboard right now — the difference between "the click landed in the field"
- * and "the click landed next to it, and the text is about to go somewhere else".
+ * `targets` is the flat list of everything actionable in the focused window and
+ * the menu bar — what the outline offers the model to aim at.
  */
 export interface AxProbe {
   pid: number
-  app: string
-  chain: AxElementInfo[]
   targets: AxElementInfo[]
-  focused: AxElementInfo | null
   elapsedMs: number
 }
 
@@ -681,17 +702,15 @@ export interface ContextFlags {
 }
 
 export interface OverlayNotice {
-  kind: 'info' | 'warning' | 'error'
+  /** A setup problem the card cannot fix itself: `error` is the red tone, `warning` the amber one. */
+  kind: 'warning' | 'error'
   message: string
-  /** Optional call to action rendered as a link-button in the overlay. */
-  action?: 'openSettings' | 'openPermissions'
 }
 
 export interface OverlayState {
   sessionId: string
   context: ContextSnapshot
   flags: ContextFlags
-  defaults: ContextFlags
   /** Set when provider/model/key are not ready; the overlay still opens. */
   setupNotice: OverlayNotice | null
   warnings: string[]
@@ -702,6 +721,15 @@ export interface OverlayState {
   agent: AgentAvailability
 }
 
+/**
+ * A machine-readable reason for the two failures the card treats differently.
+ *
+ * `timeout` means the run was cut off by its deadline, so the result is not
+ * known — the card and the voice both say "check what happened" rather than
+ * "nothing happened".
+ */
+export type StreamEventCode = 'timeout'
+
 export type StreamEvent =
   | { type: 'chunk'; requestId: string; delta: string }
   /**
@@ -709,12 +737,17 @@ export type StreamEvent =
    * Zero means the answer is text only, which is the normal case.
    */
   | { type: 'done'; requestId: string; text: string; annotations: number }
-  | { type: 'error'; requestId: string; message: string; retryable: boolean }
+  | {
+      type: 'error'
+      requestId: string
+      message: string
+      retryable: boolean
+      code?: StreamEventCode
+    }
 
 /** Sent to the overlay whenever the drawing layer gained or lost shapes. */
 export interface AnnotationsEvent {
   count: number
-  visible: boolean
 }
 
 export interface ProviderInfo {

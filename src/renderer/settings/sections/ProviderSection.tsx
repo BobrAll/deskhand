@@ -205,7 +205,7 @@ export function ProviderSection({
           hint={
             'JSON-объект, который добавляется в тело каждого запроса к модели. ' +
             'Например, {"reasoning_effort": "none"} или {"thinking": {"type": "disabled"}} — ' +
-            'смотря что понимает ваш сервис.'
+            'смотря что понимает твой сервис.'
           }
         >
           <textarea

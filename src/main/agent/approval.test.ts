@@ -83,7 +83,7 @@ describe('classifyCall: secrets', () => {
   it('refuses to type a password, without asking', () => {
     const decision = classifyCall(request({ tool: 'type_text', title: 'Пароль' }), [])
 
-    expect(decision).toEqual({ kind: 'deny', reason: 'Секреты и пароли введите вручную.' })
+    expect(decision).toEqual({ kind: 'deny', reason: 'Секреты и пароли введи вручную.' })
   })
 
   it('refuses an API key and a token as well', () => {
