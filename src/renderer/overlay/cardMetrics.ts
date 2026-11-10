@@ -5,7 +5,7 @@
  * how the card ends up clipped or jumping — nothing throws, it just looks wrong.
  * The widths are the strongest case and live one level up, in `@shared/metrics`,
  * because the main process clamps the window to the very same numbers; they are
- * imported under their `BUBBLE_*` names at every use site instead of being
+ * imported under their `CARD_*` names at every use site instead of being
  * re-exported here. Everything below is the renderer's own business.
  *
  * A layout change is a change to this file, and it is checked by eye:
@@ -20,7 +20,7 @@ export const ANSWER_CHROME = 8 * 2 + 2 + 12
 /** Two buttons' horizontal padding and a small gap between their labels. */
 export const ACTIONS_CHROME = ANSWER_CHROME + 5 * 4 + 8
 
-/** The bubble edge and padding, plus the status icon and gap. */
+/** The card edge and padding, plus the status icon and gap. */
 export const AGENT_ROW_CHROME = 8 * 2 + 2 + 18
 
 /** The extra margin and padding around the status row after the run. */
@@ -29,7 +29,7 @@ export const AGENT_STATUS_INSET = 12 + 8 * 2
 /**
  * Everything on the line that is not the question itself, in points.
  *
- * The bubble's `padding: 6px 8px` and its 1px edge are 18; the bar spends 6 on the gap
+ * The card's `padding: 6px 8px` and its 1px edge are 18; the bar spends 6 on the gap
  * and 16 on the chevron — 40 points of chrome
  * before the field gets a single point of its own.
  */

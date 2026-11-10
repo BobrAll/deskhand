@@ -120,7 +120,7 @@ interface Session {
 }
 
 /**
- * Size the bubble is placed with before the renderer has laid itself out: the
+ * Size the card is placed with before the renderer has laid itself out: the
  * folded card — one input line and the chevron. Only placement uses it; the
  * renderer reports the real size a frame later, so a slightly generous guess here
  * just keeps the first placement from flipping sides afterwards.

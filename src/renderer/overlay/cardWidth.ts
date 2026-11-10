@@ -2,7 +2,7 @@
  * How wide the card is, as a decision rather than as an expression in a render.
  *
  * Two people choose this number and they must not fight. The card sizes itself
- * to its content, because a bubble that opens as wide as its longest line is a
+ * to its content, because a card that opens as wide as its longest line is a
  * panel parked over the document. The user may then take over — by dragging the
  * edge or by pressing «Шире» — and from that moment the number is theirs.
  *
@@ -15,7 +15,7 @@
  * must not be made wider than the screen it hangs on, and a test has no screen.
  */
 
-import { BUBBLE_MAX_WIDTH, BUBBLE_MIN_WIDTH, BUBBLE_NARROW_WIDTH, BUBBLE_VOICE_WIDTH, BUBBLE_WIDTH } from '@shared/metrics'
+import { CARD_MAX_WIDTH, CARD_MIN_WIDTH, CARD_NARROW_WIDTH, CARD_VOICE_WIDTH, CARD_WIDTH } from '@shared/metrics'
 import { clamp } from './cardMetrics'
 
 /** Clearance the dragged card leaves at the edges of the display, in points. */
@@ -24,12 +24,12 @@ const SCREEN_INSET = 16
 /**
  * The widest the user may make the card on a display of `availWidth` points.
  *
- * `BUBBLE_MAX_WIDTH` is a design ceiling; the display is the physical one. On a
+ * `CARD_MAX_WIDTH` is a design ceiling; the display is the physical one. On a
  * narrow screen the second is smaller, and a card that cannot fit is not a wider
  * card, it is a card with its right side off the screen.
  */
 export function userWidthCeiling(availWidth: number): number {
-  return Math.max(BUBBLE_WIDTH, Math.min(BUBBLE_MAX_WIDTH, availWidth - SCREEN_INSET))
+  return Math.max(CARD_WIDTH, Math.min(CARD_MAX_WIDTH, availWidth - SCREEN_INSET))
 }
 
 /**
@@ -40,14 +40,14 @@ export function userWidthCeiling(availWidth: number): number {
  * incremental sum would feed the card's own motion back into the pointer.
  *
  * `min` is not always the window's floor. While the drawer is unfolded the card
- * cannot be narrower than `BUBBLE_WIDTH` — its buttons need that much — and a drag
+ * cannot be narrower than `CARD_WIDTH` — its buttons need that much — and a drag
  * that ignored it would snap back on release.
  */
 export function draggedWidth(
   startWidth: number,
   delta: number,
   availWidth: number,
-  min = BUBBLE_MIN_WIDTH
+  min = CARD_MIN_WIDTH
 ): number {
   return Math.round(clamp(startWidth + delta, min, userWidthCeiling(availWidth)))
 }
@@ -60,13 +60,13 @@ export function draggedWidth(
  * a table floating in two-thirds of an empty card, and the next press of
  * «Вернуть» snaps it back past the size it actually wanted.
  *
- * `natural` is the unclamped measurement. Below `BUBBLE_WIDTH` there is nothing to
+ * `natural` is the unclamped measurement. Below `CARD_WIDTH` there is nothing to
  * widen — the card already holds the content — so the answer is `null`, and the
  * button is not shown at all.
  */
 export function expandedWidth(natural: number, availWidth: number): number | null {
-  if (natural <= BUBBLE_WIDTH) return null
-  return Math.round(clamp(natural, BUBBLE_WIDTH, userWidthCeiling(availWidth)))
+  if (natural <= CARD_WIDTH) return null
+  return Math.round(clamp(natural, CARD_WIDTH, userWidthCeiling(availWidth)))
 }
 
 export interface WidthInputs {
@@ -91,18 +91,18 @@ export interface WidthInputs {
  * answer it holds got shorter.
  *
  * The drawer is the one thing the user's number cannot squeeze: its buttons need
- * `BUBBLE_WIDTH`, so a card dragged down to 200 points opens to the full width when
+ * `CARD_WIDTH`, so a card dragged down to 200 points opens to the full width when
  * the drawer unfolds, and goes back to 200 when it closes.
  */
 export function resolveWidth(input: WidthInputs): number {
-  if (input.showingVoiceBars) return BUBBLE_VOICE_WIDTH
+  if (input.showingVoiceBars) return CARD_VOICE_WIDTH
 
   const chosen =
     input.userWidth === null
       ? null
-      : Math.round(clamp(input.userWidth, BUBBLE_MIN_WIDTH, userWidthCeiling(input.availWidth)))
+      : Math.round(clamp(input.userWidth, CARD_MIN_WIDTH, userWidthCeiling(input.availWidth)))
 
-  if (chosen !== null) return input.wantsWide ? Math.max(chosen, BUBBLE_WIDTH) : chosen
-  if (input.wantsWide) return BUBBLE_WIDTH
-  return clamp(input.contentWidth, BUBBLE_NARROW_WIDTH, BUBBLE_WIDTH)
+  if (chosen !== null) return input.wantsWide ? Math.max(chosen, CARD_WIDTH) : chosen
+  if (input.wantsWide) return CARD_WIDTH
+  return clamp(input.contentWidth, CARD_NARROW_WIDTH, CARD_WIDTH)
 }

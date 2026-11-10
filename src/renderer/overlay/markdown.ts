@@ -1,8 +1,8 @@
 /**
  * A small Markdown reader for the answer.
  *
- * This is deliberately not a Markdown library. The answer is printed in a bubble
- * at most 360 points wide (`BUBBLE_WIDTH` in `@shared/metrics.ts`), and what models actually
+ * This is deliberately not a Markdown library. The answer is printed in a card
+ * at most 360 points wide (`CARD_WIDTH` in `@shared/metrics.ts`), and what models actually
  * write there is headings, short lists, fenced code, tables and the four inline
  * markers — bold, italics, code and links. Everything else (HTML, reference links,
  * nested lists) would be code nobody reads and screen space nobody has.

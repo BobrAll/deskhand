@@ -21,7 +21,7 @@
  *   reading it, which is worse than the card growing into the pointer's own
  *   column. Growing pushes the far edge away, and near a display edge the far edge
  *   is what gets pinned.
- * - A bubble the user dragged away is left where they put it and grows from there:
+ * - A card the user dragged away is left where they put it and grows from there:
  *   yanking it back to the old pointer position mid-answer would move the text out
  *   from under the eyes that are reading it.
  */
@@ -32,11 +32,11 @@ import { clamp } from './util'
 // Re-exported for existing callers; `util.ts` owns the implementation.
 export { clamp }
 
-/** Clearance between the pointer and the bubble, in points. */
-export const BUBBLE_GAP = 10
+/** Clearance between the pointer and the card, in points. */
+export const CARD_GAP = 10
 
-/** How close the bubble may get to a display edge. */
-export const BUBBLE_MARGIN = 8
+/** How close the card may get to a display edge. */
+export const CARD_MARGIN = 8
 
 /** How far the window may drift from where it was placed before it counts as dragged. */
 const DRAG_SLACK = 2
@@ -48,32 +48,32 @@ const DRAG_SLACK = 2
  * coordinates, and passing a screen point where an annotation point is expected
  * is the mistake the two names exist to keep apart.
  */
-export interface BubblePoint {
+export interface ScreenPoint {
   x: number
   y: number
 }
 
 /**
- * Where the bubble hangs off the pointer.
+ * Where the card hangs off the pointer.
  *
- * Kept for the lifetime of one showing: the answer streams in and the bubble
+ * Kept for the lifetime of one showing: the answer streams in and the card
  * grows, and a rectangle re-placed from scratch on every height change would
  * drift away from the cursor (and, worse, hop above it mid-answer). The pointer
  * position, the side it was placed on and the horizontal edge are therefore
  * remembered once and only the vertical edge is recomputed.
  */
-export interface BubbleAnchor {
-  /** The pointer at the moment the bubble appeared, in global screen points. */
-  point: BubblePoint
+export interface CardAnchor {
+  /** The pointer at the moment the card appeared, in global screen points. */
+  point: ScreenPoint
   area: ScreenRect
-  /** Left edge of the bubble; it may sit left of the pointer when flipped. */
+  /** Left edge of the card; it may sit left of the pointer when flipped. */
   x: number
-  /** `true` when the bubble hangs above the pointer instead of below it. */
+  /** `true` when the card hangs above the pointer instead of below it. */
   above: boolean
   /**
-   * The side of the pointer the bubble hangs on.
+   * The side of the pointer the card hangs on.
    *
-   * Remembered because the bubble *grows sideways*: it opens as a 112 pt pill and
+   * Remembered because the card *grows sideways*: it opens as a 112 pt pill and
    * widens with every letter typed, so the horizontal edge has to be computed
    * from the width each time instead of being frozen at the size it opened with.
    * The side is the part that stays.
@@ -92,12 +92,12 @@ export interface BubbleAnchor {
 
 /** Remaining room on either side of the pointer, inside the given work area. */
 export function roomAround(
-  point: BubblePoint,
+  point: ScreenPoint,
   area: ScreenRect
 ): { below: number; above: number } {
   return {
-    below: area.y + area.height - BUBBLE_MARGIN - (point.y + BUBBLE_GAP),
-    above: point.y - BUBBLE_GAP - (area.y + BUBBLE_MARGIN)
+    below: area.y + area.height - CARD_MARGIN - (point.y + CARD_GAP),
+    above: point.y - CARD_GAP - (area.y + CARD_MARGIN)
   }
 }
 
@@ -108,40 +108,40 @@ export function roomAround(
  * near a display edge the far edge is what gets pinned — the card slides just
  * enough to stay on screen.
  */
-export function xFor(placed: BubbleAnchor, width: number): number {
-  const min = placed.area.x + BUBBLE_MARGIN
-  const max = Math.max(min, placed.area.x + placed.area.width - width - BUBBLE_MARGIN)
-  const wanted = placed.right ? placed.point.x + BUBBLE_GAP : placed.point.x - width - BUBBLE_GAP
+export function xFor(placed: CardAnchor, width: number): number {
+  const min = placed.area.x + CARD_MARGIN
+  const max = Math.max(min, placed.area.x + placed.area.width - width - CARD_MARGIN)
+  const wanted = placed.right ? placed.point.x + CARD_GAP : placed.point.x - width - CARD_GAP
   return clamp(wanted, min, max)
 }
 
-/** The vertical edge for a given height, clamped so the bubble stays on screen. */
-export function yFor(placed: BubbleAnchor, height: number): number {
-  const raw = placed.above ? placed.point.y - BUBBLE_GAP - height : placed.point.y + BUBBLE_GAP
-  const max = placed.area.y + placed.area.height - height - BUBBLE_MARGIN
+/** The vertical edge for a given height, clamped so the card stays on screen. */
+export function yFor(placed: CardAnchor, height: number): number {
+  const raw = placed.above ? placed.point.y - CARD_GAP - height : placed.point.y + CARD_GAP
+  const max = placed.area.y + placed.area.height - height - CARD_MARGIN
   return clamp(
     raw,
-    placed.area.y + BUBBLE_MARGIN,
-    Math.max(placed.area.y + BUBBLE_MARGIN, max)
+    placed.area.y + CARD_MARGIN,
+    Math.max(placed.area.y + CARD_MARGIN, max)
   )
 }
 
 /**
- * Records the anchor for a bubble of the given size (ТЗ §8: next to the cursor).
+ * Records the anchor for a card of the given size (ТЗ §8: next to the cursor).
  *
  * Placed down-and-right of the pointer, flipped left near the right edge and
  * above near the bottom edge.
  */
 export function placeAnchor(
-  point: BubblePoint,
+  point: ScreenPoint,
   area: ScreenRect,
   height: number,
   width: number
-): BubbleAnchor {
-  const right = point.x + BUBBLE_GAP + width <= area.x + area.width - BUBBLE_MARGIN
+): CardAnchor {
+  const right = point.x + CARD_GAP + width <= area.x + area.width - CARD_MARGIN
 
   const room = roomAround(point, area)
-  const placed: BubbleAnchor = {
+  const placed: CardAnchor = {
     point,
     area,
     x: 0,
@@ -153,7 +153,7 @@ export function placeAnchor(
 }
 
 /** The window rectangle for an anchor and a size. */
-export function boundsFor(anchor: BubbleAnchor, height: number, width: number): ScreenRect {
+export function boundsFor(anchor: CardAnchor, height: number, width: number): ScreenRect {
   return {
     x: Math.round(anchor.x),
     y: Math.round(yFor(anchor, height)),
@@ -178,24 +178,24 @@ export function boundsFor(anchor: BubbleAnchor, height: number, width: number): 
  * resize must not pull the card back to the pointer mid-answer.
  */
 export interface ResizeAnchorOptions {
-  anchor: BubbleAnchor
+  anchor: CardAnchor
   /** The window's current rectangle, as Electron reports it. */
   bounds: ScreenRect
   height: number
   width: number
   /**
    * The caller's `screen.getDisplayNearestPoint(...).workArea`: the pointer may
-   * have been on another display when the bubble opened, and a card the user
+   * have been on another display when the card opened, and a card the user
    * dragged away has to stay inside the work area of *that* display.
    */
-  workAreaAt(point: BubblePoint): ScreenRect
+  workAreaAt(point: ScreenPoint): ScreenRect
   /** The horizontal edge is the user's: they dragged the card or pulled its edge. */
   pin?: boolean
 }
 
-export function resizeAnchor(options: ResizeAnchorOptions): BubbleAnchor {
+export function resizeAnchor(options: ResizeAnchorOptions): CardAnchor {
   const { anchor, bounds, height, width, workAreaAt, pin = false } = options
-  const placed: BubbleAnchor = { ...anchor, point: { ...anchor.point } }
+  const placed: CardAnchor = { ...anchor, point: { ...anchor.point } }
   placed.area = workAreaAt(placed.point)
 
   const dragged =
@@ -210,12 +210,12 @@ export function resizeAnchor(options: ResizeAnchorOptions): BubbleAnchor {
     // the edge the user chose instead of the one it was placed with. The
     // horizontal edge stays where the card was dropped — it is the user's choice —
     // and is only pulled back when growing wider would carry it off the display.
-    const min = placed.area.x + BUBBLE_MARGIN
-    const max = Math.max(min, placed.area.x + placed.area.width - width - BUBBLE_MARGIN)
+    const min = placed.area.x + CARD_MARGIN
+    const max = Math.max(min, placed.area.x + placed.area.width - width - CARD_MARGIN)
     placed.x = clamp(bounds.x, min, max)
     placed.point = {
       x: placed.point.x,
-      y: placed.above ? bounds.y + bounds.height + BUBBLE_GAP : bounds.y - BUBBLE_GAP
+      y: placed.above ? bounds.y + bounds.height + CARD_GAP : bounds.y - CARD_GAP
     }
     // From here on the horizontal edge belongs to the user, including a resize
     // that happens after the drag has ended.

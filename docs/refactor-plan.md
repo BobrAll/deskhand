@@ -545,7 +545,7 @@
 ### WP5 — TypeScript: остальной main
 
 Файлы: `src/main/index.ts`, `ipc.ts`, `prompt.ts`, `response.ts`,
-`turnStream.ts`, `bubble.ts`, `tray.ts`, `hotkey.ts`, `util.ts`, `paths.ts`,
+`turnStream.ts`, `card.ts`, `tray.ts`, `hotkey.ts`, `util.ts`, `paths.ts`,
 `permissions.ts`, `pageLoad.ts`, `denyExternalLinks.ts`, `src/main/llm/**`,
 `src/main/voice/**`, `src/main/tts/**`, `src/main/settings/**`,
 `src/main/windows/**`, `src/main/native/**`, `src/main/paste/**`.
@@ -568,7 +568,7 @@
       коллекции → `useResponsesApi`.
 - [ ] `tray.ts:11` — `toggle` не говорит, что включает → `openAssistant`.
 - [ ] `hotkey.ts:10` — `current` → `registeredAccelerator`.
-- [ ] `bubble.ts:113,121` — `xFor`/`yFor` → `horizontalEdgeFor`/`verticalEdgeFor`.
+- [ ] `card.ts:113,121` — `xFor`/`yFor` → `horizontalEdgeFor`/`verticalEdgeFor`.
 - [ ] `windows/settings.ts:111` — `settingsWindows()` → `openAppWindows()`,
       отфильтровать `null` внутри.
 
@@ -600,7 +600,7 @@
 - [ ] `tts/index.ts:59` — `'\u0000'` разделитель ключа кэша → имя.
 - [ ] `llm/webSearch.ts:45,57,62,68,78` — `512`, `3`, `5`/`10`, `45_000` → имена.
 - [ ] `llm/testKey.ts:12,32` — `12_000` и `160` → имена.
-- [ ] `bubble.ts` — `'#0f1115'`, позиция светофора, `16`/`18` → имена.
+- [ ] `card.ts` — `'#0f1115'`, позиция светофора, `16`/`18` → имена.
 - [ ] `util.ts:20-32` — `intervalMs = 40` → `DEFAULT_POLL_MS`.
 
 **Мёртвый код**
@@ -637,7 +637,7 @@
 - [ ] `permissions.ts:20-41` — три одинаковых try/catch → `safe(fn, fallback)`.
 - [ ] `tray.ts:30-42` и `index.ts:125-153` — подписи меню и акселераторы
       дублированы → общие константы. Строки не менять.
-- [ ] `bubble.ts:38-48` — `BubblePoint`/`BubbleRect` дублируют
+- [ ] `card.ts:38-48` — `ScreenPoint`/`CardRect` дублируют
       `Point01`/`ScreenRect` → переиспользовать; `:87` `clamp` → в `util.ts`.
 - [ ] `windows/index.ts:470` — `passthrough` объявлена через ~250 строк после
       первого чтения → перенести к `drawing`/`voice`.
@@ -748,7 +748,7 @@
       аргументы.
 - [ ] `overlay/markdown.ts:5` — заголовок говорит, что таблиц нет, а
       `tableAt`/`Block.table`/`CellAlign` реализуют таблицы; там же
-      «420-point bubble» при `FULL_WIDTH = 360`. Переписать.
+      «420-point card» при `FULL_WIDTH = 360`. Переписать.
 - [ ] `overlay/viewFlags.ts:71` — `blocked` возвращается и не потребляется;
       `App.tsx:1026` заново выводит то же → добавить `blocked` в
       деструктуризацию `deriveView` и удалить дубль.
@@ -773,8 +773,8 @@
       «промпт был произнесён», а `useVoice()` — микрофон. Внутренние имена →
       `spoken`/`fromSpeech`. Поле `SendRequest.voice` — IPC, не трогать.
 - [ ] `overlay/metrics.ts:28` — `NARROW_WIDTH`/`VOICE_WIDTH`/`FULL_WIDTH` —
-      алиасы `BUBBLE_*` → переименовать модуль (`cardMetrics.ts`) и использовать
-      `BUBBLE_*` везде.
+      алиасы `CARD_*` → переименовать модуль (`cardMetrics.ts`) и использовать
+      `CARD_*` везде.
 - [ ] `overlay/viewFlags.ts:50,54,76` — `actionAsk` → `promptLooksLikeAction`;
       `alert` → `needsAttention`; `agentNotice` → инлайн.
 - [ ] `overlay/cardWidth.ts:31` `manualCeiling` → `userWidthCeiling`; `:72`

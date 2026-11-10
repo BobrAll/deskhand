@@ -66,7 +66,7 @@ export function keyPolicy(input: KeyInput): KeyAction {
   if (input.key === 'Escape') {
     // While a plan runs, Escape is "стоп", not "закрыть": the card closing would
     // hide the very row that reports what was interrupted, and the user pressing
-    // Escape is watching the screen, not the bubble.
+    // Escape is watching the screen, not the card.
     if (input.agentPhase === 'asking') {
       // A question is a stop point like any other: Escape refuses it. It is not
       // `cancel` — the card has no request of its own to abort here — and it is

@@ -5,7 +5,7 @@
  * one of these either closes a card the user was reading, or leaves one open they
  * wanted gone. Both are silent failures — no exception, no log, just a card that
  * did the wrong thing at the moment someone was watching the screen instead of the
- * bubble.
+ * card.
  */
 
 import { describe, expect, it } from 'vitest'

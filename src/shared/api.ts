@@ -97,7 +97,7 @@ export interface DeskhandApi {
     setTyping(typing: boolean): void
     close(): void
     /**
-     * Reports the laid-out card. The width is optional because the folded bubble
+     * Reports the laid-out card. The width is optional because the folded card
      * is narrower than the one that shows an answer; omitting it keeps the full
      * width.
      *

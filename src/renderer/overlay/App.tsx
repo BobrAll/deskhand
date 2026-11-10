@@ -1,7 +1,7 @@
 /**
  * The overlay UI (ТЗ §8).
  *
- * A bubble, not a window: one line for the question, the answer printed directly
+ * A card, not a window: one line for the question, the answer printed directly
  * underneath it. It appears next to the cursor (the main process owns the
  * placement) as *only* that line plus one small chevron; context tags and the answer's secondary commands stay folded behind the chevron, so
  * the common case — ask, read, paste — is a small rectangle that never covers the
@@ -11,7 +11,7 @@
  * answer when nothing is selected.
  *
  * Width is the one thing the card lets a person overrule. It sizes itself to its
- * content up to `BUBBLE_WIDTH`, which is right for a sentence and wrong for a table;
+ * content up to `CARD_WIDTH`, which is right for a sentence and wrong for a table;
  * the right edge can be dragged, and «Шире» does the same thing in one click. The
  * decision itself lives in `cardWidth.ts`.
  */
@@ -27,7 +27,7 @@ import type {
   ResponseMode,
   StreamEvent
 } from '@shared/types'
-import { BUBBLE_NARROW_WIDTH, BUBBLE_WIDTH } from '@shared/metrics'
+import { CARD_NARROW_WIDTH, CARD_WIDTH } from '@shared/metrics'
 import {
   ANSWER_CHROME,
   ACTIONS_CHROME,
@@ -77,7 +77,7 @@ let ruler: CanvasRenderingContext2D | null = null
  * The width of the widest line of `text`, in the font the field renders in.
  *
  * Measured, never guessed from the character count: «ш» and «i» are not the same
- * letter, and a bubble that widens by a different step than the typing does reads
+ * letter, and a card that widens by a different step than the typing does reads
  * as a glitch rather than as the card making room. A canvas 2D context is the
  * cheapest shaper that agrees with the textarea — no extra element whose layout
  * could lag the keystroke being measured.
@@ -130,7 +130,7 @@ export function App() {
   const dragRef = useRef<{ startX: number; startWidth: number; width: number } | null>(null)
   const [dragging, setDragging] = useState(false)
   /**
-   * The bubble opens as a single small field. Everything else — context tags,
+   * The card opens as a single small field. Everything else — context tags,
    * status rows and the answer's action strip — lives behind the
    * small chevron, so the common "ask and paste" case stays one line tall.
    */
@@ -206,7 +206,7 @@ export function App() {
       style.font || `${style.fontStyle} ${style.fontWeight} ${style.fontSize} ${style.fontFamily}`
   }, [])
   /**
-   * The bubble's outermost element, as state rather than a ref.
+   * The card's outermost element, as state rather than a ref.
    *
    * There are two different roots — the voice bars and the card — and React mounts
    * a new element when the component switches between them. A `useRef` would still
@@ -235,7 +235,7 @@ export function App() {
   agentRef.current = agent
 
   /**
-   * Applies a state broadcast. A *new* session replaces the bubble completely; the
+   * Applies a state broadcast. A *new* session replaces the card completely; the
    * same session re-broadcast (context/warnings refreshed after a live capture)
    * must not throw away what the user has already typed or the answer on screen.
    */
@@ -463,7 +463,7 @@ export function App() {
    *
    * Measured, not estimated from the character count: «ш» and «i» are not the
    * same letter, and a card that widens by a different step than the typing does
-   * reads as a glitch rather than as the bubble making room. The measuring canvas
+   * reads as a glitch rather than as the card making room. The measuring canvas
    * uses the field's own computed font, so the run is shaped exactly as it will
    * be inside the textarea.
    */
@@ -483,7 +483,7 @@ export function App() {
   /**
    * Everything on the line that is not the question, in points.
    *
-   * The bubble's padding and edge, the gap and the chevron —
+   * The card's padding and edge, the gap and the chevron —
    * plus the stop button, which is on screen exactly while a request is running.
    */
   const chromeWidth = CHROME_WIDTH + (busy ? STOP_CHROME : 0)
@@ -492,16 +492,16 @@ export function App() {
    * The width the card needs for the question being written.
    *
    * Nothing is added for empty space: the field gets as many points as the
-   * sentence takes, so every keystroke widens the bubble by exactly one glyph and
-   * the card only starts wrapping once it has reached `BUBBLE_WIDTH`. That is the
-   * difference between a bubble that grows under your hands and one that snaps
+   * sentence takes, so every keystroke widens the card by exactly one glyph and
+   * the card only starts wrapping once it has reached `CARD_WIDTH`. That is the
+   * difference between a card that grows under your hands and one that snaps
    * open to a panel the moment you start typing — the latter is loud in precisely
    * the moment a person is still deciding whether they want to say anything.
    */
   const composedWidth = clamp(
     Math.ceil(textWidth) + chromeWidth + CARET_SLACK,
-    BUBBLE_NARROW_WIDTH,
-    BUBBLE_WIDTH
+    CARD_NARROW_WIDTH,
+    CARD_WIDTH
   )
 
   // Recompute from current content so a shorter answer shrinks the card again.
@@ -521,17 +521,17 @@ export function App() {
     ? Math.ceil(measureLine(agentStatus, AGENT_FONT)) +
       AGENT_ROW_CHROME + (agentRunning ? 0 : AGENT_STATUS_INSET) + CARET_SLACK
     : 0
-  const inputWidth = agentRunning ? BUBBLE_NARROW_WIDTH : composedWidth
+  const inputWidth = agentRunning ? CARD_NARROW_WIDTH : composedWidth
   /**
    * What the content would like, before any cap.
    *
    * Kept unclamped because «Шире» has to know how much room the answer actually
-   * wants: the capped number is always `BUBBLE_WIDTH` once the answer is long, and
+   * wants: the capped number is always `CARD_WIDTH` once the answer is long, and
    * a button that opens the card to the same width for every long reply is the
    * bug it was reported as.
    */
   const naturalWidth = Math.max(inputWidth, answerWidth, actionsWidth, agentWidth)
-  const contentWidth = clamp(naturalWidth, BUBBLE_NARROW_WIDTH, BUBBLE_WIDTH)
+  const contentWidth = clamp(naturalWidth, CARD_NARROW_WIDTH, CARD_WIDTH)
   // While a drag runs the width lives in a ref, because updating state a hundred
   // times a second re-renders the answer for nothing. But a render can still
   // happen mid-drag — the next chunk of a streaming answer is exactly that — and
@@ -597,7 +597,7 @@ export function App() {
     if (node) node.scrollTop = node.scrollHeight
   }, [answer])
 
-  // A setup problem or a failed request is not a detail: the bubble unfolds, so
+  // A setup problem or a failed request is not a detail: the card unfolds, so
   // the reason (and the way out of it) is never hidden behind a chevron.
   useEffect(() => {
     if (failure || state?.setupNotice) setExpanded(true)
@@ -632,7 +632,7 @@ export function App() {
     setAgent(null)
     // The question has been asked: whatever the user typed to ask it is no longer
     // "using the card", and the answer — drawings included — is what they will be
-    // looking at now. Without this the bubble would stay solid for the whole
+    // looking at now. Without this the card would stay solid for the whole
     // answer, because the field still holds the question.
     setTyping(false)
     // The field is emptied on send, not on answer.
@@ -767,7 +767,7 @@ export function App() {
     []
   )
 
-  /** Speech that has already been recognised and put into this bubble. */
+  /** Speech that has already been recognised and put into this card. */
   useEffect(() => {
     const off = window.deskhand.voice.onTranscript(({ text, send: autoSend }) => {
       // A new phrase replaces whatever the previous turn left on the card. The
@@ -857,7 +857,7 @@ export function App() {
     if (!drag || !node) return
     // The drawer's buttons need the full width, so an unfolded card cannot be
     // dragged narrower than that: it would snap back on release.
-    const floor = wantsWide ? BUBBLE_WIDTH : undefined
+    const floor = wantsWide ? CARD_WIDTH : undefined
     const width = draggedWidth(
       drag.startWidth,
       event.screenX - drag.startX,
@@ -963,7 +963,7 @@ export function App() {
    */
   if (listening) {
     return (
-      <div ref={rootRef} className="bubble" style={{ width: cardWidth }} data-voice>
+      <div ref={rootRef} className="card" style={{ width: cardWidth }} data-voice>
         <div
           className="voice"
           data-phase={voice.phase}
@@ -1073,7 +1073,7 @@ export function App() {
     // before the session exists is a no-op rather than an error: `send` returns
     // without touching the text, and the same Enter works a moment later.
     return (
-      <div ref={rootRef} className="bubble" style={{ width: cardWidth }}>
+      <div ref={rootRef} className="card" style={{ width: cardWidth }}>
         <div className="bar">
           {composer}
           {/*
@@ -1101,7 +1101,7 @@ export function App() {
     // the card, and an opaque panel sitting on that very spot is what hides it.
     <div
       ref={rootRef}
-      className="bubble"
+      className="card"
       style={{ width: cardWidth }}
       data-busy={busy || undefined}
       data-drawing={(drawn > 0 && !typing) || undefined}
@@ -1239,7 +1239,7 @@ export function App() {
       {/*
         Enabled but still blocked (almost always the Accessibility grant). The
         reason already arrived through `hint`; this adds the way out of it, since
-        "нужен доступ" without a button is a dead end in a bubble this small.
+        "нужен доступ" without a button is a dead end in a card this small.
       */}
       {expanded && agentBlocked && !blocked && !busy && (
         <div className="line">
@@ -1420,7 +1420,7 @@ export function App() {
 
       {/*
         The resize edge. It sits on the card's outermost right column, over the
-        bubble's padding and outside the answer's scrollbar, so pulling it never
+        card's padding and outside the answer's scrollbar, so pulling it never
         fights a scroll gesture or a text selection.
       */}
       {hasAnswer && (

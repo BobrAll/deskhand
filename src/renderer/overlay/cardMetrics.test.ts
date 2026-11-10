@@ -7,7 +7,7 @@
  *    `@shared/metrics` because the main process clamps the window to the very
  *    same points — a local copy is how the card ends up clipped or jumping, and
  *    nothing throws when it does. This module re-exports none of them: every use
- *    site imports the `BUBBLE_*` names directly.
+ *    site imports the `CARD_*` names directly.
  * 2. The chrome numbers describe the CSS. They cannot be derived from it (the
  *    renderer has no stylesheet parser and the values are hand-summed from
  *    `overlay.css`), so they are pinned instead: changing one is a deliberate act
@@ -50,7 +50,7 @@ describe('metrics: the widths stay in @shared/metrics', () => {
     // carry a copy of a width.
     for (const name of ['cardWidth.ts', 'App.tsx']) {
       const source = read(name)
-      expect(source, name).toMatch(/BUBBLE_(WIDTH|NARROW_WIDTH|VOICE_WIDTH)/)
+      expect(source, name).toMatch(/CARD_(WIDTH|NARROW_WIDTH|VOICE_WIDTH)/)
       expect(source, name).not.toMatch(/=\s*360\b/)
       expect(source, name).not.toMatch(/=\s*112\b/)
       expect(source, name).not.toMatch(/=\s*80\b/)

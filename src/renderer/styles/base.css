@@ -32,7 +32,7 @@
   --radius: 14px;
   --radius-sm: 9px;
 
-  /* Glass surface for the cursor bubble (see `overlay.css`). */
+  /* Glass surface for the cursor card (see `overlay.css`). */
   --glass-tint: rgba(24, 26, 32, 0.60);
   --glass-sheen: rgba(255, 255, 255, 0.14);
   --glass-edge: rgba(255, 255, 255, 0.13);

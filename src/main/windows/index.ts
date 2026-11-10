@@ -7,19 +7,19 @@
 import { join } from 'node:path'
 import { app, BrowserWindow, screen } from 'electron'
 import {
-  BUBBLE_MAX_WIDTH,
-  BUBBLE_MIN_WIDTH,
-  BUBBLE_NARROW_WIDTH,
-  BUBBLE_VOICE_WIDTH,
-  BUBBLE_WIDTH
+  CARD_MAX_WIDTH,
+  CARD_MIN_WIDTH,
+  CARD_NARROW_WIDTH,
+  CARD_VOICE_WIDTH,
+  CARD_WIDTH
 } from '@shared/metrics'
 import type { OverlayHost } from '../overlay/host'
 import {
   boundsFor,
   placeAnchor,
   resizeAnchor,
-  type BubbleAnchor
-} from '../bubble'
+  type CardAnchor
+} from '../card'
 import { clamp } from '../util'
 import { denyExternalLinks } from '../denyExternalLinks'
 import { loadPage } from '../pageLoad'
@@ -34,7 +34,7 @@ export {
 } from './settings'
 
 /**
- * The overlay is a small bubble next to the cursor, not a window: it appears as a
+ * The overlay is a small card next to the cursor, not a window: it appears as a
  * one-line field, and grows downwards (or upwards, when the pointer is near the
  * bottom of the display) only as an answer is streamed into it.
  *
@@ -97,7 +97,7 @@ function applyWindowChrome(): void {
 
 function createOverlayWindow(): BrowserWindow {
   const win = new BrowserWindow({
-    width: BUBBLE_NARROW_WIDTH,
+    width: CARD_NARROW_WIDTH,
     height: OVERLAY_MIN_HEIGHT,
     show: false,
     frame: false,
@@ -111,10 +111,10 @@ function createOverlayWindow(): BrowserWindow {
     acceptFirstMouse: true,
     roundedCorners: true,
     // The window is exactly the card (the renderer keeps no transparent margin),
-    // so both the shadow and the blur below describe the rounded bubble and not
+    // so both the shadow and the blur below describe the rounded card and not
     // a rectangle around it. An earlier version had an 8px transparent margin
     // for a CSS shadow, and macOS drew its shadow around that whole rectangle —
-    // which is what read as a second, translucent pane under the bubble.
+    // which is what read as a second, translucent pane under the card.
     //
     // These two follow the flags rather than a hardcoded "card": a window can be
     // *created* by the first voice press (when the feature was just switched on
@@ -185,7 +185,7 @@ function createOverlayWindow(): BrowserWindow {
 }
 
 /** The anchor of the card currently on screen, if any. */
-let anchor: BubbleAnchor | null = null
+let anchor: CardAnchor | null = null
 // Native animation may still be between frames when the next letter arrives.
 // Placement must use the last destination, not mistake that frame for a drag.
 let resizeBounds: Electron.Rectangle | null = null
@@ -203,7 +203,7 @@ function positionOverlay(win: BrowserWindow, height: number, width: number): voi
 }
 
 /**
- * Re-applies the remembered anchor to a new size, or places the bubble for the
+ * Re-applies the remembered anchor to a new size, or places the card for the
  * first time when there is no anchor yet.
  */
 function resizeAtAnchor(win: BrowserWindow, height: number, width: number, pin = false): void {
@@ -287,7 +287,7 @@ function performShow(height: number, width: number, activate: boolean): void {
 }
 
 /**
- * Shows the bubble at the given size, optionally without taking focus.
+ * Shows the card at the given size, optionally without taking focus.
  *
  * The inactive path exists for push-to-talk. The bars have to be on screen
  * immediately, but `collectContext` still has to read the app the user is
@@ -307,10 +307,10 @@ function presentOverlay(height: number, width: number, activate: boolean): void 
   // default narrow width, which would leave the invisible window 32 points wider
   // than the few pixels it paints. That extra strip is invisible but still
   // belongs to the window, so it sits between the pointer and whatever is under
-  // it. The renderer asks for `BUBBLE_VOICE_WIDTH` throughout the turn; this is
+  // it. The renderer asks for `CARD_VOICE_WIDTH` throughout the turn; this is
   // the same number applied at the moment the window is actually shown.
   const safeWidth = Math.round(
-    clamp(voice ? BUBBLE_VOICE_WIDTH : width, BUBBLE_MIN_WIDTH, BUBBLE_WIDTH)
+    clamp(voice ? CARD_VOICE_WIDTH : width, CARD_MIN_WIDTH, CARD_WIDTH)
   )
 
   if (!overlayWindow) {
@@ -349,22 +349,22 @@ export const overlayHost: OverlayHost = {
     overlayWindow = createOverlayWindow()
   },
 
-  show(height: number, width = BUBBLE_NARROW_WIDTH): void {
+  show(height: number, width = CARD_NARROW_WIDTH): void {
     presentOverlay(height, width, true)
   },
 
-  showInactive(height: number, width = BUBBLE_NARROW_WIDTH): void {
+  showInactive(height: number, width = CARD_NARROW_WIDTH): void {
     presentOverlay(height, width, false)
   },
 
-  resize(height: number, width = BUBBLE_WIDTH, pin = false): void {
+  resize(height: number, width = CARD_WIDTH, pin = false): void {
     const win = overlayWindow
     if (!win || win.isDestroyed()) return
     const safeHeight = Math.round(clamp(height, OVERLAY_MIN_HEIGHT, OVERLAY_MAX_HEIGHT))
     // The user's own width may exceed what content is allowed to ask for: a
     // dragged card is a person's decision, and clamping it back to the content
     // cap would make the drag spring back under the hand.
-    const safeWidth = Math.round(clamp(width, BUBBLE_MIN_WIDTH, BUBBLE_MAX_WIDTH))
+    const safeWidth = Math.round(clamp(width, CARD_MIN_WIDTH, CARD_MAX_WIDTH))
     const bounds = resizeBounds ?? win.getBounds()
     if (bounds.height === safeHeight && bounds.width === safeWidth && !pin) return
     resizeAtAnchor(win, safeHeight, safeWidth, pin)
@@ -462,7 +462,7 @@ export const overlayHost: OverlayHost = {
     // closed (Escape during the context collection is exactly that case).
     pendingShow = null
     // The next press asks for a fresh anchor: the pointer has almost certainly
-    // moved since this bubble appeared.
+    // moved since this card appeared.
     anchor = null
     resizeBounds = null
     if (overlayWindow && !overlayWindow.isDestroyed()) overlayWindow.hide()

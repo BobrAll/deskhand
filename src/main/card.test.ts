@@ -9,8 +9,8 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { ScreenRect } from '@shared/types'
 import {
-  BUBBLE_GAP,
-  BUBBLE_MARGIN,
+  CARD_GAP,
+  CARD_MARGIN,
   boundsFor,
   clamp,
   placeAnchor,
@@ -18,8 +18,8 @@ import {
   roomAround,
   xFor,
   yFor,
-  type BubbleAnchor
-} from './bubble'
+  type CardAnchor
+} from './card'
 const SCREEN: ScreenRect = { x: 0, y: 0, width: 1440, height: 900 }
 const SMALL: ScreenRect = { x: 0, y: 0, width: 600, height: 400 }
 const MIN = 8
@@ -29,12 +29,12 @@ function at(x: number, y: number): { x: number; y: number } {
   return { x, y }
 }
 
-describe('bubble: the numbers', () => {
+describe('card: the numbers', () => {
   it('keeps the gap and the margin the card was tuned with', () => {
-    expect(BUBBLE_GAP).toBe(10)
-    expect(BUBBLE_MARGIN).toBe(8)
-    expect(GAP).toBe(BUBBLE_GAP)
-    expect(MIN).toBe(BUBBLE_MARGIN)
+    expect(CARD_GAP).toBe(10)
+    expect(CARD_MARGIN).toBe(8)
+    expect(GAP).toBe(CARD_GAP)
+    expect(MIN).toBe(CARD_MARGIN)
   })
 
   it('clamps to the range, and answers `min` for a number that is not one', () => {
@@ -46,7 +46,7 @@ describe('bubble: the numbers', () => {
   })
 })
 
-describe('bubble: room around the pointer', () => {
+describe('card: room around the pointer', () => {
   it('measures both sides inside the work area', () => {
     expect(roomAround(at(100, 100), SCREEN)).toEqual({
       below: 900 - MIN - 110,
@@ -60,7 +60,7 @@ describe('bubble: room around the pointer', () => {
   })
 })
 
-describe('bubble: placing a new card', () => {
+describe('card: placing a new card', () => {
   it('opens down and to the right of the pointer', () => {
     const anchor = placeAnchor(at(100, 100), SCREEN, 31, 112)
 
@@ -108,8 +108,8 @@ describe('bubble: placing a new card', () => {
   })
 })
 
-describe('bubble: the edges for a size', () => {
-  const placed: BubbleAnchor = {
+describe('card: the edges for a size', () => {
+  const placed: CardAnchor = {
     point: at(700, 400),
     area: SCREEN,
     x: 710,
@@ -123,7 +123,7 @@ describe('bubble: the edges for a size', () => {
   })
 
   it('pins the far edge near the right edge instead of hopping over the pointer', () => {
-    const nearEdge: BubbleAnchor = { ...placed, point: at(1300, 400), x: 1310 }
+    const nearEdge: CardAnchor = { ...placed, point: at(1300, 400), x: 1310 }
 
     expect(xFor(nearEdge, 112)).toBe(1310)
     expect(xFor(nearEdge, 360)).toBe(1440 - 360 - MIN)
@@ -135,14 +135,14 @@ describe('bubble: the edges for a size', () => {
   })
 
   it('keeps a card above the pointer above it as it grows', () => {
-    const above: BubbleAnchor = { ...placed, above: true, point: at(700, 800) }
+    const above: CardAnchor = { ...placed, above: true, point: at(700, 800) }
 
     expect(yFor(above, 31)).toBe(800 - GAP - 31)
     expect(yFor(above, 520)).toBe(800 - GAP - 520)
   })
 
   it('rounds the window rectangle, never the remembered anchor', () => {
-    const fractional: BubbleAnchor = { ...placed, x: 710.6, point: at(700.4, 400.4) }
+    const fractional: CardAnchor = { ...placed, x: 710.6, point: at(700.4, 400.4) }
 
     expect(boundsFor(fractional, 31.4, 112.4)).toEqual({
       x: 711,
@@ -154,8 +154,8 @@ describe('bubble: the edges for a size', () => {
   })
 })
 
-describe('bubble: resizing at the anchor', () => {
-  const base: BubbleAnchor = {
+describe('card: resizing at the anchor', () => {
+  const base: CardAnchor = {
     point: at(700, 400),
     area: SCREEN,
     x: 710,
@@ -175,7 +175,7 @@ describe('bubble: resizing at the anchor', () => {
   it('flips above when the answer outgrows the room below', () => {
     // Pointer at y=700: 182 pt of room below, 682 above. A 500 pt answer only
     // fits on the side the card did not open on.
-    const low: BubbleAnchor = { ...base, point: at(700, 700), x: 710 }
+    const low: CardAnchor = { ...base, point: at(700, 700), x: 710 }
     const dropped: ScreenRect = { x: 710, y: 710, width: 112, height: 31 }
     const next = resizeAnchor({ anchor: low, bounds: dropped, height: 500, width: 360, workAreaAt: () => SCREEN })
 
@@ -187,7 +187,7 @@ describe('bubble: resizing at the anchor', () => {
     // The flip is only undone when the *other* side becomes the only one that
     // fits. A card that hopped above the pointer and then shrinks stays there:
     // hopping back down mid-answer is the movement the anchor exists to prevent.
-    const low: BubbleAnchor = { ...base, point: at(700, 700), x: 710 }
+    const low: CardAnchor = { ...base, point: at(700, 700), x: 710 }
     const dropped: ScreenRect = { x: 710, y: 710, width: 112, height: 31 }
     const flipped = resizeAnchor({ anchor: low, bounds: dropped, height: 500, width: 360, workAreaAt: () => SCREEN })
     const bounds = boundsFor(flipped, 500, 360)
@@ -199,7 +199,7 @@ describe('bubble: resizing at the anchor', () => {
   it('flips back below when the card is too tall for the side it is on', () => {
     // Above the pointer there are 382 pt of room, below 482. A 400 pt answer
     // fits only below, so the card hops back down.
-    const above: BubbleAnchor = { ...base, above: true, point: at(700, 400), x: 710 }
+    const above: CardAnchor = { ...base, above: true, point: at(700, 400), x: 710 }
     const bounds: ScreenRect = { x: 710, y: 8, width: 360, height: 400 }
     const next = resizeAnchor({ anchor: above, bounds: bounds, height: 400, width: 360, workAreaAt: () => SCREEN })
 
@@ -282,14 +282,14 @@ describe('bubble: resizing at the anchor', () => {
   })
 
   it('does not mutate the anchor it was given', () => {
-    const before = JSON.parse(JSON.stringify(base)) as BubbleAnchor
+    const before = JSON.parse(JSON.stringify(base)) as CardAnchor
     resizeAnchor({ anchor: base, bounds: inPlace, height: 700, width: 360, workAreaAt: () => SCREEN })
 
     expect(base).toEqual(before)
   })
 })
 
-describe('bubble: the geometry left windows.ts', () => {
+describe('card: the geometry left windows.ts', () => {
   const source = readFileSync(join(__dirname, 'windows/index.ts'), 'utf8')
 
   it('no longer defines the placement functions itself', () => {
