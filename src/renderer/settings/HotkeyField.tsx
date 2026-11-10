@@ -87,7 +87,7 @@ export function HotkeyField({ value, onChange }: HotkeyFieldProps) {
     setRecording(active)
     // The main process re-reads the stored accelerator when this goes false, so
     // a combination the system refused is not re-armed by accident.
-    window.smartCursor.settings.recording(active)
+    window.deskhand.settings.recording(active)
   }, [])
 
   useEffect(() => {
@@ -124,7 +124,7 @@ export function HotkeyField({ value, onChange }: HotkeyFieldProps) {
   }, [recording])
   useEffect(
     () => () => {
-      if (armedRef.current) window.smartCursor.settings.recording(false)
+      if (armedRef.current) window.deskhand.settings.recording(false)
     },
     []
   )

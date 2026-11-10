@@ -17,7 +17,7 @@ const [givenPath, scoresPath] = argv.filter((arg) => !arg.startsWith('--'))
  * The common case is "what just happened", and requiring the user to find the
  * log directory first makes the tool useless at exactly the moment it is needed.
  */
-const DEFAULT_TRACE = join(homedir(), 'Library', 'Application Support', 'smart-cursor', 'agent-trace.jsonl')
+const DEFAULT_TRACE = join(homedir(), 'Library', 'Application Support', 'deskhand', 'agent-trace.jsonl')
 const tracePath = givenPath ?? DEFAULT_TRACE
 if (!givenPath && !existsSync(DEFAULT_TRACE)) {
   console.error(`No trace at ${DEFAULT_TRACE}`)

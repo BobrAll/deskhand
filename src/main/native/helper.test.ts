@@ -116,11 +116,11 @@ function answerWith(rules: Record<string, { error?: Error | null; stdout?: strin
 
 /** The `execFile` calls made against the helper binary (not osascript). */
 function helperCalls(): Array<{ file: string; args: string[]; options: Record<string, unknown> }> {
-  return state.calls.filter((call) => call.file === '/resources/smartcursor-helper')
+  return state.calls.filter((call) => call.file === '/resources/deskhand-helper')
 }
 
 beforeEach(async () => {
-  state.existing = new Set(['/resources/smartcursor-helper'])
+  state.existing = new Set(['/resources/deskhand-helper'])
   state.isPackaged = true
   state.calls = []
   state.handler = null
@@ -139,26 +139,26 @@ afterEach(() => {
 
 describe('helperBinary: where the binary is looked up', () => {
   it('uses the resources directory in a packaged app', () => {
-    expect(helper.helperBinary()).toBe('/resources/smartcursor-helper')
+    expect(helper.helperBinary()).toBe('/resources/deskhand-helper')
   })
 
   it('looks next to the app path and then in the cwd when unpackaged', async () => {
     state.isPackaged = false
-    state.existing = new Set([`${process.cwd()}/resources/smartcursor-helper`])
+    state.existing = new Set([`${process.cwd()}/resources/deskhand-helper`])
     helper = await load()
 
-    expect(helper.helperBinary()).toBe(`${process.cwd()}/resources/smartcursor-helper`)
+    expect(helper.helperBinary()).toBe(`${process.cwd()}/resources/deskhand-helper`)
   })
 
   it('prefers the app path over the cwd when unpackaged', async () => {
     state.isPackaged = false
     state.existing = new Set([
-      '/app/resources/smartcursor-helper',
-      '/work/resources/smartcursor-helper'
+      '/app/resources/deskhand-helper',
+      '/work/resources/deskhand-helper'
     ])
     helper = await load()
 
-    expect(helper.helperBinary()).toBe('/app/resources/smartcursor-helper')
+    expect(helper.helperBinary()).toBe('/app/resources/deskhand-helper')
   })
 
   it('returns null and warns when the binary is missing', async () => {
@@ -176,7 +176,7 @@ describe('helperBinary: where the binary is looked up', () => {
     helper = await load()
 
     expect(helper.helperBinary()).toBeNull()
-    state.existing = new Set(['/resources/smartcursor-helper'])
+    state.existing = new Set(['/resources/deskhand-helper'])
     expect(helper.helperBinary()).toBeNull()
     expect(console.warn).toHaveBeenCalledTimes(1)
   })
@@ -594,7 +594,7 @@ describe('watchForAbort: the long-lived watcher', () => {
     const spawn = vi.spyOn(await import('node:child_process'), 'spawn')
     helper.watchForAbort({ watchMouse: false }, () => undefined)
 
-    expect(spawn).toHaveBeenCalledWith('/resources/smartcursor-helper', ['watch', 'key'], {
+    expect(spawn).toHaveBeenCalledWith('/resources/deskhand-helper', ['watch', 'key'], {
       stdio: ['ignore', 'pipe', 'ignore']
     })
   })
@@ -603,7 +603,7 @@ describe('watchForAbort: the long-lived watcher', () => {
     const spawn = vi.spyOn(await import('node:child_process'), 'spawn')
     helper.watchForAbort({ watchMouse: true }, () => undefined)
 
-    expect(spawn).toHaveBeenCalledWith('/resources/smartcursor-helper', ['watch', 'mouse'], {
+    expect(spawn).toHaveBeenCalledWith('/resources/deskhand-helper', ['watch', 'mouse'], {
       stdio: ['ignore', 'pipe', 'ignore']
     })
   })

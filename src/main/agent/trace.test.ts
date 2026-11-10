@@ -8,9 +8,9 @@ const { getPath } = vi.hoisted(() => ({ getPath: vi.fn() }))
 vi.mock('electron', () => ({ app: { getPath } }))
 
 it('records concurrent turns with separate IDs and pairs overlapping spans', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'smart-cursor-trace-'))
+  const directory = await mkdtemp(join(tmpdir(), 'deskhand-trace-'))
   getPath.mockReturnValue(directory)
-  vi.stubEnv('SMART_CURSOR_AGENT_TRACE', '1')
+  vi.stubEnv('DESKHAND_AGENT_TRACE', '1')
   try {
     await Promise.all(['first', 'second'].map((name) =>
       traceTurn({ name }, () => timed('work', async () => { trace('checkpoint') }))))
@@ -36,9 +36,9 @@ it('records concurrent turns with separate IDs and pairs overlapping spans', asy
 })
 
 it('flushes the queued writes so a quitting process does not drop the last line', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'smart-cursor-trace-flush-'))
+  const directory = await mkdtemp(join(tmpdir(), 'deskhand-trace-flush-'))
   getPath.mockReturnValue(directory)
-  vi.stubEnv('SMART_CURSOR_AGENT_TRACE', '1')
+  vi.stubEnv('DESKHAND_AGENT_TRACE', '1')
   try {
     await traceTurn({ name: 'flush' }, async () => {
       trace('last', { reason: 'quit' })
@@ -56,9 +56,9 @@ it('flushes the queued writes so a quitting process does not drop the last line'
 })
 
 it('opens a turn when there is none, so a run from an untraced path still records', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'smart-cursor-trace-within-'))
+  const directory = await mkdtemp(join(tmpdir(), 'deskhand-trace-within-'))
   getPath.mockReturnValue(directory)
-  vi.stubEnv('SMART_CURSOR_AGENT_TRACE', '1')
+  vi.stubEnv('DESKHAND_AGENT_TRACE', '1')
   try {
     // Called outside any turn, which is how the agent controller reaches it
     // when a caller forgot to open one.
@@ -79,9 +79,9 @@ it('opens a turn when there is none, so a run from an untraced path still record
 })
 
 it('files a late callback under the turn that is open, not the one it came from', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'smart-cursor-trace-stale-'))
+  const directory = await mkdtemp(join(tmpdir(), 'deskhand-trace-stale-'))
   getPath.mockReturnValue(directory)
-  vi.stubEnv('SMART_CURSOR_AGENT_TRACE', '1')
+  vi.stubEnv('DESKHAND_AGENT_TRACE', '1')
   try {
     // The sidecar is spawned inside the first turn that asks for it, so the
     // socket under its stdout is an async resource created in that turn — and
@@ -116,9 +116,9 @@ it('files a late callback under the turn that is open, not the one it came from'
 })
 
 it('reuses the enclosing turn instead of starting a second one', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'smart-cursor-trace-nested-'))
+  const directory = await mkdtemp(join(tmpdir(), 'deskhand-trace-nested-'))
   getPath.mockReturnValue(directory)
-  vi.stubEnv('SMART_CURSOR_AGENT_TRACE', '1')
+  vi.stubEnv('DESKHAND_AGENT_TRACE', '1')
   try {
     await traceTurn({ name: 'outer' }, async () => {
       await traceWithin({ source: 'inner' }, async () => {

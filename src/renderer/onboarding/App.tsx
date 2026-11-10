@@ -5,13 +5,13 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import type { PermissionState, ProviderId } from '@shared/types'
-import { PROVIDERS, providerInfo } from '@shared/defaults'
+import { PROVIDERS, normalizeBaseUrl, providerInfo } from '@shared/defaults'
 import type { SettingsBundle } from '@shared/api'
 import { prettyHotkey } from '../settings/HotkeyField'
 
 type Step = 0 | 1 | 2
 
-const STEPS = ['Разрешения', 'Ключ API', 'Готово']
+const STEPS = ['Разрешения', 'Подключение', 'Готово']
 
 export function App() {
   const [step, setStep] = useState<Step>(0)
@@ -21,16 +21,20 @@ export function App() {
     microphone: false
   })
   const [bundle, setBundle] = useState<SettingsBundle | null>(null)
-  const [provider, setProvider] = useState<ProviderId>('openrouter')
+  const [provider, setProvider] = useState<ProviderId>('openai')
   const [keyInput, setKeyInput] = useState('')
+  const [baseUrl, setBaseUrl] = useState('')
+  const [model, setModel] = useState('')
   const [status, setStatus] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null)
   const [busy, setBusy] = useState(false)
 
   useEffect(() => {
-    void window.smartCursor.permissions.status().then(setPermissions)
-    void window.smartCursor.settings.load().then((loaded) => {
+    void window.deskhand.permissions.status().then(setPermissions)
+    void window.deskhand.settings.load().then((loaded) => {
       setBundle(loaded)
       setProvider(loaded.settings.provider)
+      setBaseUrl(loaded.settings.baseUrls?.[loaded.settings.provider] ?? '')
+      setModel(loaded.settings.models?.[loaded.settings.provider] ?? '')
     })
   }, [])
 
@@ -38,41 +42,41 @@ export function App() {
   // checkmarks update without the user pressing anything.
   useEffect(() => {
     const timer = window.setInterval(() => {
-      void window.smartCursor.permissions.status().then(setPermissions)
+      void window.deskhand.permissions.status().then(setPermissions)
     }, 1500)
     return () => window.clearInterval(timer)
   }, [])
 
   const request = useCallback(async () => {
-    const next = await window.smartCursor.permissions.request()
+    const next = await window.deskhand.permissions.request()
     setPermissions(next)
   }, [])
 
   /** The microphone is asked for on its own: it is optional, the others are not. */
   const requestMicrophone = useCallback(async () => {
-    const granted = await window.smartCursor.permissions.requestMicrophone()
+    const granted = await window.deskhand.permissions.requestMicrophone()
     setPermissions((prev) => ({ ...prev, microphone: granted }))
   }, [])
 
   const saveKey = useCallback(async () => {
     const key = keyInput.trim()
-    if (!key) return
+    const root = normalizeBaseUrl(baseUrl)
+    if (!key || (baseUrl.trim() !== '' && root === '')) return
     setBusy(true)
     setStatus(null)
     try {
-      const test = await window.smartCursor.settings.testKey(
-        provider,
-        key,
-        bundle?.settings.baseUrls?.[provider]
-      )
+      const test = await window.deskhand.settings.testKey(provider, key, root)
       if (!test.ok) {
         setStatus({ kind: 'err', text: test.message })
         return
       }
-      await window.smartCursor.settings.setKey(provider, key)
-      await window.smartCursor.settings.save({
-        ...(bundle?.settings ?? ({} as never)),
-        provider
+      await window.deskhand.settings.setKey(provider, key)
+      const settings = bundle?.settings ?? ({} as never)
+      await window.deskhand.settings.save({
+        ...settings,
+        provider,
+        models: { ...settings.models, [provider]: model.trim() },
+        baseUrls: { ...settings.baseUrls, [provider]: root }
       })
       setKeyInput('')
       setStatus({ kind: 'ok', text: test.message })
@@ -81,14 +85,17 @@ export function App() {
     } finally {
       setBusy(false)
     }
-  }, [bundle, keyInput, provider])
+  }, [bundle, baseUrl, keyInput, model, provider])
 
   const finish = useCallback(async () => {
-    await window.smartCursor.onboarding.complete()
+    await window.deskhand.onboarding.complete()
   }, [])
 
   const hotkey = bundle?.settings.hotkey ?? 'Alt+Space'
   const configured = bundle?.keys.find((item) => item.provider === provider)?.configured ?? false
+  const baseUrlInvalid = baseUrl.trim() !== '' && normalizeBaseUrl(baseUrl) === ''
+  const defaultBaseUrl = providerInfo(provider)?.defaultBaseUrl
+  const defaultModel = providerInfo(provider)?.defaultModel
 
   return (
     <div className="wizard">
@@ -105,7 +112,7 @@ export function App() {
         <section className="panel">
           <h1>Разрешения macOS</h1>
           <p className="lead">
-            Smart Cursor читает выделенный текст и вставляет ответ в активное приложение. Без этих
+            Deskhand читает выделенный текст и вставляет ответ в активное приложение. Без этих
             разрешений он работать не сможет.
           </p>
 
@@ -169,9 +176,10 @@ export function App() {
 
       {step === 1 && (
         <section className="panel">
-          <h1>Ключ API</h1>
+          <h1>Подключение</h1>
           <p className="lead">
-            Ключ хранится в связке ключей macOS и отправляется только выбранному провайдеру.
+            Модель, ключ и адрес API. Ключ хранится в связке ключей macOS и отправляется только
+            выбранному провайдеру.
           </p>
 
           <div className="providers">
@@ -179,7 +187,11 @@ export function App() {
               <button
                 key={item.id}
                 className={`provider ${provider === item.id ? 'active' : ''}`}
-                onClick={() => setProvider(item.id)}
+                onClick={() => {
+                  setProvider(item.id)
+                  setBaseUrl(bundle?.settings.baseUrls?.[item.id] ?? '')
+                  setModel(bundle?.settings.models?.[item.id] ?? '')
+                }}
               >
                 <span className="provider-name">{item.label}</span>
                 {bundle?.keys.find((key) => key.provider === item.id)?.configured && (
@@ -192,20 +204,54 @@ export function App() {
           {configured ? (
             <div className="ok">Ключ для {providerInfo(provider)?.label} уже сохранён.</div>
           ) : (
-            <div className="key-entry">
-              <input
-                type="password"
-                placeholder="Вставьте ключ"
-                value={keyInput}
-                onChange={(event) => setKeyInput(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter') void saveKey()
-                }}
-              />
-              <button className="primary" disabled={busy || !keyInput.trim()} onClick={() => void saveKey()}>
-                {busy ? 'Проверка…' : 'Проверить'}
-              </button>
-            </div>
+            <>
+              <div className="field">
+                <input
+                  value={model}
+                  onChange={(event) => setModel(event.target.value)}
+                  placeholder={defaultModel}
+                  aria-label="Модель"
+                  spellCheck={false}
+                />
+                <div className="hint">
+                  ID модели {providerInfo(provider)?.label}. Пусто — {defaultModel}.
+                </div>
+              </div>
+
+              <div className="key-entry">
+                <input
+                  type="password"
+                  placeholder="Вставьте ключ"
+                  value={keyInput}
+                  onChange={(event) => setKeyInput(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') void saveKey()
+                  }}
+                />
+                <button
+                  className="primary"
+                  disabled={busy || !keyInput.trim() || baseUrlInvalid}
+                  onClick={() => void saveKey()}
+                >
+                  {busy ? 'Проверка…' : 'Проверить'}
+                </button>
+              </div>
+
+              <div className="field">
+                <input
+                  value={baseUrl}
+                  onChange={(event) => setBaseUrl(event.target.value)}
+                  placeholder={defaultBaseUrl}
+                  aria-label="Base URL"
+                  spellCheck={false}
+                />
+                <div className={`hint${baseUrlInvalid ? ' err' : ''}`}>
+                  {baseUrlInvalid
+                    ? 'Некорректный адрес: нужен http(s)-адрес вида https://host/v1.'
+                    : `Корень API без /chat/completions. Пусто — ${defaultBaseUrl}.`}
+                </div>
+              </div>
+            </>
           )}
 
           {status && <div className={`status ${status.kind}`}>{status.text}</div>}
@@ -257,7 +303,7 @@ export function App() {
             <button
               className="ghost"
               onClick={() => {
-                window.smartCursor.onboarding.openSettings()
+                window.deskhand.onboarding.openSettings()
               }}
             >
               Настройки

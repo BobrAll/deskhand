@@ -182,8 +182,8 @@ describe('secrets: keyStatuses', () => {
     fake.data.secrets = { openai: `plain:${b64('a')}` }
     const secrets = await loadSecrets()
     expect(secrets.keyStatuses()).toEqual([
-      { provider: 'openrouter', configured: false, encryptionAvailable: true },
       { provider: 'openai', configured: true, encryptionAvailable: true },
+      { provider: 'openrouter', configured: false, encryptionAvailable: true },
       { provider: 'anthropic', configured: false, encryptionAvailable: true }
     ])
   })

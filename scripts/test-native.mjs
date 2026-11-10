@@ -1,6 +1,6 @@
 // The helper contract, checked against the real binary.
 //
-// `src/main/native/helper.ts` parses JSON that only `smartcursor-helper` writes,
+// `src/main/native/helper.ts` parses JSON that only `deskhand-helper` writes,
 // and the tests for it use a mock. This script is the other half: it runs the
 // shipped binary and asserts the shape of its answers, so a renamed key or a
 // changed field type fails here instead of silently turning every answer into
@@ -19,7 +19,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
-const binary = join(root, 'resources', 'smartcursor-helper')
+const binary = join(root, 'resources', 'deskhand-helper')
 
 /** Commands this script is allowed to run, and why each one is safe. */
 const READ_ONLY = [

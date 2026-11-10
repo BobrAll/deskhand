@@ -1,4 +1,4 @@
-// Compiles the ObjC helper into resources/smartcursor-helper.
+// Compiles the ObjC helper into resources/deskhand-helper.
 // Runs as part of `npm run dev` / `npm run build`; failures are non-fatal because
 // the main process falls back to osascript based implementations.
 import { spawnSync } from 'node:child_process'
@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url'
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const source = join(root, 'src/main/native/helper.m')
 const outDir = join(root, 'resources')
-const out = join(outDir, 'smartcursor-helper')
+const out = join(outDir, 'deskhand-helper')
 
 if (!existsSync(outDir)) mkdirSync(outDir, { recursive: true })
 

@@ -337,7 +337,7 @@ describe('transcribe', () => {
     expect(state.spawned[0].binary).toBe('/app/resources/whisper-cli')
     expect(args.slice(0, 2)).toEqual(['-m', '/userdata/models/ggml-small-q5_1.bin'])
     expect(args[2]).toBe('-f')
-    expect(args[3]).toMatch(/^\/tmp\/smartcursor-voice-.+\/input\.wav$/)
+    expect(args[3]).toMatch(/^\/tmp\/deskhand-voice-.+\/input\.wav$/)
     expect(args.slice(4, 8)).toEqual(['-l', 'ru', '-nt', '-np'])
     expect(args[8]).toBe('-t')
   })
@@ -351,7 +351,7 @@ describe('transcribe', () => {
     expect(state.written).toHaveLength(1)
     expect(state.written[0].data).toBe(WAV)
     expect(state.removed).toHaveLength(1)
-    expect(state.removed[0]).toMatch(/^\/tmp\/smartcursor-voice-/)
+    expect(state.removed[0]).toMatch(/^\/tmp\/deskhand-voice-/)
   })
 
   it('uses the configured language, and `ru` when it is blank', async () => {

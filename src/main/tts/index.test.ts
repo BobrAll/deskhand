@@ -20,7 +20,7 @@ const fake = vi.hoisted(() => ({
 }))
 
 vi.mock('electron', () => ({
-  app: { getPath: () => '/tmp/smart-cursor-test' }
+  app: { getPath: () => '/tmp/deskhand-test' }
 }))
 
 vi.mock('node:fs/promises', async (importOriginal) => {

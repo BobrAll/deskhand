@@ -17,7 +17,7 @@ export function openSettingsWindow(): BrowserWindow {
   }
 
   const win = new BrowserWindow({
-    ...baseOptions('Smart Cursor — настройки', 980, 760),
+    ...baseOptions('Deskhand — настройки', 980, 760),
     minWidth: 820,
     minHeight: 560
   })
@@ -72,7 +72,7 @@ export function openOnboardingWindow(): BrowserWindow {
     return onboardingWindow
   }
 
-  const win = new BrowserWindow({ ...baseOptions('Smart Cursor', 760, 660), resizable: false })
+  const win = new BrowserWindow({ ...baseOptions('Deskhand', 760, 660), resizable: false })
   onboardingWindow = win
   win.once('ready-to-show', () => {
     win.show()

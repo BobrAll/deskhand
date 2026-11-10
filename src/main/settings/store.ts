@@ -26,7 +26,7 @@ function db(): Store<StoreShape> | null {
   if (store) return store
   try {
     store = new Store<StoreShape>({
-      name: 'smart-cursor',
+      name: 'deskhand',
       defaults: { settings: DEFAULT_SETTINGS }
     })
     return store
@@ -37,7 +37,7 @@ function db(): Store<StoreShape> | null {
     // `clearInvalidConfig` rewrites just the broken file, keeping the rest of
     // the Electron profile (caches, window state) intact.
     store = new Store<StoreShape>({
-      name: 'smart-cursor',
+      name: 'deskhand',
       defaults: { settings: DEFAULT_SETTINGS },
       clearInvalidConfig: true
     })

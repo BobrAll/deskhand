@@ -1,5 +1,5 @@
 /**
- * The `window.smartCursor` bridge contract. Implemented by the preload script and
+ * The `window.deskhand` bridge contract. Implemented by the preload script and
  * consumed by the renderer bundles. Types only — no runtime imports.
  */
 import type {
@@ -61,7 +61,7 @@ export interface AppPickResult {
 /** Unsubscribe callback returned by every event subscription. */
 export type Unsubscribe = () => void
 
-export interface SmartCursorApi {
+export interface DeskhandApi {
   overlay: {
     getState(): Promise<OverlayState | null>
     onState(handler: (state: OverlayState) => void): Unsubscribe

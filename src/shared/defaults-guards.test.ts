@@ -49,8 +49,8 @@ describe('PROVIDERS: the catalog itself', () => {
 
   it('declares vision support for all three providers today', () => {
     expect(PROVIDERS.filter((provider) => provider.supportsVision).map((provider) => provider.id)).toEqual([
-      'openrouter',
       'openai',
+      'openrouter',
       'anthropic'
     ])
   })

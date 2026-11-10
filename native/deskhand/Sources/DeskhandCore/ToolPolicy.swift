@@ -3,7 +3,7 @@ import ApplicationServices
 
 /// One tool call offered to the policy, with everything a decision needs.
 ///
-/// The policy is the *host's* business: Smart Cursor decides what is risky and
+/// The policy is the *host's* business: Deskhand decides what is risky and
 /// whether to ask the user, so the description here has to be rich enough for
 /// that decision and no richer. It deliberately carries the resolved target —
 /// a click on "Отправить" in a messenger is a different thing from a click on
@@ -86,7 +86,7 @@ public enum ToolPolicyDecision: Sendable {
 /// The host's veto over a tool call.
 ///
 /// Called before every mutating tool, on the thread that is running the loop.
-/// It may block — the Smart Cursor host uses exactly that to put a question in
+/// It may block — the Deskhand host uses exactly that to put a question in
 /// front of the user and wait for the answer.
 public protocol ToolPolicy: AnyObject, Sendable {
     func authorize(_ call: ToolCallContext) -> ToolPolicyDecision

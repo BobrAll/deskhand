@@ -17,7 +17,7 @@ let store: Store<SecretsSchema> | null = null
 
 function db(): Store<SecretsSchema> {
   if (!store) {
-    store = new Store<SecretsSchema>({ name: 'smart-cursor-secrets', defaults: { secrets: {} } })
+    store = new Store<SecretsSchema>({ name: 'deskhand-secrets', defaults: { secrets: {} } })
   }
   return store
 }

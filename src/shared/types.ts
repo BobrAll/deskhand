@@ -455,7 +455,7 @@ export interface AppSettings {
   captureScreenshotByDefault: boolean
   screenshotMaxSide: number
   screenshotQuality: number
-  /** Bundle identifiers where Smart Cursor does nothing at all. */
+  /** Bundle identifiers where Deskhand does nothing at all. */
   excludedApps: string[]
   rememberConversation: boolean
   launchAtLogin: boolean

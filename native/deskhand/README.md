@@ -1,7 +1,7 @@
 # Deskhand — the agent, vendored
 
 This is the agent that drives the mouse and the keyboard, taken from the standalone
-Deskhand package and kept here as part of Smart Cursor. It is the only code in the
+Deskhand package and kept here as part of Deskhand. It is the only code in the
 repository that touches the accessibility tree, ScreenCaptureKit and CGEvent, and
 it is built into `resources/deskhand-agent` by `npm run build:agent`.
 
@@ -18,11 +18,11 @@ speed and accuracy were tuned there and are carried over unchanged.
 - `DeskhandAgentKit` — `AgentLoop`, which asks the model, runs its tool calls, and
   feeds the results back.
 - `DeskhandAgent` — the executable. Run with `--serve` it becomes the sidecar that
-  Smart Cursor talks to over stdin/stdout; without it, it is a CLI.
+  Deskhand talks to over stdin/stdout; without it, it is a CLI.
 
 ## The bridge
 
-`Sources/DeskhandAgent/Bridge.swift` is the only file that knows about Smart Cursor.
+`Sources/DeskhandAgent/Bridge.swift` is the only file that knows about Deskhand.
 It reads newline-delimited JSON requests, runs one task at a time, and emits
 events. Two things about it are load-bearing:
 

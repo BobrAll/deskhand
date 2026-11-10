@@ -139,7 +139,7 @@ public final class ToolExecutor: @unchecked Sendable {
         let clock = TimingClock()
 
         // The host decides whether this call may run. It is asked before the
-        // tool touches anything, and it may block — Smart Cursor puts a question
+        // tool touches anything, and it may block — Deskhand puts a question
         // in front of the user and waits for the answer. A refusal is reported
         // as a failed step, so the model learns it was not allowed rather than
         // believing it acted.

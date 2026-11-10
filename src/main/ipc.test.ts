@@ -7,7 +7,7 @@ import { CH } from '@shared/ipc'
  * handlers in the main process, and the preload bridge exposes them to renderers.
  * A channel with no handler is a button that does nothing; a preload method with
  * no channel is a runtime `undefined` in a page. Neither shows up in typecheck,
- * because both sides are typed by hand against `SmartCursorApi`.
+ * because both sides are typed by hand against `DeskhandApi`.
  *
  * Electron, the store and the helper are mocked: no window, no Keychain, no
  * binary, no network.

@@ -212,7 +212,7 @@ export async function captureScreenshot(
   target: CaptureTarget,
   options: { maxSide: number; quality: number }
 ): Promise<ScreenshotInfo | null> {
-  const dir = await mkdtemp(join(tmpdir(), 'smart-cursor-shot-'))
+  const dir = await mkdtemp(join(tmpdir(), 'deskhand-shot-'))
   const file = join(dir, 'window.png')
   try {
     // Which of the fallbacks actually produced the image. It decides the

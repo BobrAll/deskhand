@@ -14,6 +14,6 @@ import type { PointerPayload } from '@shared/types'
 const root = document.getElementById('root')
 if (!root) throw new Error('root element is missing')
 
-window.smartCursor.pointer.onDraw((payload: PointerPayload) => {
+window.deskhand.pointer.onDraw((payload: PointerPayload) => {
   render(root, payload)
 })

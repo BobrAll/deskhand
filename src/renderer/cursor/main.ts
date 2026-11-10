@@ -9,6 +9,6 @@ if (!root) throw new Error('root element is missing')
 
 const cursor = createCursor(root)
 
-window.smartCursor.agentCursor.onState((frame: AgentCursorFrame) => {
+window.deskhand.agentCursor.onState((frame: AgentCursorFrame) => {
   cursor.render(frame)
 })

@@ -32,7 +32,7 @@ interface HelperPayload {
   [key: string]: unknown
 }
 
-const HELPER_NAME = 'smartcursor-helper'
+const HELPER_NAME = 'deskhand-helper'
 let cachedHelperPath: string | null | undefined
 
 function resolveHelperPath(): string | null {

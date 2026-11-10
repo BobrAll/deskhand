@@ -536,7 +536,7 @@ export function createOverlayController(host: OverlayHost) {
    * moment later.
    *
    * Unfocused is not a detail. `collectContext` asks macOS which application is
-   * frontmost, and a focused overlay would answer "Smart Cursor": the remembered
+   * frontmost, and a focused overlay would answer "Deskhand": the remembered
    * target, the selected text and the paste destination would all become our own
    * window. So the card is shown with `showInactive`, the context is read from the
    * app behind it, and only then does the window take the keyboard.
@@ -1216,7 +1216,7 @@ export function createOverlayController(host: OverlayHost) {
       // builds its own HTTP client — it has no idea which gateway this is. The
       // writer's provider carries them; the agent's has to be told.
       headers: settings.provider === 'openrouter'
-        ? { 'HTTP-Referer': 'https://github.com/smart-cursor', 'X-Title': 'Smart Cursor' }
+        ? { 'HTTP-Referer': 'https://github.com/BobrAll/deskhand', 'X-Title': 'Deskhand' }
         : undefined
     }
   }

@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 /**
  * The preload bridge is the only surface a renderer page can reach, and it is
- * typed by hand against `SmartCursorApi`. TypeScript checks that the object
+ * typed by hand against `DeskhandApi`. TypeScript checks that the object
  * satisfies the interface, but it cannot notice the opposite drift: a method
  * added to `api.ts` and forgotten here is a page that crashes on a click, and
  * nothing else in the build complains.
@@ -23,7 +23,7 @@ const exposed = vi.hoisted(() => ({
 vi.mock('electron', () => ({
   contextBridge: {
     exposeInMainWorld: (key: string, api: Record<string, unknown>) => {
-      expect(key).toBe('smartCursor')
+      expect(key).toBe('deskhand')
       exposed.api = api
     }
   },
@@ -55,14 +55,14 @@ function flattenMethods(node: Record<string, unknown>, prefix = ''): string[] {
 }
 
 /**
- * Method paths declared by `interface SmartCursorApi` in `shared/api.ts`.
+ * Method paths declared by `interface DeskhandApi` in `shared/api.ts`.
  *
  * A tiny brace-aware scan rather than a TS parser: the file is types only, and
  * the shape being read is `namespace: { name(...): ... }` at two levels.
  */
 function declaredMethods(): string[] {
   const source = readFileSync(resolve(__dirname, '../shared/api.ts'), 'utf8')
-  const start = source.indexOf('export interface SmartCursorApi')
+  const start = source.indexOf('export interface DeskhandApi')
   const body = source.slice(source.indexOf('{', start))
   // Drop comments first: a `//` line mentioning `foo()` must not become a method.
   const withoutComments = body
@@ -110,7 +110,7 @@ function declaredMethods(): string[] {
 }
 
 describe('preload: the exposed bridge', () => {
-  it('exposes exactly the namespaces of SmartCursorApi', () => {
+  it('exposes exactly the namespaces of DeskhandApi', () => {
     const api = exposed.api as Record<string, unknown>
     expect(Object.keys(api).sort()).toEqual([
       'agent',

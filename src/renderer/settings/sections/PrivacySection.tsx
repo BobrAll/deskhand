@@ -43,32 +43,32 @@ export function PrivacySection({
           description="Читать выделенный текст и вставлять ответ."
           granted={permissions?.accessibility ?? false}
           onRequest={async () => {
-            const next = await window.smartCursor.permissions.request()
+            const next = await window.deskhand.permissions.request()
             setBundle((prev) => (prev ? { ...prev, permissions: next } : prev))
           }}
-          onOpen={() => window.smartCursor.permissions.open('accessibility')}
+          onOpen={() => window.deskhand.permissions.open('accessibility')}
         />
         <PermissionRow
           title="Запись экрана"
           description="Скриншот активного окна."
           granted={permissions?.screenRecording ?? false}
           onRequest={async () => {
-            const next = await window.smartCursor.permissions.request()
+            const next = await window.deskhand.permissions.request()
             setBundle((prev) => (prev ? { ...prev, permissions: next } : prev))
           }}
-          onOpen={() => window.smartCursor.permissions.open('screenRecording')}
+          onOpen={() => window.deskhand.permissions.open('screenRecording')}
         />
         <PermissionRow
           title="Микрофон"
           description="Голосовой ввод: удержание клавиши записывает речь."
           granted={permissions?.microphone ?? false}
           onRequest={async () => {
-            const granted = await window.smartCursor.permissions.requestMicrophone()
+            const granted = await window.deskhand.permissions.requestMicrophone()
             setBundle((prev) =>
               prev ? { ...prev, permissions: { ...prev.permissions, microphone: granted } } : prev
             )
           }}
-          onOpen={() => window.smartCursor.permissions.open('microphone')}
+          onOpen={() => window.deskhand.permissions.open('microphone')}
         />
       </Group>
 
@@ -89,7 +89,7 @@ export function PrivacySection({
 
       <Group
         title="Исключённые приложения"
-        footnote="В этих приложениях Smart Cursor не читает текст и не делает скриншоты."
+        footnote="В этих приложениях Deskhand не читает текст и не делает скриншоты."
       >
         <Row stacked>
           <div className="excluded-list">
@@ -135,7 +135,7 @@ export function PrivacySection({
             </select>
             <button
               onClick={async () => {
-                const picked = await window.smartCursor.settings.pickApp()
+                const picked = await window.deskhand.settings.pickApp()
                 onAddExcluded(picked)
               }}
             >

@@ -109,9 +109,9 @@ afterAll(() => {
 
 /** Runs one task through the real chain, with the trace pointed at `directory`. */
 async function runAndReport(): Promise<{ events: AgentEvent[]; lines: Record<string, unknown>[] }> {
-  const directory = mkdtempSync(join(tmpdir(), 'smart-cursor-e2e-'))
+  const directory = mkdtempSync(join(tmpdir(), 'deskhand-e2e-'))
   state.traceDirectory = directory
-  vi.stubEnv('SMART_CURSOR_AGENT_TRACE', '1')
+  vi.stubEnv('DESKHAND_AGENT_TRACE', '1')
   round = 0
   const events: AgentEvent[] = []
   const controller = createAgentController({
@@ -210,7 +210,7 @@ describe.skipIf(!built)('a run’s timings reach the trace file', () => {
   })
 
   it('records exact request bodies in a separate file for each task on the same sidecar', async () => {
-    const directory = mkdtempSync(join(tmpdir(), 'smart-cursor-detailed-trace-'))
+    const directory = mkdtempSync(join(tmpdir(), 'deskhand-detailed-trace-'))
     state.traceDirectory = directory
     const controller = createAgentController({
       emit: () => undefined,
@@ -265,9 +265,9 @@ describe.skipIf(!built)('a run’s timings reach the trace file', () => {
   })
 
   it('produces a timeline the report script can read', async () => {
-    const directory = mkdtempSync(join(tmpdir(), 'smart-cursor-e2e-report-'))
+    const directory = mkdtempSync(join(tmpdir(), 'deskhand-e2e-report-'))
     state.traceDirectory = directory
-    vi.stubEnv('SMART_CURSOR_AGENT_TRACE', '1')
+    vi.stubEnv('DESKHAND_AGENT_TRACE', '1')
     round = 0
     const controller = createAgentController({
       emit: () => undefined,

@@ -32,7 +32,7 @@ function sleep(ms: number): Promise<void> {
 
 /** A synthesised line, or null when the live engine is unavailable. */
 async function synthesize(text: string): Promise<string | null> {
-  const api = window.smartCursor?.tts
+  const api = window.deskhand?.tts
   if (!api) return null
   try {
     const result = await api.speak(text)
@@ -235,7 +235,7 @@ export function useSpeech() {
     if (!voice) return
     // Read the preference while the model is thinking, not after its answer.
     const action = looksLikeAction(prompt)
-    const preferences = window.smartCursor.settings.load().then(({ settings }) => settings.voice)
+    const preferences = window.deskhand.settings.load().then(({ settings }) => settings.voice)
     // `off` means the answer is read on the card, not heard. A recorded line is
     // still spoken for an action, because that is feedback about the machine,
     // not a repeat of text the user can already see. An absent value is treated
@@ -310,8 +310,8 @@ export function useSpeech() {
   }, [enqueue, stop, clearWaiting])
 
   useEffect(() => {
-    const offRecord = window.smartCursor.voice.onRecord(stop)
-    const offPreparing = window.smartCursor.overlay.onPreparing(stop)
+    const offRecord = window.deskhand.voice.onRecord(stop)
+    const offPreparing = window.deskhand.overlay.onPreparing(stop)
     // Voice requests deliberately hide the card while the model works. Keep
     // the pending turn; hiding an already speaking card still stops playback.
     const visibility = (): void => {

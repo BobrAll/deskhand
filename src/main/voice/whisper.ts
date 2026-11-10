@@ -44,7 +44,7 @@ function binaryName(engine: 'whisper' | 'transcribe'): string {
 // Paths
 // ---------------------------------------------------------------------------
 
-/** `~/Library/Application Support/Smart Cursor/models` once installed. */
+/** `~/Library/Application Support/Deskhand/models` once installed. */
 export function modelsDir(): string {
   return join(app.getPath('userData'), 'models')
 }
@@ -193,7 +193,7 @@ export async function transcribe(options: TranscribeOptions): Promise<Transcribe
     return { ok: false, text: '', ms: 0, message: 'Не скачана модель распознавания.' }
   }
 
-  const dir = join(tmpdir(), `smartcursor-voice-${randomUUID()}`)
+  const dir = join(tmpdir(), `deskhand-voice-${randomUUID()}`)
   await mkdir(dir, { recursive: true })
   const wavPath = join(dir, 'input.wav')
   try {

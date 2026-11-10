@@ -127,14 +127,14 @@ function bootstrap(): void {
       {
         label: app.name,
         submenu: [
-          { role: 'about', label: 'О Smart Cursor' },
+          { role: 'about', label: 'О Deskhand' },
           { type: 'separator' },
           { label: 'Настройки…', accelerator: 'CommandOrControl+,', click: () => openSettingsWindow() },
           { type: 'separator' },
           { role: 'hide', label: 'Скрыть' },
           { role: 'hideOthers', label: 'Скрыть остальные' },
           { type: 'separator' },
-          { role: 'quit', label: 'Выйти из Smart Cursor' }
+          { role: 'quit', label: 'Выйти из Deskhand' }
         ]
       },
       {

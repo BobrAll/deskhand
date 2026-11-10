@@ -42,7 +42,7 @@ export function VoiceTab({ voice, tts, savedModel, onChange, onTtsChange }: Voic
   const [checking, setChecking] = useState(false)
 
   const refresh = useCallback(() => {
-    void window.smartCursor.voice
+    void window.deskhand.voice
       .status()
       .then(setStatus)
       .catch(() => setStatus(null))
@@ -55,14 +55,14 @@ export function VoiceTab({ voice, tts, savedModel, onChange, onTtsChange }: Voic
   // Whether live synthesis is configured. Re-read when the endpoint changes, so
   // the pane never claims a voice it no longer has.
   const refreshSpeech = useCallback(() => {
-    void window.smartCursor.tts.status().then(setSpeech).catch(() => setSpeech(null))
+    void window.deskhand.tts.status().then(setSpeech).catch(() => setSpeech(null))
   }, [])
 
   useEffect(() => {
     refreshSpeech()
   }, [refreshSpeech, tts.enabled, tts.baseUrl, tts.model, tts.voice])
 
-  useEffect(() => window.smartCursor.voice.onDownloadProgress((event) => {
+  useEffect(() => window.deskhand.voice.onDownloadProgress((event) => {
     if (event.error) setDownloadError(event.error)
     if (!event.done) setProgress(event)
   }), [])
@@ -74,7 +74,7 @@ export function VoiceTab({ voice, tts, savedModel, onChange, onTtsChange }: Voic
       setDownloadError(null)
       setProgress({ model: id, received: 0, total: 0, done: false })
       try {
-        setStatus(await window.smartCursor.voice.download(id))
+        setStatus(await window.deskhand.voice.download(id))
       } catch {
         setDownloadError('Не удалось скачать модель. Проверьте соединение и попробуйте снова.')
       } finally {
@@ -85,7 +85,7 @@ export function VoiceTab({ voice, tts, savedModel, onChange, onTtsChange }: Voic
   )
 
   async function importModel(): Promise<void> {
-    const next = await window.smartCursor.voice.importModel()
+    const next = await window.deskhand.voice.importModel()
     if (next) setStatus(next)
   }
 
@@ -94,7 +94,7 @@ export function VoiceTab({ voice, tts, savedModel, onChange, onTtsChange }: Voic
     setDownloadError(null)
     setDeleting(id)
     try {
-      setStatus(await window.smartCursor.voice.deleteModel(id))
+      setStatus(await window.deskhand.voice.deleteModel(id))
     } catch {
       setDownloadError('Не удалось удалить модель. Попробуйте снова.')
     } finally {
@@ -118,7 +118,7 @@ export function VoiceTab({ voice, tts, savedModel, onChange, onTtsChange }: Voic
   const check = useCallback(async () => {
     setChecking(true)
     try {
-      const result = await window.smartCursor.voice.test()
+      const result = await window.deskhand.voice.test()
       setError(result.ok ? null : (result.message ?? 'Голосовой ввод не готов.'))
       refresh()
     } finally {
@@ -132,12 +132,12 @@ export function VoiceTab({ voice, tts, savedModel, onChange, onTtsChange }: Voic
   /** Stores the synthesis key; the value never comes back from the main process. */
   const saveTtsKey = useCallback(async () => {
     if (!ttsKey.trim()) return
-    setSpeech(await window.smartCursor.tts.setKey(ttsKey.trim()))
+    setSpeech(await window.deskhand.tts.setKey(ttsKey.trim()))
     setTtsKeyInput('')
   }, [ttsKey])
 
   const removeTtsKey = useCallback(async () => {
-    setSpeech(await window.smartCursor.tts.deleteKey())
+    setSpeech(await window.deskhand.tts.deleteKey())
   }, [])
 
   /** Plays one fixed line in the configured voice, so the choice can be judged. */
@@ -145,7 +145,7 @@ export function VoiceTab({ voice, tts, savedModel, onChange, onTtsChange }: Voic
     setPreviewing(true)
     setPreviewError(null)
     try {
-      const result = await window.smartCursor.tts.preview()
+      const result = await window.deskhand.tts.preview()
       if (!result.ok) {
         setPreviewError(result.message)
         return

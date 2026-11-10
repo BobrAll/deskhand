@@ -89,7 +89,7 @@ func printUsage() {
           deskhand-agent [options] "<task>"
 
         USAGE
-          deskhand-agent --serve           (driven by Smart Cursor over stdin/stdout)
+          deskhand-agent --serve           (driven by Deskhand over stdin/stdout)
           deskhand-agent [options] "<task>"
 
         OPTIONS

@@ -27,20 +27,20 @@ export const DEFAULT_EXCLUDED_APPS = [
 
 export const PROVIDERS: ProviderInfo[] = [
   {
-    id: 'openrouter',
-    label: 'OpenRouter',
-    defaultModel: 'openai/gpt-4o-mini',
-    defaultBaseUrl: 'https://openrouter.ai/api/v1',
-    supportsVision: true,
-    keyUrl: 'https://openrouter.ai/keys'
-  },
-  {
     id: 'openai',
     label: 'OpenAI',
     defaultModel: 'gpt-4o-mini',
     defaultBaseUrl: 'https://api.openai.com/v1',
     supportsVision: true,
     keyUrl: 'https://platform.openai.com/api-keys'
+  },
+  {
+    id: 'openrouter',
+    label: 'OpenRouter',
+    defaultModel: 'openai/gpt-4o-mini',
+    defaultBaseUrl: 'https://openrouter.ai/api/v1',
+    supportsVision: true,
+    keyUrl: 'https://openrouter.ai/keys'
   },
   {
     id: 'anthropic',
@@ -308,7 +308,7 @@ export const DEFAULT_AGENT: AgentSettings = {
 export const AGENT_MIN_OUTPUT_TOKENS = 4096
 
 export const DEFAULT_SETTINGS: AppSettings = {
-  provider: 'openrouter',
+  provider: 'openai',
   models: {
     openrouter: 'openai/gpt-4o-mini',
     openai: 'gpt-4o-mini',

@@ -5,7 +5,7 @@
 
 import { contextBridge, ipcRenderer } from 'electron'
 import { CH } from '../shared/ipc'
-import type { SmartCursorApi, Unsubscribe } from '../shared/api'
+import type { DeskhandApi, Unsubscribe } from '../shared/api'
 import type {
   AgentAvailability,
   AgentCursorFrame,
@@ -34,7 +34,7 @@ function subscribe<T>(channel: string, handler: (payload: T) => void): Unsubscri
   }
 }
 
-const api: SmartCursorApi = {
+const api: DeskhandApi = {
   overlay: {
     getState: () => ipcRenderer.invoke(CH.overlay.getState) as Promise<OverlayState | null>,
     onState: (handler) => subscribe<OverlayState>(CH.overlay.state, handler),
@@ -123,4 +123,4 @@ const api: SmartCursorApi = {
   }
 }
 
-contextBridge.exposeInMainWorld('smartCursor', api)
+contextBridge.exposeInMainWorld('deskhand', api)

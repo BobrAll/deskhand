@@ -38,7 +38,7 @@ export function AgentTab({ agent, onChange, onEnabledChange }: AgentTabProps) {
   const [steps, setSteps] = useState(String(agent.maxSteps))
 
   const refresh = useCallback(() => {
-    void window.smartCursor.agent
+    void window.deskhand.agent
       .availability()
       .then(setAvailability)
       .catch(() => setAvailability(null))
@@ -103,7 +103,7 @@ export function AgentTab({ agent, onChange, onEnabledChange }: AgentTabProps) {
             <span className="agent-ready-dot" aria-hidden />
             <span>{availability?.reason ?? 'Нужен доступ в «Универсальный доступ».'}</span>
             <button
-              onClick={() => window.smartCursor.permissions.open('accessibility')}
+              onClick={() => window.deskhand.permissions.open('accessibility')}
             >
               Открыть доступ
             </button>
@@ -120,7 +120,7 @@ export function AgentTab({ agent, onChange, onEnabledChange }: AgentTabProps) {
           <button
             type="button"
             onClick={() => {
-              void window.smartCursor.agent.clearApprovals().then(
+              void window.deskhand.agent.clearApprovals().then(
                 () => setApprovalStatus('Разрешено заново спрашивать обо всём.'),
                 () => setApprovalStatus('Не удалось сбросить разрешения.')
               )

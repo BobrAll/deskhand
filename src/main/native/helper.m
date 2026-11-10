@@ -1,4 +1,4 @@
-// Native helper for Smart Cursor.
+// Native helper for Deskhand.
 // Provides the macOS pieces that Electron cannot do reliably from JS:
 //   * front        - frontmost application info + focused window id/bounds/title
 //   * cursor       - current mouse location in screen coordinates

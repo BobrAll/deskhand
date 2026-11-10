@@ -1,4 +1,4 @@
-# Smart Cursor: чего не хватает — разбор как product analyst
+# Deskhand: чего не хватает — разбор как product analyst
 
 Только анализ, код не меняем. Вопрос: «какой функции сильно не хватает».
 
@@ -289,7 +289,7 @@ openrouter               → чёрный список подстрок в им�
 ```
 
 То есть для маршрутов `openai` и `anthropic` ответ **не зависит от модели вообще**.
-А в реальном `~/Library/Application Support/smart-cursor/smart-cursor.json` на этой
+А в реальном `~/Library/Application Support/deskhand/deskhand.json` на этой
 машине стоит:
 
 ```
@@ -396,8 +396,8 @@ Chrome-расширение. Это расширение, а не закрыти
 - Отсутствие TTS/телеметрии/учёта `usage` — grep по `src`, `resources`, `scripts`.
 - История и её обрезка — чтение `overlay.ts` (`HISTORY_TURNS`, `remember`,
   `openInternal`) и `App.tsx` (`onPreparing`).
-- Живая конфигурация — `~/Library/Application Support/smart-cursor/smart-cursor.json`
-  (провайдер, модель, base URL, агент включён), без чтения ключей: `smart-cursor-secrets.json`
+- Живая конфигурация — `~/Library/Application Support/deskhand/deskhand.json`
+  (провайдер, модель, base URL, агент включён), без чтения ключей: `deskhand-secrets.json`
   хранит только `enc:`-блоб Keychain.
 - Воспроизводимый замер промпта — `.scratch/prompt-cost/` (`build.mjs` собирает
   `entry.ts` через esbuild и печатает таблицу из §6).

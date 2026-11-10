@@ -65,7 +65,7 @@ function buildSlice(arch, work) {
 
 const requested = process.env.AGENT_ARCH || null
 mkdirSync(join(root, 'resources'), { recursive: true })
-const work = mkdtempSync(join(tmpdir(), 'smartcursor-agent-build-'))
+const work = mkdtempSync(join(tmpdir(), 'deskhand-agent-build-'))
 
 try {
   if (requested) {

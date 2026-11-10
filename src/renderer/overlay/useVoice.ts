@@ -120,7 +120,7 @@ export function useVoice(): VoiceHook {
  */
   const beginCapture = useCallback(
     async (maxDurationMs: number) => {
-      const api = window.smartCursor.voice
+      const api = window.deskhand.voice
       if (recorderRef.current) {
         // Already recording: the same press arriving twice (a tap that was
         // re-armed, an autorepeat) is not a second phrase, and restarting the
@@ -196,7 +196,7 @@ export function useVoice(): VoiceHook {
   /** Closes the turn: stops the recorder and hands the WAV back to the main process. */
   const endCapture = useCallback(
     async (transcribe: boolean) => {
-      const api = window.smartCursor.voice
+      const api = window.deskhand.voice
       stopMeter()
       const recorder = recorderRef.current
       if (!recorder) {
@@ -221,7 +221,7 @@ export function useVoice(): VoiceHook {
   )
 
   useEffect(() => {
-    const api = window.smartCursor.voice
+    const api = window.deskhand.voice
 
     const offRecord = api.onRecord((request) => {
       clearLinger()

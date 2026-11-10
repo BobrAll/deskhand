@@ -151,7 +151,7 @@ export function App() {
   useEffect(() => {
     // A rejected `load()` used to leave the window spinning on "Загрузка…"
     // forever, which looks like an empty settings window.
-    void window.smartCursor.settings
+    void window.deskhand.settings
       .load()
       .then((loaded) => {
         setBundle(loaded)
@@ -163,7 +163,7 @@ export function App() {
           error instanceof Error ? error.message : 'Не удалось загрузить настройки.'
         )
       })
-    void window.smartCursor.settings
+    void window.deskhand.settings
       .runningApps()
       .then(setApps)
       .catch(() => setApps([]))
@@ -225,7 +225,7 @@ export function App() {
     const written = JSON.stringify(snapshot)
     setApplyState('saving')
     try {
-      const saved = await window.smartCursor.settings.save(snapshot)
+      const saved = await window.deskhand.settings.save(snapshot)
       setBundle(saved)
       writtenRef.current = written
       failedRef.current = null
@@ -309,7 +309,7 @@ export function App() {
    * supposed to make impossible, just moved into a smaller window.
    */
   useEffect(() => {
-    window.smartCursor.settings.hold(applyState === 'pending' || applyState === 'saving')
+    window.deskhand.settings.hold(applyState === 'pending' || applyState === 'saving')
   }, [applyState])
 
   /** Whether the draft holds anything that is not on disk yet. */
@@ -338,7 +338,7 @@ export function App() {
       failedRef.current = null
       await flush(writable(draft))
     }
-    window.smartCursor.settings.close()
+    window.deskhand.settings.close()
   }, [draft, unsaved, writable, flush])
 
   /**
@@ -366,7 +366,7 @@ export function App() {
     if (!draft || !keyInput.trim()) return
     setTesting(true)
     try {
-      const test = await window.smartCursor.settings.testKey(
+      const test = await window.deskhand.settings.testKey(
         draft.provider,
         keyInput,
         draft.baseUrls[draft.provider]
@@ -375,7 +375,7 @@ export function App() {
         setBanner({ kind: 'err', text: test.message })
         return
       }
-      const next = await window.smartCursor.settings.setKey(draft.provider, keyInput)
+      const next = await window.deskhand.settings.setKey(draft.provider, keyInput)
       setBundle(next)
       setKeyInput('')
       setBanner({ kind: 'ok', text: test.message })
@@ -389,7 +389,7 @@ export function App() {
 
   const removeKey = useCallback(async () => {
     if (!draft) return
-    const next = await window.smartCursor.settings.deleteKey(draft.provider)
+    const next = await window.deskhand.settings.deleteKey(draft.provider)
     setBundle(next)
     setBanner({ kind: 'ok', text: 'Ключ удалён' })
     window.setTimeout(() => setBanner(null), 2200)
@@ -426,7 +426,7 @@ export function App() {
     <div className="shell">
       <aside className="sidebar">
         <div className="brand">
-          <div className="brand-name">Smart Cursor</div>
+          <div className="brand-name">Deskhand</div>
           <div className="brand-sub">Настройки</div>
         </div>
         {TABS.map((item) => (
@@ -515,7 +515,7 @@ export function App() {
                 // decides whether the assistant can act at all, and it has to be on
                 // disk before the answer that arrives a second later. The debounced
                 // autosave would also get there, 450 ms too late.
-                const availability = await window.smartCursor.agent.setEnabled(enabled)
+                const availability = await window.deskhand.agent.setEnabled(enabled)
                 // The bundle is the "saved" side of the auto-apply comparison;
                 // syncing it keeps the footer from announcing a pending write for a
                 // value that is already on disk.

@@ -39,7 +39,7 @@ function buildMenu(): Menu {
       }
     },
     { type: 'separator' },
-    { label: 'Выйти из Smart Cursor', accelerator: 'CommandOrControl+Q', click: () => actions?.quit() }
+    { label: 'Выйти из Deskhand', accelerator: 'CommandOrControl+Q', click: () => actions?.quit() }
   ])
 }
 
@@ -47,7 +47,7 @@ export function createTray(trayActions: TrayActions): Tray {
   actions = trayActions
   if (tray) return tray
   tray = new Tray(trayImage())
-  tray.setToolTip('Smart Cursor')
+  tray.setToolTip('Deskhand')
   tray.setContextMenu(buildMenu())
   tray.on('click', () => actions?.toggle())
   return tray

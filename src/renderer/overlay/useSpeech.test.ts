@@ -38,7 +38,7 @@ beforeEach(() => {
   vi.stubGlobal('window', {
     speechSynthesis: { cancel: vi.fn(), speak, getVoices: () => [{ localService: true, lang: 'ru-RU' }] },
     addEventListener: vi.fn(), removeEventListener: vi.fn(),
-    smartCursor: {
+    deskhand: {
       voice: { onRecord: (fn: () => void) => { record = fn; return vi.fn() } },
       overlay: { onPreparing: () => vi.fn() },
       // No neural voice in these tests: the system voice is the last fallback,
@@ -150,7 +150,7 @@ describe('waiting acknowledgement', () => {
     expect(speak).not.toHaveBeenCalled()
   })
   it('respects an unspoken answer and typed requests', async () => {
-    window.smartCursor.settings.load = vi.fn().mockResolvedValue({ settings: { voice: { answerVoice: 'off' } } })
+    window.deskhand.settings.load = vi.fn().mockResolvedValue({ settings: { voice: { answerVoice: 'off' } } })
     const speech = useSpeech()
     speech.begin('one', 'Вопрос', true)
     await vi.advanceTimersByTimeAsync(2000)
@@ -173,7 +173,7 @@ describe('waiting acknowledgement', () => {
   })
   it('rejects a delayed settings result after cancellation', async () => {
     let resolve!: (value: unknown) => void
-    window.smartCursor.settings.load = vi.fn().mockImplementation(() => new Promise(r => { resolve = r }))
+    window.deskhand.settings.load = vi.fn().mockImplementation(() => new Promise(r => { resolve = r }))
     const speech = useSpeech()
     speech.begin('one', 'Вопрос', true)
     await vi.advanceTimersByTimeAsync(2000)
@@ -186,7 +186,7 @@ describe('waiting acknowledgement', () => {
 
 describe('agent feedback independent of the answer voice', () => {
   it.each([false, true])('acknowledges an action only when it was spoken (voice=%s)', async (voice) => {
-    window.smartCursor.settings.load = vi.fn().mockResolvedValue({ settings: { voice: { answerVoice: 'off', agentFeedback: true } } })
+    window.deskhand.settings.load = vi.fn().mockResolvedValue({ settings: { voice: { answerVoice: 'off', agentFeedback: true } } })
     const speech = useSpeech()
     speech.begin('one', 'Открой новую вкладку', voice)
     await vi.advanceTimersByTimeAsync(1500)
@@ -195,7 +195,7 @@ describe('agent feedback independent of the answer voice', () => {
     expect(speak.mock.calls.map(call => call[0].text)).toEqual(voice ? ['Сейчас посмотрю.'] : [])
   })
   it('respects the separate feedback switch', async () => {
-    window.smartCursor.settings.load = vi.fn().mockResolvedValue({ settings: { voice: { answerVoice: 'system', agentFeedback: false } } })
+    window.deskhand.settings.load = vi.fn().mockResolvedValue({ settings: { voice: { answerVoice: 'system', agentFeedback: false } } })
     const speech = useSpeech()
     speech.begin('one', 'Открой новую вкладку', true)
     await vi.advanceTimersByTimeAsync(4000)

@@ -388,12 +388,12 @@ export function App() {
     // field would make this window the frontmost app, and `collectContext` reads
     // the frontmost app: the target would come back as the assistant itself. The
     // focus is taken in `reset`, once the session it belongs to exists.
-    void window.smartCursor.overlay.getState().then((next) => {
+    void window.deskhand.overlay.getState().then((next) => {
       if (next) applyState(next)
     })
 
-    const offState = window.smartCursor.overlay.onState(applyState)
-    const offPreparing = window.smartCursor.overlay.onPreparing(() => {
+    const offState = window.deskhand.overlay.onState(applyState)
+    const offPreparing = window.deskhand.overlay.onPreparing(() => {
       // The card is on screen, but the session it will show does not exist yet.
       // Dropping the previous turn here is what keeps the early window an empty
       // card instead of a stale answer that looks like an instant reply.
@@ -419,14 +419,14 @@ export function App() {
       replaceOnChunkRef.current = false
       spokenPromptRef.current = false
     })
-    const offContext = window.smartCursor.overlay.onContextUpdate((snapshot: ContextSnapshot) => {
+    const offContext = window.deskhand.overlay.onContextUpdate((snapshot: ContextSnapshot) => {
       setState((prev) => (prev ? { ...prev, context: snapshot } : prev))
     })
-    const offStream = window.smartCursor.overlay.onStream(onStream)
-    const offAnnotations = window.smartCursor.overlay.onAnnotations((event) => {
+    const offStream = window.deskhand.overlay.onStream(onStream)
+    const offAnnotations = window.deskhand.overlay.onAnnotations((event) => {
       setDrawn(event.count)
     })
-    const offAgent = window.smartCursor.agent.onEvent((event) => {
+    const offAgent = window.deskhand.agent.onEvent((event) => {
       agentRef.current = event.phase === 'idle' ? null : event
       setAgent(agentRef.current)
     })
@@ -447,7 +447,7 @@ export function App() {
    * back to full opacity on the first keystroke has to put the glass back too.
    */
   useEffect(() => {
-    window.smartCursor.overlay.setTyping(typing)
+    window.deskhand.overlay.setTyping(typing)
   }, [typing])
 
   /**
@@ -472,7 +472,7 @@ export function App() {
     setBusy(false)
     setFailure(null)
     setAgent(null)
-    window.smartCursor.overlay.cancel(id)
+    window.deskhand.overlay.cancel(id)
   }, [voice.phase])
 
   /**
@@ -600,7 +600,7 @@ export function App() {
       lastHeight = height
       // `pin` while a drag is in flight: the right edge is under the pointer, so
       // the card has to grow away from its left edge instead of from the anchor.
-      window.smartCursor.overlay.resize(height, width, draggingRef.current)
+      window.deskhand.overlay.resize(height, width, draggingRef.current)
     }
     const onFocus = (): void => {
       lastWidth = lastHeight = 0
@@ -647,7 +647,7 @@ export function App() {
       if (!voice) return
       const previous = requestIdRef.current
       setBusy(false)
-      if (previous) window.smartCursor.overlay.cancel(previous)
+      if (previous) window.deskhand.overlay.cancel(previous)
     }
     const usedMode = sendMode ?? 'insert'
     const requestId = newRequestId()
@@ -685,7 +685,7 @@ export function App() {
     spokenPromptRef.current = voice
     setPrompt(voice ? value : '')
     setLast({ prompt: value, mode: usedMode, refine: null, base: '', voice })
-    window.smartCursor.overlay.send({
+    window.deskhand.overlay.send({
       requestId,
       prompt: value,
       mode: usedMode,
@@ -723,7 +723,7 @@ export function App() {
         base: baseAnswer,
         voice: false
       })
-      window.smartCursor.overlay.send({
+      window.deskhand.overlay.send({
         requestId,
         prompt: last?.prompt ?? '',
         mode: last?.mode ?? 'insert',
@@ -745,11 +745,11 @@ export function App() {
     if (!current) return
     const flags = { ...current.flags, [key]: !current.flags[key] }
     setState({ ...current, flags })
-    window.smartCursor.overlay.setFlags(flags)
+    window.deskhand.overlay.setFlags(flags)
   }, [])
 
   const clearPointer = useCallback(() => {
-    window.smartCursor.overlay.clearPointer()
+    window.deskhand.overlay.clearPointer()
   }, [])
 
   /**
@@ -763,7 +763,7 @@ export function App() {
    * and the card has to show that next step instead of pretending all is well.
    */
   const setAgentEnabled = useCallback(async (enabled: boolean) => {
-    const next = await window.smartCursor.agent.setEnabled(enabled)
+    const next = await window.deskhand.agent.setEnabled(enabled)
     setState((prev) => (prev ? { ...prev, agent: next } : prev))
     if (!enabled) {
       setNotice(null)
@@ -795,14 +795,14 @@ export function App() {
    */
   const answerAgent = useCallback(
     async (request: AgentToolRequest, allow: boolean, remember: boolean) => {
-      await window.smartCursor.agent.answer(request.id, allow, remember)
+      await window.deskhand.agent.answer(request.id, allow, remember)
     },
     []
   )
 
   /** Speech that has already been recognised and put into this bubble. */
   useEffect(() => {
-    const off = window.smartCursor.voice.onTranscript(({ text, send: autoSend }) => {
+    const off = window.deskhand.voice.onTranscript(({ text, send: autoSend }) => {
       // A new phrase replaces whatever the previous turn left on the card. The
       // answer belongs to the question that produced it; keeping it under a fresh
       // transcript is how an old answer appeared to "answer" the new phrase.
@@ -829,13 +829,13 @@ export function App() {
 
   const paste = useCallback(async () => {
     if (!answer.trim()) return
-    const result = await window.smartCursor.overlay.paste(answer)
+    const result = await window.deskhand.overlay.paste(answer)
     if (!result.ok && result.message) setNotice(result.message)
   }, [answer])
 
   const copy = useCallback(async () => {
     if (!answer.trim()) return
-    await window.smartCursor.overlay.copy(answer)
+    await window.deskhand.overlay.copy(answer)
     setNotice('Скопировано в буфер обмена')
   }, [answer])
 
@@ -929,23 +929,23 @@ export function App() {
     (action: Exclude<KeyAction, null>) => {
       if (action === 'close' || action === 'cancel' || action === 'stopAgent') speechRef.current.stop()
       if (action === 'close') {
-        window.smartCursor.overlay.close()
+        window.deskhand.overlay.close()
         return
       }
       if (action === 'stopAgent') {
-        void window.smartCursor.agent.stop()
+        void window.deskhand.agent.stop()
         return
       }
       if (action === 'cancel') {
         const id = requestIdRef.current
         if (!id) {
-          window.smartCursor.overlay.close()
+          window.deskhand.overlay.close()
           return
         }
         ignoredRequestRef.current = id
         requestIdRef.current = null
         setBusy(false)
-        window.smartCursor.overlay.cancel(id)
+        window.deskhand.overlay.cancel(id)
         return
       }
       if (action === 'paste') {
@@ -1155,7 +1155,7 @@ export function App() {
                 ignoredRequestRef.current = id
                 requestIdRef.current = null
                 setBusy(false)
-                if (id) window.smartCursor.overlay.cancel(id)
+                if (id) window.deskhand.overlay.cancel(id)
               }}
             >
               <span aria-hidden />
@@ -1241,7 +1241,7 @@ export function App() {
       {expanded && setupNotice && (
         <div className="line" data-tone={setupNotice.kind === 'error' ? 'err' : 'warn'}>
           <span>{setupNotice.message}</span>
-          <button className="tag" onClick={() => window.smartCursor.settings.open()}>
+          <button className="tag" onClick={() => window.deskhand.settings.open()}>
             Настройки
           </button>
         </div>
@@ -1278,7 +1278,7 @@ export function App() {
         <div className="line">
           <button
             className="tag"
-            onClick={() => window.smartCursor.permissions.open('accessibility')}
+            onClick={() => window.deskhand.permissions.open('accessibility')}
           >
             Открыть «Универсальный доступ»
           </button>

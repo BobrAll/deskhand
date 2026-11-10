@@ -50,7 +50,7 @@ vi.mock('electron', () => {
       }
     },
     app: {
-      getPath: () => '/Users/test/Library/Application Support/Smart Cursor',
+      getPath: () => '/Users/test/Library/Application Support/Deskhand',
       getAppPath: () => '/app'
     },
     shell: {
@@ -137,7 +137,7 @@ describe('createTray: the menu', () => {
       'Настройки…',
       'Права доступа и первый запуск…',
       'Папка данных',
-      'Выйти из Smart Cursor'
+      'Выйти из Deskhand'
     ]) {
       expect(item(label), label).toBeDefined()
     }
@@ -148,7 +148,7 @@ describe('createTray: the menu', () => {
     createTray(actions())
 
     expect(item('Настройки…')?.accelerator).toBe('CommandOrControl+,')
-    expect(item('Выйти из Smart Cursor')?.accelerator).toBe('CommandOrControl+Q')
+    expect(item('Выйти из Deskhand')?.accelerator).toBe('CommandOrControl+Q')
   })
 })
 
@@ -161,7 +161,7 @@ describe('createTray: every item reaches its action', () => {
     ;(item('Открыть ассистента (⌥ Space)')?.click as () => void)()
     ;(item('Настройки…')?.click as () => void)()
     ;(item('Права доступа и первый запуск…')?.click as () => void)()
-    ;(item('Выйти из Smart Cursor')?.click as () => void)()
+    ;(item('Выйти из Deskhand')?.click as () => void)()
 
     expect(handlers.toggle).toHaveBeenCalledTimes(1)
     expect(handlers.openSettings).toHaveBeenCalledTimes(1)
@@ -176,7 +176,7 @@ describe('createTray: every item reaches its action', () => {
     ;(item('Папка данных')?.click as () => void)()
     await Promise.resolve()
 
-    expect(env.openedPaths).toEqual(['/Users/test/Library/Application Support/Smart Cursor'])
+    expect(env.openedPaths).toEqual(['/Users/test/Library/Application Support/Deskhand'])
   })
 
   it('toggles on a plain click of the tray icon', async () => {
@@ -195,7 +195,7 @@ describe('createTray: the icon and the lifecycle', () => {
     const { createTray } = await loadTray()
     createTray(actions())
 
-    expect(env.tooltip).toBe('Smart Cursor')
+    expect(env.tooltip).toBe('Deskhand')
     expect(env.contextMenus).toBe(1)
     expect(env.trayInstances).toBe(1)
   })

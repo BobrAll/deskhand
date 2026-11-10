@@ -30,7 +30,7 @@ function fail(message) {
   process.exit(1)
 }
 
-const workdir = mkdtempSync(join(tmpdir(), 'smartcursor-whisper-'))
+const workdir = mkdtempSync(join(tmpdir(), 'deskhand-whisper-'))
 const source = join(workdir, 'whisper.cpp')
 
 console.log(`[whisper] fetching whisper.cpp ${WHISPER_CPP_VERSION}…`)

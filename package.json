@@ -1,7 +1,7 @@
 {
-  "name": "smart-cursor",
+  "name": "deskhand",
   "version": "0.1.0",
-  "description": "Умный курсор — контекстный AI-ассистент для macOS",
+  "description": "Deskhand — контекстный AI-ассистент для macOS",
   "main": "./out/main/index.js",
   "author": "Alexander Bobrus",
   "license": "MIT",
@@ -29,8 +29,8 @@
     "lint": "eslint src"
   },
   "build": {
-    "appId": "com.bobr.smartcursor",
-    "productName": "Smart Cursor",
+    "appId": "com.bobr.deskhand",
+    "productName": "Deskhand",
     "copyright": "© 2026 Alexander Bobrus",
     "directories": {
       "output": "release",
@@ -42,8 +42,8 @@
     ],
     "extraResources": [
       {
-        "from": "resources/smartcursor-helper",
-        "to": "smartcursor-helper"
+        "from": "resources/deskhand-helper",
+        "to": "deskhand-helper"
       },
       {
         "from": "resources/whisper-cli",
@@ -73,7 +73,7 @@
       "identity": null,
       "hardenedRuntime": false,
       "gatekeeperAssess": false,
-      "x64ArchFiles": "Contents/Resources/{smartcursor-helper,whisper-cli,transcribe-cli,deskhand-agent}",
+      "x64ArchFiles": "Contents/Resources/{deskhand-helper,whisper-cli,transcribe-cli,deskhand-agent}",
       "target": [
         {
           "target": "zip",
@@ -83,13 +83,13 @@
         }
       ],
       "extendInfo": {
-        "NSAppleEventsUsageDescription": "Smart Cursor управляет другими приложениями, чтобы читать выделенный текст и вставлять ответ.",
-        "NSMicrophoneUsageDescription": "Smart Cursor записывает голос, пока вы удерживаете клавишу, и распознаёт его локально — звук не покидает Mac.",
+        "NSAppleEventsUsageDescription": "Deskhand управляет другими приложениями, чтобы читать выделенный текст и вставлять ответ.",
+        "NSMicrophoneUsageDescription": "Deskhand записывает голос, пока вы удерживаете клавишу, и распознаёт его локально — звук не покидает Mac.",
         "LSApplicationCategoryType": "public.app-category.productivity"
       }
     },
     "dmg": {
-      "title": "Smart Cursor",
+      "title": "Deskhand",
       "window": {
         "width": 540,
         "height": 380

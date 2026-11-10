@@ -57,7 +57,7 @@ function report(...flags: string[]): string {
 }
 
 beforeEach(() => {
-  directory = mkdtempSync(join(tmpdir(), 'smart-cursor-report-'))
+  directory = mkdtempSync(join(tmpdir(), 'deskhand-report-'))
   tracePath = join(directory, 'agent-trace.jsonl')
   writeFileSync(tracePath, EVENTS.map((event) => JSON.stringify({
     time: new Date(Date.UTC(2026, 10, 8, 19, 0, 0) + (event.elapsedMs as number)).toISOString(),

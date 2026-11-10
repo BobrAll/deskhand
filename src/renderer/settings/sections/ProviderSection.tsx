@@ -1,8 +1,10 @@
 /**
  * The «Модель» tab: who answers, what it is given, and how it is reached.
  *
- * Four cards, in the order the questions come up when the app is set up for the
- * first time: which service, which model, the key, then the network override.
+ * «Подключение» answers the four questions every setup answers, in the order they
+ * come up: which service, which model, the key, and the address requests go to.
+ * The address sits next to the key because a key pointed at the wrong host is
+ * worth nothing — a proxy, a gateway and a local endpoint are the same decision.
  * Sampling and the system prompt are folded into «Дополнительно» — they are the
  * two things almost nobody changes, and leaving them open pushed the key field
  * below the fold on a laptop screen.
@@ -140,6 +142,35 @@ export function ProviderSection({
             </div>
           )}
         </Row>
+
+        <Row
+          stacked
+          title={`Base URL · ${info?.label ?? ''}`}
+          hint={
+            draft.baseUrls[draft.provider]
+              ? `Запросы идут на ${normalizeBaseUrl(draft.baseUrls[draft.provider])}.`
+              : `Корень API без /chat/completions. По умолчанию: ${info?.defaultBaseUrl}.`
+          }
+        >
+          <div className="row-actions">
+            <input
+              value={draft.baseUrls[draft.provider]}
+              onChange={(event) =>
+                patch({ baseUrls: { ...draft.baseUrls, [draft.provider]: event.target.value } })
+              }
+              placeholder={info?.defaultBaseUrl}
+              spellCheck={false}
+            />
+            <button
+              className="ghost"
+              disabled={!draft.baseUrls[draft.provider]}
+              onClick={() => patch({ baseUrls: { ...draft.baseUrls, [draft.provider]: '' } })}
+            >
+              Сбросить
+            </button>
+          </div>
+          {baseUrlError && <div className="row-hint err">{baseUrlError}</div>}
+        </Row>
       </Group>
 
       <Group title="Поиск в интернете">
@@ -169,36 +200,7 @@ export function ProviderSection({
         </Row>
       </Group>
 
-      <Group title="Сеть">
-        <Row
-          stacked
-          title={`Base URL · ${info?.label ?? ''}`}
-          hint={
-            draft.baseUrls[draft.provider]
-              ? `Запросы идут на ${normalizeBaseUrl(draft.baseUrls[draft.provider])}.`
-              : `Корень API без /chat/completions. По умолчанию: ${info?.defaultBaseUrl}.`
-          }
-        >
-          <div className="row-actions">
-            <input
-              value={draft.baseUrls[draft.provider]}
-              onChange={(event) =>
-                patch({ baseUrls: { ...draft.baseUrls, [draft.provider]: event.target.value } })
-              }
-              placeholder={info?.defaultBaseUrl}
-              spellCheck={false}
-            />
-            <button
-              className="ghost"
-              disabled={!draft.baseUrls[draft.provider]}
-              onClick={() => patch({ baseUrls: { ...draft.baseUrls, [draft.provider]: '' } })}
-            >
-              Сбросить
-            </button>
-          </div>
-          {baseUrlError && <div className="row-hint err">{baseUrlError}</div>}
-        </Row>
-
+      <Group title="Запрос">
         <Row
           stacked
           title={`Доп. параметры запроса · ${info?.label ?? ''}`}

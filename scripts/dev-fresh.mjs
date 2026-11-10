@@ -15,8 +15,8 @@
 //   reports a clean start that never happened.
 // - A process is ours because its *executable* lives in this checkout, never
 //   because the path appears somewhere in its command line. Matching the text
-//   meant that `grep smart-cursor/node_modules/electron/dist` in another
-//   terminal — or this script's own parent shell — was killed on sight.
+//   meant that `grep node_modules/electron/dist` in another terminal — or this
+//   script's own parent shell — was killed on sight.
 import { execFileSync, spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 

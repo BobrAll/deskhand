@@ -15,8 +15,8 @@ export class OpenRouterProvider extends OpenAIProvider {
       baseUrl: 'https://openrouter.ai/api/v1',
       extraHeaders: {
         // Optional but recommended by OpenRouter for rate-limit attribution.
-        'HTTP-Referer': 'https://github.com/smart-cursor',
-        'X-Title': 'Smart Cursor'
+        'HTTP-Referer': 'https://github.com/BobrAll/deskhand',
+        'X-Title': 'Deskhand'
       }
     })
   }

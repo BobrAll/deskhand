@@ -1,7 +1,7 @@
 // swift-tools-version: 6.0
 import PackageDescription
 
-// The desktop agent that Smart Cursor drives. It is built as a sidecar binary
+// The desktop agent that Deskhand drives. It is built as a sidecar binary
 // (`deskhand-agent --serve`) and speaks newline-delimited JSON with the Electron
 // main process; the app owns the UI, the policy and the settings, and this
 // package owns everything that touches the machine.

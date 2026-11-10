@@ -340,8 +340,8 @@ describe('OpenRouterProvider: the same dialect plus attribution', () => {
     expect((fetchMock.mock.calls[0] as [string, RequestInit])[1].headers).toEqual({
       Authorization: 'Bearer sk-or',
       'Content-Type': 'application/json',
-      'HTTP-Referer': 'https://github.com/smart-cursor',
-      'X-Title': 'Smart Cursor'
+      'HTTP-Referer': 'https://github.com/BobrAll/deskhand',
+      'X-Title': 'Deskhand'
     })
   })
 

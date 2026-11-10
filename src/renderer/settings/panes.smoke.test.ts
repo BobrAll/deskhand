@@ -104,6 +104,16 @@ describe('the settings panes', () => {
     expect(privacy()).toContain('Исключённые приложения')
   })
 
+  it('keeps the address next to the key it belongs to', () => {
+    const html = provider()
+    const key = html.indexOf('Ключ API')
+    const baseUrl = html.indexOf('Base URL')
+    const extraBody = html.indexOf('Доп. параметры запроса')
+    expect(key).toBeGreaterThan(-1)
+    expect(baseUrl).toBeGreaterThan(key)
+    expect(extraBody).toBeGreaterThan(baseUrl)
+  })
+
   it('marks the recommended recognition model without hiding the others', () => {
     const html = voice()
     expect(html).toContain('рекомендовано')

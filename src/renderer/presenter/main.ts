@@ -9,6 +9,6 @@ if (!root) throw new Error('root element is missing')
 
 const presenter = createPresenter(root)
 
-window.smartCursor.agentPresenter.onState((frame: AgentPointerFrame) => {
+window.deskhand.agentPresenter.onState((frame: AgentPointerFrame) => {
   presenter.render(frame)
 })

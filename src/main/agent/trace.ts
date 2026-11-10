@@ -107,10 +107,10 @@ export function traceModelUsage(input: unknown, output: unknown): void {
 }
 
 export function traceTurn<T>(fields: Fields, work: () => Promise<T>): Promise<T> {
-  const enabled = process.env.SMART_CURSOR_AGENT_TRACE
+  const enabled = process.env.DESKHAND_AGENT_TRACE
   if (enabled === '0' || (process.env.VITEST && enabled !== '1')) return work()
   const path = join(app.getPath('userData'), 'agent-trace.jsonl')
-  const revision = process.env.SMART_CURSOR_TRACE_REVISION
+  const revision = process.env.DESKHAND_TRACE_REVISION
   const store: Turn = { id: randomUUID(), path, started: performance.now(), nextSpan: 0 }
   open.add(store)
   return turn.run(store, () => timed('turn', work, {

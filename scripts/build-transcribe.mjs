@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url'
 const version = 'v0.4.1'
 const output = fileURLToPath(new URL('../resources/transcribe-cli', import.meta.url))
 const licenses = fileURLToPath(new URL('../resources/transcribe-licenses', import.meta.url))
-const work = mkdtempSync(join(tmpdir(), 'smartcursor-transcribe-build-'))
+const work = mkdtempSync(join(tmpdir(), 'deskhand-transcribe-build-'))
 const source = process.argv[2] ?? join(work, 'source')
 
 function run(command, args) {
