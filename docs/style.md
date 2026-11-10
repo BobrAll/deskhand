@@ -124,4 +124,4 @@
 - Призрак указателя и кольцо цели: `src/renderer/presenter/presenter.css`
 - Индикатор «слушаю»: карточка, `src/renderer/overlay/overlay.css` (блок
   `the listening card`)
-- Рисование поверх экрана: `src/renderer/pointer/pointer.css`
+- Рисование поверх экрана: `src/renderer/drawing/drawing.css`

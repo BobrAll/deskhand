@@ -20,6 +20,7 @@ import { join } from 'node:path'
 import { pipeline } from 'node:stream/promises'
 import { app } from 'electron'
 import { VOICE_MODELS, voiceModel, WHISPER_MODELS } from '@shared/defaults'
+import { resourceCandidates } from '../paths'
 import type { DownloadProgress, TranscribeResult, VoiceStatus } from '@shared/types'
 import { getSettings } from '../settings/store'
 
@@ -67,13 +68,11 @@ export function modelsDir(): string {
  */
 export function resolveBinary(engine: 'whisper' | 'transcribe' = 'whisper'): string | null {
   const name = binaryName(engine)
-  const bundled = app.isPackaged
-    ? [join(process.resourcesPath, name)]
-    : [join(app.getAppPath(), 'resources', name), join(process.cwd(), 'resources', name)]
-  for (const candidate of [...bundled, join('/opt/homebrew/bin', name), join('/usr/local/bin', name)]) {
-    if (existsSync(candidate)) return candidate
-  }
-  return null
+  const candidates = resourceCandidates(name, [
+    join('/opt/homebrew/bin', name),
+    join('/usr/local/bin', name)
+  ])
+  return candidates.find((candidate) => existsSync(candidate)) ?? null
 }
 
 function isModelFile(name: string): boolean {

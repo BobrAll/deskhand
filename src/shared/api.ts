@@ -16,7 +16,7 @@ import type {
   OverlayState,
   PasteResult,
   PermissionState,
-  PointerPayload,
+  DrawingPayload,
   ProviderId,
   SendRequest,
   StreamEvent,
@@ -90,7 +90,7 @@ export interface DeskhandApi {
     copy(text: string): Promise<ActionResult>
     paste(text: string): Promise<PasteResult>
     /** Removes the drawings without closing the card. */
-    clearPointer(): void
+    clearDrawing(): void
     /**
      * The user started writing in the field.
      *
@@ -113,8 +113,8 @@ export interface DeskhandApi {
     resize(height: number, width?: number, pin?: boolean): void
   }
   /** Used only by the transparent drawing layer. */
-  pointer: {
-    onDraw(handler: (payload: PointerPayload) => void): Unsubscribe
+  drawing: {
+    onDraw(handler: (payload: DrawingPayload) => void): Unsubscribe
   }
   /**
    * Used by the agent's display layer for its edge glow and status caption.

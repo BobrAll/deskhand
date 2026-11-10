@@ -12,7 +12,7 @@ import { createVoiceController } from './voice'
 import { registerHotkey, unregisterHotkey } from './hotkey'
 import { registerIpc } from './ipc'
 import { createTray, destroyTray, refreshTray } from './tray'
-import { destroyPointer } from './pointer'
+import { destroyDrawing } from './drawing'
 import { destroyAgentCursor } from './agent/cursor'
 import { destroyAgentPresentation } from './agent/presentation'
 import { flushTrace } from './agent/trace'
@@ -310,7 +310,7 @@ if (!app.requestSingleInstanceLock()) {
     // otherwise drop the line that says how the run ended.
     await flushTrace()
     destroyTray()
-    destroyPointer()
+    destroyDrawing()
     destroyAgentCursor()
     destroyAgentPresentation()
   }

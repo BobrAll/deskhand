@@ -89,9 +89,9 @@ vi.mock('electron', () => {
   }
 })
 
-async function loadPointer(): Promise<typeof import('./pointer')> {
+async function loadDrawing(): Promise<typeof import('./drawing')> {
   vi.resetModules()
-  return import('./pointer')
+  return import('./drawing')
 }
 
 const AREA: ScreenRect = { x: 100, y: 200, width: 800, height: 600 }
@@ -100,8 +100,8 @@ function shape(kind: Annotation['kind'], from: [number, number], to: [number, nu
   return { kind, from: { x: from[0], y: from[1] }, to: { x: to[0], y: to[1] } }
 }
 
-function lastPayload(): import('@shared/types').PointerPayload {
-  return env.sent.at(-1)?.payload as import('@shared/types').PointerPayload
+function lastPayload(): import('@shared/types').DrawingPayload {
+  return env.sent.at(-1)?.payload as import('@shared/types').DrawingPayload
 }
 
 beforeEach(() => {
@@ -119,7 +119,7 @@ beforeEach(() => {
 
 describe('pointer: normalised coordinates become screen points', () => {
   it('maps 0..1 onto the layer size', async () => {
-    const { showAnnotations } = await loadPointer()
+    const { showAnnotations } = await loadDrawing()
     await showAnnotations(AREA, [shape('arrow', [0, 0], [1, 1])])
 
     expect(lastPayload().shapes[0]).toMatchObject({
@@ -130,7 +130,7 @@ describe('pointer: normalised coordinates become screen points', () => {
   })
 
   it('keeps the kind and the label as they were parsed', async () => {
-    const { showAnnotations } = await loadPointer()
+    const { showAnnotations } = await loadDrawing()
     const labelled: Annotation = { ...shape('underline', [0.1, 0.2], [0.3, 0.2]), label: 'Сюда' }
     await showAnnotations(AREA, [labelled])
 
@@ -138,7 +138,7 @@ describe('pointer: normalised coordinates become screen points', () => {
   })
 
   it('numbers the shapes so the renderer can stagger them', async () => {
-    const { showAnnotations } = await loadPointer()
+    const { showAnnotations } = await loadDrawing()
     await showAnnotations(AREA, [
       shape('arrow', [0.1, 0.1], [0.2, 0.2]),
       shape('circle', [0.3, 0.3], [0.5, 0.5])
@@ -148,7 +148,7 @@ describe('pointer: normalised coordinates become screen points', () => {
   })
 
   it('grows a single point into a visible ring instead of an invisible dot', async () => {
-    const { showAnnotations } = await loadPointer()
+    const { showAnnotations } = await loadDrawing()
     // A circle given as one point: centre (400, 300), 16 pt minimum radius, 6 pt pad.
     await showAnnotations(AREA, [shape('circle', [0.5, 0.5], [0.5, 0.5])])
 
@@ -159,7 +159,7 @@ describe('pointer: normalised coordinates become screen points', () => {
   })
 
   it('never pushes a ring past the layer edges', async () => {
-    const { showAnnotations } = await loadPointer()
+    const { showAnnotations } = await loadDrawing()
     await showAnnotations(AREA, [shape('box', [0.001, 0.001], [0.001, 0.001])])
 
     const [only] = lastPayload().shapes
@@ -172,21 +172,21 @@ describe('pointer: normalised coordinates become screen points', () => {
 
 describe('pointer: the layer', () => {
   it('sits exactly over the captured rectangle', async () => {
-    const { showAnnotations } = await loadPointer()
+    const { showAnnotations } = await loadDrawing()
     await showAnnotations(AREA, [shape('arrow', [0.1, 0.1], [0.2, 0.2])])
 
     expect(env.bounds.at(-1)).toEqual({ x: 100, y: 200, width: 800, height: 600 })
   })
 
   it('reports the layer size in the payload', async () => {
-    const { showAnnotations } = await loadPointer()
+    const { showAnnotations } = await loadDrawing()
     await showAnnotations(AREA, [shape('arrow', [0.1, 0.1], [0.2, 0.2])])
 
     expect(lastPayload()).toMatchObject({ width: 800, height: 600, visible: true })
   })
 
   it('does not move the layer when the rectangle has not changed', async () => {
-    const { showAnnotations } = await loadPointer()
+    const { showAnnotations } = await loadDrawing()
     await showAnnotations(AREA, [shape('arrow', [0.1, 0.1], [0.2, 0.2])])
     const applied = env.bounds.length
 
@@ -195,7 +195,7 @@ describe('pointer: the layer', () => {
   })
 
   it('moves the layer when the rectangle moves, rounding to whole points', async () => {
-    const { showAnnotations } = await loadPointer()
+    const { showAnnotations } = await loadDrawing()
     await showAnnotations(AREA, [shape('arrow', [0.1, 0.1], [0.2, 0.2])])
     await showAnnotations({ x: 100.4, y: 199.6, width: 800.2, height: 600 }, [
       shape('arrow', [0.1, 0.1], [0.2, 0.2])
@@ -205,7 +205,7 @@ describe('pointer: the layer', () => {
   })
 
   it('bumps the revision so the renderer replays its animation', async () => {
-    const { showAnnotations } = await loadPointer()
+    const { showAnnotations } = await loadDrawing()
     await showAnnotations(AREA, [shape('arrow', [0.1, 0.1], [0.2, 0.2])])
     const first = lastPayload().revision
     await showAnnotations(AREA, [shape('arrow', [0.1, 0.1], [0.2, 0.2])])
@@ -214,7 +214,7 @@ describe('pointer: the layer', () => {
   })
 
   it('shows the window once, and not again for the next drawing', async () => {
-    const { showAnnotations } = await loadPointer()
+    const { showAnnotations } = await loadDrawing()
     await showAnnotations(AREA, [shape('arrow', [0.1, 0.1], [0.2, 0.2])])
     await showAnnotations(AREA, [shape('arrow', [0.3, 0.3], [0.4, 0.4])])
 
@@ -222,7 +222,7 @@ describe('pointer: the layer', () => {
   })
 
   it('stays out of focus, out of clicks and out of screenshots', async () => {
-    const { showAnnotations } = await loadPointer()
+    const { showAnnotations } = await loadDrawing()
     await showAnnotations(AREA, [shape('arrow', [0.1, 0.1], [0.2, 0.2])])
 
     expect(env.calls).toContain('setIgnoreMouseEvents')
@@ -234,7 +234,7 @@ describe('pointer: the layer', () => {
 
 describe('pointer: hiding', () => {
   it('clears drawings and notifies the session on user interaction', async () => {
-    const { showAnnotations } = await loadPointer()
+    const { showAnnotations } = await loadDrawing()
     const onDismiss = vi.fn()
     await showAnnotations(AREA, [shape('arrow', [0.1, 0.1], [0.2, 0.2])], onDismiss)
 
@@ -246,7 +246,7 @@ describe('pointer: hiding', () => {
   })
 
   it('hides on an empty list without creating a window', async () => {
-    const { showAnnotations } = await loadPointer()
+    const { showAnnotations } = await loadDrawing()
     await showAnnotations(AREA, [])
 
     expect(env.created).toBe(0)
@@ -255,7 +255,7 @@ describe('pointer: hiding', () => {
 
   it('sends an invisible payload and hides after the fade', async () => {
     vi.useFakeTimers()
-    const { showAnnotations, hideAnnotations } = await loadPointer()
+    const { showAnnotations, hideAnnotations } = await loadDrawing()
     await showAnnotations(AREA, [shape('arrow', [0.1, 0.1], [0.2, 0.2])])
 
     hideAnnotations()
@@ -268,7 +268,7 @@ describe('pointer: hiding', () => {
 
   it('does not hide when a new drawing arrived during the fade', async () => {
     vi.useFakeTimers()
-    const { showAnnotations, hideAnnotations } = await loadPointer()
+    const { showAnnotations, hideAnnotations } = await loadDrawing()
     await showAnnotations(AREA, [shape('arrow', [0.1, 0.1], [0.2, 0.2])])
 
     hideAnnotations()
@@ -280,7 +280,7 @@ describe('pointer: hiding', () => {
 
   it('shows the window again after a hide', async () => {
     vi.useFakeTimers()
-    const { showAnnotations, hideAnnotations } = await loadPointer()
+    const { showAnnotations, hideAnnotations } = await loadDrawing()
     await showAnnotations(AREA, [shape('arrow', [0.1, 0.1], [0.2, 0.2])])
     hideAnnotations()
     await vi.advanceTimersByTimeAsync(300)
@@ -292,10 +292,10 @@ describe('pointer: hiding', () => {
 
 describe('pointer: destroy', () => {
   it('drops the window and forgets it', async () => {
-    const { showAnnotations, hideAnnotations, destroyPointer } = await loadPointer()
+    const { showAnnotations, hideAnnotations, destroyDrawing } = await loadDrawing()
     await showAnnotations(AREA, [shape('arrow', [0.1, 0.1], [0.2, 0.2])])
 
-    destroyPointer()
+    destroyDrawing()
 
     expect(env.destroyed).toBe(1)
     // The window is forgotten: nothing more is drawn into it.
@@ -305,9 +305,9 @@ describe('pointer: destroy', () => {
   })
 
   it('creates a fresh window for the next drawing', async () => {
-    const { showAnnotations, destroyPointer } = await loadPointer()
+    const { showAnnotations, destroyDrawing } = await loadDrawing()
     await showAnnotations(AREA, [shape('arrow', [0.1, 0.1], [0.2, 0.2])])
-    destroyPointer()
+    destroyDrawing()
 
     await showAnnotations(AREA, [shape('arrow', [0.1, 0.1], [0.2, 0.2])])
     expect(env.created).toBe(2)

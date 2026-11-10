@@ -14,9 +14,8 @@
 
 import { execFile } from 'node:child_process'
 import { existsSync } from 'node:fs'
-import { join } from 'node:path'
-import { app } from 'electron'
 import { trace, traceEnd } from '../agent/trace'
+import { resourceCandidates } from '../paths'
 
 export interface HelperPayload {
   ok?: boolean
@@ -36,12 +35,7 @@ let cachedHelperPath: string | null | undefined
 
 function resolveHelperPath(): string | null {
   if (cachedHelperPath !== undefined) return cachedHelperPath
-  const candidates = app.isPackaged
-    ? [join(process.resourcesPath, HELPER_NAME)]
-    : [
-        join(app.getAppPath(), 'resources', HELPER_NAME),
-        join(process.cwd(), 'resources', HELPER_NAME)
-      ]
+  const candidates = resourceCandidates(HELPER_NAME)
   cachedHelperPath = candidates.find((candidate) => existsSync(candidate)) ?? null
   if (!cachedHelperPath) {
     console.warn('[native] helper binary not found, falling back to osascript')

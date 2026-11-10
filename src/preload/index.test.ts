@@ -113,10 +113,10 @@ describe('preload: the exposed bridge', () => {
       'agent',
       'agentCursor',
       'agentPresenter',
+      'drawing',
       'onboarding',
       'overlay',
       'permissions',
-      'pointer',
       'settings',
       'tts',
       'voice'

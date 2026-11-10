@@ -7,6 +7,7 @@
 
 import type { ProviderId, TestKeyResult } from '@shared/types'
 import { normalizeBaseUrl, providerInfo } from '@shared/defaults'
+import { describeProviderStatus } from './statusText'
 
 /** The probe must not hold the settings pane open longer than a person will wait. */
 const TIMEOUT_MS = 12_000
@@ -24,15 +25,12 @@ async function fetchWithTimeout(url: string, init: RequestInit): Promise<Respons
   }
 }
 
-function describe(status: number, body: string): string {
-  if (status === 401 || status === 403) return 'Ключ не принят: проверь правильность ключа.'
-  if (status === 402) return 'Ключ действителен, но на счёте нет средств.'
-  if (status === 429) return 'Ключ действителен, но лимит запросов исчерпан.'
-  if (status === 404) {
-    return 'Сервис ответил 404: проверь base URL (нужен корень API, например …/v1).'
-  }
-  if (status >= 500) return 'Сервис провайдера недоступен, попробуй позже.'
-  return `Неожиданный ответ ${status}: ${body.slice(0, BODY_PREVIEW_CHARS)}`
+function describe(status: number, label: string, body: string): string {
+  return describeProviderStatus(status, {
+    label,
+    detail: body.slice(0, BODY_PREVIEW_CHARS),
+    probe: true
+  }).message
 }
 
 /**
@@ -72,9 +70,9 @@ export async function testApiKey(
       const label = providerInfo(provider)?.label ?? provider
       return { ok: true, message: `Ключ ${label} работает.` }
     }
-
     const body = await response.text().catch(() => '')
-    return { ok: false, message: describe(response.status, body) }
+    const label = providerInfo(provider)?.label ?? provider
+    return { ok: false, message: describe(response.status, label, body) }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     if (/abort/i.test(message)) return { ok: false, message: 'Превышено время ожидания ответа.' }

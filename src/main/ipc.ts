@@ -175,7 +175,7 @@ export function registerIpc(deps: IpcDeps): void {
   })
   ipcMain.on(CH.overlay.cancel, (_event, requestId: string) => deps.overlay.cancel(requestId))
   ipcMain.on(CH.overlay.setFlags, (_event, flags: ContextFlags) => deps.overlay.setFlags(flags))
-  ipcMain.on(CH.overlay.clearPointer, () => deps.overlay.clearPointer())
+  ipcMain.on(CH.overlay.clearDrawing, () => deps.overlay.clearDrawing())
   ipcMain.on(CH.overlay.typing, (_event, typing: boolean) => deps.overlay.setTyping(Boolean(typing)))
   ipcMain.on(CH.overlay.resize, (_event, height: number, width?: number, pin?: boolean) =>
     deps.overlay.resize(height, width, Boolean(pin))

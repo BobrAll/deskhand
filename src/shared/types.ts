@@ -233,6 +233,14 @@ export interface AgentEvent {
   actions?: AgentActionRow[]
   /** Set on `error` / `aborted`: why the run stopped. */
   message?: string
+  /**
+   * A machine-readable reason for the few events the card reacts to differently.
+   *
+   * `blocked` is "the run never started", which the card should not report as a
+   * failure of the work; `secret` is the policy refusing to type a password. Both
+   * used to be recognisable only by matching the Russian sentence.
+   */
+  code?: 'blocked' | 'secret'
 }
 
 /** One finished agent call, as the card lists it. */
@@ -367,6 +375,21 @@ export interface AgentPointerFrame {
 export type VoicePhase = 'idle' | 'listening' | 'transcribing'
 
 /** One turn of the voice pipeline: what the overlay needs to animate. */
+/**
+ * Why a voice turn ended without text.
+ *
+ * The card shows `error` as written, so the reason exists twice: once as a
+ * sentence for the person reading it, and once as a code for the part that
+ * decides whether to say something out loud. Matching on the sentence would
+ * break the moment the wording changes.
+ */
+export type VoiceErrorCode =
+  | 'notHeard'
+  | 'recordFailed'
+  | 'transcribeFailed'
+  | 'noMic'
+  | 'recordTooLong'
+
 export interface VoiceEvent {
   phase: VoicePhase
   /** 0..1 loudness of the last audio block; opens the bars on the chip. */
@@ -375,6 +398,8 @@ export interface VoiceEvent {
   text?: string
   /** Set on `idle` when the turn failed instead of producing text. */
   error?: string
+  /** Set alongside `error`, so the reason does not have to be matched by text. */
+  code?: VoiceErrorCode
 }
 
 export interface VoiceStatus {
@@ -528,12 +553,12 @@ export interface Annotation {
 }
 
 /** An annotation that already has an id, so the renderer can animate it in once. */
-export interface PointerShape extends Annotation {
+export interface DrawingShape extends Annotation {
   id: string
 }
 
 /** What the transparent drawing layer renders. */
-export interface PointerPayload {
+export interface DrawingPayload {
   /** Layer size in points; shapes are scaled to it, not to the capture. */
   width: number
   height: number
@@ -541,7 +566,7 @@ export interface PointerPayload {
   revision: number
   /** `false` drives the fade-out before the window is hidden. */
   visible: boolean
-  shapes: PointerShape[]
+  shapes: DrawingShape[]
 }
 
 /**
@@ -687,6 +712,15 @@ export interface OverlayState {
   agent: AgentAvailability
 }
 
+/**
+ * A machine-readable reason for the two failures the card treats differently.
+ *
+ * `timeout` means the run was cut off by its deadline, so the result is not
+ * known — the card and the voice both say "check what happened" rather than
+ * "nothing happened".
+ */
+export type StreamEventCode = 'timeout'
+
 export type StreamEvent =
   | { type: 'chunk'; requestId: string; delta: string }
   /**
@@ -694,7 +728,13 @@ export type StreamEvent =
    * Zero means the answer is text only, which is the normal case.
    */
   | { type: 'done'; requestId: string; text: string; annotations: number }
-  | { type: 'error'; requestId: string; message: string; retryable: boolean }
+  | {
+      type: 'error'
+      requestId: string
+      message: string
+      retryable: boolean
+      code?: StreamEventCode
+    }
 
 /** Sent to the overlay whenever the drawing layer gained or lost shapes. */
 export interface AnnotationsEvent {

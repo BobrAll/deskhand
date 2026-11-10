@@ -16,7 +16,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { VoiceEvent, VoicePhase } from '@shared/types'
+import type { VoiceErrorCode, VoiceEvent, VoicePhase } from '@shared/types'
 import { primeRecorder, startRecording, type RecorderHandles } from './recorder'
 
 interface VoiceState {
@@ -31,9 +31,19 @@ interface VoiceState {
   message: string | null
   /** True when the message is a failure, not a transcript. */
   error: boolean
+  /** Why the turn failed, when it did. Drives the spoken line, not the card. */
+  code: VoiceErrorCode | null
+  /**
+   * When the last outcome arrived.
+   *
+   * Two identical failures in a row are two events, not one: the spoken line has
+   * to fire for both, and an effect keyed on the code alone would stay quiet the
+   * second time.
+   */
+  at: number | null
 }
 
-const IDLE: VoiceState = { phase: 'idle', level: 0, message: null, error: false }
+const IDLE: VoiceState = { phase: 'idle', level: 0, message: null, error: false, code: null, at: null }
 
 /** How long a finished turn keeps its result on the card. */
 const LINGER_MS = 1600
@@ -143,7 +153,7 @@ export function useVoice(): VoiceHook {
       openingRef.current = true
       captureRef.current += 1
       const mine = captureRef.current
-      setState({ phase: 'listening', level: 0, message: null, error: false })
+      setState({ phase: 'listening', level: 0, message: null, error: false, code: null, at: null })
       try {
         const recorder = await startRecording(maxDurationMs)
         if (mine !== captureRef.current) {
@@ -244,12 +254,16 @@ export function useVoice(): VoiceHook {
         phase: event.phase,
         level: event.phase === 'listening' ? event.level : 0,
         message: event.text ?? event.error ?? (event.phase === 'idle' ? prev.message : null),
-        error: Boolean(event.error)
+        error: Boolean(event.error),
+        code: event.error ? (event.code ?? null) : null,
+        at: event.phase === 'idle' ? Date.now() : prev.at
       }))
       if (event.phase === 'idle' && (event.text || event.error)) {
         clearLinger()
         lingerRef.current = window.setTimeout(() => {
-          setState((prev) => (prev.phase === 'idle' ? { ...prev, message: null, error: false } : prev))
+          setState((prev) => (prev.phase === 'idle'
+            ? { ...prev, message: null, error: false, code: null }
+            : prev))
         }, LINGER_MS)
       }
     })
@@ -264,7 +278,7 @@ export function useVoice(): VoiceHook {
         // The key came up (or the recorder finished) before this component
         // subscribed. The bars still have to be there for the rest of the
         // recognition — otherwise a short phrase shows no animation at all.
-        setState({ phase: 'transcribing', level: 0, message: null, error: false })
+        setState({ phase: 'transcribing', level: 0, message: null, error: false, code: null, at: null })
       }
     }).catch(() => {
       // Nothing to attach to: the card still has to open. `ready` gates the whole

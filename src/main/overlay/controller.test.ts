@@ -69,7 +69,7 @@ vi.mock('../native/helper', () => ({
   watchForAbort: vi.fn(() => ({ stop: vi.fn() }))
 }))
 vi.mock('../paste', () => ({ copyText: vi.fn(), pasteAnswer: vi.fn() }))
-vi.mock('../pointer', () => ({ hideAnnotations: vi.fn(), showAnnotations: vi.fn() }))
+vi.mock('../drawing', () => ({ hideAnnotations: vi.fn(), showAnnotations: vi.fn() }))
 vi.mock('../context/screenshot', () => ({ captureScreenshot: vi.fn() }))
 vi.mock('../agent/outline', () => ({ describeScreen: vi.fn() }))
 // Only the three functions that paint or own the display layer are replaced:

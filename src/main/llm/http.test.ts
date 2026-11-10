@@ -149,7 +149,7 @@ describe('toProviderError: the status map', () => {
 
   it('maps 402 to a balance problem', async () => {
     const error = await errorFor(402)
-    expect(error.message).toBe('Недостаточно средств на счёте OpenAI.')
+    expect(error.message).toBe('Ключ OpenAI действителен, но на счёте нет средств.')
     expect(error.retryable).toBe(false)
     expect(error.status).toBe(402)
   })
@@ -168,7 +168,9 @@ describe('toProviderError: the status map', () => {
 
   it('maps 429 to a rate limit, and marks it retryable', async () => {
     const error = await errorFor(429)
-    expect(error.message).toBe('Лимит запросов OpenAI исчерпан. Подожди немного и повтори.')
+    expect(error.message).toBe(
+      'Ключ OpenAI действителен, но лимит запросов исчерпан. Попробуй позже.'
+    )
     expect(error.retryable).toBe(true)
     expect(error.status).toBe(429)
   })

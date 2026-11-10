@@ -180,7 +180,7 @@ function TtsSection({
       <Group title="Озвучка">
         <ToggleRow
           title="Короткие реплики агента"
-          hint="Подтверждать долгую обработку голосом. Не чаще раза в 45 секунд."
+          hint="Что происходит с управлением: старт, долгая работа, вопрос о разрешении, итог. Не чаще раза в 45 секунд."
           checked={voice.agentFeedback}
           onChange={(agentFeedback) => onVoiceChange({ agentFeedback })}
         />

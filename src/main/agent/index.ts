@@ -337,6 +337,7 @@ export function createAgentController(host: AgentHost) {
       approval: patch.approval !== undefined ? patch.approval : (lastPublished.approval ?? null),
       actions: patch.actions ?? lastPublished.actions,
       message: patch.message,
+      code: patch.code,
       // Carried on every event rather than only the last one, so a host that
       // redraws mid-run sees it too — and so the overlay can read it off the run
       // without a second channel that would have to be kept in step.
@@ -411,7 +412,7 @@ export function createAgentController(host: AgentHost) {
     const state = availability()
     if (!state.ready) {
       const message = state.reason ?? 'Агентный режим недоступен.'
-      publish({ phase: 'error', step: 0, total: 0, label: '', message })
+      publish({ phase: 'error', step: 0, total: 0, label: '', message, code: 'blocked' })
       return { answer: '', actions: [], message, blocked: true }
     }
 
@@ -764,7 +765,7 @@ export function createAgentController(host: AgentHost) {
       trace('agent.approval', { outcome: 'denied' })
       approve(request.id, false, decision.reason)
       active.actions.push({ tool: request.tool, label: decision.reason, ok: false })
-      publish({ phase: 'acting', actions: actionRows() })
+      publish({ phase: 'acting', actions: actionRows(), code: 'secret' })
       return
     }
 

@@ -24,7 +24,8 @@ import type {
   ScreenshotInfo,
   ScreenRect,
   SendRequest,
-  StreamEvent
+  StreamEvent,
+  StreamEventCode
 } from '@shared/types'
 import { createAgentController } from '../agent'
 import { beginAgentTurn, endAgentTurn, updateAgentCursor } from '../agent/cursor'
@@ -38,7 +39,7 @@ import { getProvider, resolveChatModel } from '../llm'
 import { ProviderError, type ChatMessage } from '../llm/provider'
 import { searchWeb } from '../llm/webSearch'
 import { copyText, pasteAnswer } from '../paste'
-import { hideAnnotations, showAnnotations } from '../pointer'
+import { hideAnnotations, showAnnotations } from '../drawing'
 import { buildTurnRequest, type Exchange } from './request'
 import { readPreviousCommand, saveCommand } from './history'
 import { timed, trace, traceTurn } from '../agent/trace'
@@ -954,8 +955,8 @@ export function createOverlayController(host: OverlayHost) {
     const model = resolveChatModel(settings)
     const apiKey = getApiKey(settings.provider)
 
-    const fail = (message: string, retryable: boolean): void => {
-      const event: StreamEvent = { type: 'error', requestId: request.requestId, message, retryable }
+    const fail = (message: string, retryable: boolean, code?: StreamEventCode): void => {
+      const event: StreamEvent = { type: 'error', requestId: request.requestId, message, retryable, code }
       sendToWindow(CH.overlay.stream, event)
       if (request.voice) host.showInactive(INITIAL_HEIGHT)
     }
@@ -1134,7 +1135,7 @@ export function createOverlayController(host: OverlayHost) {
         outcome = abort.signal.reason === 'deadline' ? 'timeout' : 'cancelled'
         reason = outcome === 'timeout' ? 'deadline' : abort.signal.reason === STOP_AGENT ? 'agent-stop' : 'turn-abort'
         if (session === turnSession && turnSession.abort === abort) {
-          if (outcome === 'timeout') fail('Время выполнения истекло. Результат не подтверждён.', true)
+          if (outcome === 'timeout') fail('Время выполнения истекло. Результат не подтверждён.', true, 'timeout')
           else if (abort.signal.reason === STOP_AGENT) {
             if (agent.last().phase !== 'aborted') publishAgent({
               phase: 'aborted', step: 0, total: 0, label: '', message: 'Остановлено.'
@@ -1444,7 +1445,7 @@ export function createOverlayController(host: OverlayHost) {
     close,
     state: overlayState,
     setFlags,
-    clearPointer: clearAnnotations,
+    clearDrawing: clearAnnotations,
     setTyping,
     setVoice,
     showVoiceIndicator: () => host.showInactive(INITIAL_HEIGHT),

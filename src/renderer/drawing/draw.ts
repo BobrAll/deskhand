@@ -1,6 +1,6 @@
 /** Draws the annotation paths and lays out their captions in screen coordinates. */
 
-import type { PointerPayload, PointerShape } from '@shared/types'
+import type { DrawingPayload, DrawingShape } from '@shared/types'
 import { SVG_NS } from '../svg'
 
 /** How rounded a box's corners are. */
@@ -16,7 +16,7 @@ const LABEL_OVERLAP_GAP = 4
 const LABEL_GAP = 8
 /** Clearance a caption keeps from the screen edge. */
 const LABEL_MARGIN = 6
-/** How long the layer takes to fade out, matching `pointer.css`. */
+/** How long the layer takes to fade out, matching `drawing.css`. */
 const FADE_MS = 240
 /** Stagger between captions, and how many of them are staggered at all. */
 const STAGGER_MS = 45
@@ -32,7 +32,7 @@ function el<K extends keyof SVGElementTagNameMap>(
 }
 
 /** Rounds the corners of a rectangle path so a box looks hand-drawn, not clipped. */
-function roundedRectPath(shape: PointerShape, radius: number): string {
+function roundedRectPath(shape: DrawingShape, radius: number): string {
   const x = Math.min(shape.from.x, shape.to.x)
   const y = Math.min(shape.from.y, shape.to.y)
   const width = Math.abs(shape.to.x - shape.from.x)
@@ -53,7 +53,7 @@ function roundedRectPath(shape: PointerShape, radius: number): string {
 }
 
 /** A slightly lopsided ellipse — a perfect one looks computer-generated. */
-function circlePath(shape: PointerShape): string {
+function circlePath(shape: DrawingShape): string {
   const x = Math.min(shape.from.x, shape.to.x)
   const y = Math.min(shape.from.y, shape.to.y)
   const width = Math.abs(shape.to.x - shape.from.x)
@@ -71,7 +71,7 @@ function circlePath(shape: PointerShape): string {
   )
 }
 
-function pathFor(shape: PointerShape): string {
+function pathFor(shape: DrawingShape): string {
   switch (shape.kind) {
     case 'box':
       return roundedRectPath(shape, BOX_RADIUS)
@@ -84,7 +84,7 @@ function pathFor(shape: PointerShape): string {
   }
 }
 
-function arrowHead(shape: PointerShape): SVGElementTagNameMap['path'] {
+function arrowHead(shape: DrawingShape): SVGElementTagNameMap['path'] {
   const dx = shape.to.x - shape.from.x
   const dy = shape.to.y - shape.from.y
   const angle = Math.atan2(dy, dx)
@@ -98,12 +98,12 @@ function arrowHead(shape: PointerShape): SVGElementTagNameMap['path'] {
     `M${shape.to.x},${shape.to.y}`,
     `L${shape.to.x + Math.cos(right) * size},${shape.to.y + Math.sin(right) * size}`
   ].join(' ')
-  return el('path', { d, class: 'pointer-head' })
+  return el('path', { d, class: 'drawing-head' })
 }
 
 type Rect = { left: number; top: number; right: number; bottom: number }
 
-function targetBounds(shape: PointerShape): Rect {
+function targetBounds(shape: DrawingShape): Rect {
   const { from, to } = shape
   if (shape.kind === 'arrow') {
     return {
@@ -138,7 +138,7 @@ function overlap(a: Rect, b: Rect): number {
 function labelPlacements(
   width: number,
   height: number,
-  shape: PointerShape,
+  shape: DrawingShape,
   screen: { width: number; height: number },
   obstacles: Rect[]
 ): Rect[] {
@@ -180,20 +180,20 @@ function leastCovered(placements: Rect[], obstacles: Rect[]): Rect {
 function placeLabel(
   width: number,
   height: number,
-  shape: PointerShape,
+  shape: DrawingShape,
   screen: { width: number; height: number },
   obstacles: Rect[]
 ): Rect {
   return leastCovered(labelPlacements(width, height, shape, screen, obstacles), obstacles)
 }
 
-function renderShape(shape: PointerShape, delay: string): SVGGElement {
-  const group = el('g', { class: 'pointer-shape' })
+function renderShape(shape: DrawingShape, delay: string): SVGGElement {
+  const group = el('g', { class: 'drawing-shape' })
   group.style.setProperty('--delay', delay)
 
   const path = el('path', {
     d: pathFor(shape),
-    class: 'pointer-stroke'
+    class: 'drawing-stroke'
   })
   // `pathLength=1` normalises the dash maths for every shape, whatever its real
   // length, so one CSS rule animates circles, boxes and arrows identically.
@@ -205,7 +205,7 @@ function renderShape(shape: PointerShape, delay: string): SVGGElement {
 }
 
 /** Replaces the layer contents with `payload` (or fades everything out). */
-export function render(root: HTMLElement, payload: PointerPayload): void {
+export function render(root: HTMLElement, payload: DrawingPayload): void {
   root.style.width = `${payload.width}px`
   root.style.height = `${payload.height}px`
 
@@ -221,7 +221,7 @@ export function render(root: HTMLElement, payload: PointerPayload): void {
   root.classList.remove('leaving')
 
   const layer = document.createElement('div')
-  layer.className = 'pointer-layer'
+  layer.className = 'drawing-layer'
   const svg = el('svg', {
     width: payload.width,
     height: payload.height,
@@ -234,7 +234,7 @@ export function render(root: HTMLElement, payload: PointerPayload): void {
     if (!shape.label) return []
 
     const node = document.createElement('div')
-    node.className = 'pointer-label'
+    node.className = 'drawing-label'
     node.style.setProperty('--delay', delay)
     node.textContent = shape.label
     layer.append(node)

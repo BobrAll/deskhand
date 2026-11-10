@@ -20,7 +20,7 @@
 
 import type { BrowserWindow } from 'electron'
 import { CH } from '@shared/ipc'
-import type { Annotation, PointerPayload, PointerShape, ScreenRect } from '@shared/types'
+import type { Annotation, DrawingPayload, DrawingShape, ScreenRect } from '@shared/types'
 import {
   createLayerWindow,
   ensureLayerWindow,
@@ -45,7 +45,7 @@ let revision = 0
 let placedOn: ScreenRect | null = null
 
 /** Drops everything that belonged to the window that just went away. */
-function resetPointerState(): void {
+function resetDrawingState(): void {
   interactionWatcher?.stop()
   interactionWatcher = null
   visible = false
@@ -55,10 +55,10 @@ function resetPointerState(): void {
 
 function createWindow(): BrowserWindow {
   return createLayerWindow({
-    page: 'pointer',
+    page: 'drawing',
     acceptFirstMouse: true,
     onClosed: () => {
-      resetPointerState()
+      resetDrawingState()
       layer.window = null
     }
   })
@@ -69,7 +69,7 @@ function placeOn(win: BrowserWindow, area: ScreenRect): void {
 }
 
 /** Scales normalised coordinates onto the layer's own points. */
-function toShapes(annotations: Annotation[], width: number, height: number): PointerShape[] {
+function toShapes(annotations: Annotation[], width: number, height: number): DrawingShape[] {
   return annotations.map((annotation, index) => {
     const x1 = annotation.from.x * width
     const y1 = annotation.from.y * height
@@ -120,7 +120,7 @@ export async function showAnnotations(area: ScreenRect, annotations: Annotation[
   placeOn(win, area)
   revision += 1
 
-  const payload: PointerPayload = {
+  const payload: DrawingPayload = {
     width: Math.round(area.width),
     height: Math.round(area.height),
     revision,
@@ -128,7 +128,7 @@ export async function showAnnotations(area: ScreenRect, annotations: Annotation[
     shapes: toShapes(annotations, area.width, area.height)
   }
 
-  win.webContents.send(CH.pointer.draw, payload)
+  win.webContents.send(CH.drawing.draw, payload)
   if (!visible) {
     visible = true
     // showInactive: keep the user's app frontmost — this is the whole point.
@@ -146,14 +146,14 @@ export function hideAnnotations(): void {
   visible = false
   const win = layer.window
   if (!win || win.isDestroyed()) return
-  const payload: PointerPayload = {
+  const payload: DrawingPayload = {
     width: placedOn?.width ?? 0,
     height: placedOn?.height ?? 0,
     revision,
     visible: false,
     shapes: []
   }
-  win.webContents.send(CH.pointer.draw, payload)
+  win.webContents.send(CH.drawing.draw, payload)
   // Let the renderer play its fade-out before the window disappears.
   setTimeout(() => {
     const current = layer.window
@@ -161,8 +161,8 @@ export function hideAnnotations(): void {
   }, DRAWING_FADE_MS)
 }
 
-export function destroyPointer(): void {
-  resetPointerState()
+export function destroyDrawing(): void {
+  resetDrawingState()
   const win = layer.window
   if (win && !win.isDestroyed()) win.destroy()
   layer.window = null
