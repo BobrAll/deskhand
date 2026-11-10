@@ -2,7 +2,13 @@ import { join } from 'node:path'
 
 const preload = join(__dirname, '../preload/index.js')
 
-export function baseOptions(
+/** The app's own window colour, so the first frame is not white. */
+const WINDOW_BACKGROUND = '#0f1115'
+/** Where the traffic lights sit inside the hidden-inset title bar. */
+const TRAFFIC_LIGHT_POSITION = { x: 16, y: 18 }
+
+/** The BrowserWindow options every standalone app window starts from. */
+export function appWindowOptions(
   title: string,
   width: number,
   height: number
@@ -12,9 +18,9 @@ export function baseOptions(
     height,
     show: false,
     title,
-    backgroundColor: '#0f1115',
+    backgroundColor: WINDOW_BACKGROUND,
     titleBarStyle: 'hiddenInset',
-    trafficLightPosition: { x: 16, y: 18 },
+    trafficLightPosition: TRAFFIC_LIGHT_POSITION,
     webPreferences: {
       preload,
       sandbox: false,

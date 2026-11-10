@@ -172,7 +172,7 @@ export function createVoiceController(host: VoiceHost) {
           return
         }
         if (Date.now() - startedAt < getSettings().voice.maxDurationMs) return
-        endStuckTurn('Запись остановлена: слишком долго.')
+        abortTurnWithError('Запись остановлена: слишком долго.')
       }, WATCHDOG_MS)
       return
     }
@@ -185,7 +185,7 @@ export function createVoiceController(host: VoiceHost) {
     const limit = busy ? TRANSCRIBE_TIMEOUT_MS : RECORDING_TIMEOUT_MS
     recordingTimer = setTimeout(() => {
       if (mine !== turn) return
-      endStuckTurn(
+      abortTurnWithError(
         busy
           ? 'Распознавание не ответило — попробуйте ещё раз.'
           : 'Запись не дошла до распознавания — попробуйте ещё раз.'
@@ -193,8 +193,14 @@ export function createVoiceController(host: VoiceHost) {
     }, limit)
   }
 
-  /** Closes a turn nobody is driving any more, and says why on the card. */
-  function endStuckTurn(message: string): void {
+  /**
+   * Abandons the turn in flight and puts its reason on the card.
+   *
+   * The watchdog paths end a turn that nobody is driving any more; `finishIdle`
+   * is the ordinary ending, for a turn that produced a transcript or was
+   * dismissed.
+   */
+  function abortTurnWithError(message: string): void {
     turn += 1
     if (phase === 'listening') host.emit(CH.voice.stop, { transcribe: false })
     abort?.abort()

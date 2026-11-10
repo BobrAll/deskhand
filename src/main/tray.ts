@@ -18,7 +18,8 @@ export interface TrayActions {
 }
 
 let tray: Tray | null = null
-let actions: TrayActions | null = null
+/** What the tray menu clicks reach while the tray exists. */
+let trayActions: TrayActions | null = null
 
 function trayImage(): Electron.NativeImage {
   const image = nativeImage.createFromPath(resourcePath('trayTemplate.png'))
@@ -30,10 +31,10 @@ function trayImage(): Electron.NativeImage {
 function buildMenu(): Menu {
   const hotkey = prettyAccelerator(getSettings().hotkey)
   return Menu.buildFromTemplate([
-    { label: openAssistantLabel(hotkey), click: () => actions?.openAssistant() },
+    { label: openAssistantLabel(hotkey), click: () => trayActions?.openAssistant() },
     { type: 'separator' },
-    { label: SETTINGS_LABEL, accelerator: SETTINGS_ACCELERATOR, click: () => actions?.openSettings() },
-    { label: 'Права доступа и первый запуск…', click: () => actions?.openOnboarding() },
+    { label: SETTINGS_LABEL, accelerator: SETTINGS_ACCELERATOR, click: () => trayActions?.openSettings() },
+    { label: 'Права доступа и первый запуск…', click: () => trayActions?.openOnboarding() },
     { type: 'separator' },
     {
       label: 'Папка данных',
@@ -42,17 +43,17 @@ function buildMenu(): Menu {
       }
     },
     { type: 'separator' },
-    { label: QUIT_LABEL, accelerator: QUIT_ACCELERATOR, click: () => actions?.quit() }
+    { label: QUIT_LABEL, accelerator: QUIT_ACCELERATOR, click: () => trayActions?.quit() }
   ])
 }
 
-export function createTray(trayActions: TrayActions): Tray {
-  actions = trayActions
+export function createTray(actions: TrayActions): Tray {
+  trayActions = actions
   if (tray) return tray
   tray = new Tray(trayImage())
   tray.setToolTip('Deskhand')
   tray.setContextMenu(buildMenu())
-  tray.on('click', () => actions?.openAssistant())
+  tray.on('click', () => trayActions?.openAssistant())
   return tray
 }
 
@@ -64,5 +65,5 @@ export function refreshTray(): void {
 export function destroyTray(): void {
   tray?.destroy()
   tray = null
-  actions = null
+  trayActions = null
 }

@@ -173,6 +173,23 @@ export function rememberKey(fingerprint: string): string {
 }
 
 /**
+ * The imperative phrase the confirmation opens with.
+ *
+ * Pressing keys, clicking and dragging are named more directly than
+ * `describeCall` does it: those three are the calls that land on something the
+ * user cannot see in the question, so the question says what will be hit rather
+ * than what the assistant is doing.
+ */
+function confirmationSubject(request: AgentToolRequest): string {
+  if (request.tool === 'press_key') return `Нажать клавиши: ${text(request.arguments.key)}`
+  if (request.tool === 'click') {
+    return `Нажать: ${request.title || request.label || text(request.arguments.label) || 'элемент'}`
+  }
+  if (request.tool === 'drag') return 'Перетащить элемент'
+  return describeCall(request)
+}
+
+/**
  * Decides whether one call needs the user.
  *
  * `rememberedKeys` holds the digests of the fingerprints the user already allowed
@@ -209,18 +226,11 @@ export function classifyCall(request: AgentToolRequest, rememberedKeys: string[]
   }
   if (!critical) return { kind: 'allow' }
 
-  const operation =
-    request.tool === 'press_key'
-      ? `Нажать клавиши: ${text(request.arguments.key)}`
-      : request.tool === 'click'
-        ? `Нажать: ${request.title || request.label || text(request.arguments.label) || 'элемент'}`
-        : request.tool === 'drag'
-          ? 'Перетащить элемент'
-          : describeCall(request)
+  const subject = confirmationSubject(request)
 
   return {
     kind: 'confirm',
-    detail: `${operation}${request.app ? ` — ${request.app}` : ''}\n\n` +
+    detail: `${subject}${request.app ? ` — ${request.app}` : ''}\n\n` +
       'Проверьте последствия в приложении: для оплаты — продавца, сумму и подписку; ' +
       'для отправки — получателя и содержимое. «Разрешить всегда» запомнит это действие ' +
       'для этого приложения.'

@@ -40,15 +40,22 @@ async function focusTarget(target: ActiveAppInfo | null): Promise<boolean> {
   }, FOCUS_TIMEOUT_MS, FOCUS_POLL_MS)
 }
 
+/**
+ * The paste did not land, so the answer is on the clipboard instead.
+ *
+ * Both failures (no way back to the app, no way to paste into the field) end in
+ * the same place and carry the same flag; only the sentence differs, and it is
+ * the sentence that says which failure it was.
+ */
+function copiedOnly(message: string): PasteResult {
+  return { ok: false, copiedOnly: true, message }
+}
+
 export async function pasteAnswer(text: string, target: ActiveAppInfo | null): Promise<PasteResult> {
   const focused = await focusTarget(target)
   if (!focused) {
     await copyText(text)
-    return {
-      ok: false,
-      copiedOnly: true,
-      message: 'Не удалось вернуться в исходное приложение — ответ скопирован в буфер обмена.'
-    }
+    return copiedOnly('Не удалось вернуться в исходное приложение — ответ скопирован в буфер обмена.')
   }
 
   const typed = await withClipboard(async () => {
@@ -70,11 +77,7 @@ export async function pasteAnswer(text: string, target: ActiveAppInfo | null): P
 
   if (!typed) {
     await copyText(text)
-    return {
-      ok: false,
-      copiedOnly: true,
-      message: 'Вставка недоступна в этом поле — ответ скопирован в буфер обмена.'
-    }
+    return copiedOnly('Вставка недоступна в этом поле — ответ скопирован в буфер обмена.')
   }
 
   return { ok: true, copiedOnly: false }

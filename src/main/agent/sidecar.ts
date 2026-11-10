@@ -41,7 +41,7 @@ const SHUTDOWN_GRACE_MS = 1_000
 const MAX_LOG_LINE_CHARS = 300
 
 /** The gesture vocabulary `present` may carry, matching the Swift enum. */
-const GESTURES = [
+const GESTURES: ReadonlySet<string> = new Set([
   'click',
   'secondary',
   'type',
@@ -51,7 +51,7 @@ const GESTURES = [
   'scroll',
   'drag',
   'activate'
-] as const
+])
 
 let cachedPath: string | null | undefined
 
@@ -202,7 +202,7 @@ export type AgentSidecarEvent =
   | { kind: 'cancelled' }
   | { kind: 'error'; message: string; code?: string }
 
-interface Pending {
+interface PendingRequest {
   resolve(value: Record<string, unknown>): void
   reject(error: Error): void
 }
@@ -229,7 +229,7 @@ export class AgentSidecar {
   private buffer = ''
   private traceRunId: string | undefined
   private counter = 0
-  private readonly pending = new Map<number, Pending>()
+  private readonly pending = new Map<number, PendingRequest>()
   private handlers: ((event: AgentSidecarEvent) => void)[] = []
   private starting: Promise<void> | null = null
 
@@ -344,23 +344,23 @@ export class AgentSidecar {
   }
 
   /** Starts a task. Resolves when the run is accepted, not when it finishes. */
-  async run(options: AgentRunOptions): Promise<void> {
+  async run(runOptions: AgentRunOptions): Promise<void> {
     await this.start()
-    this.traceRunId = options.traceRunId
+    this.traceRunId = runOptions.traceRunId
     await this.request('run', {
-      task: options.task,
-      provider: wireProvider(options.provider),
+      task: runOptions.task,
+      provider: wireProvider(runOptions.provider),
       options: {
-        max_steps: options.maxSteps,
-        trace_run_id: options.traceRunId,
-        verify_actions: options.verifyActions,
+        max_steps: runOptions.maxSteps,
+        trace_run_id: runOptions.traceRunId,
+        verify_actions: runOptions.verifyActions,
         // The app's trace already carries every event; the agent's own stderr is
         // the fallback for a run started outside the app.
         verbose: false,
         timings: true,
         // Presentation only. With this false the same tools run and the same
         // approvals are asked, but nothing is raised or drawn.
-        visualize: options.visualize
+        visualize: runOptions.visualize
       }
     })
   }
@@ -499,6 +499,17 @@ function textParam(params: Record<string, unknown>, key: string): string {
 }
 
 /**
+ * A flag the agent sends only when it is false.
+ *
+ * Absent means success on this wire: an older binary that does not send the
+ * field is still describing a call that worked, or a run that ended. Reading
+ * absence as failure would turn every such call into an error.
+ */
+function notFalse(value: unknown): boolean {
+  return value !== false
+}
+
+/**
  * One screen rectangle, or `undefined` when the agent did not send a usable one.
  *
  * Kept as `undefined` rather than a zero rect: "no element to point at" and "an
@@ -555,7 +566,7 @@ function translateResult(params: Record<string, unknown>): EventOf<'result'> {
     kind: 'result',
     step: numberParam(params, 'step'),
     name: textParam(params, 'name'),
-    ok: params.ok !== false,
+    ok: notFalse(params.ok),
     text: textParam(params, 'text'),
     timing: {
       ...optionalNumber(params, 'wall_ms', 'wallMs'),
@@ -612,9 +623,7 @@ function translatePresent(params: Record<string, unknown>): EventOf<'present'> {
       tool: textParam(params, 'tool'),
       // An unknown gesture falls back to a click rather than dropping the
       // event: a new tool should still show a pointer, not disappear.
-      gesture: (GESTURES as readonly string[]).includes(gesture)
-        ? (gesture as AgentGesture)
-        : 'click',
+      gesture: GESTURES.has(gesture) ? (gesture as AgentGesture) : 'click',
       app: textParam(params, 'app') || undefined,
       bundleId: textParam(params, 'bundle_id') || undefined,
       pid: typeof params.pid === 'number' ? params.pid : undefined,
@@ -692,13 +701,10 @@ export function translate(message: Message): AgentSidecarEvent | null {
     case 'stopped':
       return { kind: 'stopped', reason: textParam(params, 'reason') }
     case 'done':
-      // Absent means complete: an older binary that does not send the field is
-      // still describing a run that ended, and treating a missing field as
-      // failure would turn every such run into an error.
       return {
         kind: 'done',
         answer: textParam(params, 'answer'),
-        complete: params.complete !== false
+        complete: notFalse(params.complete)
       }
     case 'cancelled':
       return { kind: 'cancelled' }

@@ -91,6 +91,13 @@ export async function requestPermissions(): Promise<PermissionState> {
   return readPermissions()
 }
 
+/**
+ * Opens the Microphone pane.
+ *
+ * In the app it is reached only through `openPermissionPane`; it is exported so
+ * the tests can check that the microphone route reaches this pane rather than
+ * the two panes that share the generic branch.
+ */
 export function openMicrophonePane(): void {
   void shell.openExternal(MICROPHONE_PANE)
 }

@@ -85,7 +85,8 @@ function visibleName(element: AxElementInfo): string {
   return text.length > MAX_NAME ? `${text.slice(0, MAX_NAME - 1)}…` : text
 }
 
-function round3(value: number): string {
+/** A 0..1 fraction of the screen, at the three decimals the model copies. */
+function formatFraction(value: number): string {
   return value.toFixed(3)
 }
 
@@ -141,13 +142,13 @@ export function formatOutline(
     }
     const name = visibleName(element)
     if (!name) continue
-    const kind = ROLE_WORD[element.role ?? ''] ?? ''
+    const kind = ROLE_WORD[element.role] ?? ''
     const key = `${name}|${Math.round(rect.x)},${Math.round(rect.y)}`
     if (seen.has(key)) continue
     seen.add(key)
     const cx = (rect.x + rect.width / 2 - captureArea.x) / captureArea.width
     const cy = (rect.y + rect.height / 2 - captureArea.y) / captureArea.height
-    const line = `  ${round3(cx)} ${round3(cy)}  ${kind ? `${kind} ` : ''}«${name}»`
+    const line = `  ${formatFraction(cx)} ${formatFraction(cy)}  ${kind ? `${kind} ` : ''}«${name}»`
     rows.push({ x: rect.x, y: rect.y, line })
     if (rows.length >= MAX_ITEMS * OVERCOLLECT_FACTOR) break
   }
@@ -181,11 +182,11 @@ export async function describeScreen(
   pid: number | null,
   windowBounds: ScreenRect | null,
   captureArea: ScreenRect,
-  onTargets?: (targets: AxElementInfo[]) => void
+  onDrawingTargets?: (targets: AxElementInfo[]) => void
 ): Promise<string | null> {
   const probe = await helperProbe(pid, null)
   if (!probe || probe.targets.length === 0) return null
-  onTargets?.(probe.targets
+  onDrawingTargets?.(probe.targets
     .filter((element) => isListable(element, captureArea, windowBounds))
     .map((element) => ({ ...element, pid: element.pid ?? probe.pid })))
   return formatOutline(probe, windowBounds, captureArea)

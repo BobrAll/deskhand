@@ -122,9 +122,9 @@ function place(target: BrowserWindow, bounds: ScreenRect): void {
   placedOn = placeLayer(target, placedOn, bounds).placedOn
 }
 
-function send(target: BrowserWindow, next: AgentCursorFrame): void {
-  frame = next
-  if (!target.isDestroyed()) target.webContents.send(CH.agent.cursor, next)
+function send(target: BrowserWindow, nextFrame: AgentCursorFrame): void {
+  frame = nextFrame
+  if (!target.isDestroyed()) target.webContents.send(CH.agent.cursor, nextFrame)
 }
 
 /**

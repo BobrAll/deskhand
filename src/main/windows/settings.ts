@@ -1,7 +1,7 @@
 import { app, BrowserWindow } from 'electron'
 import { denyExternalLinks } from '../denyExternalLinks'
 import { loadPage } from '../pageLoad'
-import { baseOptions } from './base'
+import { appWindowOptions } from './base'
 
 /** How long ⌘W waits for an in-flight settings write before it closes anyway. */
 const CLOSE_GRACE_MS = 1200
@@ -35,7 +35,7 @@ let settingsHeld = false
  */
 function openAppWindow(options: AppWindowOptions): BrowserWindow {
   const win = new BrowserWindow({
-    ...baseOptions(options.title, options.width, options.height),
+    ...appWindowOptions(options.title, options.width, options.height),
     ...(options.resizable === undefined ? {} : { resizable: options.resizable }),
     ...(options.minWidth === undefined ? {} : { minWidth: options.minWidth }),
     ...(options.minHeight === undefined ? {} : { minHeight: options.minHeight })
@@ -124,7 +124,7 @@ export function openOnboardingWindow(): BrowserWindow {
 }
 
 export function closeOnboardingWindow(): void {
-  if (onboardingWindow && !onboardingWindow.isDestroyed()) onboardingWindow.close()
+  closeIfOpen(onboardingWindow)
 }
 
 /**
@@ -135,13 +135,27 @@ export function closeOnboardingWindow(): void {
  * same grace period instead of only the one that happens to call this.
  */
 export function closeSettingsWindow(): void {
-  if (settingsWindow && !settingsWindow.isDestroyed()) settingsWindow.close()
+  closeIfOpen(settingsWindow)
+}
+
+/** Closes one of the app windows if it is still there. */
+function closeIfOpen(win: BrowserWindow | null): void {
+  if (win && !win.isDestroyed()) win.close()
 }
 
 export function setSettingsHeld(held: boolean): void {
   settingsHeld = held
 }
 
-export function settingsWindows(): Array<BrowserWindow | null> {
-  return [settingsWindow, onboardingWindow]
+/**
+ * The app windows that are open right now, for the activation handler.
+ *
+ * Closed singletons are dropped here rather than at every caller: the only
+ * question anyone asks is "which window can be brought back", and a destroyed
+ * window is not an answer.
+ */
+export function openAppWindows(): BrowserWindow[] {
+  return [settingsWindow, onboardingWindow].filter(
+    (win): win is BrowserWindow => win !== null && !win.isDestroyed()
+  )
 }

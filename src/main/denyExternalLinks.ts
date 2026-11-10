@@ -21,14 +21,16 @@ export interface DenyExternalLinksOptions {
   caseless?: boolean
 }
 
-const CASELESS = /^https?:\/\//i
-const SENSITIVE = /^https?:\/\//
+/** `^https?://` matched case-insensitively: the agent's cursor layer accepts `HTTPS://`. */
+const ANY_CASE_SCHEME = /^https?:\/\//i
+/** The same pattern case-sensitively, which is what the three app windows kept. */
+const EXACT_CASE_SCHEME = /^https?:\/\//
 
 export function denyExternalLinks(
   win: BrowserWindow,
   options: DenyExternalLinksOptions = {}
 ): void {
-  const pattern = options.caseless ? CASELESS : SENSITIVE
+  const pattern = options.caseless ? ANY_CASE_SCHEME : EXACT_CASE_SCHEME
   win.webContents.setWindowOpenHandler(({ url }) => {
     if (pattern.test(url)) void shell.openExternal(url)
     return { action: 'deny' }
