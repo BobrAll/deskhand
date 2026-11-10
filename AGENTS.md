@@ -26,3 +26,4 @@
 
 - Build the sidecar with `npm run build:agent` (universal) or `AGENT_ARCH=arm64 npm run build:agent`.
 - Both suites must pass for code changes. Run `npm test` from the root and `swift test` from `native/deskhand`.
+- `src/main/agent/timing.integration.test.ts` and `trace.integration.test.ts` need a built binary *and* a granted Accessibility permission: the agent checks the grant before it accepts a run, so without it they fail with `error` instead of a stream. The wire contract still has `src/main/agent/sidecar.test.ts`, which replays a recorded transcript and needs neither.
