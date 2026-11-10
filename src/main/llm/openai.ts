@@ -6,6 +6,7 @@ import { traceModelUsage } from '../agent/trace'
 import { disabledReasoning } from './reasoning'
 import { ProviderError, type ChatMessage, type ContentPart, type LlmProvider, type StreamChunk, type StreamEnd, type StreamOptions } from './provider'
 import {
+  apiRoot,
   readSse,
   toProviderError,
   toTransportError,
@@ -31,7 +32,7 @@ export interface OpenAiCompatibleConfig {
   extraHeaders?: Record<string, string>
 }
 
-function encodeParts(parts: ContentPart[]): string | OpenAiPart[] {
+function encodeBlocks(parts: ContentPart[]): string | OpenAiPart[] {
   if (parts.every((part) => part.type === 'text')) {
     return parts
       .map((part) => (part.type === 'text' ? part.text : ''))
@@ -60,11 +61,6 @@ export class OpenAIProvider implements LlmProvider {
     this.extraHeaders = config.extraHeaders ?? {}
   }
 
-  /** Request base URL: the per-request override wins over the built-in default. */
-  private endpoint(options: StreamOptions): string {
-    return (options.baseUrl || this.baseUrl).replace(/\/+$/, '')
-  }
-
   async *stream(
     messages: ChatMessage[],
     apiKey: string,
@@ -74,18 +70,18 @@ export class OpenAIProvider implements LlmProvider {
       model: options.model,
       temperature: options.temperature,
       max_tokens: options.maxTokens,
-      ...disabledReasoning(this.endpoint(options), options.model),
+      ...disabledReasoning(apiRoot(options, this.baseUrl), options.model),
       ...options.extraBody,
       stream: true,
       messages: messages.map((message): OpenAiMessage => ({
         role: message.role,
-        content: encodeParts(message.parts)
+        content: encodeBlocks(message.parts)
       }))
     }
 
     let response: Response
     try {
-      response = await fetch(`${this.endpoint(options)}/chat/completions`, {
+      response = await fetch(`${apiRoot(options, this.baseUrl)}/chat/completions`, {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${apiKey}`,

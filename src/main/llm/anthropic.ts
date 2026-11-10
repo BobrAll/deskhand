@@ -13,7 +13,7 @@ import {
   type StreamChunk, type StreamEnd,
   type StreamOptions
 } from './provider'
-import { readSse, toProviderError, toTransportError } from './http'
+import { apiRoot, readSse, toProviderError, toTransportError } from './http'
 
 type AnthropicBlock =
   | { type: 'text'; text: string }
@@ -44,11 +44,6 @@ export class AnthropicProvider implements LlmProvider {
 
   constructor(baseUrl = 'https://api.anthropic.com/v1') {
     this.baseUrl = baseUrl
-  }
-
-  /** Request base URL: the per-request override wins over the built-in default. */
-  private endpoint(options: StreamOptions): string {
-    return (options.baseUrl || this.baseUrl).replace(/\/+$/, '')
   }
 
   async *stream(
@@ -87,7 +82,7 @@ export class AnthropicProvider implements LlmProvider {
 
     let response: Response
     try {
-      response = await fetch(`${this.endpoint(options)}/messages`, {
+      response = await fetch(`${apiRoot(options, this.baseUrl)}/messages`, {
         method: 'POST',
         headers: {
           'x-api-key': apiKey,

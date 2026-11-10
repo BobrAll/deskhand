@@ -7,7 +7,7 @@
 
 import { globalShortcut } from 'electron'
 
-let current: string | null = null
+let registeredAccelerator: string | null = null
 
 export interface RegisterResult {
   ok: boolean
@@ -20,13 +20,13 @@ export function registerHotkey(accelerator: string, handler: () => void): Regist
   const next = accelerator.trim()
   if (!next) return { ok: false, accelerator: next, message: 'Комбинация не задана.' }
 
-  if (current === next && globalShortcut.isRegistered(next)) {
+  if (registeredAccelerator === next && globalShortcut.isRegistered(next)) {
     return { ok: true, accelerator: next }
   }
 
-  if (current) {
-    globalShortcut.unregister(current)
-    current = null
+  if (registeredAccelerator) {
+    globalShortcut.unregister(registeredAccelerator)
+    registeredAccelerator = null
   }
 
   let ok = false
@@ -44,17 +44,17 @@ export function registerHotkey(accelerator: string, handler: () => void): Regist
     }
   }
 
-  current = next
+  registeredAccelerator = next
   return { ok: true, accelerator: next }
 }
 
 export function unregisterHotkey(): void {
-  if (current) {
-    globalShortcut.unregister(current)
-    current = null
+  if (registeredAccelerator) {
+    globalShortcut.unregister(registeredAccelerator)
+    registeredAccelerator = null
   }
 }
 
 export function currentHotkey(): string | null {
-  return current
+  return registeredAccelerator
 }

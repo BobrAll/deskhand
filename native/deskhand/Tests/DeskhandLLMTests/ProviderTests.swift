@@ -54,7 +54,7 @@ final class ProviderConfigTests: XCTestCase {
         ]
         for (input, expected) in cases {
             let config = ProviderConfig(baseURL: URL(string: input)!)
-            XCTAssertEqual(config.endpointURL().absoluteString, expected, input)
+            XCTAssertEqual(config.endpointURL.absoluteString, expected, input)
         }
     }
 
@@ -63,7 +63,7 @@ final class ProviderConfigTests: XCTestCase {
             wire: .anthropic,
             baseURL: URL(string: "https://api.anthropic.com/v1")!
         )
-        XCTAssertEqual(config.endpointURL().absoluteString, "https://api.anthropic.com/v1/messages")
+        XCTAssertEqual(config.endpointURL.absoluteString, "https://api.anthropic.com/v1/messages")
     }
 
     func testLoadsFromFileAndEnvironment() throws {
@@ -247,7 +247,7 @@ final class AnthropicEncodingTests: XCTestCase {
             ChatMessage(role: .assistant, text: "", toolCalls: [
                 ToolCall(id: "t1", name: "click", arguments: .object([:]))
             ]),
-            ChatMessage(role: .tool, text: "clicked", toolCallID: "t1", toolIsError: false),
+            ChatMessage(role: .tool, text: "clicked", toolCallID: "t1", isError: false),
         ])
         XCTAssertEqual(encoded.count, 2)
         XCTAssertEqual(encoded[0]["role"]?.stringValue, "assistant")

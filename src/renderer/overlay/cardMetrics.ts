@@ -3,35 +3,14 @@
  *
  * None of these may be inlined at a use site: a copy of one of them is exactly
  * how the card ends up clipped or jumping — nothing throws, it just looks wrong.
- * The three widths are the strongest case and live one level up, in
- * `@shared/metrics`, because the main process clamps the window to the very same
- * numbers; everything here is the renderer's own business.
+ * The widths are the strongest case and live one level up, in `@shared/metrics`,
+ * because the main process clamps the window to the very same numbers; they are
+ * imported under their `CARD_*` names at every use site instead of being
+ * re-exported here. Everything below is the renderer's own business.
  *
  * A layout change is a change to this file, and it is checked by eye:
  * the card at rest and unfolded, line wrapping at 112/80/360, and the agent row.
  */
-
-import { BUBBLE_NARROW_WIDTH, BUBBLE_VOICE_WIDTH, BUBBLE_WIDTH } from '@shared/metrics'
-import type { RefineDirection } from '@shared/types'
-
-/**
- * Card widths, in the same points the main process clamps the window to.
- *
- * The folded, empty card is a small pill — roughly three times as wide as the one
- * line it is tall, which is what makes it read as a foothold on the screen rather
- * than a panel. It does not jump to a fixed width when typing starts: it grows by
- * the width of each glyph as it is typed, and only wraps onto a second line once
- * the question no longer fits in `FULL_WIDTH`. A panel that doubles in size on
- * the first keystroke is loud at exactly the moment a person is still deciding
- * whether they have anything to say.
- */
-export const NARROW_WIDTH = BUBBLE_NARROW_WIDTH
-
-/** While a voice turn runs the card is nothing but the bars, so it shrinks to them. */
-export const VOICE_WIDTH = BUBBLE_VOICE_WIDTH
-
-/** The widest the card gets, whether it is a question or an answer inside it. */
-export const FULL_WIDTH = BUBBLE_WIDTH
 
 /** Outer padding, border and the answer's text-column indent. */
 export const ANSWER_CHROME = 8 * 2 + 2 + 12
@@ -39,7 +18,7 @@ export const ANSWER_CHROME = 8 * 2 + 2 + 12
 /** Two buttons' horizontal padding and a small gap between their labels. */
 export const ACTIONS_CHROME = ANSWER_CHROME + 5 * 4 + 8
 
-/** The bubble edge and padding, plus the status icon and gap. */
+/** The card edge and padding, plus the status icon and gap. */
 export const AGENT_ROW_CHROME = 8 * 2 + 2 + 18
 
 /** The extra margin and padding around the status row after the run. */
@@ -48,7 +27,7 @@ export const AGENT_STATUS_INSET = 12 + 8 * 2
 /**
  * Everything on the line that is not the question itself, in points.
  *
- * The bubble's `padding: 6px 8px` and its 1px edge are 18; the bar spends 6 on the gap
+ * The card's `padding: 6px 8px` and its 1px edge are 18; the bar spends 6 on the gap
  * and 16 on the chevron — 40 points of chrome
  * before the field gets a single point of its own.
  */
@@ -86,23 +65,15 @@ export const MAX_FIELD_HEIGHT = 84
 export const FIELD_FONT =
   "13px -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', Arial, sans-serif"
 
+/**
+ * The two places the card prints smaller than the field it measured.
+ *
+ * `button.link` in the answer's action strip is 11 px and the agent row is
+ * 11.5 px, so a width measured in `FIELD_FONT` would over-report both.
+ */
+export const ACTIONS_FONT = FIELD_FONT.replace('13px', '11px')
+export const AGENT_FONT = FIELD_FONT.replace('13px', '11.5px')
+
 export function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max)
-}
-
-/**
- * The two rewrite buttons under a finished answer.
- *
- * `label` is what the button says; `hint` is the tooltip, which is where the
- * difference between them is actually explained — "Короче" alone does not say
- * whether the meaning survives.
- */
-export const REFINE_LABEL: Record<RefineDirection, string> = {
-  shorter: 'Короче',
-  longer: 'Длиннее'
-}
-
-export const REFINE_HINT: Record<RefineDirection, string> = {
-  shorter: 'Сократить ответ, сохранив суть',
-  longer: 'Развернуть ответ подробнее'
 }

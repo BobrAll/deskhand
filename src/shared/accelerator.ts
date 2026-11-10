@@ -1,5 +1,5 @@
 /**
- * Accelerator helpers shared by the two parsers and the UI.
+ * Accelerator helpers shared by the voice parser and the UI.
  *
  * Two things live here because both sides of the app must spell a combination
  * the same way: the `CGEventFlags` values a modifier name stands for (the voice

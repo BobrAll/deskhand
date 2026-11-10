@@ -166,8 +166,8 @@ final class AgentLoopTests: XCTestCase {    func testATruncatedReplyIsNotMistake
 
         let toolMessages = provider.calls[1].0.filter { $0.role == .tool }
         XCTAssertEqual(toolMessages.count, 2, "every call still needs a result message")
-        XCTAssertTrue(toolMessages[0].toolIsError, "unknown tool reported as an error")
-        XCTAssertTrue(toolMessages[1].toolIsError, "the skipped call is marked as not run")
+        XCTAssertTrue(toolMessages[0].isError, "unknown tool reported as an error")
+        XCTAssertTrue(toolMessages[1].isError, "the skipped call is marked as not run")
         XCTAssertTrue(
             toolMessages[1].text.contains("Stopped the batch"),
             "the skipped call says why it did not run"
@@ -193,7 +193,7 @@ final class AgentLoopTests: XCTestCase {    func testATruncatedReplyIsNotMistake
 
         let toolMessages = provider.calls[1].0.filter { $0.role == .tool }
         XCTAssertEqual(toolMessages.count, 2)
-        XCTAssertFalse(toolMessages.contains { $0.toolIsError })
+        XCTAssertFalse(toolMessages.contains { $0.isError })
     }
 
     func testLoopGuardStopsRepeatedIdenticalCalls() async throws {
@@ -220,7 +220,7 @@ final class AgentLoopTests: XCTestCase {    func testATruncatedReplyIsNotMistake
 
         // The third call should have produced a warning instead of a result.
         let lastMessages = provider.calls.last!.0
-        let warnings = lastMessages.filter { $0.role == .tool && $0.toolIsError }
+        let warnings = lastMessages.filter { $0.role == .tool && $0.isError }
         XCTAssertFalse(warnings.isEmpty, "expected the loop guard to inject a warning")
         XCTAssertTrue(warnings.contains { $0.text.contains("without a change") })
     }
@@ -323,7 +323,7 @@ final class AgentLoopTests: XCTestCase {    func testATruncatedReplyIsNotMistake
             ChatMessage(role: .tool, text: "state 2", toolCallID: "b"),
             ChatMessage(role: .user, text: "shot 2", images: [Data([2])]),
         ]
-        let trimmed = loop.trim(messages)
+        let trimmed = loop.trimmedHistory(messages)
         let images = trimmed.filter { !$0.images.isEmpty }
         XCTAssertEqual(images.count, 1)
         XCTAssertEqual(images.first?.text, "shot 2", "the newest screenshot survives")
@@ -353,7 +353,7 @@ final class AgentLoopTests: XCTestCase {    func testATruncatedReplyIsNotMistake
             ChatMessage(role: .tool, text: tree("Telegram", bundle: "ru.keepcoder.Telegram", node: "AXTextArea \"Composer\""), toolCallID: "2"),
             ChatMessage(role: .tool, text: tree("Chrome", bundle: "com.google.Chrome", node: "AXButton \"NewAddress\""), toolCallID: "3"),
         ]
-        let trimmed = loop.trim(messages)
+        let trimmed = loop.trimmedHistory(messages)
         let bodies = trimmed.map(\.text)
         XCTAssertTrue(
             bodies[2].contains("AXTextArea"),
@@ -394,7 +394,7 @@ final class AgentLoopTests: XCTestCase {    func testATruncatedReplyIsNotMistake
             ChatMessage(role: .tool, text: first, toolCallID: "a"),
             ChatMessage(role: .tool, text: second, toolCallID: "b"),
         ]
-        let trimmed = loop.trim(messages)
+        let trimmed = loop.trimmedHistory(messages)
         let trees = trimmed.filter { $0.text.contains("Accessibility tree") }
         XCTAssertEqual(trees.count, 2, "both messages survive")
 
@@ -433,7 +433,7 @@ final class AgentLoopTests: XCTestCase {    func testATruncatedReplyIsNotMistake
                 + 9 AXTextField "Label"
                 """, toolCallID: "b"),
         ]
-        let trimmed = loop.trim(messages)
+        let trimmed = loop.trimmedHistory(messages)
 
         XCTAssertTrue(trimmed[0].text.contains("superseded by a later action"))
         XCTAssertFalse(trimmed[0].text.contains("AXButton \"Confirm\""),
@@ -455,7 +455,7 @@ final class AgentLoopTests: XCTestCase {    func testATruncatedReplyIsNotMistake
             ChatMessage(role: .tool, text: "important output", toolCallID: "a"),
             ChatMessage(role: .user, text: "", images: [Data([1])]),
         ]
-        let trimmed = loop.trim(messages)
+        let trimmed = loop.trimmedHistory(messages)
         XCTAssertTrue(trimmed.contains { $0.text == "important output" })
         XCTAssertTrue(trimmed.allSatisfy { $0.images.isEmpty })
     }

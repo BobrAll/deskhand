@@ -4,9 +4,8 @@ import { SPEECH_BANK } from '@shared/speechBank'
 export const WAIT_STATUS_MS = 1500
 export const WAIT_TIP_MS = 8000
 export const WAIT_LONG_MS = 25000
-export const WAIT_VOICE_COOLDOWN_MS = 45000
 
-export const waitingTips = [
+export const WAITING_TIPS = [
   'Выделите нужный фрагмент перед вопросом — так проще объяснить, что изменить.',
   'Можно попросить объяснить ответ проще или показать конкретный пример.',
   'Длинную задачу удобнее проверять по шагам: сначала план, затем выполнение.',
@@ -16,7 +15,10 @@ export const waitingTips = [
 
 export const waitingPhrases: readonly string[] = SPEECH_BANK.acknowledge.map((line) => line.text)
 
-export function waitingStage(elapsed: number): 'quiet' | 'status' | 'tip' | 'long' {
+/** Which of the waiting rows the card shows, from how long the request has run. */
+export type WaitStage = 'quiet' | 'status' | 'tip' | 'long'
+
+export function waitingStage(elapsed: number): WaitStage {
   if (elapsed >= WAIT_LONG_MS) return 'long'
   if (elapsed >= WAIT_TIP_MS) return 'tip'
   if (elapsed >= WAIT_STATUS_MS) return 'status'

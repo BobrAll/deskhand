@@ -7,40 +7,40 @@
 import { join } from 'node:path'
 import { app, BrowserWindow, screen } from 'electron'
 import {
-  BUBBLE_MAX_WIDTH,
-  BUBBLE_MIN_WIDTH,
-  BUBBLE_NARROW_WIDTH,
-  BUBBLE_VOICE_WIDTH,
-  BUBBLE_WIDTH
+  CARD_MAX_WIDTH,
+  CARD_MIN_WIDTH,
+  CARD_NARROW_WIDTH,
+  CARD_VOICE_WIDTH,
+  CARD_WIDTH
 } from '@shared/metrics'
 import type { OverlayHost } from '../overlay/host'
 import {
   boundsFor,
-  clamp,
   placeAnchor,
   resizeAnchor,
-  type BubbleAnchor
-} from '../bubble'
+  type CardAnchor
+} from '../card'
+import { clamp } from '../util'
 import { denyExternalLinks } from '../denyExternalLinks'
 import { loadPage } from '../pageLoad'
-import { settingsWindows } from './settings'
+import { openAppWindows } from './settings'
 
 export {
   openSettingsWindow,
   openOnboardingWindow,
   closeOnboardingWindow,
   closeSettingsWindow,
-  markSettingsBusy
+  setSettingsHeld
 } from './settings'
 
 /**
- * The overlay is a small bubble next to the cursor, not a window: it appears as a
+ * The overlay is a small card next to the cursor, not a window: it appears as a
  * one-line field, and grows downwards (or upwards, when the pointer is near the
  * bottom of the display) only as an answer is streamed into it.
  *
- * Its three widths live in `@shared/metrics` because the renderer needs the very
- * same numbers to decide where a line wraps. Height and the placement gap are
- * main's business only, so they stay here.
+ * Its widths live in `@shared/metrics` because the renderer needs the very same
+ * numbers to decide where a line wraps and how wide a card to ask for. Height and
+ * the placement gap are main's business only, so they stay here.
  */
 const OVERLAY_MIN_HEIGHT = 31
 const OVERLAY_MAX_HEIGHT = 520
@@ -60,16 +60,23 @@ let overlayVisible = false
  */
 let overlayReady = false
 /** Whether the card is currently in its thin, see-through "drawing" state. */
-let drawing = false
+let drawingActive = false
 /** True while a voice turn shows bare bars instead of the card. */
-let voice = false
+let voiceActive = false
+/**
+ * Whether the card is currently transparent to input (an agent plan is running).
+ * Tracked so `setIgnoreMouseEvents` is not called on every frame — it is cheap,
+ * but toggling it re-enters the window server and can drop a click that was
+ * already in flight.
+ */
+let passthroughActive = false
 
 /**
  * One place decides what the *window* contributes to the picture.
  *
  * A voice turn is the strict case: the page draws a few pixels of bars and
  * nothing else, so the window must add nothing at all. Both bits of native chrome
- * are therefore removed while `voice` is on:
+ * are therefore removed while `voiceActive` is on:
  *
  * - vibrancy — a blurred rectangle behind what is meant to be bare bars;
  * - the native window shadow — AppKit draws it around the window's *rectangle*,
@@ -84,13 +91,13 @@ let voice = false
 function applyWindowChrome(): void {
   const win = overlayWindow
   if (!win || win.isDestroyed()) return
-  win.setVibrancy(drawing || voice ? null : 'under-window')
-  win.setHasShadow(!voice)
+  win.setVibrancy(drawingActive || voiceActive ? null : 'under-window')
+  win.setHasShadow(!voiceActive)
 }
 
 function createOverlayWindow(): BrowserWindow {
   const win = new BrowserWindow({
-    width: BUBBLE_NARROW_WIDTH,
+    width: CARD_NARROW_WIDTH,
     height: OVERLAY_MIN_HEIGHT,
     show: false,
     frame: false,
@@ -104,20 +111,20 @@ function createOverlayWindow(): BrowserWindow {
     acceptFirstMouse: true,
     roundedCorners: true,
     // The window is exactly the card (the renderer keeps no transparent margin),
-    // so both the shadow and the blur below describe the rounded bubble and not
+    // so both the shadow and the blur below describe the rounded card and not
     // a rectangle around it. An earlier version had an 8px transparent margin
     // for a CSS shadow, and macOS drew its shadow around that whole rectangle —
-    // which is what read as a second, translucent pane under the bubble.
+    // which is what read as a second, translucent pane under the card.
     //
     // These two follow the flags rather than a hardcoded "card": a window can be
     // *created* by the first voice press (when the feature was just switched on
     // and the prewarm has not run), and a fresh window with glass and a shadow
     // would put a panel behind the bars for the whole turn.
-    hasShadow: !voice,
+    hasShadow: !voiceActive,
     // Real frosting: `backdrop-filter` in a transparent window only has the
     // page's own (empty) backdrop to sample, so the glass would just show the
     // app behind it unblurred. The vibrancy view blurs the desktop instead.
-    vibrancy: drawing || voice ? undefined : 'under-window',
+    vibrancy: drawingActive || voiceActive ? undefined : 'under-window',
     visualEffectState: 'active',
     webPreferences: {
       preload,
@@ -149,10 +156,11 @@ function createOverlayWindow(): BrowserWindow {
     overlayReady = false
     overlayVisible = false
     // The window is gone and nothing is painted or spoken through it any more.
-    // Keeping `voice`/`drawing` would make the *next* creation bare before any
-    // turn asked for it; the next session starts from the resting card state.
-    drawing = false
-    voice = false
+    // Keeping `voiceActive`/`drawingActive` would make the *next* creation bare
+    // before any turn asked for it; the next session starts from the resting
+    // card state.
+    drawingActive = false
+    voiceActive = false
   })
 
   denyExternalLinks(win)
@@ -178,7 +186,7 @@ function createOverlayWindow(): BrowserWindow {
 }
 
 /** The anchor of the card currently on screen, if any. */
-let anchor: BubbleAnchor | null = null
+let anchor: CardAnchor | null = null
 // Native animation may still be between frames when the next letter arrives.
 // Placement must use the last destination, not mistake that frame for a drag.
 let resizeBounds: Electron.Rectangle | null = null
@@ -196,7 +204,7 @@ function positionOverlay(win: BrowserWindow, height: number, width: number): voi
 }
 
 /**
- * Re-applies the remembered anchor to a new size, or places the bubble for the
+ * Re-applies the remembered anchor to a new size, or places the card for the
  * first time when there is no anchor yet.
  */
 function resizeAtAnchor(win: BrowserWindow, height: number, width: number, pin = false): void {
@@ -204,14 +212,21 @@ function resizeAtAnchor(win: BrowserWindow, height: number, width: number, pin =
     positionOverlay(win, height, width)
     return
   }
-  anchor = resizeAnchor(anchor, resizeBounds ?? win.getBounds(), height, width, workAreaAt, pin)
+  anchor = resizeAnchor({
+    anchor,
+    bounds: resizeBounds ?? win.getBounds(),
+    height,
+    width,
+    workAreaAt,
+    pin
+  })
   resizeBounds = boundsFor(anchor, height, width)
   // Native animation is right for a card that grows as text arrives — one small
   // step, eased. It is wrong for a drag: macOS animates every `setBounds` over
   // its own duration, so a hundred frames a second each get their own easing and
   // the window lags behind the hand in a soft rubber band. A dragged edge has to
   // land exactly where the pointer is, this frame.
-  win.setBounds(resizeBounds, !pin && !voice && overlayVisible)
+  win.setBounds(resizeBounds, !pin && !voiceActive && overlayVisible)
 }
 
 /**
@@ -226,16 +241,14 @@ let pendingShow: { height: number; width: number; activate: boolean } | null = n
 function performShow(height: number, width: number, activate: boolean): void {
   const win = overlayWindow
   if (!win || win.isDestroyed()) return
-  /**
-   * A card that is already on screen keeps its own size.
-   *
-   * Both numbers passed here are guesses: the folded card is 31 points tall until
-   * the renderer lays itself out, and 112 wide until the user types something. The
-   * renderer reports the real size a frame later and resizes the window itself, so
-   * re-applying a guess over a card that is already being typed into would shrink
-   * it back to the empty pill between two keystrokes. Keep the position when the
-   * visible card takes focus after context collection.
-   */
+  // A card that is already on screen keeps its own size.
+  //
+  // Both numbers passed here are guesses: the folded card is 31 points tall until
+  // the renderer lays itself out, and 112 wide until the user types something. The
+  // renderer reports the real size a frame later and resizes the window itself, so
+  // re-applying a guess over a card that is already being typed into would shrink
+  // it back to the empty pill between two keystrokes. Keep the position when the
+  // visible card takes focus after context collection.
   const current = overlayVisible ? win.getBounds() : null
   const focusExisting = activate && current && win.isVisible()
   if (!focusExisting) {
@@ -262,10 +275,10 @@ function performShow(height: number, width: number, activate: boolean): void {
   // any window does — that is the behaviour the panel had before it started
   // hanging over everything. The one exception is a running agent plan, and that
   // exception is decided in `setPassthrough`, not here: the plan presses things in
-  // a window that would otherwise cover the card. `passthrough` is read instead
-  // of assumed so a show arriving mid-plan cannot drop the card behind the app
-  // the plan is working in.
-  win.setAlwaysOnTop(passthrough, 'floating')
+  // a window that would otherwise cover the card. `passthroughActive` is read
+  // instead of assumed so a show arriving mid-plan cannot drop the card behind
+  // the app the plan is working in.
+  win.setAlwaysOnTop(passthroughActive, 'floating')
   win.focus()
   try {
     app.focus({ steal: true })
@@ -275,7 +288,7 @@ function performShow(height: number, width: number, activate: boolean): void {
 }
 
 /**
- * Shows the bubble at the given size, optionally without taking focus.
+ * Shows the card at the given size, optionally without taking focus.
  *
  * The inactive path exists for push-to-talk. The bars have to be on screen
  * immediately, but `collectContext` still has to read the app the user is
@@ -295,10 +308,10 @@ function presentOverlay(height: number, width: number, activate: boolean): void 
   // default narrow width, which would leave the invisible window 32 points wider
   // than the few pixels it paints. That extra strip is invisible but still
   // belongs to the window, so it sits between the pointer and whatever is under
-  // it. The renderer asks for `BUBBLE_VOICE_WIDTH` throughout the turn; this is
+  // it. The renderer asks for `CARD_VOICE_WIDTH` throughout the turn; this is
   // the same number applied at the moment the window is actually shown.
   const safeWidth = Math.round(
-    clamp(voice ? BUBBLE_VOICE_WIDTH : width, BUBBLE_MIN_WIDTH, BUBBLE_WIDTH)
+    clamp(voiceActive ? CARD_VOICE_WIDTH : width, CARD_MIN_WIDTH, CARD_WIDTH)
   )
 
   if (!overlayWindow) {
@@ -321,6 +334,15 @@ function presentOverlay(height: number, width: number, activate: boolean): void 
   performShow(safeHeight, safeWidth, activate)
 }
 
+/**
+ * Drops the floating level a running plan raised, so the card goes back to being
+ * an ordinary window. Called when the plan ends and when the card is hidden.
+ */
+function clearAlwaysOnTop(): void {
+  const win = overlayWindow
+  if (win && !win.isDestroyed()) win.setAlwaysOnTop(false)
+}
+
 export const overlayHost: OverlayHost = {
   /**
    * Creates the overlay window without showing it.
@@ -337,22 +359,22 @@ export const overlayHost: OverlayHost = {
     overlayWindow = createOverlayWindow()
   },
 
-  show(height: number, width = BUBBLE_NARROW_WIDTH): void {
+  show(height: number, width = CARD_NARROW_WIDTH): void {
     presentOverlay(height, width, true)
   },
 
-  showInactive(height: number, width = BUBBLE_NARROW_WIDTH): void {
+  showInactive(height: number, width = CARD_NARROW_WIDTH): void {
     presentOverlay(height, width, false)
   },
 
-  resize(height: number, width = BUBBLE_WIDTH, pin = false): void {
+  resize(height: number, width = CARD_WIDTH, pin = false): void {
     const win = overlayWindow
     if (!win || win.isDestroyed()) return
     const safeHeight = Math.round(clamp(height, OVERLAY_MIN_HEIGHT, OVERLAY_MAX_HEIGHT))
     // The user's own width may exceed what content is allowed to ask for: a
     // dragged card is a person's decision, and clamping it back to the content
     // cap would make the drag spring back under the hand.
-    const safeWidth = Math.round(clamp(width, BUBBLE_MIN_WIDTH, BUBBLE_MAX_WIDTH))
+    const safeWidth = Math.round(clamp(width, CARD_MIN_WIDTH, CARD_MAX_WIDTH))
     const bounds = resizeBounds ?? win.getBounds()
     if (bounds.height === safeHeight && bounds.width === safeWidth && !pin) return
     resizeAtAnchor(win, safeHeight, safeWidth, pin)
@@ -368,12 +390,12 @@ export const overlayHost: OverlayHost = {
    * of the region itself. Removing it while shapes are up is what makes the
    * transparency actually reveal the target.
    *
-   * Guarded by `drawing` because `setVibrancy` rebuilds a native view: calling it
-   * on every redraw would flicker the card.
+   * Guarded by `drawingActive` because `setVibrancy` rebuilds a native view:
+   * calling it on every redraw would flicker the card.
    */
   setDrawing(active: boolean): void {
-    if (drawing === active) return
-    drawing = active
+    if (drawingActive === active) return
+    drawingActive = active
     applyWindowChrome()
   },
 
@@ -384,8 +406,8 @@ export const overlayHost: OverlayHost = {
    * `applyWindowChrome`. The bar animation itself is unchanged.
    */
   setVoice(active: boolean): void {
-    if (voice !== active) {
-      voice = active
+    if (voiceActive !== active) {
+      voiceActive = active
       applyWindowChrome()
     }
   },
@@ -406,8 +428,8 @@ export const overlayHost: OverlayHost = {
   setPassthrough(active: boolean): void {
     const win = overlayWindow
     if (!win || win.isDestroyed()) return
-    if (passthrough === active) return
-    passthrough = active
+    if (passthroughActive === active) return
+    passthroughActive = active
     win.setIgnoreMouseEvents(active, { forward: true })
     // The floating level belongs to the run and to nothing else. While a plan
     // presses things in another app, the card reports its steps over a window it
@@ -431,26 +453,24 @@ export const overlayHost: OverlayHost = {
   hide(): void {
     // A hidden card must never stay click-through: the next session opens with a
     // panel that expects the mouse.
-    if (passthrough) {
-      passthrough = false
+    if (passthroughActive) {
+      passthroughActive = false
       const win = overlayWindow
       if (win && !win.isDestroyed()) win.setIgnoreMouseEvents(false)
     }
     // The floating level goes with the card: a hidden window that was left pinned
     // would meet the user above every window on the next press. Outside the
-    // `passthrough` branch on purpose — a plan can be stopped in a path that never
-    // clears the flag (a card closed mid-run), and the level must not survive that.
-    {
-      const win = overlayWindow
-      if (win && !win.isDestroyed()) win.setAlwaysOnTop(false)
-    }
+    // `passthroughActive` branch on purpose — a plan can be stopped in a path
+    // that never clears the flag (a card closed mid-run), and the level must not
+    // survive that.
+    clearAlwaysOnTop()
     overlayVisible = false
     // A show still waiting for the first paint belongs to the turn that just
     // ended: letting it through would put the card back on screen after it was
     // closed (Escape during the context collection is exactly that case).
     pendingShow = null
     // The next press asks for a fresh anchor: the pointer has almost certainly
-    // moved since this bubble appeared.
+    // moved since this card appeared.
     anchor = null
     resizeBounds = null
     if (overlayWindow && !overlayWindow.isDestroyed()) overlayWindow.hide()
@@ -462,21 +482,14 @@ export const overlayHost: OverlayHost = {
 }
 
 /**
- * Whether the card is currently transparent to input (an agent plan is running).
- * Tracked so `setIgnoreMouseEvents` is not called on every frame — it is cheap,
- * but toggling it re-enters the window server and can drop a click that was
- * already in flight.
- */
-let passthrough = false
-
-/**
  * Brings the most relevant open window back to the foreground after the app is
- * re-activated. With the tray-only (accessory) activation policy macOS can leave
- * windows hidden behind other apps, so the user "loses" them after Alt+Tab; this
- * makes sure an already-open window is shown again rather than silently missing.
+ * re-activated. macOS can leave a window behind other apps — a card shown without
+ * focus, a settings window covered by the app it was opened from — so the user
+ * "loses" it after Alt+Tab; this makes sure an already-open window is shown again
+ * rather than silently missing.
  */
 export function showActiveWindow(): void {
-  const candidates = [overlayWindow, ...settingsWindows()]
+  const candidates = [overlayWindow, ...openAppWindows()]
   for (const win of candidates) {
     if (win && !win.isDestroyed() && win.isVisible()) {
       win.show()

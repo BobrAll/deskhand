@@ -10,7 +10,7 @@
 - Fix the underlying capability or decision rule. Use specific apps, sites, and prompts as regression cases. Keep names and aliases out of runtime routing and tool instructions.
 - Use web search for public information, browser navigation for an explicitly requested destination, and screen input for an observed interface.
 - After the active app changes, confirm which app received input and verify the result on a fresh screen before continuing.
-- Log timings and tool decisions. Exclude queries, typed content, and screenshots.
+- Log timings and tool decisions. The aggregate trace (`agent-trace.jsonl`) excludes queries, typed content and screenshots; the per-run trace (`agent-runs/`, `agent-dialogs/`) keeps the exact request bodies on purpose, so it is gitignored and never shared.
 
 ## Sidecar contracts
 
@@ -26,3 +26,4 @@
 
 - Build the sidecar with `npm run build:agent` (universal) or `AGENT_ARCH=arm64 npm run build:agent`.
 - Both suites must pass for code changes. Run `npm test` from the root and `swift test` from `native/deskhand`.
+- `src/main/agent/timing.integration.test.ts` and `trace.integration.test.ts` need a built binary *and* a granted Accessibility permission: the agent checks the grant before it accepts a run, so without it they fail with `error` instead of a stream. The wire contract still has `src/main/agent/sidecar.test.ts`, which replays a recorded transcript and needs neither.

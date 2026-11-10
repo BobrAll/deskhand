@@ -51,7 +51,7 @@ describe('parseAnnotationLine: kinds', () => {
 
   it('treats an unknown first token as the start of the coordinates', () => {
     // "big" is not a kind, so it is not consumed and the numbers are never found.
-    expect(parseAnnotationLine('@point big 0.1 0.2')).toEqual({ text: '', annotations: [] })
+    expect(parseAnnotationLine('@point big 0.1 0.2')).toEqual({ annotations: [] })
   })
 })
 
@@ -144,25 +144,20 @@ describe('parseAnnotationLine: numbers', () => {
   })
 
   it('swallows garbage coordinates instead of drawing', () => {
-    expect(parseAnnotationLine('@point')).toEqual({ text: '', annotations: [] })
-    expect(parseAnnotationLine('@point arrow')).toEqual({ text: '', annotations: [] })
-    expect(parseAnnotationLine('@point 0.5')).toEqual({ text: '', annotations: [] })
-    expect(parseAnnotationLine('@point arrow abc def')).toEqual({ text: '', annotations: [] })
-    expect(parseAnnotationLine('@point arrow 0.1 abc 0.3 0.4')).toEqual({
-      text: '',
-      annotations: []
-    })
+    expect(parseAnnotationLine('@point')).toEqual({ annotations: [] })
+    expect(parseAnnotationLine('@point arrow')).toEqual({ annotations: [] })
+    expect(parseAnnotationLine('@point 0.5')).toEqual({ annotations: [] })
+    expect(parseAnnotationLine('@point arrow abc def')).toEqual({ annotations: [] })
+    expect(parseAnnotationLine('@point arrow 0.1 abc 0.3 0.4')).toEqual({ annotations: [] })
   })
 
   it('swallows a degenerate shape for every kind except circle', () => {
     for (const kind of ['box', 'arrow', 'underline']) {
       expect(parseAnnotationLine(`@point ${kind} 0.5 0.5 0.5 0.5`), kind).toEqual({
-        text: '',
         annotations: []
       })
       // Exactly at the MIN_SIDE threshold (0.004) is still degenerate.
       expect(parseAnnotationLine(`@point ${kind} 0.5 0.5 0.503 0.503`), kind).toEqual({
-        text: '',
         annotations: []
       })
     }
@@ -221,10 +216,6 @@ describe('parseAnnotationLine: labels', () => {
     expect(
       parseAnnotationLine(`@point arrow 0.1 0.2 0.3 0.4 ${'я'.repeat(90)}`)?.annotations[0].label
     ).toBe('я'.repeat(90))
-  })
-
-  it('never returns protocol text to show in the answer', () => {
-    expect(parseAnnotationLine('@point arrow 0.1 0.2 0.3 0.4 «x»')?.text).toBe('')
   })
 })
 

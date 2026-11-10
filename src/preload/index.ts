@@ -34,11 +34,20 @@ function subscribe<T>(channel: string, handler: (payload: T) => void): Unsubscri
   }
 }
 
+/**
+ * A channel that is only a signal: main posts it to say "now" and sends nothing
+ * with it. Its own helper so the payload type does not have to be faked with
+ * `null` at the call site.
+ */
+function subscribeSignal(channel: string, handler: () => void): Unsubscribe {
+  return subscribe<undefined>(channel, () => handler())
+}
+
 const api: DeskhandApi = {
   overlay: {
     getState: () => ipcRenderer.invoke(CH.overlay.getState) as Promise<OverlayState | null>,
     onState: (handler) => subscribe<OverlayState>(CH.overlay.state, handler),
-    onPreparing: (handler) => subscribe<null>(CH.overlay.preparing, () => handler()),
+    onPreparing: (handler) => subscribeSignal(CH.overlay.preparing, handler),
     onContextUpdate: (handler) => subscribe<ContextSnapshot>(CH.overlay.contextUpdate, handler),
     onStream: (handler) => subscribe<StreamEvent>(CH.overlay.stream, handler),
     onAnnotations: (handler) => subscribe<AnnotationsEvent>(CH.overlay.annotations, handler),
@@ -84,7 +93,7 @@ const api: DeskhandApi = {
     pickApp: () => ipcRenderer.invoke(CH.settings.pickApp),
     open: () => ipcRenderer.send(CH.settings.open),
     close: () => ipcRenderer.send(CH.settings.close),
-    hold: (busy: boolean) => ipcRenderer.send(CH.settings.hold, busy),
+    hold: (held: boolean) => ipcRenderer.send(CH.settings.hold, held),
     recording: (active: boolean) => ipcRenderer.send(CH.settings.recording, active)
   },
   onboarding: {

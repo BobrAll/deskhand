@@ -29,25 +29,19 @@ export const PROVIDERS: ProviderInfo[] = [
   {
     id: 'openai',
     label: 'OpenAI',
-    defaultModel: 'gpt-4o-mini',
     defaultBaseUrl: 'https://api.openai.com/v1',
-    supportsVision: true,
     keyUrl: 'https://platform.openai.com/api-keys'
   },
   {
     id: 'openrouter',
     label: 'OpenRouter',
-    defaultModel: 'openai/gpt-4o-mini',
     defaultBaseUrl: 'https://openrouter.ai/api/v1',
-    supportsVision: true,
     keyUrl: 'https://openrouter.ai/keys'
   },
   {
     id: 'anthropic',
     label: 'Anthropic',
-    defaultModel: 'claude-sonnet-4-5',
     defaultBaseUrl: 'https://api.anthropic.com/v1',
-    supportsVision: true,
     keyUrl: 'https://console.anthropic.com/settings/keys'
   }
 ]
@@ -56,20 +50,19 @@ export function providerInfo(id: string): ProviderInfo | undefined {
   return PROVIDERS.find((provider) => provider.id === id)
 }
 
-export const OPENAI_DEFAULT_SEARCH_MODEL = 'gpt-5-search-api'
+type SearchModelDefaults = Pick<AppSettings, 'provider' | 'models'>
 
-type SearchModelDefaults = Pick<AppSettings, 'provider' | 'models' | 'baseUrls'>
-
-export function defaultSearchModel(settings: SearchModelDefaults): string {
-  const { provider } = settings
-  if (provider === 'openai' && !isPlusVibeApi(resolveBaseUrl(provider, settings.baseUrls[provider]))) {
-    return OPENAI_DEFAULT_SEARCH_MODEL
-  }
-  return settings.models[provider].trim() || providerInfo(provider)?.defaultModel || ''
+/**
+ * What web search uses when the user left the search field empty: the same model
+ * they chose for chat. There is no built-in search model — a name shipped in the
+ * build would be a guess about a provider account we cannot see.
+ */
+export function searchModelFallback(settings: SearchModelDefaults): string {
+  return settings.models[settings.provider].trim()
 }
 
 export function resolveSearchModel(settings: SearchModelDefaults & Pick<AppSettings, 'searchModels'>): string {
-  return settings.searchModels[settings.provider].trim() || defaultSearchModel(settings)
+  return settings.searchModels[settings.provider].trim() || searchModelFallback(settings)
 }
 
 /**
@@ -100,14 +93,17 @@ export function resolveBaseUrl(provider: ProviderId, configured: string | undefi
   return normalizeBaseUrl(configured) || providerInfo(provider)?.defaultBaseUrl || ''
 }
 
+/** The gateway's exact hosts: membership is a string match, not a suffix match. */
+const PLUSVIBE_HOSTS = new Set(['plusvibeapi.ru', 'gw.plusvibeapi.ru', 'plusvibeapi.com'])
+
 export function isPlusVibeApi(baseUrl: string): boolean {
   if (!URL.canParse(baseUrl)) return false
   const { hostname } = new URL(baseUrl)
-  return hostname === 'plusvibeapi.ru' || hostname === 'gw.plusvibeapi.ru' || hostname === 'plusvibeapi.com'
+  return PLUSVIBE_HOSTS.has(hostname)
 }
 
 /**
- * The local whisper models the app can download. Sizes are the exact sizes of the
+ * The local whisper models the app can download. Sizes are the real sizes of the
  * Hugging Face files, because the settings window shows them before a download
  * that may take minutes on a slow line.
  */
@@ -168,6 +164,11 @@ export const WHISPER_MODELS: WhisperModelMeta[] = [
   }
 ]
 
+/**
+ * Test seam: production resolves ids through `voiceModel`; this whisper-only
+ * lookup exists for `defaults-guards.test.ts` to assert that every catalog id
+ * resolves and an unknown id does not.
+ */
 export function whisperModel(id: string): WhisperModelMeta | undefined {
   return WHISPER_MODELS.find((model) => model.id === id)
 }
@@ -226,8 +227,8 @@ export const DEFAULT_VOICE: VoiceSettings = {
   // duplicates what the user is looking at, and on a long answer the voice
   // becomes the slowest part of the turn. The hands-free case is real but
   // narrower than the "every voice question is spoken back" default suggests,
-  // so it is opt-in. `system` is what the toggle turns on, because it always
-  // works: no key, no network, no cost.
+  // so it is opt-in. `system` is the mode to pick once it is wanted, because it
+  // always works: no key, no network, no cost.
   answerVoice: 'off',
   agentFeedback: true,
   minDurationMs: 300,
@@ -310,9 +311,9 @@ export const AGENT_MIN_OUTPUT_TOKENS = 4096
 export const DEFAULT_SETTINGS: AppSettings = {
   provider: 'openai',
   models: {
-    openrouter: 'openai/gpt-4o-mini',
-    openai: 'gpt-4o-mini',
-    anthropic: 'claude-sonnet-4-5'
+    openrouter: '',
+    openai: '',
+    anthropic: ''
   },
   searchModels: { openrouter: '', openai: '', anthropic: '' },
   baseUrls: {
@@ -340,8 +341,22 @@ export const DEFAULT_SETTINGS: AppSettings = {
   agent: DEFAULT_AGENT
 }
 
-const MIN_SIDE = 480
-const MAX_SIDE = 2400
+/**
+ * The range every numeric setting is kept inside.
+ *
+ * Two processes need the same numbers: `normalizeSettings` clamps what reaches
+ * the store, and the settings pane offers the same range in its sliders and
+ * number field. A second copy is how a slider ends up able to produce a value the
+ * store then quietly replaces, so both sides read this object. The values are
+ * inclusive; a step size is a property of the control, not of the setting, and
+ * stays with the control.
+ */
+export const SETTINGS_BOUNDS = {
+  screenshotMaxSide: { min: 480, max: 2400 },
+  screenshotQuality: { min: 30, max: 95 },
+  temperature: { min: 0, max: 2 },
+  maxTokens: { min: 64, max: 8192 }
+} as const
 
 function clamp(value: unknown, min: number, max: number, fallback: number): number {
   const num = typeof value === 'number' && Number.isFinite(value) ? value : fallback
@@ -357,28 +372,49 @@ function sanitizeStringList(input: unknown, fallback: string[]): string[] {
   return Array.from(new Set(list))
 }
 
+/** An id that is in the catalog, or the shipped model — never a name we cannot resolve. */
+function sanitizeVoiceModel(value: unknown): string {
+  return voiceModel(String(value ?? ''))?.id ?? DEFAULT_VOICE.model
+}
+
+/** A short language code, lower-cased; `auto` passes through like any other. */
+function sanitizeLanguage(value: unknown): string {
+  return typeof value === 'string' && value.trim()
+    ? value.trim().toLowerCase().slice(0, 8)
+    : DEFAULT_VOICE.language
+}
+
+function sanitizeHotkey(value: unknown): string {
+  return typeof value === 'string' && value.trim() ? value.trim() : DEFAULT_VOICE.hotkey
+}
+
+/** `dictate` is the only second action; anything else sends the transcript to the model. */
+function sanitizeVoiceAction(value: unknown): VoiceSettings['action'] {
+  return value === 'dictate' ? 'dictate' : 'command'
+}
+
+/** Milliseconds, rounded and kept inside the window the field may hold. */
+function sanitizeDuration(value: unknown, min: number, max: number, fallback: number): number {
+  return Math.round(clamp(value, min, max, fallback))
+}
+
 function sanitizeVoice(input: unknown): VoiceSettings {
   const raw = (typeof input === 'object' && input !== null ? input : {}) as Partial<VoiceSettings> & { dialogue?: unknown }
-  const model = voiceModel(String(raw.model ?? ''))?.id ?? DEFAULT_VOICE.model
-  const language =
-    typeof raw.language === 'string' && raw.language.trim()
-      ? raw.language.trim().toLowerCase().slice(0, 8)
-      : DEFAULT_VOICE.language
   return {
     enabled: typeof raw.enabled === 'boolean' ? raw.enabled : DEFAULT_VOICE.enabled,
-    hotkey:
-      typeof raw.hotkey === 'string' && raw.hotkey.trim()
-        ? raw.hotkey.trim()
-        : DEFAULT_VOICE.hotkey,
-    model,
-    language,
-    action: raw.action === 'dictate' ? 'dictate' : 'command',
+    hotkey: sanitizeHotkey(raw.hotkey),
+    model: sanitizeVoiceModel(raw.model),
+    language: sanitizeLanguage(raw.language),
+    action: sanitizeVoiceAction(raw.action),
     answerVoice: sanitizeAnswerVoice(raw),
     agentFeedback: raw.agentFeedback !== false,
     autoSend: typeof raw.autoSend === 'boolean' ? raw.autoSend : DEFAULT_VOICE.autoSend,
-    minDurationMs: Math.round(clamp(raw.minDurationMs, 0, 5_000, DEFAULT_VOICE.minDurationMs)),
-    maxDurationMs: Math.round(
-      clamp(raw.maxDurationMs, 1_000, 10 * 60_000, DEFAULT_VOICE.maxDurationMs)
+    minDurationMs: sanitizeDuration(raw.minDurationMs, 0, 5_000, DEFAULT_VOICE.minDurationMs),
+    maxDurationMs: sanitizeDuration(
+      raw.maxDurationMs,
+      1_000,
+      10 * 60_000,
+      DEFAULT_VOICE.maxDurationMs
     )
   }
 }
@@ -411,13 +447,16 @@ function sanitizeTts(input: unknown): TtsSettings {
   }
 }
 
+/** Approvals are appended forever and persisted with settings; past this the oldest are dropped. */
+const MAX_REMEMBERED_APPROVALS = 256
+
 function sanitizeAgent(input: unknown): AgentSettings {
   const raw = (typeof input === 'object' && input !== null ? input : {}) as Partial<AgentSettings>
   const flag = (value: unknown, fallback: boolean): boolean =>
     typeof value === 'boolean' ? value : fallback
   return {
     rememberedApprovals: Array.isArray(raw.rememberedApprovals)
-      ? [...new Set(raw.rememberedApprovals.filter(value => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value)))].slice(-256)
+      ? [...new Set(raw.rememberedApprovals.filter(value => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value)))].slice(-MAX_REMEMBERED_APPROVALS)
       : [],
     enabled: flag(raw.enabled, DEFAULT_AGENT.enabled),
     // Only the floor is enforced: a typo cannot produce a zero-step run, but the
@@ -451,8 +490,18 @@ export function normalizeSettings(input: unknown): AppSettings {
       anthropic: normalizeBaseUrl(baseUrls.anthropic)
     },
     extraBody: normalizeExtraBody(raw.extraBody),
-    temperature: clamp(raw.temperature, 0, 2, DEFAULT_SETTINGS.temperature),
-    maxTokens: Math.round(clamp(raw.maxTokens, 64, 8192, DEFAULT_SETTINGS.maxTokens)),
+    temperature: clamp(
+      raw.temperature,
+      SETTINGS_BOUNDS.temperature.min,
+      SETTINGS_BOUNDS.temperature.max,
+      DEFAULT_SETTINGS.temperature
+    ),
+    maxTokens: Math.round(clamp(
+      raw.maxTokens,
+      SETTINGS_BOUNDS.maxTokens.min,
+      SETTINGS_BOUNDS.maxTokens.max,
+      DEFAULT_SETTINGS.maxTokens
+    )),
     systemPrompt:
       typeof raw.systemPrompt === 'string' && raw.systemPrompt.trim()
         ? raw.systemPrompt
@@ -463,10 +512,18 @@ export function normalizeSettings(input: unknown): AppSettings {
       typeof raw.captureScreenshotByDefault === 'boolean'
         ? raw.captureScreenshotByDefault
         : DEFAULT_SETTINGS.captureScreenshotByDefault,
-    screenshotMaxSide: Math.round(
-      clamp(raw.screenshotMaxSide, MIN_SIDE, MAX_SIDE, DEFAULT_SETTINGS.screenshotMaxSide)
-    ),
-    screenshotQuality: Math.round(clamp(raw.screenshotQuality, 30, 95, DEFAULT_SETTINGS.screenshotQuality)),
+    screenshotMaxSide: Math.round(clamp(
+      raw.screenshotMaxSide,
+      SETTINGS_BOUNDS.screenshotMaxSide.min,
+      SETTINGS_BOUNDS.screenshotMaxSide.max,
+      DEFAULT_SETTINGS.screenshotMaxSide
+    )),
+    screenshotQuality: Math.round(clamp(
+      raw.screenshotQuality,
+      SETTINGS_BOUNDS.screenshotQuality.min,
+      SETTINGS_BOUNDS.screenshotQuality.max,
+      DEFAULT_SETTINGS.screenshotQuality
+    )),
     excludedApps: sanitizeStringList(raw.excludedApps, DEFAULT_EXCLUDED_APPS),
     rememberConversation: typeof raw.rememberConversation === 'boolean'
       ? raw.rememberConversation
@@ -524,14 +581,4 @@ export function parseExtraBody(text: string | undefined): Record<string, unknown
   return Object.fromEntries(
     Object.entries(value as Record<string, unknown>).filter(([key]) => !RESERVED_BODY_FIELDS.has(key))
   )
-}
-
-/** Models that are known to reject image input; used for the vision warning. */
-export function modelSupportsVision(provider: ProviderId, model: string): boolean {
-  const info = providerInfo(provider)
-  if (!info) return false
-  if (provider !== 'openrouter') return info.supportsVision
-  const name = model.toLowerCase()
-  const textOnly = ['o1-mini', 'o3-mini', 'deepseek', 'mistral-7b', 'llama-3.1-8b']
-  return !textOnly.some((needle) => name.includes(needle))
 }

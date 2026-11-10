@@ -49,7 +49,7 @@ vi.mock('../util', async (importOriginal) => {
   return { ...actual, delay }
 })
 
-import { MAX_SELECTION_CHARS, readSelection } from './selection'
+import { MAX_SELECTED_TEXT_CHARS, readSelection } from './selection'
 
 const snapshot = { text: 'старый буфер', html: '', rtf: '', bookmark: null, png: null }
 
@@ -146,20 +146,20 @@ describe('readSelection: no selection', () => {
 
 describe('readSelection: the size limit', () => {
   it('truncates a long selection at 24 000 characters', async () => {
-    state.reads = ['я'.repeat(MAX_SELECTION_CHARS + 10)]
+    state.reads = ['я'.repeat(MAX_SELECTED_TEXT_CHARS + 10)]
 
     const selection = await readSelection()
 
-    expect(selection?.text).toHaveLength(MAX_SELECTION_CHARS)
+    expect(selection?.text).toHaveLength(MAX_SELECTED_TEXT_CHARS)
     expect(selection?.truncated).toBe(true)
   })
 
   it('keeps a selection of exactly the limit untruncated', async () => {
-    state.reads = ['я'.repeat(MAX_SELECTION_CHARS)]
+    state.reads = ['я'.repeat(MAX_SELECTED_TEXT_CHARS)]
 
     const selection = await readSelection()
 
-    expect(selection?.text).toHaveLength(MAX_SELECTION_CHARS)
+    expect(selection?.text).toHaveLength(MAX_SELECTED_TEXT_CHARS)
     expect(selection?.truncated).toBe(false)
   })
 })

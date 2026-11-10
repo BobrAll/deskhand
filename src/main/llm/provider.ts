@@ -34,12 +34,23 @@ export interface StreamChunk {
 export class ProviderError extends Error {
   readonly retryable: boolean
   readonly status: number | undefined
+  /**
+   * The provider refused the image, not the request.
+   *
+   * Only ever set by `toProviderError`, from the provider's own words: a 400 or
+   * 422 whose detail talks about images or multimodality. It is a separate flag
+   * rather than a message match at the call site because the message is
+   * localised, and matching on a translated string is how the check silently
+   * stops working.
+   */
+  readonly imageRejected: boolean
 
-  constructor(message: string, retryable: boolean, status?: number) {
+  constructor(message: string, retryable: boolean, status?: number, imageRejected = false) {
     super(message)
     this.name = 'ProviderError'
     this.retryable = retryable
     this.status = status
+    this.imageRejected = imageRejected
   }
 }
 

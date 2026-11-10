@@ -5,16 +5,18 @@
 
 import { BrowserWindow, screen } from 'electron'
 import { CH } from '@shared/ipc'
-import type { AgentCursorFrame, AgentEvent, ScreenRect } from '@shared/types'
+import type { AgentCursorFrame, AgentCursorPhase, AgentEvent, ScreenRect } from '@shared/types'
 import { trace } from './trace'
-import { createLayerWindow } from '../layerWindow'
+import {
+  createLayerWindow,
+  ensureLayerWindow,
+  placeLayer,
+  type LayerWindowState
+} from '../layerWindow'
 
 /** How long the renderer's fade-out runs before the window is actually hidden. */
-const EXIT_MS = 160
+const CURSOR_FADE_MS = 160
 const SUCCESS_MS = 1100
-
-/** How long to wait for the page before painting anyway. */
-const LOAD_TIMEOUT_MS = 1500
 
 /**
  * Follow rate. 16 ms is roughly one display frame: the helper warps the pointer
@@ -32,8 +34,10 @@ const CAPTION_GAP = 26
  */
 const CAPTION_ROOM = CAPTION_GAP + 38
 
-let win: BrowserWindow | null = null
-let loaded: Promise<void> | null = null
+/** How long the pause between two plans has to last before the caption changes. */
+const WAIT_LABEL_MS = 700
+
+const layer: LayerWindowState = { window: null, loaded: null }
 let visible = false
 /** Where the layer was last put, so an unchanged display is not re-applied. */
 let placedOn: ScreenRect | null = null
@@ -57,8 +61,8 @@ let paintToken = 0
  * older one: the previous request can finish after the next one has already
  * started, and its release must not take the new turn's glow down.
  */
-let held: number | null = null
-let turn = 0
+let glowOwner: number | null = null
+let turnCount = 0
 /** Stage a `done` into `waiting` after a beat; cancelled by the next step. */
 let waitTimer: NodeJS.Timeout | null = null
 let successTimer: NodeJS.Timeout | null = null
@@ -72,48 +76,15 @@ function createWindow(): BrowserWindow {
   return createLayerWindow({
     page: 'cursor',
     acceptFirstMouse: false,
-    caseless: true,
+    matchSchemeCaseInsensitively: true,
     onClosed: () => {
-      win = null
-      loaded = null
+      layer.window = null
+      layer.loaded = null
       visible = false
       placedOn = null
       frame = null
     }
   })
-}
-
-/**
- * Resolves once the page can receive messages.
- *
- * Bounded for the same reason as the other layers: a page that never loads would
- * otherwise leave the follow loop waiting forever, and the glow would never
- * appear again in this session.
- */
-function ensureWindow(): Promise<BrowserWindow | null> {
-  if (win && !win.isDestroyed() && loaded) {
-    return loaded.then(() => (win && !win.isDestroyed() ? win : null))
-  }
-  const created = createWindow()
-  win = created
-  loaded = new Promise<void>((resolve) => {
-    let settled = false
-    const done = (): void => {
-      if (settled) return
-      settled = true
-      resolve()
-    }
-    created.webContents.once('did-finish-load', done)
-    created.webContents.once('did-fail-load', done)
-    created.webContents.once('destroyed', done)
-    setTimeout(done, LOAD_TIMEOUT_MS)
-  })
-  return loaded.then(() => (win && !win.isDestroyed() ? win : null))
-}
-
-function sameRect(a: ScreenRect | null, b: ScreenRect): boolean {
-  if (!a) return false
-  return a.x === b.x && a.y === b.y && a.width === b.width && a.height === b.height
 }
 
 function displayBounds(): { bounds: ScreenRect; cursor: { x: number; y: number } } {
@@ -148,14 +119,12 @@ function measure(): { bounds: ScreenRect; anchor: { x: number; y: number }; side
 }
 
 function place(target: BrowserWindow, bounds: ScreenRect): void {
-  if (sameRect(placedOn, bounds)) return
-  target.setBounds(bounds)
-  placedOn = bounds
+  placedOn = placeLayer(target, placedOn, bounds).placedOn
 }
 
-function send(target: BrowserWindow, next: AgentCursorFrame): void {
-  frame = next
-  if (!target.isDestroyed()) target.webContents.send(CH.agent.cursor, next)
+function send(target: BrowserWindow, nextFrame: AgentCursorFrame): void {
+  frame = nextFrame
+  if (!target.isDestroyed()) target.webContents.send(CH.agent.cursor, nextFrame)
 }
 
 /**
@@ -174,7 +143,7 @@ async function paint(): Promise<void> {
     hideTimer = null
   }
   const token = ++paintToken
-  const target = await ensureWindow()
+  const target = await ensureLayerWindow(layer, createWindow, { watchDestroyed: true })
   const shown = frame
   if (!target || !shown || token !== paintToken) return
 
@@ -198,7 +167,7 @@ async function paint(): Promise<void> {
   if (shown.phase === 'success') {
     successTimer = setTimeout(() => {
       successTimer = null
-      if (token === paintToken) hide(true)
+      if (token === paintToken) hideNow()
     }, SUCCESS_MS)
   }
 }
@@ -206,10 +175,11 @@ async function paint(): Promise<void> {
 function startFollow(): void {
   if (follow) return
   follow = setInterval(() => {
-    if (!visible || !frame || !win || win.isDestroyed()) return
+    const target = layer.window
+    if (!visible || !frame || !target || target.isDestroyed()) return
     const spot = measure()
     // The pointer may have crossed to another display: move the layer once.
-    place(win, spot.bounds)
+    place(target, spot.bounds)
     if (
       spot.anchor.x === frame.anchor.x &&
       spot.anchor.y === frame.anchor.y &&
@@ -217,7 +187,7 @@ function startFollow(): void {
     ) {
       return
     }
-    send(win, { ...frame, anchor: spot.anchor, side: spot.side })
+    send(target, { ...frame, anchor: spot.anchor, side: spot.side })
   }, FOLLOW_MS)
 }
 
@@ -227,9 +197,6 @@ function stopFollow(): void {
     follow = null
   }
 }
-
-/** How long the pause between two plans has to last before the caption changes. */
-const WAIT_LABEL_MS = 700
 
 /**
  * Keeps the glow visible while the turn is still working.
@@ -243,19 +210,20 @@ const WAIT_LABEL_MS = 700
  * the caller can fall through to a real hide.
  */
 function park(): boolean {
-  const target = win
+  const target = layer.window
   const shown = frame
   if (!shown || !visible || !target || target.isDestroyed()) return false
   if (waitTimer || shown.phase === 'waiting') return true
   // The pause belongs to *this* turn: a newer turn already painting its own step
   // must not be relabelled by a timer the previous one left behind.
-  const owner = held
+  const owner = glowOwner
   waitTimer = setTimeout(() => {
     waitTimer = null
     const stillShown = frame
-    if (!stillShown || !visible || !win || win.isDestroyed() || held === null) return
-    if (held !== owner) return
-    send(win, {
+    const stillTarget = layer.window
+    if (!stillShown || !visible || !stillTarget || stillTarget.isDestroyed() || glowOwner === null) return
+    if (glowOwner !== owner) return
+    send(stillTarget, {
       ...stillShown,
       visible: true,
       phase: 'waiting',
@@ -273,13 +241,14 @@ function cancelWait(): void {
   waitTimer = null
 }
 
-function hide(force = false): void {
-  if (!force && frame?.phase === 'success') return
+/** Fades the glow out and hides the layer, unless `immediate` skips the park. */
+function hide(immediate = false): void {
+  if (!immediate && frame?.phase === 'success') return
   cancelSuccess()
   // A turn that is still running keeps the glow: the plan it just finished is a
-  // pause, not the end (see `held`). Only `endAgentTurn` — or a stop, an error or
-  // a close, which pass `force` — is allowed to take it away.
-  if (!force && held !== null && park()) return
+  // pause, not the end (see `glowOwner`). Only `endAgentTurn` — or a stop, an
+  // error or a close, which are immediate — is allowed to take it away.
+  if (!immediate && glowOwner !== null && park()) return
   cancelWait()
 
   // Already fading (or hidden): the pending timer owns the window. Clearing it
@@ -294,7 +263,7 @@ function hide(force = false): void {
     return
   }
 
-  const target = win
+  const target = layer.window
   const shown = frame
   frame = null
   const token = ++paintToken
@@ -311,74 +280,63 @@ function hide(force = false): void {
   trace('cursor.fade', { phase: shown.phase })
   // Let the renderer play its fade-out before the window disappears. The frame
   // stays `null` while hidden, so a late tick cannot resurrect the glow.
-  if (!target.isDestroyed()) {
-    target.webContents.send(CH.agent.cursor, { ...shown, visible: false })
-  }
+  target.webContents.send(CH.agent.cursor, { ...shown, visible: false })
   hideTimer = setTimeout(() => {
     hideTimer = null
     if (token !== paintToken) return
     if (target && !target.isDestroyed()) target.hide()
     visible = false
     placedOn = null
-  }, EXIT_MS)
+  }, CURSOR_FADE_MS)
+}
+
+/** Takes the glow down now, whatever the turn is doing. */
+function hideNow(): void {
+  hide(true)
+}
+
+/** The success frame: a green check for a run that finished. */
+function paintSuccess(): void {
+  frame = {
+    visible: true,
+    anchor: frame?.anchor ?? { x: 0, y: 0 },
+    side: frame?.side ?? 'above',
+    phase: 'success',
+    label: 'Готово',
+    step: 0,
+    total: 0
+  }
+  void paint()
 }
 
 /**
- * Feeds one agent event into the layer.
- *
- * `arming` and `acting` are painted as they come. `done` inside a longer turn
- * parks the glow (see `held`); `done` outside a turn, and `aborted`, `error` and
- * `idle`, mean the pointer belongs to the user again and the glow goes at once.
- * The follow loop stops on the same events, so nothing keeps polling the cursor
- * after the run is over.
+ * The glow parks with the question, so the eye goes to the card instead of
+ * following a caption that says nothing new.
  */
-export function updateAgentCursor(event: AgentEvent): void {
-  if (event.phase === 'done' && event.completed) {
-    frame = {
-      visible: true,
-      anchor: frame?.anchor ?? { x: 0, y: 0 },
-      side: frame?.side ?? 'above',
-      phase: 'success',
-      label: 'Готово',
-      step: 0,
-      total: 0
-    }
+function paintQuestion(event: AgentEvent): void {
+  if (!frame && glowOwner === null) return
+  cancelWait()
+  const waiting: AgentCursorFrame = {
+    visible: true,
+    anchor: frame?.anchor ?? { x: 0, y: 0 },
+    side: frame?.side ?? 'above',
+    phase: 'waiting',
+    label: event.label || 'Нужно подтверждение',
+    step: 0,
+    total: 0
+  }
+  trace('cursor.waiting', { asking: true })
+  const target = layer.window
+  if (visible && target && !target.isDestroyed()) send(target, waiting)
+  else {
+    frame = waiting
     void paint()
-    return
   }
-  // A run that is waiting for the user to answer is not progress and not a
-  // failure: the pointer glow parks with the question, so the eye goes to the
-  // card instead of following a caption that says nothing new.
-  const asking = event.phase === 'asking'
-  if (asking) {
-    if (!frame && held === null) return
-    cancelWait()
-    const waiting: AgentCursorFrame = {
-      visible: true,
-      anchor: frame?.anchor ?? { x: 0, y: 0 },
-      side: frame?.side ?? 'above',
-      phase: 'waiting',
-      label: event.label || 'Нужно подтверждение',
-      step: 0,
-      total: 0
-    }
-    trace('cursor.waiting', { asking: true })
-    if (visible && win && !win.isDestroyed()) send(win, waiting)
-    else {
-      frame = waiting
-      void paint()
-    }
-    return
-  }
+}
 
-  if (event.phase !== 'arming' && event.phase !== 'acting') {
-    if (event.phase === 'done' && held !== null && park()) return
-    hide(true)
-    return
-  }
-
-  const acting = event.phase === 'acting'
-
+/** A step of a run: the caption moves with the work. */
+function paintStep(event: AgentEvent, phase: AgentCursorPhase): void {
+  const acting = phase === 'acting'
   const previous = frame
   const label =
     event.label ||
@@ -387,7 +345,7 @@ export function updateAgentCursor(event: AgentEvent): void {
     visible: true,
     anchor: previous?.anchor ?? { x: 0, y: 0 },
     side: previous?.side ?? 'above',
-    phase: event.phase,
+    phase,
     label,
     step: acting ? event.step : 0,
     total: event.total
@@ -395,6 +353,36 @@ export function updateAgentCursor(event: AgentEvent): void {
 
   frame = next
   void paint()
+}
+
+/**
+ * Feeds one agent event into the layer.
+ *
+ * `arming` and `acting` are painted as they come. `done` inside a longer turn
+ * parks the glow (see `glowOwner`); `done` outside a turn, and `aborted`, `error`
+ * and `idle`, mean the pointer belongs to the user again and the glow goes at
+ * once. The follow loop stops on the same events, so nothing keeps polling the
+ * cursor after the run is over.
+ */
+export function updateAgentCursor(event: AgentEvent): void {
+  if (event.phase === 'done' && event.completed) {
+    paintSuccess()
+    return
+  }
+  // A run that is waiting for the user to answer is not progress and not a
+  // failure: the pointer glow parks with the question.
+  if (event.phase === 'asking') {
+    paintQuestion(event)
+    return
+  }
+
+  if (event.phase !== 'arming' && event.phase !== 'acting') {
+    if (event.phase === 'done' && glowOwner !== null && park()) return
+    hideNow()
+    return
+  }
+
+  paintStep(event, event.phase)
 }
 
 /**
@@ -417,24 +405,24 @@ export function hideAgentCursor(): void {
  * shows one continuous glow instead of one per plan.
  */
 export function beginAgentTurn(label?: string): number {
-  turn += 1
+  turnCount += 1
   // A new request supersedes the previous turn's glow and caption.
-  if (frame) hide(true)
-  held = turn
+  if (frame) hideNow()
+  glowOwner = turnCount
   if (label) {
     frame = { visible: true, anchor: { x: 0, y: 0 }, side: 'above',
       phase: 'waiting', label, step: 0, total: 0 }
     void paint()
   }
-  return held
+  return glowOwner
 }
 
 /** Releases the glow when the turn is really over: the one moment it goes out. */
 export function endAgentTurn(token: number): void {
   // A newer turn already owns the glow: this release is stale.
-  if (held !== token) return
-  held = null
-  if (frame?.phase !== 'success') hide(true)
+  if (glowOwner !== token) return
+  glowOwner = null
+  if (frame?.phase !== 'success') hideNow()
 }
 
 /** Releases the window; called on quit so the layer cannot outlive the app. */
@@ -450,8 +438,9 @@ export function destroyAgentCursor(): void {
   visible = false
   placedOn = null
   frame = null
-  held = null
-  if (win && !win.isDestroyed()) win.destroy()
-  win = null
-  loaded = null
+  glowOwner = null
+  const target = layer.window
+  if (target && !target.isDestroyed()) target.destroy()
+  layer.window = null
+  layer.loaded = null
 }

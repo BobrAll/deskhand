@@ -19,8 +19,7 @@
  */
 
 import type { AppSettings, KeyStatus, ProviderId } from '@shared/types'
-import { DEFAULT_SYSTEM_PROMPT, PROVIDERS, defaultSearchModel, normalizeBaseUrl, parseExtraBody, providerInfo } from '@shared/defaults'
-import { MAX_TOKENS_MAX, MAX_TOKENS_MIN } from '../applyGate'
+import { DEFAULT_SYSTEM_PROMPT, PROVIDERS, SETTINGS_BOUNDS, normalizeBaseUrl, parseExtraBody, providerInfo, searchModelFallback } from '@shared/defaults'
 import { Disclosure, Group, Row, Toggle } from '../Row'
 
 interface ProviderSectionProps {
@@ -48,9 +47,9 @@ export function ProviderSection({
   onRemoveKey
 }: ProviderSectionProps) {
   const info = providerInfo(draft.provider)
-  const status = providerKeys[draft.provider]
+  const keyStatus = providerKeys[draft.provider]
   const searchModel = draft.searchModels[draft.provider]
-  const fallbackSearchModel = defaultSearchModel(draft)
+  const fallbackSearchModel = searchModelFallback(draft)
   // An invalid override is rejected instead of being silently replaced by the
   // default, so a typo cannot quietly send traffic to the official host.
   const baseUrlError = invalidBaseUrls.includes(draft.provider)
@@ -83,7 +82,7 @@ export function ProviderSection({
           title="Модель"
           hint={
             info
-              ? `ID модели ${info.label}. Пусто — ${info.defaultModel}.`
+              ? `ID модели ${info.label}. Без неё запрос не отправится.`
               : 'ID модели провайдера.'
           }
         >
@@ -92,7 +91,6 @@ export function ProviderSection({
             onChange={(event) =>
               patch({ models: { ...draft.models, [draft.provider]: event.target.value } })
             }
-            placeholder={info?.defaultModel}
             spellCheck={false}
           />
         </Row>
@@ -101,12 +99,12 @@ export function ProviderSection({
           stacked
           title={`Ключ API ${info?.label ?? ''}`.trim()}
           hint={
-            status?.configured
+            keyStatus?.configured
               ? 'Ключ лежит в Keychain и никогда не показывается целиком.'
               : undefined
           }
         >
-          {status?.configured ? (
+          {keyStatus?.configured ? (
             <div className="row-actions">
               <span className="permission-state ok">● Ключ сохранён</span>
               <button className="ghost" onClick={onRemoveKey}>
@@ -243,8 +241,8 @@ export function ProviderSection({
               <div className="row-hint">Длинная сторона · {draft.screenshotMaxSide}px</div>
               <input
                 type="range"
-                min={480}
-                max={2400}
+                min={SETTINGS_BOUNDS.screenshotMaxSide.min}
+                max={SETTINGS_BOUNDS.screenshotMaxSide.max}
                 step={80}
                 value={draft.screenshotMaxSide}
                 aria-label="Длинная сторона скриншота"
@@ -255,8 +253,8 @@ export function ProviderSection({
               <div className="row-hint">Качество JPEG · {draft.screenshotQuality}</div>
               <input
                 type="range"
-                min={30}
-                max={95}
+                min={SETTINGS_BOUNDS.screenshotQuality.min}
+                max={SETTINGS_BOUNDS.screenshotQuality.max}
                 step={5}
                 value={draft.screenshotQuality}
                 aria-label="Качество JPEG"
@@ -273,8 +271,8 @@ export function ProviderSection({
             <div className="row-hint">Температура · {draft.temperature.toFixed(1)}</div>
             <input
               type="range"
-              min={0}
-              max={2}
+              min={SETTINGS_BOUNDS.temperature.min}
+              max={SETTINGS_BOUNDS.temperature.max}
               step={0.1}
               value={draft.temperature}
               aria-label="Температура"
@@ -285,9 +283,9 @@ export function ProviderSection({
             <div className="row-hint">Максимум токенов</div>
             <input
               type="number"
-              min={MAX_TOKENS_MIN}
-              max={MAX_TOKENS_MAX}
-              step={MAX_TOKENS_MIN}
+              min={SETTINGS_BOUNDS.maxTokens.min}
+              max={SETTINGS_BOUNDS.maxTokens.max}
+              step={SETTINGS_BOUNDS.maxTokens.min}
               value={draft.maxTokens}
               aria-label="Максимум токенов"
               onChange={(event) => patch({ maxTokens: Number(event.target.value) })}

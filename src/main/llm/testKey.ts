@@ -5,13 +5,16 @@
  * proxied base URL can be verified before it is saved.
  */
 
-import type { ProviderId } from '@shared/types'
+import type { ProviderId, TestKeyResult } from '@shared/types'
 import { normalizeBaseUrl, providerInfo } from '@shared/defaults'
-import type { TestKeyResult } from '@shared/types'
 
+/** The probe must not hold the settings pane open longer than a person will wait. */
 const TIMEOUT_MS = 12_000
+/** Enough of an unexpected body to identify it, never the whole response. */
+const BODY_PREVIEW_CHARS = 160
 
-async function request(url: string, init: RequestInit): Promise<Response> {
+/** `fetch` with an abort timer, so a silent gateway still ends the probe. */
+async function fetchWithTimeout(url: string, init: RequestInit): Promise<Response> {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS)
   try {
@@ -29,7 +32,7 @@ function describe(status: number, body: string): string {
     return 'Сервис ответил 404: проверьте base URL (нужен корень API, например …/v1).'
   }
   if (status >= 500) return 'Сервис провайдера недоступен, попробуйте позже.'
-  return `Неожиданный ответ ${status}: ${body.slice(0, 160)}`
+  return `Неожиданный ответ ${status}: ${body.slice(0, BODY_PREVIEW_CHARS)}`
 }
 
 /**
@@ -51,16 +54,16 @@ export async function testApiKey(
   try {
     let response: Response
     if (provider === 'anthropic') {
-      response = await request(`${root}/models`, {
+      response = await fetchWithTimeout(`${root}/models`, {
         method: 'GET',
         headers: { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' }
       })
     } else if (provider === 'openai') {
-      response = await request(`${root}/models`, {
+      response = await fetchWithTimeout(`${root}/models`, {
         headers: { Authorization: `Bearer ${apiKey}` }
       })
     } else {
-      response = await request(`${root}/key`, {
+      response = await fetchWithTimeout(`${root}/key`, {
         headers: { Authorization: `Bearer ${apiKey}` }
       })
     }

@@ -53,8 +53,8 @@ final class ActionPresentationTests: XCTestCase {
             bundleIdentifier: "com.apple.Safari",
             pid: 42,
             point: CGPoint(x: 10, y: 20),
-            target: CGRect(x: 0, y: 0, width: 30, height: 40),
-            window: CGRect(x: 0, y: 0, width: 800, height: 600)
+            elementFrame: CGRect(x: 0, y: 0, width: 30, height: 40),
+            windowFrame: CGRect(x: 0, y: 0, width: 800, height: 600)
         )
 
         XCTAssertEqual(action.tool, "click")
@@ -63,8 +63,8 @@ final class ActionPresentationTests: XCTestCase {
         XCTAssertEqual(action.bundleIdentifier, "com.apple.Safari")
         XCTAssertEqual(action.pid, 42)
         XCTAssertEqual(action.point, CGPoint(x: 10, y: 20))
-        XCTAssertEqual(action.target, CGRect(x: 0, y: 0, width: 30, height: 40))
-        XCTAssertEqual(action.window, CGRect(x: 0, y: 0, width: 800, height: 600))
+        XCTAssertEqual(action.elementFrame, CGRect(x: 0, y: 0, width: 30, height: 40))
+        XCTAssertEqual(action.windowFrame, CGRect(x: 0, y: 0, width: 800, height: 600))
     }
 
     func testGeometryIsOptional() {
@@ -72,7 +72,7 @@ final class ActionPresentationTests: XCTestCase {
         // The action is still valid, and the picture simply has less to say.
         let action = ActionPresentation(tool: "press_key", gesture: .key, appName: "Notes")
         XCTAssertNil(action.point)
-        XCTAssertNil(action.target)
-        XCTAssertNil(action.window)
+        XCTAssertNil(action.elementFrame)
+        XCTAssertNil(action.windowFrame)
     }
 }

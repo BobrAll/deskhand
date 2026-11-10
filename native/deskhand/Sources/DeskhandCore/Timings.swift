@@ -24,30 +24,6 @@ public final class Timings: @unchecked Sendable {
         lock.unlock()
     }
 
-    public func measure<T>(
-        _ label: String,
-        bytes: ((T) -> Int?)? = nil,
-        _ body: () throws -> T
-    ) rethrows -> T {
-        let start = ProcessInfo.processInfo.systemUptime
-        let value = try body()
-        let elapsed = (ProcessInfo.processInfo.systemUptime - start) * 1000
-        record(label, milliseconds: elapsed, bytes: bytes?(value))
-        return value
-    }
-
-    public func measureAsync<T>(
-        _ label: String,
-        bytes: ((T) -> Int?)? = nil,
-        _ body: () async throws -> T
-    ) async rethrows -> T {
-        let start = ProcessInfo.processInfo.systemUptime
-        let value = try await body()
-        let elapsed = (ProcessInfo.processInfo.systemUptime - start) * 1000
-        record(label, milliseconds: elapsed, bytes: bytes?(value))
-        return value
-    }
-
     public func snapshot() -> [Sample] {
         lock.lock()
         defer { lock.unlock() }
@@ -124,11 +100,12 @@ public final class Timings: @unchecked Sendable {
     /// dominated by `tree` or `screenshot` is fixed in the tool layer, and no
     /// prompt change touches those.
     public func bottleneck() -> String? {
-        // `run total` is the sum of the rest and `  phase` rows are already
-        // counted inside their tool, so both would double-count here.
-        let excluded = ["run total"]
+        // Phase rows are already counted inside their tool, and `run total`
+        // contains everything, so both would double-count here.
         let rows = grouped().filter {
-            $0.total > 0 && !$0.label.hasPrefix("  ") && !excluded.contains($0.label)
+            $0.total > 0
+                && !$0.label.hasPrefix(TimingLabel.phasePrefix)
+                && $0.label != TimingLabel.runTotal
         }
         guard rows.count >= 2 else { return nil }
         let total = rows.reduce(0) { $0 + $1.total }
@@ -138,12 +115,12 @@ public final class Timings: @unchecked Sendable {
 
         let advice: String
         switch worst.label {
-        case "llm":
+        case TimingLabel.model:
             advice = "the model round trips dominate — batch more actions per answer and keep the prompt small"
-        case "tool get_app_state":
+        case TimingLabel.tool("get_app_state"):
             advice = "reading state dominates — rely on the post-action diff instead of re-reading"
         default:
-            if worst.label.hasPrefix("tool ") {
+            if worst.label.hasPrefix(TimingLabel.toolPrefix) {
                 advice = "one tool dominates — look at its tree walk or capture in the breakdown above"
             } else {
                 advice = "this phase dominates the run"
@@ -153,12 +130,46 @@ public final class Timings: @unchecked Sendable {
     }
 }
 
+/// The label vocabulary the run loop records and the report reads back.
+///
+/// The two sides live in different files — and, for the producers, in a
+/// different module — so the strings are named once here rather than spelled
+/// out in each of them. `bottleneck()` recognises a row by these exact
+/// prefixes, so a producer that invents a spelling silently drops out of the
+/// verdict.
+public enum TimingLabel {
+    /// Model round trips.
+    public static let model = "llm"
+    /// The whole run. It contains everything else, so it is not a bottleneck.
+    public static let runTotal = "run total"
+    /// Prefix of a whole tool call: `tool <name>`.
+    public static let toolPrefix = "tool "
+    /// Prefix of a phase row inside a tool, e.g. `  tree walk`. The row is
+    /// already counted inside that tool's total.
+    public static let phasePrefix = "  "
+
+    /// Accessibility tree walk inside a tool call.
+    public static let treeWalk = phasePrefix + "tree walk"
+    /// Window capture inside a tool call.
+    public static let screenshot = phasePrefix + "screenshot"
+    /// Encoding of the captured image inside a tool call.
+    public static let imageEncode = phasePrefix + "image encode"
+    /// Size of the image handed to the model. A size row, not a duration.
+    public static let screenshotBytes = phasePrefix + "screenshot bytes"
+
+    /// The row for one whole tool call.
+    public static func tool(_ name: String) -> String {
+        toolPrefix + name
+    }
+}
+
 /// Where a single tool call spent its time.
 ///
 /// The split matters because the phases have completely different fixes:
-/// `tree` is accessibility IPC, `capture` is ScreenCaptureKit, `encode` is PNG
-/// compression. In a single "tool took 1.9 s" number they are indistinguishable
-/// — and on this machine the 1.9 s is almost entirely one of them.
+/// `tree` is accessibility IPC, `capture` is ScreenCaptureKit, `encode` is
+/// image compression. In a single "tool took 1.9 s" number they are
+/// indistinguishable — and on this machine the 1.9 s is almost entirely one of
+/// them.
 public struct ToolTimings: Sendable, Equatable {
     /// Total wall time of the tool call.
     public var wall: Double
@@ -166,9 +177,9 @@ public struct ToolTimings: Sendable, Equatable {
     public var tree: Double
     /// Window capture (ScreenCaptureKit).
     public var capture: Double
-    /// PNG encoding of the captured image.
+    /// Encoding of the captured image.
     public var encode: Double
-    /// Size of the PNG handed to the model, before base64.
+    /// Size of the encoded image handed to the model, before base64.
     public var screenshotBytes: Int
 
     public init(

@@ -145,11 +145,11 @@ final class ElementTextSelectionTests: XCTestCase {
     }
 
     func testDisambiguatesBySuffix() {
-        let text = "cat dog cat"
-        let second = ElementActions.locate("cat", in: text, prefix: nil, suffix: nil)
-        XCTAssertEqual(second, 0..<3, "without context the first match wins")
-        let withPrefix = ElementActions.locate("cat", in: text, prefix: "dog ", suffix: nil)
-        XCTAssertEqual(withPrefix, 8..<11)
+        let text = "cat, cat dog"
+        let first = ElementActions.locate("cat", in: text, prefix: nil, suffix: nil)
+        XCTAssertEqual(first, 0..<3, "without context the first match wins")
+        let bySuffix = ElementActions.locate("cat", in: text, prefix: nil, suffix: " dog")
+        XCTAssertEqual(bySuffix, 5..<8)
     }
 
     func testFallsBackToFirstMatchWhenContextDoesNotMatch() {

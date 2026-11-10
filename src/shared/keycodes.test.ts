@@ -3,18 +3,19 @@ import { describe, expect, it } from 'vitest'
 import { FUNCTION_CODES, KEY_CODES, VOICE_KEY_CODES } from './keycodes'
 
 /**
- * The two parsers share the numbers but not the grammar. These tests exist to
- * keep that line where it is: the sizes are pinned, and the voice table is
- * checked to be the agent table minus exactly two aliases.
+ * The voice table is the full table minus exactly two aliases, and these tests
+ * exist to keep that line where it is: both sizes are pinned, and every voice key
+ * is checked to carry the same code as the full table.
  *
- * Why it matters: `parseShortcut` (voice) accepts a single bare key, while
- * `parseAccelerator` (agent) requires a modifier. Letting `esc` into the voice
- * table would turn "esc" from a validation error into a registerable global
- * hotkey — a behaviour change nobody asked for.
+ * Why it matters: `parseAccelerator` — the only reader, in `main/voice/listen.ts`
+ * — requires a modifier and a key, so this table alone decides whether "Alt+esc"
+ * is a valid accelerator. Letting `esc` in would turn that combination from a
+ * validation error into a registerable global hotkey — a behaviour change nobody
+ * asked for.
  */
 
 describe('keycodes: the shared tables', () => {
-  it('keeps the agent table at 64 entries', () => {
+  it('keeps the full table at 64 entries', () => {
     expect(Object.keys(KEY_CODES)).toHaveLength(64)
   })
 
@@ -22,13 +23,13 @@ describe('keycodes: the shared tables', () => {
     expect(Object.keys(VOICE_KEY_CODES)).toHaveLength(62)
   })
 
-  it('keeps F1–F20 identical and complete for both parsers', () => {
+  it('keeps F1–F20 complete', () => {
     expect(Object.keys(FUNCTION_CODES)).toHaveLength(20)
     expect(FUNCTION_CODES[1]).toBe(122)
     expect(FUNCTION_CODES[20]).toBe(90)
   })
 
-  it('gives every voice key the same code as the agent table', () => {
+  it('gives every voice key the same code as the full table', () => {
     for (const [name, code] of Object.entries(VOICE_KEY_CODES)) {
       expect(KEY_CODES[name], name).toBe(code)
     }
@@ -46,7 +47,7 @@ describe('keycodes: the shared tables', () => {
     expect(VOICE_KEY_CODES.delete).toBe(117)
   })
 
-  it('is exactly the agent table minus those two names', () => {
+  it('is exactly the full table minus those two names', () => {
     const extra = Object.keys(KEY_CODES).filter((name) => !(name in VOICE_KEY_CODES))
     expect(extra.sort()).toEqual(['esc', 'forwarddelete'])
   })

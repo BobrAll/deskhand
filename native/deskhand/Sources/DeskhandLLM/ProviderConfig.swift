@@ -1,6 +1,15 @@
 import Foundation
 import DeskhandCore
 
+/// What every request from both wires has in common.
+enum ProviderHTTP {
+    /// Identifies the client on every request.
+    static let userAgent = "Deskhand/0.1"
+    /// Statuses that mean the endpoint does not implement streaming, so the same
+    /// request can be retried in one piece.
+    static let streamingFallbackStatuses = [400, 404, 422]
+}
+
 /// Configuration for any OpenAI-compatible or Anthropic-compatible endpoint.
 ///
 /// Deskhand is BYOK by design: there is no bundled key, no proxy, and no
@@ -31,10 +40,14 @@ public struct ProviderConfig: Sendable, Equatable {
     /// the gateway. Applied after the agent's own fields, so a user value wins.
     public var extraBody: [String: JSONValue] = [:]
 
+    /// The endpoint used when a caller does not override it.
+    public static let defaultBaseURL = URL(string: "https://api.openai.com/v1")!
+    public static let defaultModel = "gpt-5"
+
     public init(
         wire: Wire = .openAICompatible,
-        baseURL: URL = URL(string: "https://api.openai.com/v1")!,
-        model: String = "gpt-5",
+        baseURL: URL = defaultBaseURL,
+        model: String = defaultModel,
         apiKey: String? = nil,
         maxTokens: Int = 4096,
         temperature: Double? = nil,
@@ -53,7 +66,7 @@ public struct ProviderConfig: Sendable, Equatable {
 
     /// Resolves the final endpoint, tolerating both `https://host/v1` and
     /// `https://host/v1/chat/completions` styles of input.
-    public func endpointURL() -> URL {
+    public var endpointURL: URL {
         var base = baseURL.absoluteString
         while base.hasSuffix("/") { base.removeLast() }
 
@@ -65,11 +78,6 @@ public struct ProviderConfig: Sendable, Equatable {
             if base.hasSuffix("/messages") { return URL(string: base)! }
             return URL(string: base + "/messages")!
         }
-    }
-
-    public var redactedDescription: String {
-        let key = apiKey.map { _ in "set" } ?? "unset"
-        return "\(wire.rawValue) base=\(baseURL.absoluteString) model=\(model) key=\(key)"
     }
 }
 
@@ -136,7 +144,7 @@ public enum ConfigLoader {
             config.apiKey = key
         }
         if let omit = environment["DESKHAND_OMIT_AUTH"] {
-            config.omitAuthHeader = ["1", "true", "yes"].contains(omit.lowercased())
+            config.omitAuthHeader = isTruthy(omit)
         }
 
         if config.apiKey == nil {
@@ -165,6 +173,11 @@ public enum ConfigLoader {
         return nil
     }
 
+    /// The config file and the environment spell booleans loosely.
+    private static func isTruthy(_ value: String) -> Bool {
+        ["1", "true", "yes"].contains(value.lowercased())
+    }
+
     static func apply(_ parsed: [String: [String: String]], to config: inout ProviderConfig) {
         let provider = parsed["provider"] ?? parsed[""] ?? [:]
         if let wireName = provider["wire"] ?? provider["type"] ?? provider["provider"],
@@ -187,7 +200,7 @@ public enum ConfigLoader {
             config.temperature = value
         }
         if let omit = provider["omit_auth"] {
-            config.omitAuthHeader = ["1", "true", "yes"].contains(omit.lowercased())
+            config.omitAuthHeader = isTruthy(omit)
         }
         if let headers = parsed["headers"] {
             config.extraHeaders = headers

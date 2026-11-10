@@ -68,11 +68,6 @@ function toAccelerator(event: KeyboardEvent): string | null {
   return parts.join('+')
 }
 
-/** How the field prints a combination: `⌥ Space`, not `Alt+Space`. */
-export function prettyHotkey(accelerator: string): string {
-  return prettyAccelerator(accelerator)
-}
-
 interface HotkeyFieldProps {
   value: string
   onChange(accelerator: string): void
@@ -81,7 +76,6 @@ interface HotkeyFieldProps {
 export function HotkeyField({ value, onChange }: HotkeyFieldProps) {
   const [recording, setRecording] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const buttonRef = useRef<HTMLButtonElement | null>(null)
 
   const setArmed = useCallback((active: boolean) => {
     setRecording(active)
@@ -132,7 +126,6 @@ export function HotkeyField({ value, onChange }: HotkeyFieldProps) {
   return (
     <div className="hotkey-field">
       <button
-        ref={buttonRef}
         className={recording ? 'recording' : ''}
         aria-pressed={recording}
         onClick={() => {
@@ -152,7 +145,7 @@ export function HotkeyField({ value, onChange }: HotkeyFieldProps) {
           setError(null)
         }}
       >
-        {recording ? 'Нажмите комбинацию…' : prettyHotkey(value)}
+        {recording ? 'Нажмите комбинацию…' : prettyAccelerator(value)}
       </button>
       {recording && <span className="hint">Esc — отмена</span>}
       {error && <span className="hint err">{error}</span>}

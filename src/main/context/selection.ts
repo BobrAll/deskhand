@@ -12,7 +12,12 @@ import { helperSendKey } from '../native/helper'
 import { restoreClipboard, snapshotClipboard, withClipboard } from '../paste/clipboard'
 import { delay, truncate } from '../util'
 
-export const MAX_SELECTION_CHARS = 24_000
+/** Ceiling for the text a Cmd+C round trip is allowed to bring back. */
+export const MAX_SELECTED_TEXT_CHARS = 24_000
+
+/** How long the pasteboard is polled after the synthetic ⌘C, and how often. */
+const SELECTION_POLL_TIMEOUT_MS = 450
+const SELECTION_POLL_INTERVAL_MS = 35
 
 export function readSelection(onCopySent?: () => void): Promise<SelectionInfo | null> {
   return withClipboard(async () => {
@@ -30,9 +35,9 @@ export function readSelection(onCopySent?: () => void): Promise<SelectionInfo | 
     }
 
     let captured = ''
-    const deadline = Date.now() + 450
+    const deadline = Date.now() + SELECTION_POLL_TIMEOUT_MS
     while (Date.now() < deadline) {
-      await delay(35)
+      await delay(SELECTION_POLL_INTERVAL_MS)
       const current = clipboard.readText()
       if (current) {
         captured = current
@@ -44,6 +49,6 @@ export function readSelection(onCopySent?: () => void): Promise<SelectionInfo | 
     restoreClipboard(snapshot)
 
     if (!captured.trim()) return null
-    return truncate(captured, MAX_SELECTION_CHARS)
+    return truncate(captured, MAX_SELECTED_TEXT_CHARS)
   })
 }

@@ -26,10 +26,13 @@ const turn = new AsyncLocalStorage<Turn>()
  * Keeping the open turns is what lets a stale context be recognised as stale
  * without breaking turns that really do overlap.
  */
-const open = new Set<Turn>()
+const openTurns = new Set<Turn>()
 const MAX_BYTES = 2 * 1024 * 1024
-let writes = Promise.resolve()
-let warned = false
+/** The shape of a trace line; bumped when a reader could no longer parse it. */
+const TRACE_SCHEMA = 2
+let writeQueue = Promise.resolve()
+/** One warning per process: a failing trace must not flood the log once per line. */
+let warnedOnce = false
 
 /**
  * The turn an event belongs to, or nothing.
@@ -42,8 +45,8 @@ let warned = false
  */
 function currentTurn(): Turn | null {
   const ambient = turn.getStore()
-  if (ambient && open.has(ambient)) return ambient
-  if (open.size === 1) return open.values().next().value ?? null
+  if (ambient && openTurns.has(ambient)) return ambient
+  if (openTurns.size === 1) return openTurns.values().next().value ?? null
   return null
 }
 
@@ -56,7 +59,7 @@ function currentTurn(): Turn | null {
  * ended one event early. Called on quit, not per event.
  */
 export function flushTrace(): Promise<void> {
-  return writes
+  return writeQueue
 }
 
 export function trace(event: string, fields: Fields = {}): void {
@@ -70,13 +73,13 @@ export function trace(event: string, fields: Fields = {}): void {
     event,
     ...fields
   }) + '\n'
-  writes = writes.then(async () => {
+  writeQueue = writeQueue.then(async () => {
     const size = (await stat(path).catch(() => null))?.size ?? 0
     if (size + Buffer.byteLength(line) > MAX_BYTES) await rename(path, path + '.previous')
     await appendFile(path, line, { mode: 0o600 })
   }).catch(() => {
-    if (!warned) console.warn('[agent trace] Unable to write the local trace')
-    warned = true
+    if (!warnedOnce) console.warn('[agent trace] Unable to write the local trace')
+    warnedOnce = true
   })
 }
 
@@ -98,11 +101,18 @@ export async function timed<T>(event: string, work: () => Promise<T>, fields?: F
   }
 }
 
+/** A token count, when the provider sent one: a non-negative safe integer. */
+function tokenCount(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : undefined
+}
+
 /** Record counts only, when the provider supplies them. */
 export function traceModelUsage(input: unknown, output: unknown): void {
   const fields: Fields = {}
-  if (typeof input === 'number' && Number.isSafeInteger(input) && input >= 0) fields.inputTokens = input
-  if (typeof output === 'number' && Number.isSafeInteger(output) && output >= 0) fields.outputTokens = output
+  const inputTokens = tokenCount(input)
+  const outputTokens = tokenCount(output)
+  if (inputTokens !== undefined) fields.inputTokens = inputTokens
+  if (outputTokens !== undefined) fields.outputTokens = outputTokens
   if (Object.keys(fields).length) trace('model.usage', fields)
 }
 
@@ -111,15 +121,15 @@ export function traceTurn<T>(fields: Fields, work: () => Promise<T>): Promise<T>
   if (enabled === '0' || (process.env.VITEST && enabled !== '1')) return work()
   const path = join(app.getPath('userData'), 'agent-trace.jsonl')
   const revision = process.env.DESKHAND_TRACE_REVISION
-  const store: Turn = { id: randomUUID(), path, started: performance.now(), nextSpan: 0 }
-  open.add(store)
-  return turn.run(store, () => timed('turn', work, {
-    ...fields, schema: 2, build: app.getVersion?.() ?? 'unknown',
+  const turnRecord: Turn = { id: randomUUID(), path, started: performance.now(), nextSpan: 0 }
+  openTurns.add(turnRecord)
+  return turn.run(turnRecord, () => timed('turn', work, {
+    ...fields, schema: TRACE_SCHEMA, build: app.getVersion?.() ?? 'unknown',
     revision: revision && /^[a-f0-9]{7,40}$/.test(revision) ? revision : null
   // Closed only after the turn's own end event is written, so the last line is
   // not the one that loses its turn.
   })).finally(() => {
-    open.delete(store)
+    openTurns.delete(turnRecord)
   })
 }
 
@@ -141,6 +151,6 @@ export function traceWithin<T>(fields: Fields, work: () => Promise<T>): Promise<
   // turn's context — reusing it would file this run under a turn that ended
   // minutes ago.
   const ambient = turn.getStore()
-  if (ambient && open.has(ambient)) return work()
+  if (ambient && openTurns.has(ambient)) return work()
   return traceTurn(fields, work)
 }

@@ -16,7 +16,7 @@ function caretNode(): ReactNode {
   return <span key="caret" className="caret" />
 }
 
-function renderInline(nodes: Inline[], tail?: boolean): ReactNode[] {
+function renderInline(nodes: Inline[], withCaret?: boolean): ReactNode[] {
   const rendered = nodes.map((node, index) => {
     switch (node.kind) {
       case 'text':
@@ -35,32 +35,32 @@ function renderInline(nodes: Inline[], tail?: boolean): ReactNode[] {
         )
     }
   })
-  return tail ? [...rendered, caretNode()] : rendered
+  return withCaret ? [...rendered, caretNode()] : rendered
 }
 
 /** Paragraph lines keep their break: a newline in an answer is deliberate. */
-function renderLines(lines: Inline[][], tail?: boolean): ReactNode[] {
+function renderLines(lines: Inline[][], withCaret?: boolean): ReactNode[] {
   const rendered: ReactNode[] = []
   lines.forEach((line, index) => {
     if (index > 0) rendered.push('\n')
-    rendered.push(...renderInline(line, index === lines.length - 1 && tail))
+    rendered.push(...renderInline(line, index === lines.length - 1 && withCaret))
   })
   return rendered
 }
 
-function renderBlock(block: Block, key: number, tail: boolean): ReactNode {
+function renderBlock(block: Block, key: number, withCaret: boolean): ReactNode {
   switch (block.kind) {
     case 'paragraph':
-      return <p key={key}>{renderLines(block.lines, tail)}</p>
+      return <p key={key}>{renderLines(block.lines, withCaret)}</p>
     case 'heading':
       return (
         <p key={key} className="md-heading" data-level={block.level}>
-          {renderInline(block.inlines, tail)}
+          {renderInline(block.inlines, withCaret)}
         </p>
       )
     case 'list': {
       const items = block.items.map((item, index) => (
-        <li key={index}>{renderInline(item, tail && index === block.items.length - 1)}</li>
+        <li key={index}>{renderInline(item, withCaret && index === block.items.length - 1)}</li>
       ))
       return block.ordered ? (
         <ol key={key} start={block.start}>
@@ -75,7 +75,7 @@ function renderBlock(block: Block, key: number, tail: boolean): ReactNode {
         <pre key={key}>
           <code>
             {block.text}
-            {tail && caretNode()}
+            {withCaret && caretNode()}
           </code>
         </pre>
       )
@@ -93,7 +93,7 @@ function renderBlock(block: Block, key: number, tail: boolean): ReactNode {
                   <th key={column} style={alignStyle(block.align[column])}>
                     {/* A table that has arrived as far as its delimiter row has
                         no body to hang the caret on, so it goes in the header. */}
-                    {renderInline(cell, tail && block.rows.length === 0 && column === block.header.length - 1)}
+                    {renderInline(cell, withCaret && block.rows.length === 0 && column === block.header.length - 1)}
                   </th>
                 ))}
               </tr>
@@ -105,7 +105,7 @@ function renderBlock(block: Block, key: number, tail: boolean): ReactNode {
                     <td key={column} style={alignStyle(block.align[column])}>
                       {/* The caret follows the last cell of the last row, so a
                           streaming table keeps it where the text is. */}
-                      {renderInline(cell, tail && rowIndex === block.rows.length - 1 && column === row.length - 1)}
+                      {renderInline(cell, withCaret && rowIndex === block.rows.length - 1 && column === row.length - 1)}
                     </td>
                   ))}
                 </tr>

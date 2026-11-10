@@ -785,12 +785,24 @@ a {
   gap: 9px;
   margin: 0 14px 12px;
   padding: 9px 11px;
-  border: 1px solid color-mix(in srgb, var(--warning) 34%, transparent);
+  border: 1px solid color-mix(in srgb, var(--text-faint) 30%, transparent);
   border-radius: 8px;
-  background: color-mix(in srgb, var(--warning) 10%, transparent);
+  background: var(--surface);
   color: var(--text);
   font-size: 12.5px;
   line-height: 1.4;
+}
+
+/* The three states of the switch, told apart by colour as well as by the words:
+   blocked is the one that needs a button, ready is the one that needs nothing. */
+.agent-ready[data-tone='blocked'] {
+  border-color: color-mix(in srgb, var(--warning) 34%, transparent);
+  background: color-mix(in srgb, var(--warning) 10%, transparent);
+}
+
+.agent-ready[data-tone='ready'] {
+  border-color: color-mix(in srgb, var(--success) 30%, transparent);
+  background: color-mix(in srgb, var(--success) 8%, transparent);
 }
 
 .agent-ready > span:nth-child(2) {
@@ -803,5 +815,13 @@ a {
   width: 7px;
   height: 7px;
   border-radius: 50%;
+  background: var(--text-faint);
+}
+
+.agent-ready[data-tone='blocked'] .agent-ready-dot {
   background: var(--warning);
+}
+
+.agent-ready[data-tone='ready'] .agent-ready-dot {
+  background: var(--success);
 }

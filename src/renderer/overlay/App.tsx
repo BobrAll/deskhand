@@ -1,7 +1,7 @@
 /**
  * The overlay UI (ТЗ §8).
  *
- * A bubble, not a window: one line for the question, the answer printed directly
+ * A card, not a window: one line for the question, the answer printed directly
  * underneath it. It appears next to the cursor (the main process owns the
  * placement) as *only* that line plus one small chevron; context tags and the answer's secondary commands stay folded behind the chevron, so
  * the common case — ask, read, paste — is a small rectangle that never covers the
@@ -11,7 +11,7 @@
  * answer when nothing is selected.
  *
  * Width is the one thing the card lets a person overrule. It sizes itself to its
- * content up to `FULL_WIDTH`, which is right for a sentence and wrong for a table;
+ * content up to `CARD_WIDTH`, which is right for a sentence and wrong for a table;
  * the right edge can be dragged, and «Шире» does the same thing in one click. The
  * decision itself lives in `cardWidth.ts`.
  */
@@ -27,30 +27,30 @@ import type {
   ResponseMode,
   StreamEvent
 } from '@shared/types'
+import { CARD_NARROW_WIDTH, CARD_WIDTH } from '@shared/metrics'
 import {
   ANSWER_CHROME,
   ACTIONS_CHROME,
-  AGENT_STATUS_INSET,
+  ACTIONS_FONT,
+  AGENT_FONT,
   AGENT_ROW_CHROME,
+  AGENT_STATUS_INSET,
   CARET_SLACK,
   CHROME_WIDTH,
   FIELD_FONT,
-  FULL_WIDTH,
-  NARROW_WIDTH,
-  REFINE_HINT,
-  REFINE_LABEL,
   STOP_CHROME,
   clamp
-} from './metrics'
+} from './cardMetrics'
+import { REFINE_HINT, REFINE_LABEL } from './copy'
 import { useSpeech } from './useSpeech'
 import { useWaiting } from './useWaiting'
-import { waitingStage } from './waiting'
 import { useVoice } from './useVoice'
 import { deriveView } from './viewFlags'
 import { agentLabel, agentMark } from './agentRow'
 import { keyPolicy, type KeyAction } from './keyPolicy'
 import { routeStream } from './streamRouting'
 import { Markdown } from './markdownText'
+import { LiveThumb } from './LiveThumb'
 import { draggedWidth, expandedWidth, resolveWidth } from './cardWidth'
 
 interface Failure {
@@ -58,15 +58,24 @@ interface Failure {
   retryable: boolean
 }
 
+/** The bars on the voice surface. */
+const VOICE_BARS = 5
+/** The bars' resting height and how much of the microphone level they add. */
+const VOICE_AMP_BASE = 0.62
+const VOICE_AMP_PER_LEVEL = 0.55
+
 function newRequestId(): string {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
 }
+
+/** One measuring context for the whole window: creating one is not free. */
+let ruler: CanvasRenderingContext2D | null = null
 
 /**
  * The width of the widest line of `text`, in the font the field renders in.
  *
  * Measured, never guessed from the character count: «ш» and «i» are not the same
- * letter, and a bubble that widens by a different step than the typing does reads
+ * letter, and a card that widens by a different step than the typing does reads
  * as a glitch rather than as the card making room. A canvas 2D context is the
  * cheapest shaper that agrees with the textarea — no extra element whose layout
  * could lag the keystroke being measured.
@@ -83,50 +92,6 @@ function measureLine(text: string, font: string): number {
     widest = Math.max(widest, ruler.measureText(line).width)
   }
   return widest
-}
-
-/** One measuring context for the whole window: creating one is not free. */
-let ruler: CanvasRenderingContext2D | null = null
-
-/**
- * The context tag re-captures its image live, so the `src` changes every couple
- * of seconds. Swapping it straight onto an `<img>` blanks the thumbnail for a
- * frame each time (the new data URL is decoded after the old one is dropped), so
- * the next frame is preloaded and only then takes over.
- */
-function LiveThumb({ src }: { src: string }) {
-  const [shown, setShown] = useState(src)
-  const [incoming, setIncoming] = useState<string | null>(null)
-
-  useEffect(() => {
-    if (src === shown) {
-      setIncoming(null)
-      return
-    }
-    let cancelled = false
-    const loader = new Image()
-    loader.decoding = 'sync'
-    loader.onload = () => {
-      if (cancelled) return
-      setShown(src)
-      setIncoming(null)
-    }
-    loader.onerror = () => {
-      if (!cancelled) setIncoming(null)
-    }
-    loader.src = src
-    setIncoming(src)
-    return () => {
-      cancelled = true
-    }
-  }, [src, shown])
-
-  return (
-    <>
-      <img className="thumb" src={shown} alt="Скриншот экрана" decoding="sync" />
-      {incoming && <img className="thumb probe" src={incoming} alt="" aria-hidden />}
-    </>
-  )
 }
 
 export function App() {
@@ -163,7 +128,7 @@ export function App() {
   const dragRef = useRef<{ startX: number; startWidth: number; width: number } | null>(null)
   const [dragging, setDragging] = useState(false)
   /**
-   * The bubble opens as a single small field. Everything else — context tags,
+   * The card opens as a single small field. Everything else — context tags,
    * status rows and the answer's action strip — lives behind the
    * small chevron, so the common "ask and paste" case stays one line tall.
    */
@@ -184,7 +149,7 @@ export function App() {
     /** Answer the last rewrite started from — retries must not chain partials. */
     base: string
     /** True when the last prompt was spoken, so a retry keeps its suppression. */
-    voice: boolean
+    spoken: boolean
   } | null>(null)
 
   const stateRef = useRef<OverlayState | null>(null)
@@ -208,7 +173,7 @@ export function App() {
    */
   const ignoredRequestRef = useRef<string | null>(null)
   /** Latest `send`, so the voice listener does not resubscribe on every render. */
-  const sendRef = useRef<(text: string, voice?: boolean) => void>(() => {})
+  const sendRef = useRef<(text: string, spoken?: boolean) => void>(() => {})
   /**
    * A spoken command that arrived before the turn's state did.
    *
@@ -239,7 +204,7 @@ export function App() {
       style.font || `${style.fontStyle} ${style.fontWeight} ${style.fontSize} ${style.fontFamily}`
   }, [])
   /**
-   * The bubble's outermost element, as state rather than a ref.
+   * The card's outermost element, as state rather than a ref.
    *
    * There are two different roots — the voice bars and the card — and React mounts
    * a new element when the component switches between them. A `useRef` would still
@@ -268,7 +233,7 @@ export function App() {
   agentRef.current = agent
 
   /**
-   * Applies a state broadcast. A *new* session replaces the bubble completely; the
+   * Applies a state broadcast. A *new* session replaces the card completely; the
    * same session re-broadcast (context/warnings refreshed after a live capture)
    * must not throw away what the user has already typed or the answer on screen.
    */
@@ -482,7 +447,7 @@ export function App() {
    */
   const listening = voice.phase !== 'idle'
   /** The bars open with the voice; the meter arrives at ~10 Hz, hence the transition. */
-  const amp = voice.phase === 'listening' ? 0.62 + voice.level * 0.55 : 1
+  const amp = voice.phase === 'listening' ? VOICE_AMP_BASE + voice.level * VOICE_AMP_PER_LEVEL : 1
 
   /**
    * Whether there is anything to read. A model that produced only whitespace has
@@ -496,7 +461,7 @@ export function App() {
    *
    * Measured, not estimated from the character count: «ш» and «i» are not the
    * same letter, and a card that widens by a different step than the typing does
-   * reads as a glitch rather than as the bubble making room. The measuring canvas
+   * reads as a glitch rather than as the card making room. The measuring canvas
    * uses the field's own computed font, so the run is shaped exactly as it will
    * be inside the textarea.
    */
@@ -505,10 +470,10 @@ export function App() {
   // Drawers and confirmations need room for controls. Progress and answers
   // size to their content.
   const waiting = useWaiting(requestIdRef.current, busy && !failure && !listening)
-  const waitStage = waitingStage(waiting.elapsed)
+  const waitStage = waiting.stage
   const agentRunning = busy && agent !== null
   const agentStatus = agent && agentLabel(agent, answer)
-  const agentDone = !busy && !hasAnswer && agent?.phase === 'done' && agent.completed === true
+  const agentDone = !busy && !hasAnswer && agent !== null && agentMark(agent) === 'done'
   const showWaiting = waitStage !== 'quiet' && !hasAnswer && !agent
   const wantsWide = (expanded && !agentRunning) || Boolean(failure) ||
     agent?.phase === 'asking' || showWaiting
@@ -516,7 +481,7 @@ export function App() {
   /**
    * Everything on the line that is not the question, in points.
    *
-   * The bubble's padding and edge, the gap and the chevron —
+   * The card's padding and edge, the gap and the chevron —
    * plus the stop button, which is on screen exactly while a request is running.
    */
   const chromeWidth = CHROME_WIDTH + (busy ? STOP_CHROME : 0)
@@ -525,16 +490,16 @@ export function App() {
    * The width the card needs for the question being written.
    *
    * Nothing is added for empty space: the field gets as many points as the
-   * sentence takes, so every keystroke widens the bubble by exactly one glyph and
-   * the card only starts wrapping once it has reached `FULL_WIDTH`. That is the
-   * difference between a bubble that grows under your hands and one that snaps
+   * sentence takes, so every keystroke widens the card by exactly one glyph and
+   * the card only starts wrapping once it has reached `CARD_WIDTH`. That is the
+   * difference between a card that grows under your hands and one that snaps
    * open to a panel the moment you start typing — the latter is loud in precisely
    * the moment a person is still deciding whether they want to say anything.
    */
   const composedWidth = clamp(
     Math.ceil(textWidth) + chromeWidth + CARET_SLACK,
-    NARROW_WIDTH,
-    FULL_WIDTH
+    CARD_NARROW_WIDTH,
+    CARD_WIDTH
   )
 
   // Recompute from current content so a shorter answer shrinks the card again.
@@ -547,31 +512,31 @@ export function App() {
         // when the answer finishes and the remaining buttons appear. «Вернуть» is
         // the longer of the two width labels, so it is the one measured.
         `${speech.speaking ? 'Остановить озвучку' : 'Прослушать'} Вернуть Скопировать`,
-        FIELD_FONT.replace('13px', '11px')
+        ACTIONS_FONT
       )) + ACTIONS_CHROME
     : 0
   const agentWidth = agentStatus
-    ? Math.ceil(measureLine(agentStatus, FIELD_FONT.replace('13px', '11.5px'))) +
+    ? Math.ceil(measureLine(agentStatus, AGENT_FONT)) +
       AGENT_ROW_CHROME + (agentRunning ? 0 : AGENT_STATUS_INSET) + CARET_SLACK
     : 0
-  const inputWidth = agentRunning ? NARROW_WIDTH : composedWidth
+  const inputWidth = agentRunning ? CARD_NARROW_WIDTH : composedWidth
   /**
    * What the content would like, before any cap.
    *
    * Kept unclamped because «Шире» has to know how much room the answer actually
-   * wants: the capped number is always `FULL_WIDTH` once the answer is long, and
+   * wants: the capped number is always `CARD_WIDTH` once the answer is long, and
    * a button that opens the card to the same width for every long reply is the
    * bug it was reported as.
    */
   const naturalWidth = Math.max(inputWidth, answerWidth, actionsWidth, agentWidth)
-  const contentWidth = clamp(naturalWidth, NARROW_WIDTH, FULL_WIDTH)
+  const contentWidth = clamp(naturalWidth, CARD_NARROW_WIDTH, CARD_WIDTH)
   // While a drag runs the width lives in a ref, because updating state a hundred
   // times a second re-renders the answer for nothing. But a render can still
   // happen mid-drag — the next chunk of a streaming answer is exactly that — and
   // React would then write its own width over the dragged one. Reading the live
   // value here makes such a render agree with the edge instead of fighting it.
   const cardWidth = resolveWidth({
-    listening,
+    showingVoiceBars: listening,
     wantsWide,
     contentWidth,
     userWidth: dragRef.current?.width ?? userWidth,
@@ -586,13 +551,13 @@ export function App() {
 
   // Measure layout, not the entrance transform. getBoundingClientRect includes
   // the appear animation's scale, which used to feed false heights back to macOS.
-  const reportRef = useRef<() => void>(() => {})
+  const resizeWindowToLayoutRef = useRef<() => void>(() => {})
   useLayoutEffect(() => {
     const node = rootNode
     if (!node) return
     let lastWidth = 0
     let lastHeight = 0
-    const report = (): void => {
+    const resizeWindowToLayout = (): void => {
       const width = node.offsetWidth
       const height = node.offsetHeight
       if (width === lastWidth && height === lastHeight) return
@@ -604,16 +569,16 @@ export function App() {
     }
     const onFocus = (): void => {
       lastWidth = lastHeight = 0
-      report()
+      resizeWindowToLayout()
       inputRef.current?.focus()
     }
-    reportRef.current = report
-    const observer = new ResizeObserver(report)
+    resizeWindowToLayoutRef.current = resizeWindowToLayout
+    const observer = new ResizeObserver(resizeWindowToLayout)
     observer.observe(node)
-    report()
+    resizeWindowToLayout()
     window.addEventListener('focus', onFocus)
     return () => {
-      reportRef.current = () => {}
+      resizeWindowToLayoutRef.current = () => {}
       observer.disconnect()
       window.removeEventListener('focus', onFocus)
     }
@@ -622,7 +587,7 @@ export function App() {
   // Chromium sizes the field from its content. Report the final layout before
   // paint without temporarily collapsing the focused textarea to measure it.
   useLayoutEffect(() => {
-    reportRef.current()
+    resizeWindowToLayoutRef.current()
   }, [prompt, cardWidth, wrapped, rootNode])
 
   useEffect(() => {
@@ -630,13 +595,13 @@ export function App() {
     if (node) node.scrollTop = node.scrollHeight
   }, [answer])
 
-  // A setup problem or a failed request is not a detail: the bubble unfolds, so
+  // A setup problem or a failed request is not a detail: the card unfolds, so
   // the reason (and the way out of it) is never hidden behind a chevron.
   useEffect(() => {
     if (failure || state?.setupNotice) setExpanded(true)
   }, [failure, state?.setupNotice])
 
-  const send = useCallback((text: string, sendMode?: ResponseMode, voice = false) => {
+  const send = useCallback((text: string, sendMode?: ResponseMode, spoken = false) => {
     const value = text.trim()
     const current = stateRef.current
     if (!value || !current) return
@@ -644,7 +609,7 @@ export function App() {
       // A typed Enter while an answer streams is most likely a duplicate; a
       // spoken command is a new question and has to win, or the phrase would be
       // swallowed and the user would hear nothing back at all.
-      if (!voice) return
+      if (!spoken) return
       const previous = requestIdRef.current
       setBusy(false)
       if (previous) window.deskhand.overlay.cancel(previous)
@@ -652,7 +617,7 @@ export function App() {
     const usedMode = sendMode ?? 'insert'
     const requestId = newRequestId()
     requestIdRef.current = requestId
-    speechRef.current.begin(requestId, value, voice)
+    speechRef.current.begin(requestId, value, spoken)
     setBusy(true)
     setAnswer('')
     setFailure(null)
@@ -665,7 +630,7 @@ export function App() {
     setAgent(null)
     // The question has been asked: whatever the user typed to ask it is no longer
     // "using the card", and the answer — drawings included — is what they will be
-    // looking at now. Without this the bubble would stay solid for the whole
+    // looking at now. Without this the card would stay solid for the whole
     // answer, because the field still holds the question.
     setTyping(false)
     // The field is emptied on send, not on answer.
@@ -682,16 +647,16 @@ export function App() {
     // confirmation of what was heard, so it stays until the answer starts arriving
     // (`onStream` clears it then). The user did not type it, so they have not
     // already seen it.
-    spokenPromptRef.current = voice
-    setPrompt(voice ? value : '')
-    setLast({ prompt: value, mode: usedMode, refine: null, base: '', voice })
+    spokenPromptRef.current = spoken
+    setPrompt(spoken ? value : '')
+    setLast({ prompt: value, mode: usedMode, refine: null, base: '', spoken })
     window.deskhand.overlay.send({
       requestId,
       prompt: value,
       mode: usedMode,
       includeSelection: current.flags.includeSelection,
       includeScreenshot: current.flags.includeScreenshot,
-      voice
+      voice: spoken
     })
   }, [])
 
@@ -702,7 +667,7 @@ export function App() {
    */
   // Assigned after `send` is defined so the transcript listener can call it
   // without depending on it (that would resubscribe on every render).
-  sendRef.current = (text: string, voice?: boolean) => send(text, undefined, voice)
+  sendRef.current = (text: string, spoken?: boolean) => send(text, undefined, spoken)
 
   const refine = useCallback(
     (direction: RefineDirection, base?: string) => {
@@ -721,7 +686,7 @@ export function App() {
         mode: last?.mode ?? 'insert',
         refine: direction,
         base: baseAnswer,
-        voice: false
+        spoken: false
       })
       window.deskhand.overlay.send({
         requestId,
@@ -800,7 +765,7 @@ export function App() {
     []
   )
 
-  /** Speech that has already been recognised and put into this bubble. */
+  /** Speech that has already been recognised and put into this card. */
   useEffect(() => {
     const off = window.deskhand.voice.onTranscript(({ text, send: autoSend }) => {
       // A new phrase replaces whatever the previous turn left on the card. The
@@ -865,9 +830,10 @@ export function App() {
    *   A state update per pointer move re-renders the whole card — the answer's
    *   Markdown included — a hundred times a second, and the card lags behind the
    *   hand by exactly that much. State is committed once, on release.
-   * - The window follows from the element: the `ResizeObserver` in `report` sees
-   *   the new width and resizes the window with `pin`, so the left edge stays put
-   *   and the right edge tracks the pointer. There is one resize path, not two.
+   * - The window follows from the element: the `ResizeObserver` in
+   *   `resizeWindowToLayout` sees the new width and resizes the window with
+   *   `pin`, so the left edge stays put and the right edge tracks the pointer.
+   *   There is one resize path, not two.
    */
   const gripDown = useCallback(
     (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -889,7 +855,7 @@ export function App() {
     if (!drag || !node) return
     // The drawer's buttons need the full width, so an unfolded card cannot be
     // dragged narrower than that: it would snap back on release.
-    const floor = wantsWide ? FULL_WIDTH : undefined
+    const floor = wantsWide ? CARD_WIDTH : undefined
     const width = draggedWidth(
       drag.startWidth,
       event.screenX - drag.startX,
@@ -969,7 +935,6 @@ export function App() {
         shift: event.shiftKey,
         tagName: (event.target as HTMLElement | null)?.tagName ?? null,
         agentPhase: agentRef.current?.phase ?? null,
-        hasRequestId: Boolean(requestIdRef.current),
         hasSelection: Boolean(window.getSelection()?.toString()),
         hasAnswer: Boolean(answer.trim())
       })
@@ -996,7 +961,7 @@ export function App() {
    */
   if (listening) {
     return (
-      <div ref={rootRef} className="bubble" style={{ width: cardWidth }} data-voice>
+      <div ref={rootRef} className="card" style={{ width: cardWidth }} data-voice>
         <div
           className="voice"
           data-phase={voice.phase}
@@ -1004,7 +969,7 @@ export function App() {
           role="status"
           aria-label={voice.phase === 'listening' ? 'Слушаю' : 'Распознаю'}
         >
-          {[0, 1, 2, 3, 4].map((bar) => (
+          {Array.from({ length: VOICE_BARS }, (_, bar) => (
             <i key={bar} />
           ))}
         </div>
@@ -1013,18 +978,31 @@ export function App() {
   }
 
   /**
-   * The card is on screen *before* its session exists.
+   * Everything the card decides about itself, in one place and out of this file.
    *
-   * The window comes up on the key press, and the context — frontmost app,
-   * selection, screenshot — lands a few hundred milliseconds later. That gap is
-   * rendered as the card itself: the same field and the same
-   * placeholder. Announcing the wait ("Подготовка контекста…") turned the first
-   * beat of every press into a status line nobody asked to read, and made the
-   * panel change shape and contents right after it appeared. Collecting the
-   * context is background work; the card just looks like itself from frame one.
+   * The flags are a pure function of the session, the drawer and the last request
+   * — see `viewFlags.ts`. They used to be expressions here, which meant they could
+   * only be checked by looking at the card. `blocked` is one of them: the field
+   * needs it before the session exists, and the drawer's lines need it after.
    */
-  const blocked = state?.context.excluded ?? false
-  const showingTranscript = busy && last?.voice && Boolean(prompt)
+  const {
+    blocked,
+    showMeta,
+    answerReady,
+    agentOff,
+    agentBlocked,
+    promptLooksLikeAction,
+    hint,
+    needsAttention
+  } = deriveView({
+    session: state,
+    expanded,
+    hasAnswer,
+    busy,
+    failed: Boolean(failure),
+    last
+  })
+  const showingTranscript = busy && last?.spoken && Boolean(prompt)
 
   /**
    * The field is shared by the provisional and ready card.
@@ -1062,7 +1040,6 @@ export function App() {
           shift: event.shiftKey,
           tagName: 'TEXTAREA',
           agentPhase: null,
-          hasRequestId: false,
           hasSelection: false,
           hasAnswer: Boolean(answer.trim())
         }) !== 'send') {
@@ -1074,6 +1051,17 @@ export function App() {
     />
   )
 
+  /**
+   * The card is on screen *before* its session exists.
+   *
+   * The window comes up on the key press, and the context — frontmost app,
+   * selection, screenshot — lands a few hundred milliseconds later. That gap is
+   * rendered as the card itself: the same field and the same placeholder.
+   * Announcing the wait ("Подготовка контекста…") turned the first beat of every
+   * press into a status line nobody asked to read, and made the panel change shape
+   * and contents right after it appeared. Collecting the context is background
+   * work; the card just looks like itself from frame one.
+   */
   if (!state) {
     // Nothing to unfold yet and nothing to send to: the field is the whole card.
     //
@@ -1083,7 +1071,7 @@ export function App() {
     // before the session exists is a no-op rather than an error: `send` returns
     // without touching the text, and the same Enter works a moment later.
     return (
-      <div ref={rootRef} className="bubble" style={{ width: cardWidth }}>
+      <div ref={rootRef} className="card" style={{ width: cardWidth }}>
         <div className="bar">
           {composer}
           {/*
@@ -1104,29 +1092,8 @@ export function App() {
   const { context, flags, setupNotice } = state
   const selection = context.selection
   const screenshot = context.screenshot
-  /**
-   * Everything the card decides about itself, in one place and out of this file.
-   *
-   * The flags are a pure function of the session, the drawer and the last request
-   * — see `viewFlags.ts`. They used to be expressions here, which meant they could
-   * only be checked by looking at the card.
-   */
-  const {
-    showMeta,
-    answerReady,
-    agentOff,
-    agentBlocked,
-    actionAsk,
-    hint,
-    alert
-  } = deriveView({
-    session: state,
-    expanded,
-    hasAnswer,
-    busy,
-    failed: Boolean(failure),
-    last
-  })
+  /** The call the run is waiting on an answer for, if any. */
+  const approval = agent?.approval ?? null
 
   return (
     // While the assistant is painting on the screen the card turns into a much
@@ -1134,7 +1101,7 @@ export function App() {
     // the card, and an opaque panel sitting on that very spot is what hides it.
     <div
       ref={rootRef}
-      className="bubble"
+      className="card"
       style={{ width: cardWidth }}
       data-busy={busy || undefined}
       data-drawing={(drawn > 0 && !typing) || undefined}
@@ -1164,7 +1131,7 @@ export function App() {
           <button
             className="toggle"
             data-open={expanded || undefined}
-            data-alert={!expanded && alert ? true : undefined}
+            data-alert={!expanded && needsAttention ? true : undefined}
             aria-expanded={expanded}
             aria-label={expanded ? 'Свернуть' : 'Развернуть'}
             title={expanded ? 'Свернуть' : 'Контекст, подсказки и действия'}
@@ -1256,10 +1223,10 @@ export function App() {
         сделать" is exactly the moment this switch is worth knowing about, and
         inside the drawer it would only be found by people who already knew.
       */}
-      {agentOff && !blocked && !busy && (expanded || drawn > 0 || actionAsk) && (
-        <div className="line" data-tone={actionAsk ? 'warn' : undefined}>
+      {agentOff && !blocked && !busy && (expanded || drawn > 0 || promptLooksLikeAction) && (
+        <div className="line" data-tone={promptLooksLikeAction ? 'warn' : undefined}>
           <span>
-            {actionAsk
+            {promptLooksLikeAction
               ? 'Это можно было сделать, а не показать: включите управление — и я нажму сам.'
               : 'Могу и нажать за вас — управление мышью пока выключено.'}
           </span>
@@ -1272,7 +1239,7 @@ export function App() {
       {/*
         Enabled but still blocked (almost always the Accessibility grant). The
         reason already arrived through `hint`; this adds the way out of it, since
-        "нужен доступ" without a button is a dead end in a bubble this small.
+        "нужен доступ" without a button is a dead end in a card this small.
       */}
       {expanded && agentBlocked && !blocked && !busy && (
         <div className="line">
@@ -1292,7 +1259,7 @@ export function App() {
           </svg>
           <span className="agent-label">Готово</span>
         </div>
-      ) : agent && (agentStatus || agent.approval) ? (
+      ) : agent && (agentStatus || approval) ? (
         <div
           className="agent"
           data-phase={agent.phase}
@@ -1313,25 +1280,25 @@ export function App() {
             appears where the step it belongs to appears, so the user reads the
             run and the question as one thing.
           */}
-          {agent.phase === 'asking' && agent.approval && (
+          {agent.phase === 'asking' && approval && (
             <div className="agent-ask" role="group" aria-label="Подтверждение действия">
               {agent.message && <div className="agent-ask-detail">{agent.message}</div>}
               <div className="agent-ask-buttons">
                 <button
                   className="agent-allow"
-                  onClick={() => void answerAgent(agent.approval!, true, false)}
+                  onClick={() => void answerAgent(approval, true, false)}
                 >
                   Разрешить
                 </button>
                 <button
                   className="agent-always"
-                  onClick={() => void answerAgent(agent.approval!, true, true)}
+                  onClick={() => void answerAgent(approval, true, true)}
                 >
                   Разрешить всегда
                 </button>
                 <button
                   className="agent-deny"
-                  onClick={() => void answerAgent(agent.approval!, false, false)}
+                  onClick={() => void answerAgent(approval, false, false)}
                 >
                   Отменить
                 </button>
@@ -1354,7 +1321,7 @@ export function App() {
 
       {failure && (
         <>
-          {last?.voice && <div className="line transcript">Распознано: {last.prompt}</div>}
+          {last?.spoken && <div className="line transcript">Распознано: {last.prompt}</div>}
           <div className="line" data-tone="err">
             <span>{failure.message}</span>
             {failure.retryable && last && (
@@ -1363,7 +1330,7 @@ export function App() {
                 onClick={() =>
                   last.refine
                     ? refine(last.refine, last.base)
-                    : send(last.prompt, last.mode, last.voice)
+                    : send(last.prompt, last.mode, last.spoken)
                 }
               >
                 Повторить
@@ -1453,7 +1420,7 @@ export function App() {
 
       {/*
         The resize edge. It sits on the card's outermost right column, over the
-        bubble's padding and outside the answer's scrollbar, so pulling it never
+        card's padding and outside the answer's scrollbar, so pulling it never
         fights a scroll gesture or a text selection.
       */}
       {hasAnswer && (

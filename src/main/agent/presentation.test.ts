@@ -10,110 +10,37 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type { AgentEvent, AgentPointerFrame, AgentPresentation, ScreenRect } from '@shared/types'
+import type { AgentEvent, AgentPointerFrame, AgentPresentation } from '@shared/types'
+import type { FakeLayerWindow } from '../test/layerWindowMock'
+import { lastLayerWindow } from '../test/layerWindowMock'
 
 const state = vi.hoisted(() => ({
   cursor: { x: 500, y: 400 },
   display: { x: 0, y: 0, width: 1440, height: 900 },
-  windows: [] as Array<{
-    bounds: ScreenRect | null
-    shown: number
-    hidden: number
-    destroyed: boolean
-    sent: AgentPointerFrame[]
-    loadHandlers: Record<string, () => void>
-  }>
+  windows: [] as FakeLayerWindow<AgentPointerFrame>[]
 }))
 
-vi.mock('electron', () => ({
-  BrowserWindow: class {
-    readonly webContents = {
-      setWindowOpenHandler: (_handler: unknown) => {
-        // This layer never opens anything.
-      },
-      once: (event: string, handler: () => void) => {
-        this.entry.loadHandlers[event] = handler
-        return this.webContents
-      },
-      send: (_channel: string, payload: AgentPointerFrame) => {
-        this.entry.sent.push(payload)
+vi.mock('electron', async () => {
+  const { layerWindowClass } = await import('../test/layerWindowMock')
+  return {
+    BrowserWindow: layerWindowClass(state),
+    screen: {
+      getCursorScreenPoint: () => state.cursor,
+      getDisplayNearestPoint: (point: { x: number; y: number }) => {
+        const inMain =
+          point.x >= state.display.x &&
+          point.x <= state.display.x + state.display.width &&
+          point.y >= state.display.y &&
+          point.y <= state.display.y + state.display.height
+        // The second display is the one the tests move to, at -1920.
+        return { bounds: inMain ? state.display : { x: -1920, y: 0, width: 1920, height: 1080 } }
       }
+    },
+    shell: {
+      openExternal: async () => undefined
     }
-    readonly entry: {
-      bounds: ScreenRect | null
-      shown: number
-      hidden: number
-      destroyed: boolean
-      sent: AgentPointerFrame[]
-      loadHandlers: Record<string, () => void>
-    }
-
-    constructor() {
-      this.entry = {
-        bounds: null,
-        shown: 0,
-        hidden: 0,
-        destroyed: false,
-        sent: [],
-        loadHandlers: {}
-      }
-      state.windows.push(this.entry)
-      queueMicrotask(() => this.entry.loadHandlers['did-finish-load']?.())
-    }
-
-    loadURL(): void {
-      // Not used: the dev-server branch is off in tests.
-    }
-    loadFile(): void {
-      // Not used: the dev-server branch is off in tests.
-    }
-    setBounds(bounds: ScreenRect): void {
-      this.entry.bounds = bounds
-    }
-    setAlwaysOnTop(): void {
-      // Part of the contract: the layer sits above full-screen apps.
-    }
-    setVisibleOnAllWorkspaces(): void {
-      // Part of the contract: the layer is visible across spaces.
-    }
-    on(event: string, handler: () => void): void {
-      this.entry.loadHandlers[event] = handler
-    }
-    setIgnoreMouseEvents(): void {
-      // Part of the contract: the layer never eats clicks.
-    }
-    setContentProtection(): void {
-      // Part of the contract: the layer never ends up in a screenshot.
-    }
-    showInactive(): void {
-      this.entry.shown += 1
-    }
-    hide(): void {
-      this.entry.hidden += 1
-    }
-    isDestroyed(): boolean {
-      return this.entry.destroyed
-    }
-    destroy(): void {
-      this.entry.destroyed = true
-    }
-  },
-  screen: {
-    getCursorScreenPoint: () => state.cursor,
-    getDisplayNearestPoint: (point: { x: number; y: number }) => {
-      const inMain =
-        point.x >= state.display.x &&
-        point.x <= state.display.x + state.display.width &&
-        point.y >= state.display.y &&
-        point.y <= state.display.y + state.display.height
-      // The second display is the one the tests move to, at -1920.
-      return { bounds: inMain ? state.display : { x: -1920, y: 0, width: 1920, height: 1080 } }
-    }
-  },
-  shell: {
-    openExternal: async () => undefined
   }
-}))
+})
 
 type PresentationModule = typeof import('./presentation')
 
@@ -139,8 +66,8 @@ async function settle(): Promise<void> {
   for (let index = 0; index < 5; index += 1) await Promise.resolve()
 }
 
-function win(): (typeof state.windows)[number] {
-  return state.windows[state.windows.length - 1]
+function win(): FakeLayerWindow<AgentPointerFrame> {
+  return lastLayerWindow(state)
 }
 
 beforeEach(async () => {
@@ -158,7 +85,7 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
-describe('presentAgentAction: painting an action', () => {
+describe('paintAgentPresentation: painting an action', () => {
   it('creates nothing until an action arrives', () => {
     // The layer is a consequence of an action, not a fixture of the app: a run
     // that never acts must not pay for a window.
@@ -166,7 +93,7 @@ describe('presentAgentAction: painting an action', () => {
   })
 
   it('places the layer over the display and sends the point in its coordinates', async () => {
-    layer.presentAgentAction(action())
+    layer.paintAgentPresentation(action())
     await settle()
 
     expect(state.windows).toHaveLength(1)
@@ -183,14 +110,14 @@ describe('presentAgentAction: painting an action', () => {
   })
 
   it('shows without taking focus', async () => {
-    layer.presentAgentAction(action())
+    layer.paintAgentPresentation(action())
     await settle()
 
     expect(win().shown).toBe(1)
   })
 
   it('carries the element frame in the same coordinates as the point', async () => {
-    layer.presentAgentAction(action({
+    layer.paintAgentPresentation(action({
       target: { x: 100, y: 290, width: 40, height: 20 }
     }))
     await settle()
@@ -199,9 +126,9 @@ describe('presentAgentAction: painting an action', () => {
   })
 
   it('travels from the previous target on a normal step', async () => {
-    layer.presentAgentAction(action())
+    layer.paintAgentPresentation(action())
     await settle()
-    layer.presentAgentAction(action({ point: { x: 700, y: 500 } }))
+    layer.paintAgentPresentation(action({ point: { x: 700, y: 500 } }))
     await settle()
 
     expect(win().sent.at(-1)).toMatchObject({ point: { x: 700, y: 500 } })
@@ -211,7 +138,7 @@ describe('presentAgentAction: painting an action', () => {
   it('aims at the middle of the window when the call has no element', async () => {
     // A key press or a scroll with no element is aimed at the window, not at an
     // invented pixel.
-    layer.presentAgentAction(action({
+    layer.paintAgentPresentation(action({
       tool: 'press_key',
       gesture: 'key',
       point: undefined,
@@ -223,16 +150,16 @@ describe('presentAgentAction: painting an action', () => {
   })
 
   it('draws nothing when there is no geometry to point at', async () => {
-    layer.presentAgentAction(action({ point: undefined }))
+    layer.paintAgentPresentation(action({ point: undefined }))
     await settle()
 
     expect(state.windows).toHaveLength(0)
   })
 
   it('moves the layer to the display the target lives on', async () => {
-    layer.presentAgentAction(action())
+    layer.paintAgentPresentation(action())
     await settle()
-    layer.presentAgentAction(action({ point: { x: -1000, y: 200 } }))
+    layer.paintAgentPresentation(action({ point: { x: -1000, y: 200 } }))
     await settle()
 
     expect(win().bounds).toEqual({ x: -1920, y: 0, width: 1920, height: 1080 })
@@ -244,11 +171,11 @@ describe('presentAgentAction: painting an action', () => {
   })
 
   it('reuses one window for a whole batch', async () => {
-    layer.presentAgentAction(action())
+    layer.paintAgentPresentation(action())
     await settle()
-    layer.presentAgentAction(action({ point: { x: 200, y: 200 } }))
+    layer.paintAgentPresentation(action({ point: { x: 200, y: 200 } }))
     await settle()
-    layer.presentAgentAction(action({ point: { x: 300, y: 400 } }))
+    layer.paintAgentPresentation(action({ point: { x: 300, y: 400 } }))
     await settle()
 
     expect(state.windows).toHaveLength(1)
@@ -256,9 +183,9 @@ describe('presentAgentAction: painting an action', () => {
   })
 })
 
-describe('showAgentPointer: present for the whole run', () => {
+describe('showAgentPresentation: present for the whole run', () => {
   it('appears before the first action, at the real pointer', async () => {
-    layer.showAgentPointer()
+    layer.showAgentPresentation()
     await settle()
 
     expect(state.windows).toHaveLength(1)
@@ -271,10 +198,10 @@ describe('showAgentPointer: present for the whole run', () => {
   })
 
   it('is idempotent: every phase of a run may ask for it', async () => {
-    layer.showAgentPointer()
+    layer.showAgentPresentation()
     await settle()
-    layer.showAgentPointer()
-    layer.showAgentPointer()
+    layer.showAgentPresentation()
+    layer.showAgentPresentation()
     await settle()
 
     expect(state.windows).toHaveLength(1)
@@ -284,7 +211,7 @@ describe('showAgentPointer: present for the whole run', () => {
   it('stays on screen across a long gap between actions', async () => {
     // The mark describes the run, not the step: half a minute of model time is
     // not a reason to disappear.
-    layer.showAgentPointer()
+    layer.showAgentPresentation()
     await settle()
     await vi.advanceTimersByTimeAsync(60_000)
 
@@ -293,9 +220,9 @@ describe('showAgentPointer: present for the whole run', () => {
   })
 
   it('turns the idle mark into a gesture when the first action lands', async () => {
-    layer.showAgentPointer()
+    layer.showAgentPresentation()
     await settle()
-    layer.presentAgentAction(action())
+    layer.paintAgentPresentation(action())
     await settle()
 
     expect(win().sent.at(-1)).toMatchObject({
@@ -311,9 +238,9 @@ describe('showAgentPointer: present for the whole run', () => {
   })
 })
 
-describe('updateAgentPointer: the mark follows the run', () => {
+describe('updateAgentPresentation: the mark follows the run', () => {
   it('is on screen from the first phase, before any action', async () => {
-    layer.updateAgentPointer(phase('arming'))
+    layer.updateAgentPresentation(phase('arming'))
     await settle()
 
     expect(win().shown).toBe(1)
@@ -321,11 +248,11 @@ describe('updateAgentPointer: the mark follows the run', () => {
   })
 
   it('stays up through a step and through a question', async () => {
-    layer.updateAgentPointer(phase('arming'))
+    layer.updateAgentPresentation(phase('arming'))
     await settle()
-    layer.updateAgentPointer({ ...phase('acting'), step: 1, total: 4 })
+    layer.updateAgentPresentation({ ...phase('acting'), step: 1, total: 4 })
     await settle()
-    layer.updateAgentPointer(phase('asking'))
+    layer.updateAgentPresentation(phase('asking'))
     await settle()
 
     expect(win().hidden).toBe(0)
@@ -334,9 +261,9 @@ describe('updateAgentPointer: the mark follows the run', () => {
 
   it('leaves on every terminal phase', async () => {
     for (const terminal of ['done', 'aborted', 'error', 'idle'] as const) {
-      layer.updateAgentPointer(phase('acting'))
+      layer.updateAgentPresentation(phase('acting'))
       await settle()
-      layer.updateAgentPointer(phase(terminal))
+      layer.updateAgentPresentation(phase(terminal))
       await vi.advanceTimersByTimeAsync(240)
 
       expect(win().hidden, terminal).toBe(1)
@@ -348,10 +275,10 @@ describe('updateAgentPointer: the mark follows the run', () => {
   })
 
   it('does not flash when a step repeats the same phase', async () => {
-    layer.updateAgentPointer(phase('acting'))
+    layer.updateAgentPresentation(phase('acting'))
     await settle()
-    layer.updateAgentPointer({ ...phase('acting'), step: 2 })
-    layer.updateAgentPointer({ ...phase('acting'), step: 3 })
+    layer.updateAgentPresentation({ ...phase('acting'), step: 2 })
+    layer.updateAgentPresentation({ ...phase('acting'), step: 3 })
     await settle()
 
     expect(win().hidden).toBe(0)
@@ -359,9 +286,9 @@ describe('updateAgentPointer: the mark follows the run', () => {
   })
 })
 
-describe('presentAgentAction: getting out of the way', () => {
+describe('paintAgentPresentation: getting out of the way', () => {
   it('does not hide on its own after the last action', async () => {
-    layer.presentAgentAction(action())
+    layer.paintAgentPresentation(action())
     await settle()
     await vi.advanceTimersByTimeAsync(10_000)
 
@@ -370,7 +297,7 @@ describe('presentAgentAction: getting out of the way', () => {
   })
 
   it('hides at the end of a run', async () => {
-    layer.presentAgentAction(action())
+    layer.paintAgentPresentation(action())
     await settle()
 
     layer.hideAgentPresentation()
@@ -382,7 +309,7 @@ describe('presentAgentAction: getting out of the way', () => {
   it('ignores a hide that arrives before the window has loaded', async () => {
     // The run can end before the page finished parsing; the mark must not be
     // shown afterwards by the paint that was still waiting.
-    layer.presentAgentAction(action())
+    layer.paintAgentPresentation(action())
     layer.hideAgentPresentation()
     await settle()
 
@@ -391,7 +318,7 @@ describe('presentAgentAction: getting out of the way', () => {
   })
 
   it('destroys the window on quit', async () => {
-    layer.presentAgentAction(action())
+    layer.paintAgentPresentation(action())
     await settle()
 
     layer.destroyAgentPresentation()

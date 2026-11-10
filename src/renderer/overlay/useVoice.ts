@@ -42,8 +42,6 @@ const LINGER_MS = 1600
 const LEVEL_MS = 80
 
 export interface VoiceHook extends VoiceState {
-  /** Push-to-talk is configured and the card should offer it. */
-  available: boolean
   /**
    * False until `attach()` has answered.
    *
@@ -59,13 +57,19 @@ export interface VoiceHook extends VoiceState {
 
 export function useVoice(): VoiceHook {
   const [state, setState] = useState<VoiceState>(IDLE)
-  const [available, setAvailable] = useState(false)
   const [ready, setReady] = useState(false)
   const recorderRef = useRef<RecorderHandles | null>(null)
   const lingerRef = useRef<number | null>(null)
   const levelTimerRef = useRef<number | null>(null)
-  /** Set when the key was released before the microphone finished opening. */
-  const pendingStopRef = useRef<boolean | null>(null)
+  /**
+   * The stop that arrived before the microphone finished opening, as its
+   * `transcribe` flag.
+   *
+   * `null` means nothing is pending. The opener applies it the moment the
+   * recorder is up, so a cancelled turn is not transcribed and a released key
+   * does not record until the next press.
+   */
+  const pendingStopTranscribeRef = useRef<boolean | null>(null)
   /**
    * True between "start opening the microphone" and the recorder being ready.
    *
@@ -110,14 +114,14 @@ export function useVoice(): VoiceHook {
   }, [])
 
   /**
- * Why an early return here is not enough.
- *
- * The main process supersedes a turn the moment the key goes down again, so a
- * press that arrives while the previous recorder is still winding down *must*
- * produce a recording — otherwise the new turn has no audio, the card sits on
- * "recognising", and the watchdog has to close it. The work already in flight is
- * therefore queued, not dropped, and restarts the instant the microphone is free.
- */
+   * Why an early return here is not enough.
+   *
+   * The main process supersedes a turn the moment the key goes down again, so a
+   * press that arrives while the previous recorder is still winding down *must*
+   * produce a recording — otherwise the new turn has no audio, the card sits on
+   * "recognising", and the watchdog has to close it. The work already in flight is
+   * therefore queued, not dropped, and restarts the instant the microphone is free.
+   */
   const beginCapture = useCallback(
     async (maxDurationMs: number) => {
       const api = window.deskhand.voice
@@ -154,11 +158,11 @@ export function useVoice(): VoiceHook {
           if (current) api.level(current.level())
         }, LEVEL_MS)
 
-        const pending = pendingStopRef.current
+        const pending = pendingStopTranscribeRef.current
         if (pending !== null) {
           // The key came up while `getUserMedia` was still resolving: honour it
           // now instead of recording until the next press.
-          pendingStopRef.current = null
+          pendingStopTranscribeRef.current = null
           stopMeter()
           recorderRef.current = null
           const audio = await recorder.stop(pending)
@@ -169,7 +173,7 @@ export function useVoice(): VoiceHook {
       } catch (error) {
         // A stop that arrived while the microphone was opening belongs to this
         // failed turn; keeping it would make the *next* press stop instantly.
-        pendingStopRef.current = null
+        pendingStopTranscribeRef.current = null
         const message =
           error instanceof DOMException && error.name === 'NotAllowedError'
             ? 'Нет доступа к микрофону — разрешите его в настройках macOS.'
@@ -204,7 +208,9 @@ export function useVoice(): VoiceHook {
         // the decision, the opener applies it the moment the microphone is up.
         // Otherwise the stop is stale (the microphone never started) and must not
         // be carried into the next press.
-        if (openingRef.current || queuedRef.current !== null) pendingStopRef.current = transcribe
+        if (openingRef.current || queuedRef.current !== null) {
+          pendingStopTranscribeRef.current = transcribe
+        }
         return
       }
       recorderRef.current = null
@@ -263,13 +269,11 @@ export function useVoice(): VoiceHook {
       setReady(true)
     })
 
-    // The hint is only offered when a hotkey actually exists: advertising voice on
-    // a machine without a model or a tap would be a lie. The same answer decides
-    // whether the microphone is warmed: opening it is the expensive part of the
-    // first turn on macOS, and doing it here — while the user is not speaking —
-    // is what keeps the first phrase after launch from losing its beginning.
+    // Warming the microphone is the expensive part of the first turn on macOS,
+    // and doing it here — while the user is not speaking — is what keeps the first
+    // phrase after launch from losing its beginning. On a machine without a model
+    // or a tap there is nothing to warm.
     void api.status().then((status) => {
-      setAvailable(status.ready && status.listenerError === null)
       if (status.ready && status.enabled) void primeRecorder()
     })
 
@@ -285,5 +289,5 @@ export function useVoice(): VoiceHook {
     }
   }, [beginCapture, clearLinger, endCapture, stopMeter])
 
-  return { ...state, available, ready }
+  return { ...state, ready }
 }

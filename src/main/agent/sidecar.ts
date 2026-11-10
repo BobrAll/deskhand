@@ -31,8 +31,17 @@ import { trace } from './trace'
 
 const BINARY_NAME = 'deskhand-agent'
 
+/** How long the agent has to announce itself before the start counts as failed. */
+const START_TIMEOUT_MS = 10_000
+/** How long one request may wait for its answer. */
+const REQUEST_TIMEOUT_MS = 15_000
+/** How long a process gets to exit after `shutdown` before it is killed. */
+const SHUTDOWN_GRACE_MS = 1_000
+/** How much of one stderr line is kept in the trace. */
+const MAX_LOG_LINE_CHARS = 300
+
 /** The gesture vocabulary `present` may carry, matching the Swift enum. */
-const GESTURES = [
+const GESTURES: ReadonlySet<string> = new Set([
   'click',
   'secondary',
   'type',
@@ -42,7 +51,7 @@ const GESTURES = [
   'scroll',
   'drag',
   'activate'
-] as const
+])
 
 let cachedPath: string | null | undefined
 
@@ -193,7 +202,7 @@ export type AgentSidecarEvent =
   | { kind: 'cancelled' }
   | { kind: 'error'; message: string; code?: string }
 
-interface Pending {
+interface PendingRequest {
   resolve(value: Record<string, unknown>): void
   reject(error: Error): void
 }
@@ -220,7 +229,7 @@ export class AgentSidecar {
   private buffer = ''
   private traceRunId: string | undefined
   private counter = 0
-  private readonly pending = new Map<number, Pending>()
+  private readonly pending = new Map<number, PendingRequest>()
   private handlers: ((event: AgentSidecarEvent) => void)[] = []
   private starting: Promise<void> | null = null
 
@@ -269,7 +278,7 @@ export class AgentSidecar {
     this.child = child
 
     const ready = new Promise<void>((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error('Агент не ответил за 10 секунд.')), 10_000)
+      const timer = setTimeout(() => reject(new Error('Агент не ответил за 10 секунд.')), START_TIMEOUT_MS)
       const off = this.onEvent((event) => {
         if (event.kind !== 'ready') return
         clearTimeout(timer)
@@ -290,7 +299,7 @@ export class AgentSidecar {
     child.stderr.setEncoding('utf8')
     child.stderr.on('data', (chunk: string) => {
       for (const line of chunk.split('\n')) {
-        if (line.trim()) trace('agent.log', { line: line.slice(0, 300) })
+        if (line.trim()) trace('agent.log', { line: line.slice(0, MAX_LOG_LINE_CHARS) })
       }
     })
     child.once('exit', (code, signal) => {
@@ -310,7 +319,7 @@ export class AgentSidecar {
   request(
     method: string,
     params: Record<string, unknown> = {},
-    timeoutMs = 15_000
+    timeoutMs = REQUEST_TIMEOUT_MS
   ): Promise<Record<string, unknown>> {
     const child = this.child
     if (!child || !this.alive) return Promise.reject(new Error('Агент не запущен.'))
@@ -335,23 +344,23 @@ export class AgentSidecar {
   }
 
   /** Starts a task. Resolves when the run is accepted, not when it finishes. */
-  async run(options: AgentRunOptions): Promise<void> {
+  async run(runOptions: AgentRunOptions): Promise<void> {
     await this.start()
-    this.traceRunId = options.traceRunId
+    this.traceRunId = runOptions.traceRunId
     await this.request('run', {
-      task: options.task,
-      provider: wireProvider(options.provider),
+      task: runOptions.task,
+      provider: wireProvider(runOptions.provider),
       options: {
-        max_steps: options.maxSteps,
-        trace_run_id: options.traceRunId,
-        verify_actions: options.verifyActions,
+        max_steps: runOptions.maxSteps,
+        trace_run_id: runOptions.traceRunId,
+        verify_actions: runOptions.verifyActions,
         // The app's trace already carries every event; the agent's own stderr is
         // the fallback for a run started outside the app.
         verbose: false,
         timings: true,
         // Presentation only. With this false the same tools run and the same
         // approvals are asked, but nothing is raised or drawn.
-        visualize: options.visualize
+        visualize: runOptions.visualize
       }
     })
   }
@@ -384,7 +393,7 @@ export class AgentSidecar {
     }
     // A process that ignored `shutdown` will not answer a polite question
     // either, and it must not survive the app that started it.
-    const timer = setTimeout(() => child.kill('SIGKILL'), 1_000)
+    const timer = setTimeout(() => child.kill('SIGKILL'), SHUTDOWN_GRACE_MS)
     child.once('exit', () => clearTimeout(timer))
   }
 
@@ -474,8 +483,174 @@ function optionalNumber(
   return typeof value === 'number' && Number.isFinite(value) ? { [local]: value } : {}
 }
 
+/** One variant of the event union, by its `kind`. */
+type EventOf<Kind extends AgentSidecarEvent['kind']> = Extract<AgentSidecarEvent, { kind: Kind }>
+
+/** The numeric parameter, or 0 when the agent sent something else. */
+function numberParam(params: Record<string, unknown>, key: string): number {
+  const value = params[key]
+  return typeof value === 'number' ? value : 0
+}
+
+/** The string parameter, or '' when the agent sent something else. */
+function textParam(params: Record<string, unknown>, key: string): string {
+  const value = params[key]
+  return typeof value === 'string' ? value : ''
+}
+
+/**
+ * A flag the agent sends only when it is false.
+ *
+ * Absent means success on this wire: an older binary that does not send the
+ * field is still describing a call that worked, or a run that ended. Reading
+ * absence as failure would turn every such call into an error.
+ */
+function notFalse(value: unknown): boolean {
+  return value !== false
+}
+
+/**
+ * One screen rectangle, or `undefined` when the agent did not send a usable one.
+ *
+ * Kept as `undefined` rather than a zero rect: "no element to point at" and "an
+ * element at 0,0 with no size" are different pictures.
+ */
+function screenRectParam(value: unknown): ScreenRect | undefined {
+  if (!value || typeof value !== 'object') return undefined
+  const raw = value as Record<string, unknown>
+  const x = raw.x
+  const y = raw.y
+  const width = raw.width
+  const height = raw.height
+  if (
+    typeof x !== 'number' || !Number.isFinite(x) ||
+    typeof y !== 'number' || !Number.isFinite(y) ||
+    typeof width !== 'number' || !Number.isFinite(width) ||
+    typeof height !== 'number' || !Number.isFinite(height)
+  ) {
+    return undefined
+  }
+  return { x, y, width, height }
+}
+
+/** A call the model made, with the arguments it asked for. */
+function translateTool(params: Record<string, unknown>): EventOf<'tool'> {
+  return {
+    kind: 'tool',
+    step: numberParam(params, 'step'),
+    name: textParam(params, 'name'),
+    args: (params.arguments as Record<string, unknown>) ?? {},
+    narration: textParam(params, 'narration') || undefined
+  }
+}
+
+/** What one model round trip cost. */
+function translateStepTiming(params: Record<string, unknown>): EventOf<'stepTiming'> {
+  return {
+    kind: 'stepTiming',
+    step: numberParam(params, 'step'),
+    timing: {
+      llmMs: numberParam(params, 'llm_ms'),
+      promptBytes: numberParam(params, 'prompt_bytes'),
+      history: numberParam(params, 'history'),
+      calls: numberParam(params, 'calls'),
+      ...optionalNumber(params, 'input_tokens', 'inputTokens'),
+      ...optionalNumber(params, 'output_tokens', 'outputTokens')
+    }
+  }
+}
+
+/** What a call did, and how long each phase of it took. */
+function translateResult(params: Record<string, unknown>): EventOf<'result'> {
+  return {
+    kind: 'result',
+    step: numberParam(params, 'step'),
+    name: textParam(params, 'name'),
+    ok: notFalse(params.ok),
+    text: textParam(params, 'text'),
+    timing: {
+      ...optionalNumber(params, 'wall_ms', 'wallMs'),
+      ...optionalNumber(params, 'tree_ms', 'treeMs'),
+      ...optionalNumber(params, 'capture_ms', 'captureMs'),
+      ...optionalNumber(params, 'encode_ms', 'encodeMs'),
+      ...optionalNumber(params, 'image_bytes', 'imageBytes')
+    }
+  }
+}
+
+/** The run's totals. */
+function translateRunReport(params: Record<string, unknown>): EventOf<'runReport'> {
+  return {
+    kind: 'runReport',
+    report: {
+      steps: numberParam(params, 'steps'),
+      calls: numberParam(params, 'calls'),
+      failedCalls: numberParam(params, 'failed_calls'),
+      totalMs: numberParam(params, 'total_ms'),
+      llmMs: numberParam(params, 'llm_ms'),
+      toolMs: numberParam(params, 'tool_ms'),
+      table: textParam(params, 'table') || undefined
+    }
+  }
+}
+
+/** A question the agent is blocked on. */
+function translateApproval(params: Record<string, unknown>): EventOf<'approval'> {
+  return {
+    kind: 'approval',
+    request: {
+      id: textParam(params, 'id'),
+      tool: textParam(params, 'tool'),
+      arguments: (params.arguments as Record<string, unknown>) ?? {},
+      fingerprint: textParam(params, 'fingerprint'),
+      app: textParam(params, 'app') || undefined,
+      bundleId: textParam(params, 'bundle_id') || undefined,
+      role: textParam(params, 'role') || undefined,
+      title: textParam(params, 'title') || undefined,
+      label: textParam(params, 'label') || undefined,
+      textField: params.text_field === true,
+      narration: textParam(params, 'narration') || undefined
+    }
+  }
+}
+
+/** One action in screen terms, just before it runs. */
+function translatePresent(params: Record<string, unknown>): EventOf<'present'> {
+  const gesture = textParam(params, 'gesture')
+  return {
+    kind: 'present',
+    presentation: {
+      tool: textParam(params, 'tool'),
+      // An unknown gesture falls back to a click rather than dropping the
+      // event: a new tool should still show a pointer, not disappear.
+      gesture: GESTURES.has(gesture) ? (gesture as AgentGesture) : 'click',
+      app: textParam(params, 'app') || undefined,
+      bundleId: textParam(params, 'bundle_id') || undefined,
+      pid: typeof params.pid === 'number' ? params.pid : undefined,
+      point:
+        typeof params.x === 'number' && typeof params.y === 'number'
+          ? { x: params.x, y: params.y }
+          : undefined,
+      target: screenRectParam(params.target),
+      window: screenRectParam(params.window)
+    }
+  }
+}
+
+/** A failure the loop reports instead of a run. */
+function translateError(params: Record<string, unknown>): EventOf<'error'> {
+  return {
+    kind: 'error',
+    message: textParam(params, 'message'),
+    code: textParam(params, 'code') || undefined
+  }
+}
+
 /**
  * Turns one protocol line into the shape the app thinks in.
+ *
+ * One case per family of events; the bulky payloads are built by the functions
+ * above so this stays a table of the protocol rather than its implementation.
  *
  * Exported for the transcript test: the protocol is a contract between two
  * languages, and the only honest way to check the TypeScript half is to feed it
@@ -483,146 +658,58 @@ function optionalNumber(
  */
 export function translate(message: Message): AgentSidecarEvent | null {
   const params = message.params ?? {}
-  const number = (key: string): number => (typeof params[key] === 'number' ? params[key] as number : 0)
-  const text = (key: string): string => (typeof params[key] === 'string' ? params[key] as string : '')
-  /**
-   * One screen rectangle, or `undefined` when the agent did not send a usable
-   * one. Kept as `undefined` rather than a zero rect: "no element to point at"
-   * and "an element at 0,0 with no size" are different pictures.
-   */
-  const rect = (value: unknown): ScreenRect | undefined => {
-    if (!value || typeof value !== 'object') return undefined
-    const raw = value as Record<string, unknown>
-    const x = raw.x
-    const y = raw.y
-    const width = raw.width
-    const height = raw.height
-    if (
-      typeof x !== 'number' || !Number.isFinite(x) ||
-      typeof y !== 'number' || !Number.isFinite(y) ||
-      typeof width !== 'number' || !Number.isFinite(width) ||
-      typeof height !== 'number' || !Number.isFinite(height)
-    ) {
-      return undefined
-    }
-    return { x, y, width, height }
-  }
   switch (message.event) {
     case 'ready':
-      return { kind: 'ready', tools: number('tools') }
+      return { kind: 'ready', tools: numberParam(params, 'tools') }
     case 'model-request':
     case 'model-response':
     case 'model-completion':
     case 'model-error':
       return { kind: 'modelTrace', event: message.event, data: params }
     case 'step':
-      return { kind: 'step', step: number('step'), total: number('total') }
+      return {
+        kind: 'step',
+        step: numberParam(params, 'step'),
+        total: numberParam(params, 'total')
+      }
     case 'stream':
-      return { kind: 'stream', step: number('step'), text: text('text') }
+      return {
+        kind: 'stream',
+        step: numberParam(params, 'step'),
+        text: textParam(params, 'text')
+      }
     case 'narration':
-      return { kind: 'narration', step: number('step'), text: text('text') }
+      return {
+        kind: 'narration',
+        step: numberParam(params, 'step'),
+        text: textParam(params, 'text')
+      }
     case 'tool':
-      return {
-        kind: 'tool',
-        step: number('step'),
-        name: text('name'),
-        args: (params.arguments as Record<string, unknown>) ?? {},
-        narration: text('narration') || undefined
-      }
+      return translateTool(params)
     case 'step-timing':
-      return {
-        kind: 'stepTiming',
-        step: number('step'),
-        timing: {
-          llmMs: number('llm_ms'),
-          promptBytes: number('prompt_bytes'),
-          history: number('history'),
-          calls: number('calls'),
-          ...optionalNumber(params, 'input_tokens', 'inputTokens'),
-          ...optionalNumber(params, 'output_tokens', 'outputTokens')
-        }
-      }
+      return translateStepTiming(params)
     case 'result':
-      return {
-        kind: 'result',
-        step: number('step'),
-        name: text('name'),
-        ok: params.ok !== false,
-        text: text('text'),
-        timing: {
-          ...optionalNumber(params, 'wall_ms', 'wallMs'),
-          ...optionalNumber(params, 'tree_ms', 'treeMs'),
-          ...optionalNumber(params, 'capture_ms', 'captureMs'),
-          ...optionalNumber(params, 'encode_ms', 'encodeMs'),
-          ...optionalNumber(params, 'image_bytes', 'imageBytes')
-        }
-      }
+      return translateResult(params)
     case 'run-report':
-      return {
-        kind: 'runReport',
-        report: {
-          steps: number('steps'),
-          calls: number('calls'),
-          failedCalls: number('failed_calls'),
-          totalMs: number('total_ms'),
-          llmMs: number('llm_ms'),
-          toolMs: number('tool_ms'),
-          table: text('table') || undefined
-        }
-      }
+      return translateRunReport(params)
     case 'approval':
-      return {
-        kind: 'approval',
-        request: {
-          id: text('id'),
-          tool: text('tool'),
-          arguments: (params.arguments as Record<string, unknown>) ?? {},
-          fingerprint: text('fingerprint'),
-          app: text('app') || undefined,
-          bundleId: text('bundle_id') || undefined,
-          role: text('role') || undefined,
-          title: text('title') || undefined,
-          label: text('label') || undefined,
-          textField: params.text_field === true,
-          narration: text('narration') || undefined
-        }
-      }
-    case 'present': {
-      const gesture = text('gesture')
-      return {
-        kind: 'present',
-        presentation: {
-          tool: text('tool'),
-          // An unknown gesture falls back to a click rather than dropping the
-          // event: a new tool should still show a pointer, not disappear.
-          gesture: (GESTURES as readonly string[]).includes(gesture)
-            ? (gesture as AgentGesture)
-            : 'click',
-          app: text('app') || undefined,
-          bundleId: text('bundle_id') || undefined,
-          pid: typeof params.pid === 'number' ? params.pid : undefined,
-          point:
-            typeof params.x === 'number' && typeof params.y === 'number'
-              ? { x: params.x, y: params.y }
-              : undefined,
-          target: rect(params.target),
-          window: rect(params.window)
-        }
-      }
-    }
+      return translateApproval(params)
+    case 'present':
+      return translatePresent(params)
     case 'warning':
-      return { kind: 'warning', reason: text('reason') }
+      return { kind: 'warning', reason: textParam(params, 'reason') }
     case 'stopped':
-      return { kind: 'stopped', reason: text('reason') }
+      return { kind: 'stopped', reason: textParam(params, 'reason') }
     case 'done':
-      // Absent means complete: an older binary that does not send the field is
-      // still describing a run that ended, and treating a missing field as
-      // failure would turn every such run into an error.
-      return { kind: 'done', answer: text('answer'), complete: params.complete !== false }
+      return {
+        kind: 'done',
+        answer: textParam(params, 'answer'),
+        complete: notFalse(params.complete)
+      }
     case 'cancelled':
       return { kind: 'cancelled' }
     case 'error':
-      return { kind: 'error', message: text('message'), code: text('code') || undefined }
+      return translateError(params)
     default:
       return null
   }

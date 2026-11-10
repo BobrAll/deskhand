@@ -41,9 +41,9 @@ public struct ActionPresentation: Sendable {
     /// Where the action is aimed, in screen points.
     public var point: CGPoint?
     /// The element's frame in screen points, when it has one.
-    public var target: CGRect?
+    public var elementFrame: CGRect?
     /// The window the action belongs to, in screen points.
-    public var window: CGRect?
+    public var windowFrame: CGRect?
 
     public init(
         tool: String,
@@ -52,8 +52,8 @@ public struct ActionPresentation: Sendable {
         bundleIdentifier: String? = nil,
         pid: pid_t? = nil,
         point: CGPoint? = nil,
-        target: CGRect? = nil,
-        window: CGRect? = nil
+        elementFrame: CGRect? = nil,
+        windowFrame: CGRect? = nil
     ) {
         self.tool = tool
         self.gesture = gesture
@@ -61,8 +61,8 @@ public struct ActionPresentation: Sendable {
         self.bundleIdentifier = bundleIdentifier
         self.pid = pid
         self.point = point
-        self.target = target
-        self.window = window
+        self.elementFrame = elementFrame
+        self.windowFrame = windowFrame
     }
 
     /// The gesture a tool name stands for.

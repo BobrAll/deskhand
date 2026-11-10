@@ -5,7 +5,7 @@
  * one of these either closes a card the user was reading, or leaves one open they
  * wanted gone. Both are silent failures — no exception, no log, just a card that
  * did the wrong thing at the moment someone was watching the screen instead of the
- * bubble.
+ * card.
  */
 
 import { describe, expect, it } from 'vitest'
@@ -19,7 +19,6 @@ function key(overrides: Partial<KeyInput> = {}): KeyInput {
     shift: false,
     tagName: 'TEXTAREA',
     agentPhase: null,
-    hasRequestId: false,
     hasSelection: false,
     hasAnswer: true,
     ...overrides
@@ -31,8 +30,7 @@ describe('keyPolicy: Escape while a run owns the card', () => {
     // The agent is blocked on this answer, so Escape has to *be* an answer. If it
     // closed the card instead, the run would stay blocked on a question that is
     // no longer on screen — the one state the card must never reach.
-    expect(keyPolicy(key({ key: 'Escape', agentPhase: 'asking', hasRequestId: true }))).toBe('stopAgent')
-    expect(keyPolicy(key({ key: 'Escape', agentPhase: 'asking', hasRequestId: false }))).toBe('stopAgent')
+    expect(keyPolicy(key({ key: 'Escape', agentPhase: 'asking' }))).toBe('stopAgent')
   })
 
   it('stops the run while it is arming or acting', () => {

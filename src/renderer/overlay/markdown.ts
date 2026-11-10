@@ -1,11 +1,15 @@
 /**
  * A small Markdown reader for the answer.
  *
- * This is deliberately not a Markdown library. The answer is printed in a
- * 420-point bubble, and what models actually write there is headings, short
- * lists, fenced code and the four inline markers — bold, italics, code and
- * links. Everything else (tables, HTML, reference links, nested lists) would be
- * code nobody reads and screen space nobody has.
+ * This is deliberately not a Markdown library. The answer is printed in a card
+ * at most 360 points wide (`CARD_WIDTH` in `@shared/metrics.ts`), and what models actually
+ * write there is headings, short lists, fenced code, tables and the four inline
+ * markers — bold, italics, code and links. Everything else (HTML, reference links,
+ * nested lists) would be code nobody reads and screen space nobody has.
+ *
+ * Tables come in the two shapes replies use: with a delimiter row, which is the
+ * only one that can carry column alignment, and without it, which is what models
+ * write most of the time. `tableAt` recognises both.
  *
  * HTML is never interpreted: the renderer turns tokens into React elements, so
  * `<script>` in a reply is text, not markup. That is also why there is no
@@ -43,11 +47,11 @@ const FENCE = /^\s*```([\w+#.-]*)\s*$/
 const CLOSING_FENCE = /^\s*```\s*$/
 const HEADING = /^\s{0,3}(#{1,6})\s+(.*?)\s*$/
 const BULLET = /^\s{0,3}[-*+]\s+(.*)$/
-const NUMBER = /^\s{0,3}(\d{1,9})[.)]\s+(.*)$/
+const ORDERED = /^\s{0,3}(\d{1,9})[.)]\s+(.*)$/
 const RULE = /^\s{0,3}([-*_])(?:\s*\1){2,}\s*$/
 const LINK = /^\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)/
 const URL = /^https?:\/\/[^\s<>()\]]+/
-const WORD = /[\p{L}\p{N}]/u
+const LETTER_OR_DIGIT = /[\p{L}\p{N}]/u
 /** One cell of a delimiter row: dashes, optionally anchored by a colon. */
 const DELIM_CELL = /^:?-+:?$/
 
@@ -138,6 +142,12 @@ function cellAlign(cell: string): CellAlign {
   return null
 }
 
+/** A block found at a line, and the line the next block starts on. */
+interface ParsedBlock {
+  block: Block
+  next: number
+}
+
 /**
  * Parses the whole answer into blocks.
  *
@@ -157,19 +167,10 @@ export function parseMarkdown(text: string, streaming = false): Block[] {
       continue
     }
 
-    const fence = FENCE.exec(line)
+    const fence = parseFence(lines, i)
     if (fence) {
-      const body: string[] = []
-      i += 1
-      while (i < lines.length && !CLOSING_FENCE.test(lines[i])) {
-        body.push(lines[i])
-        i += 1
-      }
-      // A fence that never closes is what streaming looks like. Stepping over
-      // the closing fence when there is none lands past the end, which ends
-      // the loop too.
-      i += 1
-      blocks.push({ kind: 'code', lang: fence[1], text: body.join('\n') })
+      blocks.push(fence.block)
+      i = fence.next
       continue
     }
 
@@ -193,66 +194,111 @@ export function parseMarkdown(text: string, streaming = false): Block[] {
 
     // Before the list: a row `| a | b |` is not a bullet, but a delimiter row
     // that starts with `-` would be read as one.
-    const table = tableAt(lines, i)
+    const table = parseTable(lines, i, streaming)
     if (table) {
-      const rows: Inline[][][] = []
-      i = table.start
-      // A row is any non-empty line with a pipe in it. The count is not checked
-      // again: a ragged row is a mistake to pad, not a reason to drop the table
-      // back into prose.
-      while (i < lines.length && lines[i].trim() && lines[i].includes('|')) {
-        rows.push(splitRow(lines[i]).map((cell) => parseInline(cell, streaming)))
-        i += 1
-      }
-      blocks.push({
-        kind: 'table',
-        align: table.align,
-        // A short row is padded and a long one is cut, so the table keeps the
-        // shape its header promised instead of leaning on whatever the row
-        // happened to contain.
-        header: table.header.map((cell) => parseInline(cell, streaming)),
-        rows: rows.map((row) => table.header.map((_, column) => row[column] ?? []))
-      })
+      blocks.push(table.block)
+      i = table.next
       continue
     }
 
-    const ordered = !BULLET.test(line)
-    if (BULLET.test(line) || NUMBER.test(line)) {
-      const items: Inline[][] = []
-      while (i < lines.length) {
-        const item = ordered ? NUMBER.exec(lines[i]) : BULLET.exec(lines[i])
-        if (!item) break
-        items.push(parseInline((ordered ? item[2] : item[1]).trim(), streaming))
-        i += 1
-      }
-      blocks.push({
-        kind: 'list',
-        ordered,
-        start: ordered ? Number(NUMBER.exec(line)?.[1] ?? 1) : 1,
-        items
-      })
+    const list = parseList(lines, i, streaming)
+    if (list) {
+      blocks.push(list.block)
+      i = list.next
       continue
     }
 
-    const paragraph: Inline[][] = []
-    while (i < lines.length) {
-      const current = lines[i]
-      if (!current.trim()) break
-      // A block marker ends the paragraph even without a blank line between
-      // them: models rarely leave one, and a list swallowed into prose reads
-      // as a typo.
-      if (paragraph.length > 0 && (startsBlock(current) || tableAt(lines, i))) break
-      paragraph.push(parseInline(current.trim(), streaming))
-      i += 1
-    }
-    blocks.push({ kind: 'paragraph', lines: paragraph })
+    const paragraph = parseParagraph(lines, i, streaming)
+    blocks.push(paragraph.block)
+    i = paragraph.next
   }
 
   return blocks
 }
 
+/** A fenced code block, closed or still streaming. */
+function parseFence(lines: string[], i: number): ParsedBlock | null {
+  const fence = FENCE.exec(lines[i])
+  if (!fence) return null
+  const body: string[] = []
+  let next = i + 1
+  while (next < lines.length && !CLOSING_FENCE.test(lines[next])) {
+    body.push(lines[next])
+    next += 1
+  }
+  // A fence that never closes is what streaming looks like. Stepping over the
+  // closing fence when there is none lands past the end, which ends the loop too.
+  next += 1
+  return { block: { kind: 'code', lang: fence[1], text: body.join('\n') }, next }
+}
+
+function parseTable(lines: string[], i: number, streaming: boolean): ParsedBlock | null {
+  const table = tableAt(lines, i)
+  if (!table) return null
+  const rows: Inline[][][] = []
+  let next = table.start
+  // A row is any non-empty line with a pipe in it. The count is not checked
+  // again: a ragged row is a mistake to pad, not a reason to drop the table
+  // back into prose.
+  while (next < lines.length && lines[next].trim() && lines[next].includes('|')) {
+    rows.push(splitRow(lines[next]).map((cell) => parseInline(cell, streaming)))
+    next += 1
+  }
+  return {
+    block: {
+      kind: 'table',
+      align: table.align,
+      // A short row is padded and a long one is cut, so the table keeps the
+      // shape its header promised instead of leaning on whatever the row
+      // happened to contain.
+      header: table.header.map((cell) => parseInline(cell, streaming)),
+      rows: rows.map((row) => table.header.map((_, column) => row[column] ?? []))
+    },
+    next
+  }
+}
+
+function parseList(lines: string[], i: number, streaming: boolean): ParsedBlock | null {
+  const line = lines[i]
+  const ordered = !BULLET.test(line)
+  if (!BULLET.test(line) && !ORDERED.test(line)) return null
+  const items: Inline[][] = []
+  let next = i
+  while (next < lines.length) {
+    const item = ordered ? ORDERED.exec(lines[next]) : BULLET.exec(lines[next])
+    if (!item) break
+    items.push(parseInline((ordered ? item[2] : item[1]).trim(), streaming))
+    next += 1
+  }
+  return {
+    block: {
+      kind: 'list',
+      ordered,
+      start: ordered ? Number(ORDERED.exec(line)?.[1] ?? 1) : 1,
+      items
+    },
+    next
+  }
+}
+
+/** The last resort: consecutive lines that are not another block. */
+function parseParagraph(lines: string[], i: number, streaming: boolean): ParsedBlock {
+  const paragraph: Inline[][] = []
+  let next = i
+  while (next < lines.length) {
+    const current = lines[next]
+    if (!current.trim()) break
+    // A block marker ends the paragraph even without a blank line between them:
+    // models rarely leave one, and a list swallowed into prose reads as a typo.
+    if (paragraph.length > 0 && (startsBlock(current) || tableAt(lines, next))) break
+    paragraph.push(parseInline(current.trim(), streaming))
+    next += 1
+  }
+  return { block: { kind: 'paragraph', lines: paragraph }, next }
+}
+
 function startsBlock(line: string): boolean {
-  return FENCE.test(line) || HEADING.test(line) || RULE.test(line) || BULLET.test(line) || NUMBER.test(line)
+  return FENCE.test(line) || HEADING.test(line) || RULE.test(line) || BULLET.test(line) || ORDERED.test(line)
 }
 
 /**
@@ -365,7 +411,7 @@ export function parseInline(text: string, streaming = false): Inline[] {
 function opensEmphasis(text: string, at: number): boolean {
   const next = text[at + 1]
   if (next === undefined || /\s/.test(next)) return false
-  if (text[at] === '_' && at > 0 && WORD.test(text[at - 1])) return false
+  if (text[at] === '_' && at > 0 && LETTER_OR_DIGIT.test(text[at - 1])) return false
   return true
 }
 
@@ -379,7 +425,7 @@ function findEmphasisClose(rest: string, marker: string): number {
       continue
     }
     if (/\s/.test(rest[j - 1])) continue
-    if (marker === '_' && WORD.test(rest[j + 1] ?? '')) continue
+    if (marker === '_' && LETTER_OR_DIGIT.test(rest[j + 1] ?? '')) continue
     return j
   }
   return -1

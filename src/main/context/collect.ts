@@ -3,10 +3,10 @@
  * the frontmost app and (optionally) its selected text.
  *
  * The screenshot is deliberately *not* taken here. Capturing belongs to the
- * overlay session (`overlay.ts`), which owns a *live* stream of captures: the
- * preview is refreshed while the card is open and a new picture is taken right
- * before every request. Taking it here would race with that and, worse, would
- * bake in a single frame from the moment the hotkey was pressed.
+ * overlay session (`overlay/index.ts`), which owns a *live* stream of captures:
+ * the preview is refreshed while the card is open and a new picture is taken
+ * right before every request. Taking it here would race with that and, worse,
+ * would bake in a single frame from the moment the hotkey was pressed.
  */
 
 import type { ContextFlags, ContextSnapshot } from '@shared/types'
@@ -14,10 +14,11 @@ import { getActiveApp, isExcluded } from './activeApp'
 import { readSelection } from './selection'
 
 export interface CollectOptions {
-  onInputReady?: () => void
+  /** Called once the synthetic ⌘C has been sent, before the pasteboard is read. */
+  onCopySent?: () => void
   excludedApps: string[]
   /** Whether the user wants a screenshot when nothing is selected. */
-  captureScreenshot: boolean
+  wantsScreenshot: boolean
 }
 
 export interface CollectResult {
@@ -37,15 +38,15 @@ export async function collectContext(options: CollectOptions): Promise<CollectRe
   const excluded = isExcluded(activeApp, options.excludedApps)
   if (excluded) warnings.push('Приложение входит в список исключений — контекст не собирается.')
 
-  const selection = activeApp && !excluded ? await readSelection(options.onInputReady).catch(() => null) : null
-  const wantScreenshot = Boolean(activeApp) && !excluded && options.captureScreenshot
+  const selection = activeApp && !excluded ? await readSelection(options.onCopySent).catch(() => null) : null
+  const screenshotWanted = Boolean(activeApp) && !excluded && options.wantsScreenshot
 
   // ТЗ §5.2: есть выделение -> по умолчанию только текст; нет выделения -> скриншот.
   const flags: ContextFlags = excluded
     ? { ...NO_FLAGS }
     : {
         includeSelection: Boolean(selection),
-        includeScreenshot: wantScreenshot && !selection
+        includeScreenshot: screenshotWanted && !selection
       }
 
   const snapshot: ContextSnapshot = {
@@ -54,7 +55,7 @@ export async function collectContext(options: CollectOptions): Promise<CollectRe
     screenshot: null,
     // The overlay fills this in once the live capture lands; starting with `true`
     // keeps the chip honest from the very first frame.
-    screenshotPending: wantScreenshot,
+    screenshotPending: screenshotWanted,
     excluded,
     warnings,
     collectedMs: Date.now() - startedAt

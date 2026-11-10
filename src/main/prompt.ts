@@ -21,8 +21,10 @@ export interface RequestInput {
   mode: ResponseMode
   snapshot: ContextSnapshot | null
   includeSelection: boolean
-  includeScreenshot: boolean
-  hasImage: boolean
+  /** The user asked for a screenshot with this request. */
+  requestedScreenshot: boolean
+  /** A screenshot really is attached: the request carries the image itself. */
+  imageAttached: boolean
   /**
    * Whether the drawing tool is usable at all: there is an image to aim at and a
    * layer to paint on. It is *not* a user-facing mode — when it is true the model
@@ -247,12 +249,16 @@ const ACT_UNAVAILABLE = (reason: string, asked = false): string =>
     'можно показать, куда нажимать, — но сначала скажи правду.'
   ].join('\n')
 
-function formatInstruction(
-  mode: ResponseMode,
-  draw: boolean,
-  actReason?: string | null,
-  actAsked = false
-): string {
+interface InstructionOptions {
+  mode: ResponseMode
+  draw: boolean
+  actReason?: string | null
+  /** The request reads as an action rather than a question. Only matters when acting is unavailable. */
+  actAsked?: boolean
+}
+
+function formatInstruction(options: InstructionOptions): string {
+  const { mode, draw, actReason, actAsked = false } = options
   // The drawing tool does not replace the answer format, it is appended to it:
   // "вставить в поле" still has to produce a pasteable text, and a drawing is
   // something added to the sentence, not instead of it. The markers themselves
@@ -289,7 +295,7 @@ export function buildRequest(input: RequestInput): BuiltRequest {
       if (snapshot.selection.truncated) lines.push('(выделение обрезано из-за размера)')
     }
 
-    if (input.hasImage) {
+    if (input.imageAttached) {
       const what = snapshot?.screenshot?.fullScreen ? 'весь экран' : 'активное окно'
       lines.push(`Приложен скриншот — ${what}. Используй его как основной контекст.`)
       if (input.draw) {
@@ -298,7 +304,7 @@ export function buildRequest(input: RequestInput): BuiltRequest {
             'левый верхний угол, (1,1) — правый нижний.'
         )
       }
-    } else if (input.includeScreenshot) {
+    } else if (input.requestedScreenshot) {
       lines.push('Скриншот недоступен, опирайся только на текст.')
     }
 
@@ -314,15 +320,15 @@ export function buildRequest(input: RequestInput): BuiltRequest {
 
   const userText = ['[Контекст]', ...lines, '', '[Запрос]', input.prompt.trim()].join('\n')
 
-  const instruction = formatInstruction(
-    input.mode,
-    input.draw,
-    input.actReason,
+  const instruction = formatInstruction({
+    mode: input.mode,
+    draw: input.draw,
+    actReason: input.actReason,
     // Only matters when acting is unavailable, and then it is the difference
     // between "I could not press it, here is why" and a drawing that pretends
     // the request was answered.
-    Boolean(input.actReason) && looksLikeAction(input.prompt)
-  )
+    actAsked: Boolean(input.actReason) && looksLikeAction(input.prompt)
+  })
 
   return {
     userText,
@@ -347,5 +353,5 @@ export function buildRefine(input: RefineInput): BuiltRequest {
   lines.push('', '[Задача]', REFINE_TASK[input.direction])
   lines.push('Верни только переработанный текст ответа, без пояснений о том, что изменилось.')
 
-  return { userText: lines.join('\n'), modeInstruction: formatInstruction(input.mode, false) }
+  return { userText: lines.join('\n'), modeInstruction: formatInstruction({ mode: input.mode, draw: false }) }
 }

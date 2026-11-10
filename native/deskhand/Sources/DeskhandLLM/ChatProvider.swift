@@ -16,7 +16,7 @@ public struct ChatMessage: Sendable {
     /// Identifier of the tool call this message answers.
     public var toolCallID: String?
     /// Set when a tool call failed, so providers that support it can mark it.
-    public var toolIsError: Bool
+    public var isError: Bool
 
     public init(
         role: Role,
@@ -24,14 +24,14 @@ public struct ChatMessage: Sendable {
         images: [Data] = [],
         toolCalls: [ToolCall] = [],
         toolCallID: String? = nil,
-        toolIsError: Bool = false
+        isError: Bool = false
     ) {
         self.role = role
         self.text = text
         self.images = images
         self.toolCalls = toolCalls
         self.toolCallID = toolCallID
-        self.toolIsError = toolIsError
+        self.isError = isError
     }
 }
 
@@ -47,13 +47,24 @@ public struct ToolCall: Sendable, Equatable {
     }
 }
 
+/// A tool call being assembled from stream fragments.
+///
+/// Both wires send the id, the name and the arguments in separate chunks, so
+/// each stream reader collects them into one of these and parses the arguments
+/// only once the stream ends.
+struct ToolCallBuilder {
+    var id = ""
+    var name = ""
+    var arguments = ""
+}
+
 public struct Completion: Sendable {
     public var text: String
     public var toolCalls: [ToolCall]
     public var stopReason: String?
-    public var usage: Usage?
+    public var usage: TokenUsage?
 
-    public init(text: String, toolCalls: [ToolCall], stopReason: String?, usage: Usage? = nil) {
+    public init(text: String, toolCalls: [ToolCall], stopReason: String?, usage: TokenUsage? = nil) {
         self.text = text
         self.toolCalls = toolCalls
         self.stopReason = stopReason
@@ -75,7 +86,7 @@ public struct Completion: Sendable {
     }
 }
 
-public struct Usage: Sendable, Equatable {
+public struct TokenUsage: Sendable, Equatable {
     public var inputTokens: Int
     public var outputTokens: Int
 

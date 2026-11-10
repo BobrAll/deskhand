@@ -174,14 +174,6 @@ public enum AppCatalog {
         return result.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
     }
 
-    /// Brings an app to the front, launching it if necessary.
-    @discardableResult
-    public static func launch(_ handle: AppHandle) throws -> AppHandle {
-        let resolved = try ensureRunning(handle)
-        activate(pid: resolved.pid)
-        return resolved
-    }
-
     /// Makes sure the app is running, without changing which app is frontmost.
     ///
     /// Most of what an agent does — reading the accessibility tree, pressing
@@ -228,40 +220,20 @@ public enum AppCatalog {
         return resolved
     }
 
-    /// Brings an already-running app to the front. Synthetic input events are
-    /// delivered to the focused app, so this must happen before any gesture
-    /// that goes through the system event stream.
-    ///
-    /// Returns milliseconds spent waiting, so a caller can attribute the cost, or
-    /// `nil` when the app never became active. A caller about to post a mouse
-    /// event must check that: the event goes to whichever process is frontmost.
-    ///
-    /// The wait is the important part. Activation is asynchronous in the window
-    /// server and its reply is delivered *to the main run loop*, so a caller
-    /// that waits with `Thread.sleep` never lets the reply be delivered: the
-    /// wait runs to its one-second deadline and the app is often still not in
-    /// front afterwards. Measured on the same call: **1016 ms and
-    /// `isActive == false` while sleeping, 29 ms and `isActive == true` while
-    /// pumping the loop**. The difference is not the activation itself, it is
-    /// who is allowed to run during the wait.
-    ///
-    /// A GUI host reaches this path with the tools on its main thread, so the
-    /// difference is visible there and not on the command line, which already
-    /// keeps its loop alive: the same run does strictly more work per gesture
-    /// in the app than in the terminal.
     /// Brings one of the app's windows to the front, and the app with it.
     ///
     /// `activate` alone raises whichever window the app considers main, which is
     /// not necessarily the one the tree was read from: an app with a chat window
     /// and a main window will come forward showing the wrong one, and the click
-    /// that follows lands in the window the user is not looking at. Raising the
-    /// specific AX window first, then activating, puts the right one in front.
+    /// that follows lands in the window the user is not looking at.
     ///
-    /// The raise is what picks the window; the activation is what gives a posted
-    /// mouse event a frontmost app to land in. Both are needed, and the order
-    /// matters: the app is activated first, because a raise on a fully background
-    /// app is ignored by several apps, and then the specific window is raised to
+    /// The app is activated first, because a raise on a fully background app is
+    /// ignored by several apps, and then the specific window is raised to
     /// correct whichever window the app chose to bring forward by itself.
+    ///
+    /// Returns the milliseconds spent activating, or nil when the app never
+    /// became active. A caller about to post a mouse event must check that: the
+    /// event goes to whichever process is frontmost.
     @discardableResult
     public static func activate(pid: pid_t, raising window: AXElement?, timeout: TimeInterval = 1.0) -> Double? {
         let elapsed = activate(pid: pid, timeout: timeout)
@@ -277,6 +249,26 @@ public enum AppCatalog {
         return elapsed
     }
 
+    /// Brings an already-running app to the front. Synthetic input events are
+    /// delivered to the focused app, so this must happen before any gesture
+    /// that goes through the system event stream.
+    ///
+    /// Returns milliseconds spent waiting, so a caller can attribute the cost, or
+    /// `nil` when the app never became active.
+    ///
+    /// The wait is the important part. Activation is asynchronous in the window
+    /// server and its reply is delivered *to the main run loop*, so a caller
+    /// that waits with `Thread.sleep` never lets the reply be delivered: the
+    /// wait runs to its one-second deadline and the app is often still not in
+    /// front afterwards. Measured on the same call: **1016 ms and
+    /// `isActive == false` while sleeping, 29 ms and `isActive == true` while
+    /// pumping the loop**. The difference is not the activation itself, it is
+    /// who is allowed to run during the wait.
+    ///
+    /// A GUI host reaches this path with the tools on its main thread, so the
+    /// difference is visible there and not on the command line, which already
+    /// keeps its loop alive: the same run does strictly more work per gesture
+    /// in the app than in the terminal.
     @discardableResult
     public static func activate(pid: pid_t, timeout: TimeInterval = 1.0) -> Double? {
         guard let app = NSRunningApplication(processIdentifier: pid) else { return nil }

@@ -6,10 +6,13 @@
  */
 
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { BrowserWindow } from 'electron'
+import type { ScreenRect } from '@shared/types'
 
 const state = {
   options: [] as Array<Record<string, unknown>>,
   calls: [] as string[],
+  bounds: [] as ScreenRect[],
   opened: [] as string[],
   handlers: [] as Array<(details: { url: string }) => { action: string }>,
   closedHandlers: [] as Array<() => void>,
@@ -29,6 +32,9 @@ vi.mock('electron', () => {
 
     constructor(options: Record<string, unknown>) {
       state.options.push(options)
+    }
+    setBounds(bounds: ScreenRect): void {
+      state.bounds.push(bounds)
     }
     setIgnoreMouseEvents(): void {
       state.calls.push('setIgnoreMouseEvents')
@@ -71,12 +77,18 @@ async function loadLayerWindow(): Promise<typeof import('./layerWindow')> {
 beforeEach(() => {
   state.options = []
   state.calls = []
+  state.bounds = []
   state.opened = []
   state.handlers = []
   state.closedHandlers = []
   state.loaded = []
   delete process.env['ELECTRON_RENDERER_URL']
 })
+
+/** A window the shared placement helpers can move. */
+function fakeWindow(): BrowserWindow {
+  return new BrowserWindow()
+}
 
 describe('createLayerWindow: the shared contract', () => {
   it('creates a frameless, transparent, unfocusable, taskbar-less layer', async () => {
@@ -148,6 +160,64 @@ describe('createLayerWindow: the shared contract', () => {
   })
 })
 
+describe('placeLayer: where a layer sits', () => {
+  it('does not move a layer that is already there', async () => {
+    const { placeLayer } = await loadLayerWindow()
+    const win = fakeWindow()
+    const area: ScreenRect = { x: 0, y: 0, width: 1440, height: 900 }
+
+    const first = placeLayer(win, null, area)
+    const second = placeLayer(win, first.placedOn, area)
+
+    expect(first).toEqual({ placedOn: area, moved: true })
+    expect(second).toEqual({ placedOn: area, moved: false })
+    expect(state.bounds).toHaveLength(1)
+  })
+
+  it('rounds the drawing layer before comparing and applying', async () => {
+    const { placeLayer } = await loadLayerWindow()
+    const win = fakeWindow()
+    const area: ScreenRect = { x: 100.4, y: 199.6, width: 800.2, height: 600 }
+
+    const first = placeLayer(win, null, area, true)
+
+    expect(first.placedOn).toEqual({ x: 100, y: 200, width: 800, height: 600 })
+    expect(state.bounds).toEqual([{ x: 100, y: 200, width: 800, height: 600 }])
+    // The same rectangle, given again, is the same place.
+    expect(placeLayer(win, first.placedOn, area, true).moved).toBe(false)
+    expect(state.bounds).toHaveLength(1)
+  })
+
+  it('leaves the agent layers’ bounds as they were given', async () => {
+    const { placeLayer } = await loadLayerWindow()
+    const win = fakeWindow()
+    const area: ScreenRect = { x: 100.4, y: 199.6, width: 800.2, height: 600 }
+
+    const first = placeLayer(win, null, area)
+
+    expect(first.placedOn).toEqual(area)
+    expect(state.bounds).toEqual([area])
+    // A fractional change is a move: nothing is rounded away.
+    expect(placeLayer(win, first.placedOn, { ...area, x: 100.5 }).moved).toBe(true)
+  })
+})
+
+describe('sameScreenRect', () => {
+  it('is false until the layer has been placed', async () => {
+    const { sameScreenRect } = await loadLayerWindow()
+
+    expect(sameScreenRect(null, { x: 0, y: 0, width: 1, height: 1 })).toBe(false)
+  })
+
+  it('compares exactly, or in whole points when asked to round', async () => {
+    const { sameScreenRect } = await loadLayerWindow()
+    const placed: ScreenRect = { x: 100, y: 200, width: 800, height: 600 }
+
+    expect(sameScreenRect(placed, { ...placed, x: 100.4 })).toBe(false)
+    expect(sameScreenRect(placed, { ...placed, x: 100.4 }, true)).toBe(true)
+  })
+})
+
 describe('createLayerWindow: the differences stay parameters', () => {
   it('passes acceptFirstMouse through instead of unifying it', async () => {
     const { createLayerWindow } = await loadLayerWindow()
@@ -158,14 +228,18 @@ describe('createLayerWindow: the differences stay parameters', () => {
     expect(state.options[1]?.['acceptFirstMouse']).toBe(false)
   })
 
-  it('opens HTTPS:// only for the caseless layer', async () => {
+  it('opens HTTPS:// only for the case-insensitive layer', async () => {
     const { createLayerWindow } = await loadLayerWindow()
     createLayerWindow({ page: 'pointer', acceptFirstMouse: true })
-    createLayerWindow({ page: 'cursor', acceptFirstMouse: false, caseless: true })
+    createLayerWindow({
+      page: 'cursor',
+      acceptFirstMouse: false,
+      matchSchemeCaseInsensitively: true
+    })
 
-    const [sensitive, caseless] = state.handlers
+    const [sensitive, caseInsensitive] = state.handlers
     expect(sensitive?.({ url: 'HTTPS://example.com' })).toEqual({ action: 'deny' })
-    expect(caseless?.({ url: 'HTTPS://example.com' })).toEqual({ action: 'deny' })
+    expect(caseInsensitive?.({ url: 'HTTPS://example.com' })).toEqual({ action: 'deny' })
     expect(state.opened).toEqual(['HTTPS://example.com'])
   })
 

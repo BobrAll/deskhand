@@ -19,10 +19,18 @@ public enum SyntheticEvent {
         event?.setIntegerValueField(.eventSourceUserData, value: tag)
     }
 
-    /// True for an event this agent posted. Used by the tests and by any future
-    /// listener that needs the same distinction.
-    public static func isSynthetic(_ event: CGEvent?) -> Bool {
-        guard let event else { return false }
-        return event.getIntegerValueField(.eventSourceUserData) == tag
+    /// The event source every agent-posted event comes from.
+    ///
+    /// `combinedSessionState` is the session the user is actually in, so an
+    /// event reaches the same apps a real one would. Local mouse and keyboard
+    /// events are permitted during the suppression interval, so posting does
+    /// not filter itself out.
+    static func eventSource() -> CGEventSource? {
+        let source = CGEventSource(stateID: .combinedSessionState)
+        source?.setLocalEventsFilterDuringSuppressionState(
+            [.permitLocalMouseEvents, .permitLocalKeyboardEvents],
+            state: .eventSuppressionStateSuppressionInterval
+        )
+        return source
     }
 }

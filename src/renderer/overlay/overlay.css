@@ -1,5 +1,5 @@
 /**
- * The cursor bubble.
+ * The cursor card.
  *
  * A small rounded field that appears next to the pointer: one line for the
  * question and the answer printed right under it. Everything else — context tags and
@@ -25,7 +25,7 @@ body,
   --panel-edge: rgba(255, 255, 255, 0.10);
   /*
    * The same surface while the assistant is drawing on the screen (`data-drawing`
-   * on `.bubble`). At 40% the panel is unmistakably a pane of tinted glass: what
+   * on `.card`). At 40% the panel is unmistakably a pane of tinted glass: what
    * the arrow is pointing at stays readable through it, which is the whole point
    * — an opaque card parked on the target would hide the thing it explains.
    */
@@ -40,7 +40,7 @@ body,
   }
 }
 
-.bubble {
+.card {
   /* No margin: the window is exactly this card. That is what keeps the native
      shadow and the vibrancy blur on the rounded shape instead of a rectangle
      around it (see the comment in `windows.ts`). The radius matches the window's
@@ -82,7 +82,7 @@ body,
  * window's vibrancy for the same stretch (`setDrawing` in `windows.ts`), because
  * a native blur would smear exactly what the arrow is pointing at.
  */
-.bubble[data-drawing] {
+.card[data-drawing] {
   background-color: var(--panel-drawing);
   background-image: none;
   border-color: color-mix(in srgb, var(--panel-edge) 55%, transparent);
@@ -90,7 +90,7 @@ body,
 }
 
 /* A faint accent edge marks a request in progress. */
-.bubble[data-busy] {
+.card[data-busy] {
   border-color: color-mix(in srgb, var(--accent) 45%, var(--panel-edge));
 }
 
@@ -126,7 +126,7 @@ body,
   height: 16px;
 }
 
-/* The field is the bubble: no box of its own, no focus ring — the caret is the
+/* The field is the card: no box of its own, no focus ring — the caret is the
    cursor, and a second border inside this rectangle would only add noise. */
 textarea.prompt {
   flex: 1;
@@ -150,9 +150,9 @@ textarea.prompt {
    *
    * The window is resized a frame after the keystroke that widens it, so a soft
    * wrap landing inside that gap would add a second row and drop it again — a
-   * flicker of the bubble's height on every letter. Keeping the field on a single
+   * flicker of the card's height on every letter. Keeping the field on a single
    * line and letting it overflow sideways for that one frame keeps the growth
-   * monotonic; `data-wrap` turns wrapping back on once `FULL_WIDTH` is reached and
+   * monotonic; `data-wrap` turns wrapping back on once `CARD_WIDTH` is reached and
    * there is nowhere left to grow.
    */
   white-space: pre;
@@ -173,9 +173,9 @@ textarea.prompt::placeholder {
 }
 
 /**
- * The one piece of chrome the bubble starts with. The field plus a 16px chevron:
+ * The one piece of chrome the card starts with. The field plus a 16px chevron:
  * everything else in the panel (context tags and the action strip of an
- * answer) hides behind it, so opening the bubble costs a single line of screen.
+ * answer) hides behind it, so opening the card costs a single line of screen.
  */
 button.toggle {
   flex: none;
@@ -211,7 +211,7 @@ button.toggle:hover:not(:disabled) {
 }
 
 /* Open: the chevron points up. Folded but with something to read (a warning, a
-   failure): it keeps the accent, so the one-line bubble still advertises it. */
+   failure): it keeps the accent, so the one-line card still advertises it. */
 button.toggle[data-open],
 button.toggle[data-alert] {
   color: var(--accent);
@@ -260,7 +260,7 @@ button.stop:hover:not(:disabled) > span {
   margin-left: 12px;
 }
 
-/* The folded-away half of the bubble: whatever the chevron opens. */
+/* The folded-away half of the card: whatever the chevron opens. */
 .drawer {
   display: flex;
   flex-direction: column;
@@ -536,7 +536,7 @@ button.tag.clear {
 }
 
 /*
- * Markdown blocks. The bubble is small enough that headings cannot be much
+ * Markdown blocks. The card is small enough that headings cannot be much
  * bigger than body text — a `#` here is a label, not a title — so the levels
  * differ by a point and by weight rather than by scale.
  */
@@ -618,7 +618,7 @@ button.tag.clear {
 
 .answer table {
   /* Fill the card rather than the longest cell: a table that is wider than the
-     bubble has to be dragged sideways, and a card you drag is not a card you
+     card has to be dragged sideways, and a card you drag is not a card you
      read. The wrapper keeps the scroll as a last resort for a table with more
      columns than the width can honestly hold. */
   width: 100%;
@@ -653,7 +653,7 @@ button.tag.clear {
   border-bottom: 1px solid var(--border-strong);
 }
 
-/* A 9px scrollbar would read as browser chrome inside a 420px bubble. */
+/* A 9px scrollbar would read as browser chrome inside a 360px card. */
 .answer::-webkit-scrollbar {
   width: 5px;
 }
@@ -706,7 +706,7 @@ button.tag.clear {
  *
  * It is a hit target, not a decoration: the card is transparent and has no
  * native frame, so there is nothing else to grab. Seven points is the width of
- * the bubble's own padding, which keeps it off the answer's scrollbar — a wider
+ * the card's own padding, which keeps it off the answer's scrollbar — a wider
  * strip would turn a scroll gesture into a resize halfway down a long reply.
  *
  * The hint is a short line that only appears under the pointer. A permanent mark
@@ -861,7 +861,7 @@ button.link.primary:hover:not(:disabled) {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .bubble {
+  .card {
     animation: none;
   }
   .voice {
@@ -877,7 +877,7 @@ button.link.primary:hover:not(:disabled) {
 /* A voice turn is not a panel: the glass, the edge, the shadow and the padding all
    go, and the bars are the whole thing — small, next to the pointer, where the
    field used to be. */
-.bubble[data-voice] {
+.card[data-voice] {
   padding: 0;
   background-color: transparent;
   background-image: none;
@@ -885,7 +885,7 @@ button.link.primary:hover:not(:disabled) {
   box-shadow: none;
 }
 
-.bubble[data-voice] .voice {
+.card[data-voice] .voice {
   /* Fills the window's minimum height, so the bars sit dead centre and nothing is
      clipped by the resize. */
   height: 31px;

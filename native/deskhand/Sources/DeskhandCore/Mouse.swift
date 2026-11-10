@@ -10,6 +10,22 @@ import ApplicationServices
 /// correct before the button goes down; without that, many apps treat the click
 /// as belonging to whatever was hovered previously.
 public enum Mouse {
+    /// Gesture pacing. These gaps are what a real hand leaves behind: hover
+    /// handlers need a moment before the press, drag targets need to see the
+    /// button go down before the pointer moves, and a multi-click needs a gap
+    /// between its clicks to be read as one gesture.
+    private enum Pace {
+        static let hoverSettle: TimeInterval = 0.02
+        static let clickDownToUp: TimeInterval = 0.01
+        static let betweenClicks: TimeInterval = 0.06
+        static let dragStartSettle: TimeInterval = 0.05
+        static let dragPressSettle: TimeInterval = 0.08
+        static let dragStep: TimeInterval = 0.012
+        static let dragEndSettle: TimeInterval = 0.05
+        static let scrollSettle: TimeInterval = 0.03
+        static let betweenScrollChunks: TimeInterval = 0.02
+    }
+
     public enum Button: String, Sendable {
         case left, right, middle
 
@@ -46,19 +62,10 @@ public enum Mouse {
         }
     }
 
-    private static func source() -> CGEventSource? {
-        let source = CGEventSource(stateID: .combinedSessionState)
-        source?.setLocalEventsFilterDuringSuppressionState(
-            [.permitLocalMouseEvents, .permitLocalKeyboardEvents],
-            state: .eventSuppressionStateSuppressionInterval
-        )
-        return source
-    }
-
     public static func move(to point: CGPoint) {
         WindowServer.prepare()
         guard let event = CGEvent(
-            mouseEventSource: source(),
+            mouseEventSource: SyntheticEvent.eventSource(),
             mouseType: .mouseMoved,
             mouseCursorPosition: point,
             mouseButton: .left
@@ -77,16 +84,16 @@ public enum Mouse {
         let clicks = max(1, min(count, 3))
         move(to: point)
         // A short settle lets hover/focus handlers run before the press.
-        Thread.sleep(forTimeInterval: 0.02)
+        Thread.sleep(forTimeInterval: Pace.hoverSettle)
 
         for index in 1...clicks {
             guard let down = CGEvent(
-                mouseEventSource: source(),
+                mouseEventSource: SyntheticEvent.eventSource(),
                 mouseType: button.downType,
                 mouseCursorPosition: point,
                 mouseButton: button.cgButton
             ), let up = CGEvent(
-                mouseEventSource: source(),
+                mouseEventSource: SyntheticEvent.eventSource(),
                 mouseType: button.upType,
                 mouseCursorPosition: point,
                 mouseButton: button.cgButton
@@ -99,10 +106,10 @@ public enum Mouse {
             SyntheticEvent.mark(down)
             SyntheticEvent.mark(up)
             down.post(tap: .cghidEventTap)
-            Thread.sleep(forTimeInterval: 0.01)
+            Thread.sleep(forTimeInterval: Pace.clickDownToUp)
             up.post(tap: .cghidEventTap)
             if index < clicks {
-                Thread.sleep(forTimeInterval: 0.06)
+                Thread.sleep(forTimeInterval: Pace.betweenClicks)
             }
         }
     }
@@ -118,17 +125,17 @@ public enum Mouse {
     ) {
         WindowServer.prepare()
         move(to: start)
-        Thread.sleep(forTimeInterval: 0.05)
+        Thread.sleep(forTimeInterval: Pace.dragStartSettle)
 
         guard let down = CGEvent(
-            mouseEventSource: source(),
+            mouseEventSource: SyntheticEvent.eventSource(),
             mouseType: button.downType,
             mouseCursorPosition: start,
             mouseButton: button.cgButton
         ) else { return }
         SyntheticEvent.mark(down)
         down.post(tap: .cghidEventTap)
-        Thread.sleep(forTimeInterval: 0.08)
+        Thread.sleep(forTimeInterval: Pace.dragPressSettle)
 
         let count = max(4, steps)
         for step in 1...count {
@@ -141,19 +148,19 @@ public enum Mouse {
                 y: start.y + (end.y - start.y) * eased
             )
             guard let dragged = CGEvent(
-                mouseEventSource: source(),
+                mouseEventSource: SyntheticEvent.eventSource(),
                 mouseType: button.dragType,
                 mouseCursorPosition: point,
                 mouseButton: button.cgButton
             ) else { continue }
             SyntheticEvent.mark(dragged)
             dragged.post(tap: .cghidEventTap)
-            Thread.sleep(forTimeInterval: 0.012)
+            Thread.sleep(forTimeInterval: Pace.dragStep)
         }
 
-        Thread.sleep(forTimeInterval: 0.05)
+        Thread.sleep(forTimeInterval: Pace.dragEndSettle)
         guard let up = CGEvent(
-            mouseEventSource: source(),
+            mouseEventSource: SyntheticEvent.eventSource(),
             mouseType: button.upType,
             mouseCursorPosition: end,
             mouseButton: button.cgButton
@@ -171,7 +178,7 @@ public enum Mouse {
         pages: Double
     ) {
         move(to: point)
-        Thread.sleep(forTimeInterval: 0.03)
+        Thread.sleep(forTimeInterval: Pace.scrollSettle)
 
         let linesPerPage = 12.0
         let total = pages * linesPerPage
@@ -184,7 +191,7 @@ public enum Mouse {
             remaining -= step
             let (dy, dx) = direction.delta(amount: step * sign)
             guard let event = CGEvent(
-                scrollWheelEvent2Source: source(),
+                scrollWheelEvent2Source: SyntheticEvent.eventSource(),
                 units: .line,
                 wheelCount: 2,
                 wheel1: Int32(dy),
@@ -194,7 +201,7 @@ public enum Mouse {
             event.location = point
             SyntheticEvent.mark(event)
             event.post(tap: .cghidEventTap)
-            Thread.sleep(forTimeInterval: 0.02)
+            Thread.sleep(forTimeInterval: Pace.betweenScrollChunks)
         }
     }
 

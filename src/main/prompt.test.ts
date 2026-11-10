@@ -38,8 +38,8 @@ interface RequestOverrides {
   mode?: ResponseMode
   snapshot?: ContextSnapshot | null
   includeSelection?: boolean
-  includeScreenshot?: boolean
-  hasImage?: boolean
+  requestedScreenshot?: boolean
+  imageAttached?: boolean
   draw?: boolean
   actReason?: string | null
   hasHistory?: boolean
@@ -52,8 +52,8 @@ function request(overrides: RequestOverrides = {}) {
     mode: 'analyze',
     snapshot: snapshot(),
     includeSelection: true,
-    includeScreenshot: true,
-    hasImage: true,
+    requestedScreenshot: true,
+    imageAttached: true,
     draw: false,
     ...overrides
   })
@@ -73,12 +73,12 @@ describe('buildRequest: golden matrix', () => {
   ] as const
 
   for (const mode of modes) {
-    for (const hasImage of images) {
+    for (const imageAttached of images) {
       for (const [language, prompt] of prompts) {
-        const name = `${mode} · image=${hasImage} · ${language}`
+        const name = `${mode} · image=${imageAttached} · ${language}`
 
         it(name, () => {
-          const built = request({ mode, hasImage, prompt, draw: hasImage })
+          const built = request({ mode, imageAttached, prompt, draw: imageAttached })
 
           expect(built).toMatchSnapshot()
         })
@@ -108,15 +108,15 @@ describe('buildRequest: context block', () => {
     const { userText } = request({
       snapshot: null,
       includeSelection: false,
-      includeScreenshot: false,
-      hasImage: false
+      requestedScreenshot: false,
+      imageAttached: false
     })
 
     expect(userText).toContain('Контекст из приложения не собран.')
   })
 
   it('wraps the selection in triple quotes', () => {
-    const { userText } = request({ hasImage: false })
+    const { userText } = request({ imageAttached: false })
 
     expect(userText).toContain('Выделенный текст:\n"""\nВыделенный текст\n"""')
   })
@@ -124,7 +124,7 @@ describe('buildRequest: context block', () => {
   it('marks a truncated selection', () => {
     const { userText } = request({
       snapshot: snapshot({ selection: { text: 'x', truncated: true } }),
-      hasImage: false
+      imageAttached: false
     })
 
     expect(userText).toContain('(выделение обрезано из-за размера)')
@@ -133,7 +133,7 @@ describe('buildRequest: context block', () => {
   it('caps the selection at 12000 characters', () => {
     const { userText } = request({
       snapshot: snapshot({ selection: { text: 'я'.repeat(20_000), truncated: false } }),
-      hasImage: false
+      imageAttached: false
     })
 
     expect(userText).toContain('я'.repeat(MAX_SELECTION_CHARS))
@@ -167,14 +167,14 @@ describe('buildRequest: context block', () => {
   })
 
   it('says the screenshot is missing when one was requested but is absent', () => {
-    expect(request({ hasImage: false }).userText).toContain(
+    expect(request({ imageAttached: false }).userText).toContain(
       'Скриншот недоступен, опирайся только на текст.'
     )
   })
 
   it('explains the coordinate system only when a tool needs it', () => {
-    const withTools = request({ draw: true, hasImage: true }).userText
-    const withoutTools = request({ draw: false, hasImage: true }).userText
+    const withTools = request({ draw: true, imageAttached: true }).userText
+    const withoutTools = request({ draw: false, imageAttached: true }).userText
 
     expect(withTools).toContain('(0,0) — его')
     expect(withTools).toContain('@point')

@@ -13,8 +13,14 @@ import UniformTypeIdentifiers
 /// burn the whole context window, and the scale factor is reported back so
 /// pixel coordinates from the model map onto real screen points.
 public enum WindowCapture {
+    /// A window smaller than this on either side is a tooltip, a shadow or a
+    /// stray panel, not something worth screenshotting.
+    private static let minimumWindowSide: CGFloat = 40
+    /// How far apart two reports of the same window may be, in points.
+    private static let frameMatchTolerance: Double = 8
+
     public struct Result: Sendable {
-        public let pngData: Data
+        public let imageData: Data
         public let pixelWidth: Int
         public let pixelHeight: Int
         /// screen points -> pixels in the returned image
@@ -22,7 +28,7 @@ public enum WindowCapture {
         public let windowFrame: CGRect
         /// Wall time spent in ScreenCaptureKit.
         public let captureMilliseconds: Double
-        /// Wall time spent encoding the PNG.
+        /// Wall time spent encoding the image.
         public let encodeMilliseconds: Double
     }
 
@@ -38,7 +44,7 @@ public enum WindowCapture {
             case .noPermission:
                 return "Screen Recording permission is required to take screenshots"
             case .captureFailed(let message): return "screen capture failed: \(message)"
-            case .encodingFailed: return "could not encode the screenshot as PNG"
+            case .encodingFailed: return "could not encode the screenshot"
             }
         }
     }
@@ -86,14 +92,18 @@ public enum WindowCapture {
         //
         // So the frame the tree reported wins when it is available. The size
         // heuristic stays as the fallback for a caller that has no tree.
-        let usable = windows.filter { $0.windowLayer == 0 && $0.frame.width > 40 && $0.frame.height > 40 }
+        let usable = windows.filter {
+            $0.windowLayer == 0
+                && $0.frame.width > Self.minimumWindowSide
+                && $0.frame.height > Self.minimumWindowSide
+        }
         let largest = usable.max {
             $0.frame.width * $0.frame.height < $1.frame.width * $1.frame.height
         }
         let matching = preferredFrame.flatMap { frame in
             usable.min {
-                distance($0.frame, frame) < distance($1.frame, frame)
-            }.flatMap { distance($0.frame, frame) <= 8 ? $0 : nil }
+                distance(from: $0.frame, to: frame) < distance(from: $1.frame, to: frame)
+            }.flatMap { distance(from: $0.frame, to: frame) <= Self.frameMatchTolerance ? $0 : nil }
         }
         let candidate = matching ?? largest
             ?? windows.max { lhs, rhs in lhs.frame.width * lhs.frame.height < rhs.frame.width * rhs.frame.height }
@@ -101,8 +111,8 @@ public enum WindowCapture {
         guard let window = candidate else { throw CaptureError.windowNotFound }
 
         let filter = SCContentFilter(desktopIndependentWindow: window)
-        let target = fit(
-            size: window.frame.size,
+        let target = downscaledSize(
+            of: window.frame.size,
             longestEdge: Double(options.maxDimension)
         )
 
@@ -136,7 +146,7 @@ public enum WindowCapture {
         let scale = window.frame.width > 0 ? Double(image.width) / Double(window.frame.width) : 1
 
         return Result(
-            pngData: data,
+            imageData: data,
             pixelWidth: image.width,
             pixelHeight: image.height,
             scale: scale,
@@ -151,10 +161,10 @@ public enum WindowCapture {
     /// Used to recognise the window the accessibility tree was read from among
     /// the app's windows. ScreenCaptureKit reports a window by identity, not by
     /// the AX window it corresponds to, so the frame is what ties the two
-    /// together. Eight points is the tolerance: a window can shift by its own
-    /// shadow or by a title bar the two APIs measure differently, but two
-    /// distinct windows are never that close.
-    static func distance(_ a: CGRect, _ b: CGRect) -> Double {
+    /// together. The tolerance is `frameMatchTolerance`: a window can shift by
+    /// its own shadow or by a title bar the two APIs measure differently, but
+    /// two distinct windows are never that close.
+    static func distance(from a: CGRect, to b: CGRect) -> Double {
         let dx = abs(a.origin.x - b.origin.x)
         let dy = abs(a.origin.y - b.origin.y)
         let dw = abs(a.width - b.width)
@@ -162,7 +172,7 @@ public enum WindowCapture {
         return max(max(dx, dy), max(dw, dh))
     }
 
-    static func fit(size: CGSize, longestEdge: Double) -> CGSize {
+    static func downscaledSize(of size: CGSize, longestEdge: Double) -> CGSize {
         let longest = max(size.width, size.height)
         guard longest > 0 else { return CGSize(width: 1, height: 1) }
         let factor = min(1.0, longestEdge / Double(longest))

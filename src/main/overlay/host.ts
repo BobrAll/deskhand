@@ -2,12 +2,12 @@
  * The window contract the overlay controller drives.
  *
  * It lives apart from the controller because it is the seam between two files
- * that know nothing about each other's internals: `windows.ts` owns the
+ * that know nothing about each other's internals: `windows/index.ts` owns the
  * `BrowserWindow` and implements this, `overlay/index.ts` owns the session and
  * only calls it. Keeping the declaration here means neither side has to import
- * the other — `windows.ts` used to import the type from the controller module,
- * which made the controller look like a dependency of the window code when the
- * arrow only ever pointed the other way.
+ * the other — the window code used to import the type from the controller
+ * module, which made the controller look like a dependency of the window code
+ * when the arrow only ever pointed the other way.
  */
 
 import type { BrowserWindow } from 'electron'

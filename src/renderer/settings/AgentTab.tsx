@@ -54,8 +54,9 @@ export function AgentTab({ agent, onChange, onEnabledChange }: AgentTabProps) {
     return () => window.removeEventListener('focus', onFocus)
   }, [refresh])
 
-  // The draft is only persisted on save, so the panel would otherwise keep showing
-  // the old answer until the window was reopened.
+  // The master switch is written through its own channel rather than the
+  // autosave, so the availability has to be re-read when it changes: the panel
+  // would otherwise keep showing the old answer until the window was reopened.
   useEffect(() => {
     refresh()
   }, [agent.enabled, refresh])
@@ -77,7 +78,11 @@ export function AgentTab({ agent, onChange, onEnabledChange }: AgentTabProps) {
     if (Number.isFinite(value) && value >= 1) onChange({ maxSteps: value })
   }
 
-  const needsGrant = agent.enabled && availability !== null && !availability.ready
+  // Three states, and all three are shown. Before, the panel said nothing unless
+  // the mode was on but blocked, so "off" and "on and working" looked exactly the
+  // same — and the only thing on screen that said anything about access was the
+  // privacy tab's OS permission, which is a different question.
+  const state = !agent.enabled ? 'off' : availability?.ready ? 'ready' : 'blocked'
 
   return (
     <div className="pane">
@@ -98,17 +103,21 @@ export function AgentTab({ agent, onChange, onEnabledChange }: AgentTabProps) {
           }}
         />
 
-        {needsGrant && (
-          <div className="agent-ready">
-            <span className="agent-ready-dot" aria-hidden />
-            <span>{availability?.reason ?? 'Нужен доступ в «Универсальный доступ».'}</span>
+        <div className="agent-ready" data-tone={state}>
+          <span className="agent-ready-dot" aria-hidden />
+          <span>
+            {state === 'off' && 'Режим выключен — ассистент отвечает текстом и рисует.'}
+            {state === 'ready' && 'Права выданы, режим включён.'}
+            {state === 'blocked' && (availability?.reason ?? 'Нужен доступ в «Универсальный доступ».')}
+          </span>
+          {state === 'blocked' && (
             <button
               onClick={() => window.deskhand.permissions.open('accessibility')}
             >
               Открыть доступ
             </button>
-          </div>
-        )}
+          )}
+        </div>
 
         <Row
           title="Постоянные разрешения"

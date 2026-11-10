@@ -79,18 +79,18 @@ afterEach(() => {
 
 describe('live synthesis', () => {
   it('is off until every part of the configuration is present', async () => {
-    const { speechBlockReason } = await load()
-    expect(speechBlockReason(CONFIGURED)).toBeNull()
-    expect(speechBlockReason({ ...CONFIGURED, tts: { ...CONFIGURED.tts, enabled: false } }))
+    const { ttsBlockReason } = await load()
+    expect(ttsBlockReason(CONFIGURED)).toBeNull()
+    expect(ttsBlockReason({ ...CONFIGURED, tts: { ...CONFIGURED.tts, enabled: false } }))
       .toContain('выключен')
-    expect(speechBlockReason({ ...CONFIGURED, tts: { ...CONFIGURED.tts, baseUrl: '' } }))
+    expect(ttsBlockReason({ ...CONFIGURED, tts: { ...CONFIGURED.tts, baseUrl: '' } }))
       .toContain('адрес')
-    expect(speechBlockReason({ ...CONFIGURED, tts: { ...CONFIGURED.tts, model: '' } }))
+    expect(ttsBlockReason({ ...CONFIGURED, tts: { ...CONFIGURED.tts, model: '' } }))
       .toContain('модель')
-    expect(speechBlockReason({ ...CONFIGURED, tts: { ...CONFIGURED.tts, voice: '' } }))
+    expect(ttsBlockReason({ ...CONFIGURED, tts: { ...CONFIGURED.tts, voice: '' } }))
       .toContain('голос')
     fake.key = null
-    expect(speechBlockReason(CONFIGURED)).toContain('ключ')
+    expect(ttsBlockReason(CONFIGURED)).toContain('ключ')
   })
 
   it('sends the user\'s endpoint, model, voice and style, and nothing else', async () => {

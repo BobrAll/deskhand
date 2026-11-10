@@ -28,15 +28,16 @@ final class Bridge: @unchecked Sendable {
     /// The run in flight, if any. One at a time: two agents driving the same
     /// pointer would interleave clicks, and the second would be acting on a
     /// screen the first had already changed.
-    private var activeRun: RunHandle?
+    private var activeRun: CancelToken?
 
     /// Approvals waiting for the app's answer, keyed by request id.
     private var pendingApprovals: [String: ApprovalWait] = [:]
     private var approvalCounter = 0
 
-    private final class RunHandle: @unchecked Sendable {
-        let cancel = CancelToken()
-    }
+    /// How long a question waits for the app before it is denied.
+    private static let approvalTimeout: TimeInterval = 600
+    /// How often the wait wakes up, so a cancel lands while a question is open.
+    private static let approvalPollInterval: TimeInterval = 0.1
 
     private final class ApprovalWait: @unchecked Sendable {
         let semaphore = DispatchSemaphore(value: 0)
@@ -50,7 +51,7 @@ final class Bridge: @unchecked Sendable {
             semaphore.signal()
         }
 
-        func value() -> ToolPolicyDecision {
+        var value: ToolPolicyDecision {
             lock.lock()
             defer { lock.unlock() }
             return decision
@@ -76,7 +77,7 @@ final class Bridge: @unchecked Sendable {
                 guard var line = String(data: lineData, encoding: .utf8) else { continue }
                 if line.hasSuffix("\r") { line.removeLast() }
                 if line.trimmingCharacters(in: .whitespaces).isEmpty { continue }
-                handle(line: line)
+                handleRequest(line)
             }
         }
         // stdin closed: the app is gone, and a run with nobody watching is a run
@@ -85,7 +86,7 @@ final class Bridge: @unchecked Sendable {
         exit(0)
     }
 
-    private func handle(line: String) {
+    private func handleRequest(_ line: String) {
         guard let value = try? JSONValue.parse(line), let message = value.objectValue else {
             emit(["event": .string("error"), "params": .object([
                 "message": .string("could not parse a request line"),
@@ -135,7 +136,7 @@ final class Bridge: @unchecked Sendable {
             respond(id: id, error: "a run is already in progress")
             return
         }
-        let handle = RunHandle()
+        let handle = CancelToken()
         activeRun = handle
         lock.unlock()
 
@@ -164,7 +165,7 @@ final class Bridge: @unchecked Sendable {
         let provider = ProviderFactory.make(config: config)
         let loop = AgentLoop(provider: provider, executor: executor, options: options)
         loop.observer = BridgeObserver(bridge: self)
-        executor.policy = BridgePolicy(bridge: self, cancel: handle.cancel)
+        executor.policy = BridgePolicy(bridge: self, cancel: handle)
         // A run with nobody watching is the same run without a presenter. The
         // app asks for one explicitly, so the background mode that comes later
         // is the absence of this flag rather than a different code path.
@@ -196,13 +197,13 @@ final class Bridge: @unchecked Sendable {
         }
     }
 
-    private func executeRun(loop: AgentLoop, executor: ToolExecutor, handle: RunHandle, task: String) async {
+    private func executeRun(loop: AgentLoop, executor: ToolExecutor, handle: CancelToken, task: String) async {
         var answer: String?
         var failure: String?
         do {
             answer = try await loop.run(
                 task: task,
-                cancel: handle.cancel,
+                cancel: handle,
                 finalResponseInstruction: """
                     When the requested action succeeded as requested and there is nothing else the user \
                     needs to know, reply with exactly [[ACTION_DONE]]. If the user asked for information, \
@@ -236,7 +237,7 @@ final class Bridge: @unchecked Sendable {
         }
     }
 
-    private func finishRun(_ handle: RunHandle) {
+    private func finishRun(_ handle: CancelToken) {
         lock.lock()
         if activeRun === handle { activeRun = nil }
         let waits = pendingApprovals
@@ -251,7 +252,7 @@ final class Bridge: @unchecked Sendable {
         lock.lock()
         let running = activeRun
         lock.unlock()
-        running?.cancel.cancel()
+        running?.cancel()
         resolveAllApprovals(.deny("Отменено."))
     }
 
@@ -288,7 +289,7 @@ final class Bridge: @unchecked Sendable {
         // A question nobody answers must not hang the run forever: the app is
         // the only one who can answer it, and if it stopped, so did the reason
         // to keep waiting. The poll exists so a cancel lands within 100 ms.
-        let deadline = Date().addingTimeInterval(600)
+        let deadline = Date().addingTimeInterval(Self.approvalTimeout)
         while Date() < deadline {
             if cancel.isCancelled {
                 lock.lock()
@@ -296,11 +297,11 @@ final class Bridge: @unchecked Sendable {
                 lock.unlock()
                 return .deny("Отменено.")
             }
-            if wait.semaphore.wait(timeout: .now() + 0.1) == .success {
+            if wait.semaphore.wait(timeout: .now() + Self.approvalPollInterval) == .success {
                 lock.lock()
                 pendingApprovals.removeValue(forKey: id)
                 lock.unlock()
-                return wait.value()
+                return wait.value
             }
         }
         lock.lock()
@@ -414,6 +415,9 @@ private final class LineWriter: @unchecked Sendable {
 /// Turns loop progress into events for the app.
 private final class BridgeObserver: AgentObserver, @unchecked Sendable {
     private let bridge: Bridge
+    /// The card shows a result line, not a transcript; the model already has the
+    /// full text in its history.
+    private static let maximumResultTextLength = 2000
     /// Steps whose prose already reached the card as a stream. The final
     /// `stepAnswered` must not send the same caption again: the card would
     /// replace a growing line with a shorter, identical one for a frame.
@@ -470,12 +474,16 @@ private final class BridgeObserver: AgentObserver, @unchecked Sendable {
         bridge.emit(["event": .string("step-timing"), "params": .object(params)])
     }
 
-    func toolFinished(_ step: Int, call: ToolCall, text: String, isError: Bool, timings: ToolTimings) {
+    func toolFinished(_ step: Int, call: ToolCall, text: String, didFail: Bool, timings: ToolTimings) {
         var params: [String: JSONValue] = [
             "step": .number(Double(step)),
             "name": .string(call.name),
-            "ok": .bool(!isError),
-            "text": .string(text.count > 2000 ? String(text.prefix(2000)) + "…" : text),
+            "ok": .bool(!didFail),
+            "text": .string(
+                text.count > Self.maximumResultTextLength
+                    ? String(text.prefix(Self.maximumResultTextLength)) + "…"
+                    : text
+            ),
         ]
         // Only the phases that actually ran, so the host does not have to tell
         // "0 ms" from "did not happen". Sent unrounded: a tool that takes 0.4 ms
@@ -546,8 +554,11 @@ private final class BridgePresenter: ActionPresenter, @unchecked Sendable {
             params["x"] = .number(Double(point.x))
             params["y"] = .number(Double(point.y))
         }
-        if let target = action.target { params["target"] = Self.rect(target) }
-        if let window = action.window { params["window"] = Self.rect(window) }
+        // These two keys are the wire contract with `src/main/agent/sidecar.ts`
+        // (`AgentPresentation.target` and `.window`), so they keep their names
+        // while the properties they carry are named for what they measure.
+        if let elementFrame = action.elementFrame { params["target"] = Self.rect(elementFrame) }
+        if let windowFrame = action.windowFrame { params["window"] = Self.rect(windowFrame) }
         bridge.emit(["event": .string("present"), "params": .object(params)])
 
         queue.async {

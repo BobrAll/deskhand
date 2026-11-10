@@ -2,9 +2,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { ActiveAppInfo } from '@shared/types'
 
-const { helperFront } = vi.hoisted(() => ({ helperFront: vi.fn() }))
+const { helperFrontWindow } = vi.hoisted(() => ({ helperFrontWindow: vi.fn() }))
 
-vi.mock('../native/helper', () => ({ helperFront }))
+vi.mock('../native/helper', () => ({ helperFrontWindow }))
 
 import { getActiveApp, isExcluded } from './activeApp'
 
@@ -34,30 +34,30 @@ function app(overrides: Partial<ActiveAppInfo> = {}): ActiveAppInfo {
 }
 
 beforeEach(() => {
-  helperFront.mockReset()
+  helperFrontWindow.mockReset()
 })
 
 describe('getActiveApp', () => {
   it('maps the frontmost app into the snapshot shape', async () => {
-    helperFront.mockResolvedValue(front())
+    helperFrontWindow.mockResolvedValue(front())
 
     expect(await getActiveApp()).toEqual(app())
   })
 
   it('drops the fields the snapshot does not carry', async () => {
-    helperFront.mockResolvedValue(front())
+    helperFrontWindow.mockResolvedValue(front())
 
     expect(await getActiveApp()).not.toHaveProperty('accessibility')
   })
 
   it('returns null when the frontmost app cannot be determined', async () => {
-    helperFront.mockResolvedValue(null)
+    helperFrontWindow.mockResolvedValue(null)
 
     expect(await getActiveApp()).toBeNull()
   })
 
   it('passes a missing window title and bounds through as null', async () => {
-    helperFront.mockResolvedValue(
+    helperFrontWindow.mockResolvedValue(
       front({ windowTitle: null, bounds: null, windowId: null, accessibility: false })
     )
 
@@ -67,7 +67,7 @@ describe('getActiveApp', () => {
   })
 
   it('keeps a zero pid: it means "unknown", not "missing"', async () => {
-    helperFront.mockResolvedValue(front({ pid: 0 }))
+    helperFrontWindow.mockResolvedValue(front({ pid: 0 }))
 
     expect((await getActiveApp())?.pid).toBe(0)
   })

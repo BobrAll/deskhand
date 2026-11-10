@@ -1,20 +1,22 @@
 /**
- * Key codes for both shortcut parsers.
+ * Key codes for the push-to-talk accelerator.
  *
- * Two parsers read these tables and they are deliberately different: `agent/keys.ts`
- * parses what the *model* writes ("cmd+s", "enter"), where a bare key is normal and
- * the whole keyboard is fair game; `voice/listen.ts` parses the *user's* push-to-talk
- * accelerator, where a bare key is never valid and only a handful of combinations
- * make sense. The parsers stay in their own files — only the numbers live here, so
- * a wrong keycode is fixed in one place instead of two.
+ * One parser reads these tables: `main/voice/listen.ts` turns the user's
+ * accelerator ("Alt+Shift+Space") into the key code and modifier mask the native
+ * keyboard tap needs. A bare key is never valid there — the parser returns null
+ * unless it finds at least one modifier and one key — so only combinations live
+ * in the grammar. The parser stays in its own file; only the numbers live here,
+ * so a wrong keycode is fixed in one place.
  *
- * The tables are not identical. The voice table has always been the agent table
- * minus two aliases: `esc` (it only knows `escape`) and `forwarddelete` (only
- * `delete`). That is not cosmetic — `parseShortcut` accepts a single bare key, so
- * letting `esc` into the voice table would make "esc" a registerable global
- * hotkey where it is a validation error today. The subset is therefore kept
- * explicit, and `keycodes.test.ts` pins both sizes so that adding a key to
- * `KEY_CODES` fails loudly instead of silently widening the hotkey grammar.
+ * `KEY_CODES` is the full table and the source of truth; `VOICE_KEY_CODES` is the
+ * subset that parser accepts. The subset has always been the full table minus
+ * two aliases: `esc` (the voice table only knows `escape`) and `forwarddelete`
+ * (only `delete`). That is not cosmetic — whether "Alt+esc" is a valid
+ * accelerator is decided by this table alone, and letting `esc` in would turn it
+ * from a validation error into a registerable global hotkey. The subset is
+ * therefore kept explicit, and `keycodes.test.ts` pins both sizes so that adding
+ * a key to `KEY_CODES` fails loudly instead of silently widening the hotkey
+ * grammar.
  *
  * Pure data, no imports: usable from either process and testable alone.
  */

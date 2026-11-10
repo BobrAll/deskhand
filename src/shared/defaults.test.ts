@@ -35,7 +35,8 @@ describe('parseExtraBody', () => {
 })
 
 // `models` is the one block that does not fall back to the shipped defaults: an
-// empty bag normalizes to empty model names (see the note in PROGRESS).
+// empty bag normalizes to empty model names, and an empty name means "the user
+// has not chosen a model" — there is no built-in id to fall back to.
 const EMPTY_MODELS = { openrouter: '', openai: '', anthropic: '' }
 
 describe('normalizeSettings: empty and malformed input', () => {
@@ -161,7 +162,7 @@ describe('normalizeSettings: provider', () => {
 })
 
 describe('normalizeSettings: models and base URLs', () => {
-  it('keeps web search model overrides separate and uses the old default when blank', () => {
+  it('keeps web search model overrides separate and falls back to the chat model', () => {
     const settings = normalizeSettings({
       provider: 'openrouter',
       models: { openrouter: 'ordinary-model' },
@@ -170,8 +171,10 @@ describe('normalizeSettings: models and base URLs', () => {
     expect(settings.models.openrouter).toBe('ordinary-model')
     expect(settings.searchModels).toEqual({ ...EMPTY_MODELS, openrouter: 'search-model' })
     expect(resolveSearchModel(settings)).toBe('search-model')
-    expect(resolveSearchModel({ ...settings, provider: 'openai' })).toBe('gpt-5-search-api')
     expect(resolveSearchModel({ ...settings, searchModels: EMPTY_MODELS })).toBe('ordinary-model')
+    // A provider with nothing chosen has nothing to fall back to: there is no
+    // built-in model name to reach for.
+    expect(resolveSearchModel({ ...settings, provider: 'openai' })).toBe('')
   })
 
   it('keeps a model per provider and defaults the rest to empty', () => {

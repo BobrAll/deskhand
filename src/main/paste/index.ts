@@ -10,12 +10,18 @@
 
 import { clipboard } from 'electron'
 import type { ActiveAppInfo, PasteResult } from '@shared/types'
-import { helperActivate, helperFront, helperSendKey } from '../native/helper'
+import { helperActivate, helperFrontWindow, helperSendKey } from '../native/helper'
 import { delay, waitFor } from '../util'
-import { restoreClipboard, snapshotClipboard, withClipboard } from './clipboard'
+import { copyText, restoreClipboard, snapshotClipboard, withClipboard } from './clipboard'
 
 export { copyText } from './clipboard'
 
+/** How long the target app gets to become frontmost before the paste is downgraded to a copy. */
+const FOCUS_TIMEOUT_MS = 1500
+/** Poll interval while waiting for that. */
+const FOCUS_POLL_MS = 50
+/** Give the pasteboard a tick to publish the new content before Cmd+V. */
+const PASTEBOARD_PUBLISH_MS = 40
 /** Time the target app gets to read the pasteboard after Cmd+V. */
 const PASTE_SETTLE_MS = 300
 
@@ -27,35 +33,36 @@ async function focusTarget(target: ActiveAppInfo | null): Promise<boolean> {
   // Waiting for the app to actually become frontmost is what makes Cmd+V land in
   // the right window instead of in whatever had focus a moment ago.
   return waitFor(async () => {
-    const front = await helperFront()
+    const front = await helperFrontWindow()
     if (!front) return false
     if (front.bundleId && front.bundleId === target.bundleId) return true
     return target.pid > 0 && front.pid === target.pid
-  }, 1500, 50)
+  }, FOCUS_TIMEOUT_MS, FOCUS_POLL_MS)
 }
 
-async function putOnClipboard(text: string): Promise<void> {
-  await withClipboard(async () => {
-    clipboard.writeText(text)
-  })
+/**
+ * The paste did not land, so the answer is on the clipboard instead.
+ *
+ * Both failures (no way back to the app, no way to paste into the field) end in
+ * the same place and carry the same flag; only the sentence differs, and it is
+ * the sentence that says which failure it was.
+ */
+function copiedOnly(message: string): PasteResult {
+  return { ok: false, copiedOnly: true, message }
 }
 
 export async function pasteAnswer(text: string, target: ActiveAppInfo | null): Promise<PasteResult> {
   const focused = await focusTarget(target)
   if (!focused) {
-    await putOnClipboard(text)
-    return {
-      ok: false,
-      copiedOnly: true,
-      message: 'Не удалось вернуться в исходное приложение — ответ скопирован в буфер обмена.'
-    }
+    await copyText(text)
+    return copiedOnly('Не удалось вернуться в исходное приложение — ответ скопирован в буфер обмена.')
   }
 
   const typed = await withClipboard(async () => {
     const snapshot = snapshotClipboard()
     clipboard.writeText(text)
     // Give the pasteboard a tick to publish the new content before Cmd+V.
-    await delay(40)
+    await delay(PASTEBOARD_PUBLISH_MS)
 
     const sent = await helperSendKey('paste')
     if (!sent) {
@@ -69,12 +76,8 @@ export async function pasteAnswer(text: string, target: ActiveAppInfo | null): P
   })
 
   if (!typed) {
-    await putOnClipboard(text)
-    return {
-      ok: false,
-      copiedOnly: true,
-      message: 'Вставка недоступна в этом поле — ответ скопирован в буфер обмена.'
-    }
+    await copyText(text)
+    return copiedOnly('Вставка недоступна в этом поле — ответ скопирован в буфер обмена.')
   }
 
   return { ok: true, copiedOnly: false }

@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type { AgentCursorFrame, AgentEvent, ScreenRect } from '@shared/types'
+import type { AgentCursorFrame, AgentEvent } from '@shared/types'
+import type { FakeLayerWindow } from '../test/layerWindowMock'
+import { lastLayerWindow } from '../test/layerWindowMock'
 
 /**
  * `cursor.ts` keeps all of its state at module level, so every test imports a
@@ -9,102 +11,25 @@ import type { AgentCursorFrame, AgentEvent, ScreenRect } from '@shared/types'
 const state = vi.hoisted(() => ({
   cursor: { x: 500, y: 400 },
   display: { x: 0, y: 0, width: 1440, height: 900 },
-  windows: [] as Array<{
-    bounds: ScreenRect | null
-    shown: number
-    hidden: number
-    destroyed: boolean
-    sent: AgentCursorFrame[]
-    loadHandlers: Record<string, () => void>
-  }>,
-  shellOpened: [] as string[],
-  timers: [] as Array<{ fn: () => void; ms: number; kind: 'timeout' | 'interval'; cleared: boolean }>
+  windows: [] as FakeLayerWindow<AgentCursorFrame>[],
+  shellOpened: [] as string[]
 }))
 
-vi.mock('electron', () => ({
-  BrowserWindow: class {
-    readonly webContents = {
-      setWindowOpenHandler: (_handler: unknown) => {
-        // Windows are never opened from this layer.
-      },
-      once: (event: string, handler: () => void) => {
-        this.entry.loadHandlers[event] = handler
-        return this.webContents
-      },
-      send: (_channel: string, payload: AgentCursorFrame) => {
-        this.entry.sent.push(payload)
+vi.mock('electron', async () => {
+  const { layerWindowClass } = await import('../test/layerWindowMock')
+  return {
+    BrowserWindow: layerWindowClass(state),
+    screen: {
+      getCursorScreenPoint: () => state.cursor,
+      getDisplayNearestPoint: () => ({ bounds: state.display })
+    },
+    shell: {
+      openExternal: async (url: string) => {
+        state.shellOpened.push(url)
       }
-    }
-    readonly entry: {
-      bounds: ScreenRect | null
-      shown: number
-      hidden: number
-      destroyed: boolean
-      sent: AgentCursorFrame[]
-      loadHandlers: Record<string, () => void>
-    }
-
-    constructor() {
-      this.entry = {
-        bounds: null,
-        shown: 0,
-        hidden: 0,
-        destroyed: false,
-        sent: [],
-        loadHandlers: {}
-      }
-      state.windows.push(this.entry)
-      // The page loads on the next tick, as a real one does.
-      queueMicrotask(() => this.entry.loadHandlers['did-finish-load']?.())
-    }
-
-    loadURL(): void {
-      // Not used: the dev-server branch is off in tests.
-    }
-    loadFile(): void {
-      // Not used: the dev-server branch is off in tests.
-    }
-    setBounds(bounds: ScreenRect): void {
-      this.entry.bounds = bounds
-    }
-    setAlwaysOnTop(): void {
-      // Part of the contract: the glow sits above full-screen apps.
-    }
-    setVisibleOnAllWorkspaces(): void {
-      // Part of the contract: the glow is visible across spaces.
-    }
-    on(event: string, handler: () => void): void {
-      this.entry.loadHandlers[event] = handler
-    }
-    setIgnoreMouseEvents(): void {
-      // Part of the contract: the layer never eats clicks.
-    }
-    setContentProtection(): void {
-      // Part of the contract: the layer never ends up in a screenshot.
-    }
-    showInactive(): void {
-      this.entry.shown += 1
-    }
-    hide(): void {
-      this.entry.hidden += 1
-    }
-    isDestroyed(): boolean {
-      return this.entry.destroyed
-    }
-    destroy(): void {
-      this.entry.destroyed = true
-    }
-  },
-  screen: {
-    getCursorScreenPoint: () => state.cursor,
-    getDisplayNearestPoint: () => ({ bounds: state.display })
-  },
-  shell: {
-    openExternal: async (url: string) => {
-      state.shellOpened.push(url)
     }
   }
-}))
+})
 
 type CursorModule = typeof import('./cursor')
 
@@ -131,8 +56,8 @@ async function settle(): Promise<void> {
   for (let index = 0; index < 5; index += 1) await Promise.resolve()
 }
 
-function win(): (typeof state.windows)[number] {
-  return state.windows[state.windows.length - 1]
+function win(): FakeLayerWindow<AgentCursorFrame> {
+  return lastLayerWindow(state)
 }
 
 beforeEach(async () => {
@@ -140,7 +65,6 @@ beforeEach(async () => {
   state.display = { x: 0, y: 0, width: 1440, height: 900 }
   state.windows = []
   state.shellOpened = []
-  state.timers = []
   vi.useFakeTimers({
     toFake: ['setTimeout', 'setInterval', 'clearTimeout', 'clearInterval']
   })

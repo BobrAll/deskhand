@@ -1,21 +1,25 @@
 /**
- * The tray icon: the only persistent surface of the app (no Dock icon, ТЗ §12).
+ * The tray icon: the persistent entry point to the card, the settings and the
+ * data folder (ТЗ §12). The app also has a Dock icon and a Cmd+Tab entry; the
+ * tray is what stays reachable when no window is open.
  */
 
 import { Menu, Tray, app, nativeImage, shell } from 'electron'
 import { prettyAccelerator } from '@shared/accelerator'
+import { openAssistantLabel, QUIT_ACCELERATOR, QUIT_LABEL, SETTINGS_ACCELERATOR, SETTINGS_LABEL } from './menus'
 import { resourcePath } from './paths'
 import { getSettings } from './settings/store'
 
 export interface TrayActions {
-  toggle(): void
+  openAssistant(): void
   openSettings(): void
   openOnboarding(): void
   quit(): void
 }
 
 let tray: Tray | null = null
-let actions: TrayActions | null = null
+/** What the tray menu clicks reach while the tray exists. */
+let trayActions: TrayActions | null = null
 
 function trayImage(): Electron.NativeImage {
   const image = nativeImage.createFromPath(resourcePath('trayTemplate.png'))
@@ -27,10 +31,10 @@ function trayImage(): Electron.NativeImage {
 function buildMenu(): Menu {
   const hotkey = prettyAccelerator(getSettings().hotkey)
   return Menu.buildFromTemplate([
-    { label: `Открыть ассистента (${hotkey})`, click: () => actions?.toggle() },
+    { label: openAssistantLabel(hotkey), click: () => trayActions?.openAssistant() },
     { type: 'separator' },
-    { label: 'Настройки…', accelerator: 'CommandOrControl+,', click: () => actions?.openSettings() },
-    { label: 'Права доступа и первый запуск…', click: () => actions?.openOnboarding() },
+    { label: SETTINGS_LABEL, accelerator: SETTINGS_ACCELERATOR, click: () => trayActions?.openSettings() },
+    { label: 'Права доступа и первый запуск…', click: () => trayActions?.openOnboarding() },
     { type: 'separator' },
     {
       label: 'Папка данных',
@@ -39,17 +43,17 @@ function buildMenu(): Menu {
       }
     },
     { type: 'separator' },
-    { label: 'Выйти из Deskhand', accelerator: 'CommandOrControl+Q', click: () => actions?.quit() }
+    { label: QUIT_LABEL, accelerator: QUIT_ACCELERATOR, click: () => trayActions?.quit() }
   ])
 }
 
-export function createTray(trayActions: TrayActions): Tray {
-  actions = trayActions
+export function createTray(actions: TrayActions): Tray {
+  trayActions = actions
   if (tray) return tray
   tray = new Tray(trayImage())
   tray.setToolTip('Deskhand')
   tray.setContextMenu(buildMenu())
-  tray.on('click', () => actions?.toggle())
+  tray.on('click', () => trayActions?.openAssistant())
   return tray
 }
 
@@ -61,5 +65,5 @@ export function refreshTray(): void {
 export function destroyTray(): void {
   tray?.destroy()
   tray = null
-  actions = null
+  trayActions = null
 }

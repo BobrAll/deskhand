@@ -40,7 +40,7 @@ export function PrivacySection({
       <Group title="Доступ">
         <PermissionRow
           title="Универсальный доступ"
-          description="Читать выделенный текст и вставлять ответ."
+          hint="Читать выделенный текст и вставлять ответ; управлять мышью — только если включён режим «Агент»."
           granted={permissions?.accessibility ?? false}
           onRequest={async () => {
             const next = await window.deskhand.permissions.request()
@@ -50,7 +50,7 @@ export function PrivacySection({
         />
         <PermissionRow
           title="Запись экрана"
-          description="Скриншот активного окна."
+          hint="Скриншот активного окна."
           granted={permissions?.screenRecording ?? false}
           onRequest={async () => {
             const next = await window.deskhand.permissions.request()
@@ -60,7 +60,7 @@ export function PrivacySection({
         />
         <PermissionRow
           title="Микрофон"
-          description="Голосовой ввод: удержание клавиши записывает речь."
+          hint="Голосовой ввод: удержание клавиши записывает речь."
           granted={permissions?.microphone ?? false}
           onRequest={async () => {
             const granted = await window.deskhand.permissions.requestMicrophone()

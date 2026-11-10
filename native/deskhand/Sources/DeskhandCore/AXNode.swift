@@ -22,14 +22,14 @@ public struct AXNode: Sendable {
     /// True when the element would not enumerate its children, so the tree
     /// below it is missing rather than empty. Rendered as a marker because the
     /// model must not read "no children" as "nothing here".
-    public var childrenHidden: Bool
+    public var childrenRefused: Bool
     /// How many items the element claims to hold when it will not list them.
     ///
     /// This is the difference between "an empty list" and "a list of 11 rows
     /// you cannot address": the first needs nothing, the second needs a
     /// different route in. `AXRowCount` is answered by containers that refuse
     /// `AXChildren`, so the number is usually available.
-    public var hiddenItemCount: Int?
+    public var declaredItemCount: Int?
     public init(
         index: Int,
         depth: Int,
@@ -44,8 +44,8 @@ public struct AXNode: Sendable {
         frame: CGRect? = nil,
         enabled: Bool = true,
         focused: Bool = false,
-        childrenHidden: Bool = false,
-        hiddenItemCount: Int? = nil
+        childrenRefused: Bool = false,
+        declaredItemCount: Int? = nil
     ) {
         self.index = index
         self.depth = depth
@@ -60,25 +60,25 @@ public struct AXNode: Sendable {
         self.frame = frame
         self.enabled = enabled
         self.focused = focused
-        self.childrenHidden = childrenHidden
-        self.hiddenItemCount = hiddenItemCount
+        self.childrenRefused = childrenRefused
+        self.declaredItemCount = declaredItemCount
     }
 
     /// Everything about the node that the model can see, except its index and
     /// depth. Two snapshots agree on a node when these agree.
-    var visibleState: String {
+    var visibleStateKey: String {
         [
             role, subrole ?? "", title ?? "", label ?? "", value ?? "", identifier ?? "",
             enabled ? "1" : "0", focused ? "1" : "0",
             actions.joined(separator: ","), settable ? "1" : "0",
-            childrenHidden ? "hidden" : "",
-            hiddenItemCount.map(String.init) ?? "",
+            childrenRefused ? "hidden" : "",
+            declaredItemCount.map(String.init) ?? "",
         ].joined(separator: "\u{1}")
     }
 
-    /// Position and size, compared separately from `visibleState` so that a
+    /// Position and size, compared separately from `visibleStateKey` so that a
     /// scroll or a window move is reported as movement, not as a change.
-    var geometry: String {
+    var geometryKey: String {
         guard let frame else { return "none" }
         return "\(Int(frame.origin.x)),\(Int(frame.origin.y)),\(Int(frame.width)),\(Int(frame.height))"
     }
@@ -118,7 +118,7 @@ public enum AXTreeRenderer {
         // A search field is an AXTextField with the AXSearchField subrole,
         // not a role of its own.
         let fields = nodes.filter { node in
-            node.role == kAXTextFieldRole && node.settable && !node.childrenHidden
+            node.role == kAXTextFieldRole && node.settable && !node.childrenRefused
         }
         return fields.first(where: { $0.focused })
             ?? fields.first(where: { looksLikeSearch($0) })
@@ -184,13 +184,13 @@ public enum AXTreeRenderer {
         if !node.actions.isEmpty {
             out += " [" + node.actions.joined(separator: ",") + "]"
         }
-        if node.childrenHidden {
+        if node.childrenRefused {
             // Naming the count matters: "empty" and "eleven rows I will not
             // describe" call for opposite next moves, and a bare "no children"
             // reads as the first when it means the second. Naming the field
             // matters more: it turns "you cannot reach this" into an index the
             // model can actually type into.
-            let what = node.hiddenItemCount.map { "\($0) item\($0 == 1 ? "" : "s")" }
+            let what = node.declaredItemCount.map { "\($0) item\($0 == 1 ? "" : "s")" }
             if let entry, entry.index != node.index {
                 let field = entry.focused
                     ? "element \(entry.index) (focused) is the way in"

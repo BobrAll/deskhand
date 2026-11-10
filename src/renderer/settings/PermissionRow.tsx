@@ -11,7 +11,7 @@ import { Row } from './Row'
 
 export interface PermissionRowProps {
   title: string
-  description: string
+  hint: string
   granted: boolean
   onRequest(): Promise<void>
   onOpen(): void
@@ -21,7 +21,7 @@ export function PermissionRow(props: PermissionRowProps) {
   return (
     <Row
       title={props.title}
-      hint={props.description}
+      hint={props.hint}
       stacked={!props.granted}
     >
       <div className="row-actions">

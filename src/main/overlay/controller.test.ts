@@ -1,15 +1,21 @@
 /**
- * What the card shows, and when it is brought back on screen.
+ * The overlay controller, driven through `send()` against a mocked host, a
+ * mocked writer and a mocked agent.
  *
- * The rule this file exists to protect: a turn must never end with its result in
- * an invisible panel. That used to be about a streaming answer arriving while the
- * card was hidden for a voice turn; now it also covers the agent, whose run
- * happens with the card click-through and whose answer arrives in one piece at
- * the very end.
+ * What it covers, in the order the tests are grouped:
  *
- * The controller is driven through `send()` against a mocked host, a mocked
- * writer and a mocked agent, so what is asserted is the routing and the
- * visibility — not the internals of either engine.
+ * - routing: an action request goes to the agent, a question to the writer, and
+ *   neither pays for the other's round;
+ * - the background web lookup the model asks for;
+ * - the agent turn on the card;
+ * - voice: the transcript stays on screen while the turn is already running;
+ * - what a reopened card remembers;
+ * - the pointer glow, claimed before the work starts;
+ * - and the rule underneath all of it — a turn must never end with its result in
+ *   an invisible panel. That used to be about a streaming answer arriving while
+ *   the card was hidden for a voice turn; now it also covers the agent, whose run
+ *   happens with the card click-through and whose answer arrives in one piece at
+ *   the very end.
  */
 
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -37,7 +43,14 @@ const state = vi.hoisted(() => ({
   agentReady: false,
   onAgentRun: () => {},
   agentResult: { answer: '', actions: [] } as AgentRunResult,
-  agentCalls: [] as { prompt: string }[]
+  agentCalls: [] as { prompt: string }[],
+  /** Whether the built turn says an image is going out. */
+  useImage: false,
+  /** How the mocked provider answers: refuse the image, then succeed. */
+  imageRefusedOnce: false,
+  streams: 0,
+  /** What the agent reports as a warning it worked around. */
+  agentNotice: undefined as string | undefined
 }))
 
 vi.mock('electron', () => ({ app: {}, BrowserWindow: {}, systemPreferences: { isTrustedAccessibilityClient: () => true } }))
@@ -49,8 +62,8 @@ vi.mock('../settings/store', () => ({
 vi.mock('../settings/secrets', () => ({ getApiKey: () => state.apiKey }))
 vi.mock('../native/helper', () => ({
   helperBinary: () => '/tmp/helper',
-  helperFront: vi.fn(),
-  helperFrontApp: vi.fn(),
+  helperFrontWindow: vi.fn(),
+  helperFrontApplication: vi.fn(),
   helperActivate: vi.fn(),
   helperWindow: vi.fn(),
   watchForAbort: vi.fn(() => ({ stop: vi.fn() }))
@@ -63,8 +76,8 @@ vi.mock('../agent/cursor', () => ({ beginAgentTurn: vi.fn(), endAgentTurn: vi.fn
 // The ghost pointer is a separate display layer with its own window; the
 // overlay's job is only to tell it when a run starts and ends.
 vi.mock('../agent/presentation', () => ({
-  presentAgentAction: vi.fn(),
-  updateAgentPointer: vi.fn()
+  paintAgentPresentation: vi.fn(),
+  updateAgentPresentation: vi.fn()
 }))
 vi.mock('../agent/sidecar', () => ({ agentBinary: () => '/tmp/deskhand-agent' }))
 vi.mock('../agent', () => ({
@@ -78,7 +91,7 @@ vi.mock('../agent', () => ({
     stop: vi.fn(),
     answer: vi.fn(),
     dispose: vi.fn(),
-    last: () => ({ phase: 'idle', step: 0, total: 0, label: '' })
+    last: () => ({ phase: 'idle', step: 0, total: 0, label: '', notice: state.agentNotice })
   })
 }))
 vi.mock('../context/collect', () => ({
@@ -87,21 +100,28 @@ vi.mock('../context/collect', () => ({
     flags: { includeSelection: false, includeScreenshot: false }
   })
 }))
-vi.mock('../llm', () => ({ resolveModel: () => 'gpt-4o', getProvider: vi.fn() }))
+vi.mock('../llm', () => ({ resolveChatModel: () => 'gpt-4o', getProvider: vi.fn() }))
 vi.mock('../llm/webSearch', () => ({ searchWeb: vi.fn() }))
 vi.mock('../util', () => ({ delay: vi.fn().mockResolvedValue(undefined) }))
 vi.mock('./request', () => ({
   buildTurnRequest: vi.fn(async () => ({
-    messages: [], maxTokens: 1024, area: null, canDraw: false
+    messages: [], maxTokens: 1024, area: null, canDraw: false, useImage: state.useImage
   }))
 }))
-vi.mock('../turnStream', () => ({
-  consumeTurnStream: vi.fn(async (options: { onText: (text: string) => void }) => {
-    if (state.fail) throw new Error('Request failed')
-    if (state.stream) { options.onText(state.text); state.afterChunk() }
-    return { text: state.text, webLookup: state.webLookup }
-  })
-}))
+vi.mock('../turnStream', async () => {
+  const { ProviderError } = await import('../llm/provider')
+  return {
+    consumeTurnStream: vi.fn(async (options: { onText: (text: string) => void }) => {
+      state.streams += 1
+      if (state.imageRefusedOnce && state.streams === 1) {
+        throw new ProviderError('Модель не принимает изображения', true, 400, true)
+      }
+      if (state.fail) throw new Error('Request failed')
+      if (state.stream) { options.onText(state.text); state.afterChunk() }
+      return { text: state.text, webLookup: state.webLookup }
+    })
+  }
+})
 
 beforeEach(() => {
   state.settings = structuredClone(DEFAULT_SETTINGS)
@@ -117,6 +137,10 @@ beforeEach(() => {
   state.onAgentRun = () => {}
   state.agentResult = { answer: '', actions: [] }
   state.agentCalls = []
+  state.useImage = false
+  state.imageRefusedOnce = false
+  state.streams = 0
+  state.agentNotice = undefined
   applyHistorySettings(false, [])
 })
 
@@ -295,6 +319,59 @@ describe('the agent turn on the card', () => {
     expect(h.send).toHaveBeenCalledWith('overlay:stream', expect.objectContaining({
       type: 'done', text: 'Остановлено.'
     }))
+  })
+})
+
+describe('a provider that refuses the screenshot', () => {
+  it('asks again without the image and still answers', async () => {
+    state.useImage = true
+    state.imageRefusedOnce = true
+    const h = await harness()
+
+    await h.controller.send({ ...h.request, voice: false })
+
+    // Two rounds: the refused one, then the same question without the picture.
+    expect(state.streams).toBe(2)
+    expect(h.send).toHaveBeenCalledWith('overlay:stream', expect.objectContaining({
+      type: 'done', text: 'Ответ'
+    }))
+  })
+
+  it('says why the answer has no drawing', async () => {
+    state.useImage = true
+    state.imageRefusedOnce = true
+    const h = await harness()
+
+    await h.controller.send({ ...h.request, voice: false })
+
+    const stateEvent = h.send.mock.calls
+      .filter(([channel]) => channel === 'overlay:state')
+      .at(-1)?.[1] as { warnings: string[] } | undefined
+    expect(stateEvent?.warnings.join(' ')).toContain('не принимает изображения')
+  })
+
+  it('does not retry a failure that is not about the image', async () => {
+    state.useImage = true
+    state.fail = true
+    const h = await harness()
+
+    await h.controller.send({ ...h.request, voice: false })
+
+    expect(state.streams).toBe(1)
+    expect(h.send).toHaveBeenCalledWith('overlay:stream', expect.objectContaining({ type: 'error' }))
+  })
+
+  it('carries the agent’s own warning when the agent hit the same refusal', async () => {
+    state.agentReady = true
+    state.agentNotice = 'Модель не принимает изображения — продолжаю без скриншотов.'
+    const h = await harness()
+
+    await h.controller.send({ ...h.request, voice: false, prompt: 'Нажми «Экспорт»' })
+
+    const stateEvent = h.send.mock.calls
+      .filter(([channel]) => channel === 'overlay:state')
+      .at(-1)?.[1] as { warnings: string[] } | undefined
+    expect(stateEvent?.warnings.join(' ')).toContain('продолжаю без скриншотов')
   })
 })
 

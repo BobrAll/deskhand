@@ -21,81 +21,51 @@
 import type { BrowserWindow } from 'electron'
 import { CH } from '@shared/ipc'
 import type { Annotation, PointerPayload, PointerShape, ScreenRect } from '@shared/types'
-import { createLayerWindow } from './layerWindow'
+import {
+  createLayerWindow,
+  ensureLayerWindow,
+  placeLayer,
+  type LayerWindowState
+} from './layerWindow'
 import { watchForAbort, type AbortWatcher } from './native/helper'
 
-let pointerWindow: BrowserWindow | null = null
+/** The renderer's fade-out; the window is hidden right after it. */
+const DRAWING_FADE_MS = 240
+/** The smallest ring a single-point circle is drawn as, in points. */
+const MIN_RING_RADIUS = 16
+/** Clearance around a ring, so it does not touch the target's edge. */
+const RING_PADDING = 6
+
+const layer: LayerWindowState = { window: null, loaded: null }
 let interactionWatcher: AbortWatcher | null = null
 let visible = false
 let revision = 0
-let ready: Promise<void> | null = null
 
 /** Where the layer currently sits; re-positioning on every draw would flicker. */
 let placedOn: ScreenRect | null = null
+
+/** Drops everything that belonged to the window that just went away. */
+function resetPointerState(): void {
+  interactionWatcher?.stop()
+  interactionWatcher = null
+  visible = false
+  placedOn = null
+  layer.loaded = null
+}
 
 function createWindow(): BrowserWindow {
   return createLayerWindow({
     page: 'pointer',
     acceptFirstMouse: true,
     onClosed: () => {
-      interactionWatcher?.stop()
-      interactionWatcher = null
-      pointerWindow = null
-      visible = false
-      placedOn = null
-      ready = null
+      resetPointerState()
+      layer.window = null
     }
   })
 }
 
-/**
- * Resolves once the layer's page can receive messages.
- *
- * Bounded on purpose: a page that never loads (a broken bundle, a dev server that
- * is restarting) would otherwise leave the painting chain awaiting a promise that
- * never settles, and nothing would ever be drawn again in this session.
- */
-function ensureWindow(): Promise<void> {
-  if (!pointerWindow || pointerWindow.isDestroyed()) {
-    const win = createWindow()
-    pointerWindow = win
-    ready = new Promise<void>((resolve) => {
-      let settled = false
-      const done = (): void => {
-        if (settled) return
-        settled = true
-        resolve()
-      }
-      win.webContents.once('did-finish-load', done)
-      win.webContents.once('did-fail-load', done)
-      // `send` before the first paint is harmless — it is queued — so a short cap
-      // is enough to break a deadlock without delaying the common path.
-      setTimeout(done, 1500)
-    })
-  }
-  return ready ?? Promise.resolve()
-}
-
-function sameRect(a: ScreenRect | null, b: ScreenRect): boolean {
-  if (!a) return false
-  return (
-    Math.round(a.x) === Math.round(b.x) &&
-    Math.round(a.y) === Math.round(b.y) &&
-    Math.round(a.width) === Math.round(b.width) &&
-    Math.round(a.height) === Math.round(b.height)
-  )
-}
-
 function placeOn(win: BrowserWindow, area: ScreenRect): void {
-  if (sameRect(placedOn, area)) return
-  const next: ScreenRect = {
-    x: Math.round(area.x),
-    y: Math.round(area.y),
-    width: Math.round(area.width),
-    height: Math.round(area.height)
-  }
-  win.setBounds(next)
-  placedOn = next
+  placedOn = placeLayer(win, placedOn, area, true).placedOn
 }
 
 /** Scales normalised coordinates onto the layer's own points. */
@@ -118,22 +88,20 @@ function toShapes(annotations: Annotation[], width: number, height: number): Poi
 
     // A circle or a box given as a single point becomes a visible minimum ring
     // around the target instead of an invisible dot.
-    const minRadius = 16
-    const padding = 6
     const cx = (x1 + x2) / 2
     const cy = (y1 + y2) / 2
-    const radiusX = Math.max(Math.abs(x2 - x1) / 2, minRadius)
-    const radiusY = Math.max(Math.abs(y2 - y1) / 2, minRadius)
+    const radiusX = Math.max(Math.abs(x2 - x1) / 2, MIN_RING_RADIUS)
+    const radiusY = Math.max(Math.abs(y2 - y1) / 2, MIN_RING_RADIUS)
     return {
       id: `${index}`,
       kind: annotation.kind,
       from: {
-        x: Math.max(0, cx - radiusX - padding),
-        y: Math.max(0, cy - radiusY - padding)
+        x: Math.max(0, cx - radiusX - RING_PADDING),
+        y: Math.max(0, cy - radiusY - RING_PADDING)
       },
       to: {
-        x: Math.min(width, cx + radiusX + padding),
-        y: Math.min(height, cy + radiusY + padding)
+        x: Math.min(width, cx + radiusX + RING_PADDING),
+        y: Math.min(height, cy + radiusY + RING_PADDING)
       },
       label: annotation.label
     }
@@ -146,9 +114,8 @@ export async function showAnnotations(area: ScreenRect, annotations: Annotation[
     hideAnnotations()
     return
   }
-  await ensureWindow()
-  const win = pointerWindow
-  if (!win || win.isDestroyed()) return
+  const win = await ensureLayerWindow(layer, createWindow)
+  if (!win) return
 
   placeOn(win, area)
   revision += 1
@@ -166,7 +133,7 @@ export async function showAnnotations(area: ScreenRect, annotations: Annotation[
     visible = true
     // showInactive: keep the user's app frontmost — this is the whole point.
     win.showInactive()
-    interactionWatcher = watchForAbort({ watchMouse: false, interaction: true }, () => {
+    interactionWatcher = watchForAbort('interaction', () => {
       hideAnnotations()
       onDismiss?.()
     })
@@ -177,7 +144,7 @@ export function hideAnnotations(): void {
   interactionWatcher?.stop()
   interactionWatcher = null
   visible = false
-  const win = pointerWindow
+  const win = layer.window
   if (!win || win.isDestroyed()) return
   const payload: PointerPayload = {
     width: placedOn?.width ?? 0,
@@ -189,20 +156,14 @@ export function hideAnnotations(): void {
   win.webContents.send(CH.pointer.draw, payload)
   // Let the renderer play its fade-out before the window disappears.
   setTimeout(() => {
-    if (pointerWindow && !pointerWindow.isDestroyed() && !visible) pointerWindow.hide()
-  }, 240)
-}
-
-export function isPointerVisible(): boolean {
-  return visible
+    const current = layer.window
+    if (current && !current.isDestroyed() && !visible) current.hide()
+  }, DRAWING_FADE_MS)
 }
 
 export function destroyPointer(): void {
-  interactionWatcher?.stop()
-  interactionWatcher = null
-  visible = false
-  placedOn = null
-  ready = null
-  if (pointerWindow && !pointerWindow.isDestroyed()) pointerWindow.destroy()
-  pointerWindow = null
+  resetPointerState()
+  const win = layer.window
+  if (win && !win.isDestroyed()) win.destroy()
+  layer.window = null
 }

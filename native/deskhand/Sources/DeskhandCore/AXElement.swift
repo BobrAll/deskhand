@@ -15,10 +15,6 @@ public struct AXElement {
         AXElement(AXUIElementCreateApplication(pid))
     }
 
-    public static func systemWide() -> AXElement {
-        AXElement(AXUIElementCreateSystemWide())
-    }
-
     private func copy(_ attribute: String) -> CFTypeRef? {
         var value: CFTypeRef?
         let err = AXUIElementCopyAttributeValue(raw, attribute as CFString, &value)
@@ -54,10 +50,6 @@ public struct AXElement {
         return nil
     }
 
-    public func children() -> [AXElement] {
-        childrenResult().elements
-    }
-
     /// The outcome of asking an element for its children.
     ///
     /// "No children" and "this element will not say" are different facts, and
@@ -68,7 +60,9 @@ public struct AXElement {
     /// it, assumes the list is empty, and starts clicking blind coordinates.
     public struct ChildrenResult {
         public let elements: [AXElement]
-        public let refused: Bool
+        /// True when the element would not enumerate its children, so the tree
+        /// below it is missing rather than empty.
+        public let childrenRefused: Bool
         /// How many items the element says it holds, when it will not list
         /// them. A container can refuse `AXChildren` and still answer
         /// `AXRowCount`, which turns "this list is empty" into "this list has
@@ -76,12 +70,12 @@ public struct AXElement {
         /// fix. Measured on a chat list that hides its rows: `AXChildren`,
         /// `AXRows` and `AXVisibleRows` all answer `-25200`, while `AXRowCount`
         /// answers 11.
-        public let declaredCount: Int?
+        public let declaredItemCount: Int?
 
-        public init(elements: [AXElement], refused: Bool, declaredCount: Int? = nil) {
+        public init(elements: [AXElement], childrenRefused: Bool, declaredItemCount: Int? = nil) {
             self.elements = elements
-            self.refused = refused
-            self.declaredCount = declaredCount
+            self.childrenRefused = childrenRefused
+            self.declaredItemCount = declaredItemCount
         }
     }
 
@@ -92,9 +86,10 @@ public struct AXElement {
             // Anything but success means the element declined to enumerate.
             // Ask the count attributes before giving up: they are often
             // answered even when the children are not.
-            return ChildrenResult(elements: [], refused: true, declaredCount: declaredCount())
+            return ChildrenResult(
+                elements: [], childrenRefused: true, declaredItemCount: declaredItemCount())
         }
-        return ChildrenResult(elements: arr.map(AXElement.init), refused: false)
+        return ChildrenResult(elements: arr.map(AXElement.init), childrenRefused: false)
     }
 
     /// The item count a container advertises, if any.
@@ -102,7 +97,7 @@ public struct AXElement {
     /// `AXRowCount` and `AXColumnCount` are the standard ones for lists,
     /// tables and outlines. Values arrive as numbers or as the string form of
     /// a number depending on the app, so both are accepted.
-    public func declaredCount() -> Int? {
+    public func declaredItemCount() -> Int? {
         for attribute in ["AXRowCount", "AXColumnCount"] {
             guard let v = copy(attribute) else { continue }
             if let n = v as? NSNumber, n.intValue > 0 { return n.intValue }
@@ -123,7 +118,7 @@ public struct AXElement {
         nonEmpty(string(kAXTitleAttribute))
     }
 
-    public var descriptionText: String? {
+    public var label: String? {
         nonEmpty(string(kAXDescriptionAttribute))
     }
 
@@ -134,15 +129,6 @@ public struct AXElement {
         case let n as NSNumber: return n.stringValue
         default: return nil
         }
-    }
-
-    /// The attribute name list the element advertises; used to decide which
-    /// secondary actions and setters are legitimate.
-    public func attributeNames() -> [String] {
-        var names: CFArray?
-        let err = AXUIElementCopyAttributeNames(raw, &names)
-        guard err == .success, let list = names as? [String] else { return [] }
-        return list
     }
 
     public func actionNames() -> [String] {
@@ -194,10 +180,6 @@ public struct AXElement {
         element(kAXFocusedWindowAttribute)
     }
 
-    public func mainWindow() -> AXElement? {
-        element(kAXMainWindowAttribute)
-    }
-
     @discardableResult
     public func setFocused(_ focused: Bool) -> Bool {
         setValue(focused, for: kAXFocusedAttribute)
@@ -205,12 +187,6 @@ public struct AXElement {
 
     public func isEnabled() -> Bool {
         bool(kAXEnabledAttribute) ?? true
-    }
-
-    public func pid() -> pid_t? {
-        var pid: pid_t = 0
-        let err = AXUIElementGetPid(raw, &pid)
-        return err == .success ? pid : nil
     }
 
     /// Element identifier: `AXIdentifier` when present, which many AppKit apps

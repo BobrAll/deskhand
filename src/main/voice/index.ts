@@ -20,7 +20,13 @@ import { pasteAnswer } from '../paste'
 import { helperBinary } from '../native/helper'
 import { getSettings } from '../settings/store'
 import { VoiceKeyListener, type TapEvent } from './listen'
-import { transcribe, voiceStatus } from './whisper'
+import { transcribe, voiceStatus } from './recognizer'
+
+/** What happens to a recognised transcript once it lands in the card. */
+export interface DeliverOptions {
+  /** Send it as a question instead of leaving it in the field. */
+  submit: boolean
+}
 
 export interface VoiceHost {
   /** Builds the overlay renderer ahead of a turn, so the bars can be instant. */
@@ -38,8 +44,8 @@ export interface VoiceHost {
   isOpen(): boolean
   /** Reveals the bars without activating the card or collecting context again. */
   showIndicator(): void
-  /** Puts recognised text into an open card, sending it when `send` is true. */
-  deliver(text: string, send: boolean): void
+  /** Puts recognised text into an open card. */
+  deliver(text: string, options: DeliverOptions): void
   /** Closes the card — dictation needs the user's own app in front. */
   hide(): void
   /** Raw channel emit; the controller owns the voice protocol. */
@@ -81,7 +87,7 @@ const WATCHDOG_MS = 250
  * refused while a turn runs, swallows every later press too. Five seconds is well
  * past any honest encode and short enough that the card does not look frozen.
  */
-const RECORDING_TIMEOUT_MS = 5000
+const RECORDING_TIMEOUT_MS = 5_000
 /**
  * Ceiling for one recognition. The WAV is local and whisper runs on this machine,
  * so this only fires when the child process hangs or never reports back — a few
@@ -172,7 +178,7 @@ export function createVoiceController(host: VoiceHost) {
           return
         }
         if (Date.now() - startedAt < getSettings().voice.maxDurationMs) return
-        endStuckTurn('Запись остановлена: слишком долго.')
+        abortTurnWithError('Запись остановлена: слишком долго.')
       }, WATCHDOG_MS)
       return
     }
@@ -185,7 +191,7 @@ export function createVoiceController(host: VoiceHost) {
     const limit = busy ? TRANSCRIBE_TIMEOUT_MS : RECORDING_TIMEOUT_MS
     recordingTimer = setTimeout(() => {
       if (mine !== turn) return
-      endStuckTurn(
+      abortTurnWithError(
         busy
           ? 'Распознавание не ответило — попробуйте ещё раз.'
           : 'Запись не дошла до распознавания — попробуйте ещё раз.'
@@ -193,8 +199,14 @@ export function createVoiceController(host: VoiceHost) {
     }, limit)
   }
 
-  /** Closes a turn nobody is driving any more, and says why on the card. */
-  function endStuckTurn(message: string): void {
+  /**
+   * Abandons the turn in flight and puts its reason on the card.
+   *
+   * The watchdog paths end a turn that nobody is driving any more; `finishIdle`
+   * is the ordinary ending, for a turn that produced a transcript or was
+   * dismissed.
+   */
+  function abortTurnWithError(message: string): void {
     turn += 1
     if (phase === 'listening') host.emit(CH.voice.stop, { transcribe: false })
     abort?.abort()
@@ -233,76 +245,86 @@ export function createVoiceController(host: VoiceHost) {
     return Date.now() - startedAt >= getSettings().voice.minDurationMs
   }
 
-  async function onTap(event: TapEvent): Promise<void> {
+  /** Dispatches one tap edge; `ready`/`reenabled` need nothing from the controller. */
+  function handleTapEvent(event: TapEvent): void {
     if (event === 'ready' || event === 'reenabled') return
-
     if (event === 'press') {
-      if (!getSettings().voice.enabled) return
-      // Already recording: the same physical press arriving twice (a tap that
-      // was re-armed, an autorepeat) is not a new phrase.
-      if (phase === 'listening') return
-      if (phase === 'transcribing') {
-        // The user is speaking again while the previous phrase is still in the
-        // recogniser. This is the normal case for a person — say one thing,
-        // correct it, say another — and refusing it meant the second phrase got
-        // no animation and was silently dropped, which is exactly what "не всегда
-        // анимация проигрывается" looked like from the outside.
-        //
-        // The turn in flight is superseded rather than queued: the new press owns
-        // the card, and the old result is discarded when it returns (see the
-        // `turn` check in `handleRecording`).
-        supersede()
-      }
-      // Recording starts *before* the card is prepared. Collecting the context
-      // (window, selection, screenshot) takes a moment, and waiting for it would
-      // swallow the first syllable — the one thing hold-to-talk must never lose.
-      // The window is already alive from `prewarm()`, so this is a message, not a
-      // page load.
-      const mine = (turn += 1)
-      setPhase('listening')
-      // No panel while the microphone is open: the bars replace the field and the
-      // window loses its glass entirely.
-      host.setVoice(true)
-      host.emit(CH.voice.record, { maxDurationMs: getSettings().voice.maxDurationMs })
-      // The card comes up in parallel and shows the listening state while it is
-      // still being assembled; it is the same window, so no extra work is done.
-      // It is shown before the context is collected: the bars are the only
-      // feedback the user gets while speaking, and waiting for a selection read
-      // (which can take a few hundred milliseconds) would delay them.
-      if (!host.isOpen()) {
-        void host.open().then(() => {
-          // The card refused to open (the app is on the exclusion list, or the
-          // context is unusable). Recording into a card that will never exist
-          // would leave the microphone open with nowhere to put the words.
-          if (host.isOpen() || phase !== 'listening' || mine !== turn) return
-          host.emit(CH.voice.stop, { transcribe: false })
-          finishIdle({})
-        })
-      }
-      // Do this after open has chosen between a fresh and an existing session:
-      // making the old window visible first would resurrect a closed session.
-      host.showIndicator()
+      void onPress()
       return
     }
-
     if (event === 'release') {
-      if (phase !== 'listening') return
-      if (!longEnough()) {
-        // A tap on a hold-to-talk key is almost always a mistake; transcribing a
-        // 40 ms blip would answer with "речь не распознана", which is worse.
+      void onRelease()
+      return
+    }
+    void onCancel()
+  }
+
+  async function onPress(): Promise<void> {
+    if (!getSettings().voice.enabled) return
+    // Already recording: the same physical press arriving twice (a tap that
+    // was re-armed, an autorepeat) is not a new phrase.
+    if (phase === 'listening') return
+    if (phase === 'transcribing') {
+      // The user is speaking again while the previous phrase is still in the
+      // recogniser. This is the normal case for a person — say one thing,
+      // correct it, say another — and refusing it meant the second phrase got
+      // no animation and was silently dropped, which is exactly what "не всегда
+      // анимация проигрывается" looked like from the outside.
+      //
+      // The turn in flight is superseded rather than queued: the new press owns
+      // the card, and the old result is discarded when it returns (see the
+      // `turn` check in `handleRecording`).
+      supersede()
+    }
+    // Recording starts *before* the card is prepared. Collecting the context
+    // (window, selection, screenshot) takes a moment, and waiting for it would
+    // swallow the first syllable — the one thing hold-to-talk must never lose.
+    // The window is already alive from `prewarm()`, so this is a message, not a
+    // page load.
+    const mine = (turn += 1)
+    setPhase('listening')
+    // No panel while the microphone is open: the bars replace the field and the
+    // window loses its glass entirely.
+    host.setVoice(true)
+    host.emit(CH.voice.record, { maxDurationMs: getSettings().voice.maxDurationMs })
+    // The card comes up in parallel and shows the listening state while it is
+    // still being assembled; it is the same window, so no extra work is done.
+    // It is shown before the context is collected: the bars are the only
+    // feedback the user gets while speaking, and waiting for a selection read
+    // (which can take a few hundred milliseconds) would delay them.
+    if (!host.isOpen()) {
+      void host.open().then(() => {
+        // The card refused to open (the app is on the exclusion list, or the
+        // context is unusable). Recording into a card that will never exist
+        // would leave the microphone open with nowhere to put the words.
+        if (host.isOpen() || phase !== 'listening' || mine !== turn) return
         host.emit(CH.voice.stop, { transcribe: false })
         finishIdle({})
-        return
-      }
-      setPhase('transcribing')
-      // The renderer owns the samples: it stops the recorder and answers through
-      // `handleRecording`. Keeping the state machine here, in one place, is what
-      // makes Escape and a second press behave predictably.
-      host.emit(CH.voice.stop, { transcribe: true })
+      })
+    }
+    // Do this after open has chosen between a fresh and an existing session:
+    // making the old window visible first would resurrect a closed session.
+    host.showIndicator()
+  }
+
+  async function onRelease(): Promise<void> {
+    if (phase !== 'listening') return
+    if (!longEnough()) {
+      // A tap on a hold-to-talk key is almost always a mistake; transcribing a
+      // 40 ms blip would answer with "речь не распознана", which is worse.
+      host.emit(CH.voice.stop, { transcribe: false })
+      finishIdle({})
       return
     }
+    setPhase('transcribing')
+    // The renderer owns the samples: it stops the recorder and answers through
+    // `handleRecording`. Keeping the state machine here, in one place, is what
+    // makes Escape and a second press behave predictably.
+    host.emit(CH.voice.stop, { transcribe: true })
+  }
 
-    // `cancel`: Escape while talking, or the tap was disabled by macOS.
+  async function onCancel(): Promise<void> {
+    // Escape while talking, or the tap was disabled by macOS.
     if (phase === 'listening') host.emit(CH.voice.stop, { transcribe: false })
     abort?.abort()
     abort = null
@@ -389,7 +411,7 @@ export function createVoiceController(host: VoiceHost) {
       void pasteAnswer(text, target)
       return
     }
-    host.deliver(text, settings.voice.autoSend)
+    host.deliver(text, { submit: settings.voice.autoSend })
   }
 
   /** Reports a recorder failure (no microphone, permission denied). */
@@ -417,7 +439,7 @@ export function createVoiceController(host: VoiceHost) {
         binary,
         swallow: true,
         onEvent: (event) => {
-          void onTap(event)
+          handleTapEvent(event)
         },
         onError: (message) => {
           listenerError = message
@@ -470,7 +492,7 @@ export function createVoiceController(host: VoiceHost) {
     return { ...base, listenerError }
   }
 
-  /** Settings the overlay needs: whether to offer the hold-to-talk hint at all. */
+  /** Settings the overlay needs: whether to offer the hold-to-talk hint at all. Tests read it too. */
   function mode(): { enabled: boolean; action: 'command' | 'dictate'; hotkey: string } {
     const settings = getSettings()
     return {
@@ -480,6 +502,7 @@ export function createVoiceController(host: VoiceHost) {
     }
   }
 
+  /** Exists for tests: nothing outside them needs "is a turn running" as a single flag. */
   function isBusy(): boolean {
     return busy || phase !== 'idle'
   }
@@ -503,15 +526,15 @@ export function createVoiceController(host: VoiceHost) {
    * superseding and the transcript routing apply unchanged.
    */
   function press(): void {
-    void onTap('press')
+    void onPress()
   }
 
   function release(): void {
-    void onTap('release')
+    void onRelease()
   }
 
   function cancel(): void {
-    void onTap('cancel')
+    void onCancel()
   }
 
   return {
@@ -528,6 +551,7 @@ export function createVoiceController(host: VoiceHost) {
     press,
     release,
     cancel,
+    /** Exists for tests: the renderer learns the phase from `attach()` and the events. */
     phase: (): VoicePhase => phase
   }
 }

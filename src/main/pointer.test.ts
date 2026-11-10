@@ -24,7 +24,7 @@ const env = vi.hoisted(() => ({
 }))
 
 vi.mock('./native/helper', () => ({
-  watchForAbort: (_options: unknown, callback: () => void) => {
+  watchForAbort: (_mode: unknown, callback: () => void) => {
     env.dismiss = callback
     return { stop: env.stopWatcher }
   }
@@ -234,34 +234,32 @@ describe('pointer: the layer', () => {
 
 describe('pointer: hiding', () => {
   it('clears drawings and notifies the session on user interaction', async () => {
-    const { showAnnotations, isPointerVisible } = await loadPointer()
+    const { showAnnotations } = await loadPointer()
     const onDismiss = vi.fn()
     await showAnnotations(AREA, [shape('arrow', [0.1, 0.1], [0.2, 0.2])], onDismiss)
 
     env.dismiss?.()
 
-    expect(isPointerVisible()).toBe(false)
     expect(lastPayload()).toMatchObject({ visible: false, shapes: [] })
     expect(onDismiss).toHaveBeenCalledOnce()
     expect(env.stopWatcher).toHaveBeenCalledOnce()
   })
 
   it('hides on an empty list without creating a window', async () => {
-    const { showAnnotations, isPointerVisible } = await loadPointer()
+    const { showAnnotations } = await loadPointer()
     await showAnnotations(AREA, [])
 
     expect(env.created).toBe(0)
-    expect(isPointerVisible()).toBe(false)
+    expect(env.sent).toHaveLength(0)
   })
 
   it('sends an invisible payload and hides after the fade', async () => {
     vi.useFakeTimers()
-    const { showAnnotations, hideAnnotations, isPointerVisible } = await loadPointer()
+    const { showAnnotations, hideAnnotations } = await loadPointer()
     await showAnnotations(AREA, [shape('arrow', [0.1, 0.1], [0.2, 0.2])])
 
     hideAnnotations()
     expect(lastPayload()).toMatchObject({ visible: false, shapes: [] })
-    expect(isPointerVisible()).toBe(false)
     expect(env.hidden).toBe(0)
 
     await vi.advanceTimersByTimeAsync(300)
@@ -293,14 +291,17 @@ describe('pointer: hiding', () => {
 })
 
 describe('pointer: destroy', () => {
-  it('drops the window and the visibility flag', async () => {
-    const { showAnnotations, destroyPointer, isPointerVisible } = await loadPointer()
+  it('drops the window and forgets it', async () => {
+    const { showAnnotations, hideAnnotations, destroyPointer } = await loadPointer()
     await showAnnotations(AREA, [shape('arrow', [0.1, 0.1], [0.2, 0.2])])
 
     destroyPointer()
 
     expect(env.destroyed).toBe(1)
-    expect(isPointerVisible()).toBe(false)
+    // The window is forgotten: nothing more is drawn into it.
+    const painted = env.sent.length
+    hideAnnotations()
+    expect(env.sent).toHaveLength(painted)
   })
 
   it('creates a fresh window for the next drawing', async () => {

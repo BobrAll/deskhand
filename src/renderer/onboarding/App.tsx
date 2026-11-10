@@ -7,11 +7,14 @@ import { useCallback, useEffect, useState } from 'react'
 import type { PermissionState, ProviderId } from '@shared/types'
 import { PROVIDERS, normalizeBaseUrl, providerInfo } from '@shared/defaults'
 import type { SettingsBundle } from '@shared/api'
-import { prettyHotkey } from '../settings/HotkeyField'
+import { prettyAccelerator } from '@shared/accelerator'
 
 type Step = 0 | 1 | 2
 
 const STEPS = ['Разрешения', 'Подключение', 'Готово']
+
+/** How often the permission state is re-read while this window is open. */
+const PERMISSION_POLL_MS = 1500
 
 export function App() {
   const [step, setStep] = useState<Step>(0)
@@ -25,7 +28,7 @@ export function App() {
   const [keyInput, setKeyInput] = useState('')
   const [baseUrl, setBaseUrl] = useState('')
   const [model, setModel] = useState('')
-  const [status, setStatus] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null)
+  const [notice, setNotice] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null)
   const [busy, setBusy] = useState(false)
 
   useEffect(() => {
@@ -43,11 +46,11 @@ export function App() {
   useEffect(() => {
     const timer = window.setInterval(() => {
       void window.deskhand.permissions.status().then(setPermissions)
-    }, 1500)
+    }, PERMISSION_POLL_MS)
     return () => window.clearInterval(timer)
   }, [])
 
-  const request = useCallback(async () => {
+  const requestPermissions = useCallback(async () => {
     const next = await window.deskhand.permissions.request()
     setPermissions(next)
   }, [])
@@ -63,11 +66,11 @@ export function App() {
     const root = normalizeBaseUrl(baseUrl)
     if (!key || (baseUrl.trim() !== '' && root === '')) return
     setBusy(true)
-    setStatus(null)
+    setNotice(null)
     try {
       const test = await window.deskhand.settings.testKey(provider, key, root)
       if (!test.ok) {
-        setStatus({ kind: 'err', text: test.message })
+        setNotice({ kind: 'err', text: test.message })
         return
       }
       await window.deskhand.settings.setKey(provider, key)
@@ -79,15 +82,15 @@ export function App() {
         baseUrls: { ...settings.baseUrls, [provider]: root }
       })
       setKeyInput('')
-      setStatus({ kind: 'ok', text: test.message })
+      setNotice({ kind: 'ok', text: test.message })
     } catch {
-      setStatus({ kind: 'err', text: 'Не удалось сохранить ключ.' })
+      setNotice({ kind: 'err', text: 'Не удалось сохранить ключ.' })
     } finally {
       setBusy(false)
     }
   }, [bundle, baseUrl, keyInput, model, provider])
 
-  const finish = useCallback(async () => {
+  const completeOnboarding = useCallback(async () => {
     await window.deskhand.onboarding.complete()
   }, [])
 
@@ -95,7 +98,6 @@ export function App() {
   const configured = bundle?.keys.find((item) => item.provider === provider)?.configured ?? false
   const baseUrlInvalid = baseUrl.trim() !== '' && normalizeBaseUrl(baseUrl) === ''
   const defaultBaseUrl = providerInfo(provider)?.defaultBaseUrl
-  const defaultModel = providerInfo(provider)?.defaultModel
 
   return (
     <div className="wizard">
@@ -124,7 +126,7 @@ export function App() {
               <div className="hint">Выделение текста и автоматическая вставка (⌘C / ⌘V).</div>
             </div>
             {!permissions.accessibility && (
-              <button className="primary" onClick={() => void request()}>
+              <button className="primary" onClick={() => void requestPermissions()}>
                 Открыть запрос
               </button>
             )}
@@ -138,7 +140,7 @@ export function App() {
               <div className="hint">Скриншот активного окна, когда текст не выделен.</div>
             </div>
             {!permissions.screenRecording && (
-              <button onClick={() => void request()}>Запросить доступ</button>
+              <button onClick={() => void requestPermissions()}>Запросить доступ</button>
             )}
           </div>
 
@@ -209,12 +211,11 @@ export function App() {
                 <input
                   value={model}
                   onChange={(event) => setModel(event.target.value)}
-                  placeholder={defaultModel}
                   aria-label="Модель"
                   spellCheck={false}
                 />
                 <div className="hint">
-                  ID модели {providerInfo(provider)?.label}. Пусто — {defaultModel}.
+                  ID модели {providerInfo(provider)?.label}. Его задаёте вы — встроенного значения нет.
                 </div>
               </div>
 
@@ -254,7 +255,7 @@ export function App() {
             </>
           )}
 
-          {status && <div className={`status ${status.kind}`}>{status.text}</div>}
+          {notice && <div className={`status ${notice.kind}`}>{notice.text}</div>}
 
           {providerInfo(provider) && (
             <div className="hint">
@@ -284,7 +285,7 @@ export function App() {
         <section className="panel">
           <h1>Всё готово</h1>
           <p className="lead">
-            Нажмите <kbd>{prettyHotkey(hotkey)}</kbd> в любой момент, чтобы открыть ассистента рядом
+            Нажмите <kbd>{prettyAccelerator(hotkey)}</kbd> в любой момент, чтобы открыть ассистента рядом
             с курсором.
           </p>
 
@@ -309,7 +310,7 @@ export function App() {
               Настройки
             </button>
             <div className="spacer" />
-            <button className="primary" onClick={() => void finish()}>
+            <button className="primary" onClick={() => void completeOnboarding()}>
               Начать работу
             </button>
           </div>

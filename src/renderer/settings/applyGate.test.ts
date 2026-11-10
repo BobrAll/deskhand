@@ -2,18 +2,16 @@
  * The rules that decide whether the settings window may write.
  *
  * A disagreement here does not throw. It either rewrites a field under the user's
- * hands while they are typing in it, or it writes the same value on a 450 ms timer
- * forever — so the cases below are the ones where the two halves of the rule (hold
- * the write / fix the value up) have to agree.
+ * hands while they are typing in it, or it writes the same value on an autosave
+ * tick forever — so the cases below are the ones where the two halves of the rule
+ * (hold the write / fix the value up) have to agree.
  */
 
 import { describe, expect, it } from 'vitest'
-import type { AppSettings, ProviderId } from '@shared/types'
-import { DEFAULT_SETTINGS, PROVIDERS } from '@shared/defaults'
+import type { AppSettings } from '@shared/types'
+import { DEFAULT_SETTINGS, SETTINGS_BOUNDS } from '@shared/defaults'
 import {
   HOLD_REASON,
-  MAX_TOKENS_MAX,
-  MAX_TOKENS_MIN,
   hasUnsaved,
   holdReasonFor,
   invalidBaseUrlProviders,
@@ -23,32 +21,20 @@ import {
 
 /** Settings as the window usually has them: valid everywhere. */
 function settings(overrides: Partial<AppSettings> = {}): AppSettings {
-  const baseUrls = {} as Record<ProviderId, string>
-  for (const provider of PROVIDERS) baseUrls[provider.id] = ''
-
-  return {
-    provider: 'openai',
-    model: 'gpt-4o-mini',
-    maxTokens: 2048,
-    temperature: 0.3,
-    systemPrompt: 'Ты помощник.',
-    hotkey: 'Alt+Space',
-    baseUrls,
-    ...overrides
-  } as AppSettings
+  return { ...DEFAULT_SETTINGS, maxTokens: 2048, ...overrides }
 }
 
 describe('applyGate: the token bounds appear once', () => {
   it('is 64 to 8192, inclusive', () => {
-    expect(MAX_TOKENS_MIN).toBe(64)
-    expect(MAX_TOKENS_MAX).toBe(8192)
+    expect(SETTINGS_BOUNDS.maxTokens.min).toBe(64)
+    expect(SETTINGS_BOUNDS.maxTokens.max).toBe(8192)
   })
 
   it('accepts both ends and rejects what is outside them', () => {
-    expect(tokensInRange(MAX_TOKENS_MIN)).toBe(true)
-    expect(tokensInRange(MAX_TOKENS_MAX)).toBe(true)
-    expect(tokensInRange(MAX_TOKENS_MIN - 1)).toBe(false)
-    expect(tokensInRange(MAX_TOKENS_MAX + 1)).toBe(false)
+    expect(tokensInRange(SETTINGS_BOUNDS.maxTokens.min)).toBe(true)
+    expect(tokensInRange(SETTINGS_BOUNDS.maxTokens.max)).toBe(true)
+    expect(tokensInRange(SETTINGS_BOUNDS.maxTokens.min - 1)).toBe(false)
+    expect(tokensInRange(SETTINGS_BOUNDS.maxTokens.max + 1)).toBe(false)
   })
 
   it('rejects a field that is not a number at all', () => {
@@ -112,13 +98,13 @@ describe('applyGate: why a write is held', () => {
   })
 
   it('holds a token count out of range, at both ends', () => {
-    expect(holdReasonFor(settings({ maxTokens: MAX_TOKENS_MIN - 1 }), [])).toBe(HOLD_REASON.maxTokens)
-    expect(holdReasonFor(settings({ maxTokens: MAX_TOKENS_MAX + 1 }), [])).toBe(HOLD_REASON.maxTokens)
+    expect(holdReasonFor(settings({ maxTokens: SETTINGS_BOUNDS.maxTokens.min - 1 }), [])).toBe(HOLD_REASON.maxTokens)
+    expect(holdReasonFor(settings({ maxTokens: SETTINGS_BOUNDS.maxTokens.max + 1 }), [])).toBe(HOLD_REASON.maxTokens)
   })
 
   it('does not hold a count exactly on a bound', () => {
-    expect(holdReasonFor(settings({ maxTokens: MAX_TOKENS_MIN }), [])).toBeNull()
-    expect(holdReasonFor(settings({ maxTokens: MAX_TOKENS_MAX }), [])).toBeNull()
+    expect(holdReasonFor(settings({ maxTokens: SETTINGS_BOUNDS.maxTokens.min }), [])).toBeNull()
+    expect(holdReasonFor(settings({ maxTokens: SETTINGS_BOUNDS.maxTokens.max }), [])).toBeNull()
   })
 
   it('holds an emptied prompt rather than letting the default replace it', () => {

@@ -45,6 +45,21 @@ export interface CaptureTarget {
   fullDisplay?: boolean
 }
 
+/** Which rectangle the image covers, and whether it is the whole display. */
+interface Placement {
+  area: ScreenRect | null
+  fullScreen: boolean
+}
+
+/** `screencapture` refuses anything thinner than this, and the image is unusable. */
+const MIN_CAPTURE_SIDE = 2
+/** How far the real aspect ratio may drift from the recorded area before it is dropped. */
+const PLACEMENT_TOLERANCE = 0.02
+/** `screencapture` writes the file asynchronously; poll this often, this many times. */
+const READ_ATTEMPTS = 12
+const READ_RETRY_MS = 40
+const SCREENCAPTURE_TIMEOUT_MS = 8000
+
 /**
  * Where the image sits on the real screen, in *points*.
  *
@@ -61,7 +76,7 @@ function areaFromBounds(bounds: NonNullable<CaptureTarget['bounds']>): ScreenRec
   }
 }
 
-function resolveArea(target: CaptureTarget): { area: ScreenRect | null; fullScreen: boolean } {
+function resolveArea(target: CaptureTarget): Placement {
   try {
     if (target.fullDisplay) return { area: displayUnderCursor(), fullScreen: true }
     if (target.bounds) {
@@ -84,7 +99,7 @@ function displayUnderCursor(): ScreenRect {
   }
 }
 
-function run(command: string, args: string[], timeoutMs = 8000): Promise<void> {
+function run(command: string, args: string[], timeoutMs = SCREENCAPTURE_TIMEOUT_MS): Promise<void> {
   return new Promise((resolve, reject) => {
     execFile(command, args, { timeout: timeoutMs }, (error) => {
       if (error) reject(error)
@@ -103,32 +118,23 @@ async function captureWindow(windowId: number, file: string): Promise<boolean> {
   }
 }
 
-/** Captures the screen area occupied by the window (used when `-l` is refused). */
-async function captureRegion(bounds: NonNullable<CaptureTarget['bounds']>, file: string): Promise<boolean> {
-  const width = Math.round(bounds.width)
-  const height = Math.round(bounds.height)
-  if (width < 2 || height < 2) return false
-  const region = `${Math.round(bounds.x)},${Math.round(bounds.y)},${width},${height}`
-  try {
-    await run('screencapture', ['-x', '-o', '-R', region, file])
-    return true
-  } catch {
-    return false
-  }
-}
-
 /**
- * Grabs the screen region `area` (in points) with no window filtering, so the
- * image contains exactly what the user sees — menu bar, other apps, everything.
- * Used when the answer has to point at something *outside* the active window.
+ * Grabs the rectangle `rect` (in points) with `screencapture -R`.
+ *
+ * `omitShadow` keeps the `-o` flag the window-bounds fallback has always passed;
+ * the display capture omits it and takes the frame as it is, menu bar and other
+ * apps included.
  */
-async function captureArea(area: ScreenRect, file: string): Promise<boolean> {
-  const width = Math.round(area.width)
-  const height = Math.round(area.height)
-  if (width < 2 || height < 2) return false
-  const region = `${Math.round(area.x)},${Math.round(area.y)},${width},${height}`
+async function captureRectangle(rect: ScreenRect, file: string, options: { omitShadow: boolean }): Promise<boolean> {
+  const width = Math.round(rect.width)
+  const height = Math.round(rect.height)
+  if (width < MIN_CAPTURE_SIDE || height < MIN_CAPTURE_SIDE) return false
+  const region = `${Math.round(rect.x)},${Math.round(rect.y)},${width},${height}`
+  const args = options.omitShadow
+    ? ['-x', '-o', '-R', region, file]
+    : ['-x', '-R', region, file]
   try {
-    await run('screencapture', ['-x', '-R', region, file])
+    await run('screencapture', args)
     return true
   } catch {
     return false
@@ -145,11 +151,11 @@ async function captureFullScreen(file: string): Promise<boolean> {
 }
 
 /** Scales + re-encodes a raw screenshot into a compact JPEG data URL. */
-function compress(
+function encodeScreenshot(
   buffer: Buffer,
   maxSide: number,
   quality: number,
-  placement: { area: ScreenRect | null; fullScreen: boolean }
+  placement: Placement
 ): ScreenshotInfo | null {
   const image = nativeImage.createFromBuffer(buffer)
   if (image.isEmpty()) return null
@@ -193,10 +199,10 @@ function compress(
  */
 function verifyPlacement(shot: ScreenshotInfo): ScreenshotInfo {
   const area = shot.area
-  if (!area || area.width < 2 || area.height < 2) return shot
+  if (!area || area.width < MIN_CAPTURE_SIDE || area.height < MIN_CAPTURE_SIDE) return shot
   const expected = area.width / area.height
   const actual = shot.width / shot.height
-  if (!Number.isFinite(actual) || Math.abs(actual - expected) / expected <= 0.02) return shot
+  if (!Number.isFinite(actual) || Math.abs(actual - expected) / expected <= PLACEMENT_TOLERANCE) return shot
   console.warn('[screenshot] capture does not match the recorded area; dropping coordinates', {
     area,
     image: [shot.width, shot.height]
@@ -218,12 +224,14 @@ export async function captureScreenshot(
     // Which of the fallbacks actually produced the image. It decides the
     // rectangle the picture covers, and every returned coordinate is measured
     // against that rectangle — a wrong `area` draws the arrow in the wrong place.
-    let placement: { area: ScreenRect | null; fullScreen: boolean } | null = null
+    let placement: Placement | null = null
     if (target.fullDisplay) {
       // "Где нажать?" — the model has to see the whole screen, including the
       // menu bar and other windows, not just the app the user is typing in.
       const display = displayUnderCursor()
-      if (await captureArea(display, file)) placement = { area: display, fullScreen: true }
+      if (await captureRectangle(display, file, { omitShadow: false })) {
+        placement = { area: display, fullScreen: true }
+      }
     }
     if (!placement && target.windowId !== null) {
       if (await captureWindow(target.windowId, file)) placement = resolveArea(target)
@@ -231,7 +239,7 @@ export async function captureScreenshot(
     // The window may have been closed since it was remembered: fall back to its
     // last known bounds before giving up and grabbing the whole screen.
     if (!placement && target.bounds) {
-      if (await captureRegion(target.bounds, file)) {
+      if (await captureRectangle(target.bounds, file, { omitShadow: true })) {
         placement = { area: areaFromBounds(target.bounds), fullScreen: false }
       }
     }
@@ -242,7 +250,7 @@ export async function captureScreenshot(
 
     // screencapture writes the file asynchronously; poll briefly for content.
     let buffer: Buffer | null = null
-    for (let attempt = 0; attempt < 12; attempt += 1) {
+    for (let attempt = 0; attempt < READ_ATTEMPTS; attempt += 1) {
       try {
         const data = await readFile(file)
         if (data.byteLength > 0) {
@@ -252,10 +260,10 @@ export async function captureScreenshot(
       } catch {
         /* not written yet */
       }
-      await delay(40)
+      await delay(READ_RETRY_MS)
     }
     if (!buffer) return null
-    const shot = compress(buffer, options.maxSide, options.quality, placement)
+    const shot = encodeScreenshot(buffer, options.maxSide, options.quality, placement)
     return shot ? verifyPlacement(shot) : null
   } catch {
     return null

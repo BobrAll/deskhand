@@ -15,7 +15,7 @@ export type ProviderId = 'openrouter' | 'openai' | 'anthropic'
 export type ResponseMode = 'insert' | 'analyze'
 
 /** What a finished transcript does: ask the model, or type it into the app. */
-type VoiceAction = 'command' | 'dictate'
+export type VoiceAction = 'command' | 'dictate'
 
 /** Hold-to-talk input: a local whisper model turns speech into text. */
 export interface VoiceSettings {
@@ -207,6 +207,15 @@ export interface AgentEvent {
   /** What is happening, in the user's language ("Нажимаю «Экспорт»"). */
   label: string
   /**
+   * Something the run had to work around and kept going through.
+   *
+   * A warning from the loop, not a failure: the run is still alive and its
+   * answer is still an answer. The card shows the first one when nothing more
+   * urgent is on screen. Right now this carries "the model refused the
+   * screenshot, so the rest of the run is without one".
+   */
+  notice?: string
+  /**
    * Set while the run is waiting for the user to allow one call.
    *
    * Its presence is the whole state: the card renders the buttons from it and
@@ -268,6 +277,17 @@ export interface AgentRunResult {
   incomplete?: boolean
 }
 
+/**
+ * The cursor's own vocabulary, not a copy of `AgentPhase`.
+ *
+ * `arming` and `acting` are the phases of the same name; `waiting` covers
+ * everything that is not a running step — the run stopped on a question, or the
+ * turn is preparing its next call and reading the screen — and `success` is
+ * `AgentPhase.done` with `completed` set. The glow has no "aborted" or "error":
+ * on those the window is simply hidden.
+ */
+export type AgentCursorPhase = 'arming' | 'acting' | 'waiting' | 'success'
+
 /** State of the agent’s screen glow and its caption at the pointer. */
 export interface AgentCursorFrame {
   /** `false` plays the fade-out; the window is hidden right after it. */
@@ -276,11 +296,8 @@ export interface AgentCursorFrame {
   anchor: { x: number; y: number }
   /** Which side of the pointer the caption hangs on. */
   side: 'above' | 'below'
-  /**
-   * `arming` = about to start, `acting` = a step is running, `waiting` = the turn
-   * is preparing actions or reading the screen, with no running step to count.
-   */
-  phase: 'arming' | 'acting' | 'waiting' | 'success'
+  /** What the glow is doing; see `AgentCursorPhase` for how it maps to `AgentPhase`. */
+  phase: AgentCursorPhase
   /** What is happening, in the user's language ("Клик: «Экспорт»"). */
   label: string
   /** 1-based index of the running step; 0 while arming. */
@@ -421,7 +438,6 @@ export interface TtsStatus {
   recordedVoice: string
 }
 
-
 export interface TranscribeResult {
   ok: boolean
   text: string
@@ -432,9 +448,14 @@ export interface TranscribeResult {
 
 export interface AppSettings {
   provider: ProviderId
-  /** Per-provider model id. Empty string means "use provider default". */
+  /**
+   * Per-provider model id, as the user typed it.
+   *
+   * There is no built-in default: empty means "not chosen yet", and a turn
+   * refuses to start rather than guessing an id for someone else's account.
+   */
   models: Record<ProviderId, string>
-  /** Per-provider model override for background web search. */
+  /** Per-provider model override for background web search; empty uses `models`. */
   searchModels: Record<ProviderId, string>
   /**
    * Per-provider API base URL override (no trailing slash, no endpoint path).
@@ -624,7 +645,7 @@ export interface PermissionState {
 /** How a finished answer should be reworked: shorter or more detailed. */
 export type RefineDirection = 'shorter' | 'longer'
 
-interface RefineRequest {
+export interface RefineRequest {
   direction: RefineDirection
   /** The answer the user is looking at; the model reworks this exact text. */
   baseAnswer: string
@@ -659,7 +680,7 @@ export interface ContextFlags {
   includeScreenshot: boolean
 }
 
-interface OverlayNotice {
+export interface OverlayNotice {
   kind: 'info' | 'warning' | 'error'
   message: string
   /** Optional call to action rendered as a link-button in the overlay. */
@@ -699,10 +720,8 @@ export interface AnnotationsEvent {
 export interface ProviderInfo {
   id: ProviderId
   label: string
-  defaultModel: string
   /** Used when the user leaves the base URL field empty. */
   defaultBaseUrl: string
-  supportsVision: boolean
   keyUrl: string
 }
 

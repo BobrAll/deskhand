@@ -27,13 +27,13 @@ vi.mock('electron', () => ({
   nativeImage: { createFromBuffer: () => ({}) }
 }))
 
-const { helperActivate, helperFront, helperSendKey } = vi.hoisted(() => ({
+const { helperActivate, helperFrontWindow, helperSendKey } = vi.hoisted(() => ({
   helperActivate: vi.fn(),
-  helperFront: vi.fn(),
+  helperFrontWindow: vi.fn(),
   helperSendKey: vi.fn()
 }))
 
-vi.mock('../native/helper', () => ({ helperActivate, helperFront, helperSendKey }))
+vi.mock('../native/helper', () => ({ helperActivate, helperFrontWindow, helperSendKey }))
 
 const { snapshotClipboard, restoreClipboard, withClipboard } = vi.hoisted(() => ({
   snapshotClipboard: vi.fn(),
@@ -41,12 +41,17 @@ const { snapshotClipboard, restoreClipboard, withClipboard } = vi.hoisted(() => 
   withClipboard: vi.fn()
 }))
 
-vi.mock('./clipboard', () => ({
-  snapshotClipboard,
-  restoreClipboard,
-  withClipboard,
-  copyText: vi.fn()
-}))
+/**
+ * The clipboard module is spied on, not replaced: `copyText` (the fallback that
+ * the "Копировать" action also uses) keeps its real implementation, so the
+ * fallback path is exercised through the real queue and the real Electron
+ * clipboard mock below. Only the three functions the order assertions need are
+ * faked.
+ */
+vi.mock('./clipboard', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./clipboard')>()
+  return { ...actual, snapshotClipboard, restoreClipboard, withClipboard }
+})
 
 const { delay, waitFor } = vi.hoisted(() => ({ delay: vi.fn(), waitFor: vi.fn() }))
 
@@ -73,7 +78,7 @@ beforeEach(() => {
   state.waitForAnswers = []
   state.waitForCalls = []
   helperActivate.mockReset().mockResolvedValue(true)
-  helperFront.mockReset().mockResolvedValue({ bundleId: 'com.apple.TextEdit', pid: 900 })
+  helperFrontWindow.mockReset().mockResolvedValue({ bundleId: 'com.apple.TextEdit', pid: 900 })
   helperSendKey.mockReset().mockResolvedValue(true)
   snapshotClipboard.mockReset().mockReturnValue(snapshot)
   restoreClipboard.mockReset().mockImplementation(() => state.order.push('restoreClipboard'))
@@ -153,31 +158,31 @@ describe('pasteAnswer: bringing the target back to the front', () => {
   })
 
   it('accepts the target by bundle id', async () => {
-    helperFront.mockResolvedValue({ bundleId: 'com.apple.TextEdit', pid: 1 })
+    helperFrontWindow.mockResolvedValue({ bundleId: 'com.apple.TextEdit', pid: 1 })
 
     expect((await pasteAnswer('ответ', target)).ok).toBe(true)
   })
 
   it('accepts the target by pid when the bundle id is missing', async () => {
-    helperFront.mockResolvedValue({ bundleId: '', pid: 900 })
+    helperFrontWindow.mockResolvedValue({ bundleId: '', pid: 900 })
 
     expect((await pasteAnswer('ответ', target)).ok).toBe(true)
   })
 
   it('does not accept a different app', async () => {
-    helperFront.mockResolvedValue({ bundleId: 'com.apple.Safari', pid: 12 })
+    helperFrontWindow.mockResolvedValue({ bundleId: 'com.apple.Safari', pid: 12 })
 
     expect((await pasteAnswer('ответ', target)).copiedOnly).toBe(true)
   })
 
   it('treats a failed front read as "not yet"', async () => {
-    helperFront.mockResolvedValue(null)
+    helperFrontWindow.mockResolvedValue(null)
 
     expect((await pasteAnswer('ответ', target)).copiedOnly).toBe(true)
   })
 
   it('never matches on pid 0', async () => {
-    helperFront.mockResolvedValue({ bundleId: '', pid: 0 })
+    helperFrontWindow.mockResolvedValue({ bundleId: '', pid: 0 })
 
     expect((await pasteAnswer('ответ', { ...target, pid: 0 })).copiedOnly).toBe(true)
   })

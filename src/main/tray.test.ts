@@ -84,7 +84,7 @@ async function loadTray(): Promise<typeof import('./tray')> {
 
 function actions(): import('./tray').TrayActions {
   return {
-    toggle: vi.fn(),
+    openAssistant: vi.fn(),
     openSettings: vi.fn(),
     openOnboarding: vi.fn(),
     quit: vi.fn()
@@ -163,7 +163,7 @@ describe('createTray: every item reaches its action', () => {
     ;(item('Права доступа и первый запуск…')?.click as () => void)()
     ;(item('Выйти из Deskhand')?.click as () => void)()
 
-    expect(handlers.toggle).toHaveBeenCalledTimes(1)
+    expect(handlers.openAssistant).toHaveBeenCalledTimes(1)
     expect(handlers.openSettings).toHaveBeenCalledTimes(1)
     expect(handlers.openOnboarding).toHaveBeenCalledTimes(1)
     expect(handlers.quit).toHaveBeenCalledTimes(1)
@@ -179,14 +179,14 @@ describe('createTray: every item reaches its action', () => {
     expect(env.openedPaths).toEqual(['/Users/test/Library/Application Support/Deskhand'])
   })
 
-  it('toggles on a plain click of the tray icon', async () => {
+  it('opens the assistant on a plain click of the tray icon', async () => {
     const { createTray } = await loadTray()
     const handlers = actions()
     createTray(handlers)
 
     expect(env.clickHandlers).toHaveLength(1)
     env.clickHandlers[0]()
-    expect(handlers.toggle).toHaveBeenCalledTimes(1)
+    expect(handlers.openAssistant).toHaveBeenCalledTimes(1)
   })
 })
 
@@ -225,7 +225,7 @@ describe('createTray: the icon and the lifecycle', () => {
     // A click after destroy must not reach the old actions: the handler closes
     // over the module state, which `destroyTray` clears.
     env.clickHandlers[0]()
-    expect(handlers.toggle).not.toHaveBeenCalled()
+    expect(handlers.openAssistant).not.toHaveBeenCalled()
   })
 
   it('still builds a menu when the icon image is missing', async () => {

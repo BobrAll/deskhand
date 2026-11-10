@@ -7,7 +7,7 @@ import { consumeTurnStream } from './turnStream'
 /**
  * The seam under test is the whole "stream → parse → paint/emit" chain of one
  * round. It is driven here by a fake provider, so what is asserted is the
- * contract the overlay depends on: shapes arrive as they are parsed, prose
+ * contract the overlay depends on: annotations arrive as they are parsed, prose
  * arrives as it is parsed, a marker split by a chunk boundary is not lost, and a
  * cancelled round stops at the first delta that notices.
  */
@@ -43,17 +43,17 @@ function fakeProvider(deltas: string[], failWith?: Error, end: StreamEnd = 'comp
 
 /** Collects what the round reported, in the order it reported it. */
 function recorder(): {
-  shapes: Annotation[][]
+  annotations: Annotation[][]
   text: string[]
-  onShapes(shapes: Annotation[]): void
+  onAnnotations(annotations: Annotation[]): void
   onText(delta: string): void
 } {
-  const shapes: Annotation[][] = []
+  const annotations: Annotation[][] = []
   const text: string[] = []
   return {
-    shapes,
+    annotations,
     text,
-    onShapes: (next) => shapes.push(next),
+    onAnnotations: (next) => annotations.push(next),
     onText: (delta) => text.push(delta)
   }
 }
@@ -67,7 +67,7 @@ describe('consumeTurnStream: the request it makes', () => {
       apiKey: '',
       streamOptions: STREAM_OPTIONS,
       isAlive: () => true,
-      onShapes: () => undefined,
+      onAnnotations: () => undefined,
       onText: () => undefined
     })
 
@@ -87,7 +87,7 @@ describe('consumeTurnStream: prose', () => {
       apiKey: '',
       streamOptions: STREAM_OPTIONS,
       isAlive: () => true,
-      onShapes: out.onShapes,
+      onAnnotations: out.onAnnotations,
       onText: out.onText
     })
 
@@ -103,7 +103,7 @@ describe('consumeTurnStream: prose', () => {
       apiKey: '',
       streamOptions: STREAM_OPTIONS,
       isAlive: () => true,
-      onShapes: out.onShapes,
+      onAnnotations: out.onAnnotations,
       onText: out.onText
     })
 
@@ -119,14 +119,14 @@ describe('consumeTurnStream: prose', () => {
       apiKey: '',
       streamOptions: STREAM_OPTIONS,
       isAlive: () => true,
-      onShapes: out.onShapes,
+      onAnnotations: out.onAnnotations,
       onText: out.onText
     })
 
     expect(out.text).toEqual(['ответ'])
   })
 
-  it('keeps markers out of the prose and hands them over as shapes instead', async () => {
+  it('keeps markers out of the prose and hands them over as annotations instead', async () => {
     const out = recorder()
     const result = await consumeTurnStream({
       provider: fakeProvider(['Смотри:\n@point circle 0.4 0.6\n', 'Вот тут.\n']),
@@ -134,18 +134,18 @@ describe('consumeTurnStream: prose', () => {
       apiKey: '',
       streamOptions: STREAM_OPTIONS,
       isAlive: () => true,
-      onShapes: out.onShapes,
+      onAnnotations: out.onAnnotations,
       onText: out.onText
     })
 
     expect(result.text).toBe('Смотри:\nВот тут.\n')
-    expect(out.shapes.flat().map((shape) => shape.kind)).toEqual(['circle'])
-    expect(out.shapes.flat()[0].from).toEqual({ x: 0.4, y: 0.6 })
+    expect(out.annotations.flat().map((shape) => shape.kind)).toEqual(['circle'])
+    expect(out.annotations.flat()[0].from).toEqual({ x: 0.4, y: 0.6 })
   })
 })
 
-describe('consumeTurnStream: shapes', () => {
-  it('reports shapes only when there is something to draw', async () => {
+describe('consumeTurnStream: annotations', () => {
+  it('reports annotations only when there is something to draw', async () => {
     const out = recorder()
     await consumeTurnStream({
       provider: fakeProvider(['Просто текст, ', 'без разметки.']),
@@ -153,11 +153,11 @@ describe('consumeTurnStream: shapes', () => {
       apiKey: '',
       streamOptions: STREAM_OPTIONS,
       isAlive: () => true,
-      onShapes: out.onShapes,
+      onAnnotations: out.onAnnotations,
       onText: out.onText
     })
 
-    expect(out.shapes).toEqual([])
+    expect(out.annotations).toEqual([])
   })
 
   it('drops a shape that would cover the whole screen instead of painting it', async () => {
@@ -168,11 +168,11 @@ describe('consumeTurnStream: shapes', () => {
       apiKey: '',
       streamOptions: STREAM_OPTIONS,
       isAlive: () => true,
-      onShapes: out.onShapes,
+      onAnnotations: out.onAnnotations,
       onText: out.onText
     })
 
-    const painted = out.shapes.flat()
+    const painted = out.annotations.flat()
     expect(painted).toHaveLength(1)
     expect(painted[0].from).toEqual({ x: 0.2, y: 0.2 })
   })
@@ -185,14 +185,14 @@ describe('consumeTurnStream: shapes', () => {
       apiKey: '',
       streamOptions: STREAM_OPTIONS,
       isAlive: () => true,
-      onShapes: out.onShapes,
+      onAnnotations: out.onAnnotations,
       onText: out.onText
     })
 
-    expect(out.shapes.flat().map((shape) => shape.kind)).toEqual(['circle'])
+    expect(out.annotations.flat().map((shape) => shape.kind)).toEqual(['circle'])
     // Nothing is painted for the first, incomplete delta: it could still have
     // turned into any other marker.
-    expect(out.shapes).toHaveLength(1)
+    expect(out.annotations).toHaveLength(1)
   })
 
   it('paints the tail the parser was holding back when the stream ends', async () => {
@@ -204,12 +204,12 @@ describe('consumeTurnStream: shapes', () => {
       apiKey: '',
       streamOptions: STREAM_OPTIONS,
       isAlive: () => true,
-      onShapes: out.onShapes,
+      onAnnotations: out.onAnnotations,
       onText: out.onText
     })
 
     expect(result.text).toBe('Смотри:\n')
-    expect(out.shapes.flat().map((shape) => shape.kind)).toEqual(['box'])
+    expect(out.annotations.flat().map((shape) => shape.kind)).toEqual(['box'])
   })
 })
 
@@ -223,7 +223,7 @@ describe('consumeTurnStream: markers are drawing only', () => {
       apiKey: '',
       streamOptions: STREAM_OPTIONS,
       isAlive: () => true,
-      onShapes: () => undefined,
+      onAnnotations: () => undefined,
       onText: () => undefined
     })
 
@@ -241,7 +241,7 @@ describe('consumeTurnStream: a round that is no longer wanted', () => {
       apiKey: '',
       streamOptions: STREAM_OPTIONS,
       isAlive: () => alive,
-      onShapes: out.onShapes,
+      onAnnotations: out.onAnnotations,
       onText: (delta) => {
         out.onText(delta)
         alive = false
@@ -260,12 +260,12 @@ describe('consumeTurnStream: a round that is no longer wanted', () => {
       apiKey: '',
       streamOptions: STREAM_OPTIONS,
       isAlive: () => false,
-      onShapes: out.onShapes,
+      onAnnotations: out.onAnnotations,
       onText: out.onText
     })
 
     expect(out.text).toEqual([])
-    expect(out.shapes).toEqual([])
+    expect(out.annotations).toEqual([])
     expect(result).toEqual({ text: '' })
   })
 
@@ -278,7 +278,7 @@ describe('consumeTurnStream: a round that is no longer wanted', () => {
       apiKey: '',
       streamOptions: STREAM_OPTIONS,
       isAlive: () => alive,
-      onShapes: out.onShapes,
+      onAnnotations: out.onAnnotations,
       onText: (delta) => {
         out.onText(delta)
         alive = false
@@ -286,7 +286,7 @@ describe('consumeTurnStream: a round that is no longer wanted', () => {
     })
 
     // The held-back marker must not be painted for a card nobody is looking at.
-    expect(out.shapes).toEqual([])
+    expect(out.annotations).toEqual([])
     expect(result.text).toBe('Смотри:\n')
   })
 
@@ -303,14 +303,14 @@ describe('consumeTurnStream: a round that is no longer wanted', () => {
       apiKey: '',
       streamOptions: STREAM_OPTIONS,
       isAlive: () => alive,
-      onShapes: out.onShapes,
+      onAnnotations: out.onAnnotations,
       onText: (delta) => {
         out.onText(delta)
         alive = false
       }
     })
 
-    expect(out.shapes).toEqual([])
+    expect(out.annotations).toEqual([])
   })
 
   it('hands the tail to onText when it never became a marker', async () => {
@@ -324,7 +324,7 @@ describe('consumeTurnStream: a round that is no longer wanted', () => {
       apiKey: '',
       streamOptions: STREAM_OPTIONS,
       isAlive: () => true,
-      onShapes: out.onShapes,
+      onAnnotations: out.onAnnotations,
       onText: out.onText
     })
 
@@ -334,7 +334,7 @@ describe('consumeTurnStream: a round that is no longer wanted', () => {
 
   it('lets a provider failure propagate, because the caller owns the retry', async () => {
     const boom = new Error('provider exploded')
-    const onShapes = vi.fn()
+    const onAnnotations = vi.fn()
     await expect(
       consumeTurnStream({
         provider: fakeProvider(['нач', 'ало'], boom),
@@ -342,7 +342,7 @@ describe('consumeTurnStream: a round that is no longer wanted', () => {
         apiKey: '',
         streamOptions: STREAM_OPTIONS,
         isAlive: () => true,
-        onShapes,
+        onAnnotations,
         onText: () => undefined
       })
     ).rejects.toThrow('provider exploded')
@@ -356,7 +356,7 @@ describe('consumeTurnStream: execution integrity', () => {
     await expect(consumeTurnStream({
       provider: fakeProvider(['@web\nИщу'], undefined, end),
       messages: MESSAGES, apiKey: '', streamOptions: STREAM_OPTIONS, isAlive: () => true,
-      onShapes: () => undefined, onText: () => undefined
+      onAnnotations: () => undefined, onText: () => undefined
     })).rejects.toThrow('Ответ модели оборвался')
   })
 
@@ -364,7 +364,7 @@ describe('consumeTurnStream: execution integrity', () => {
     const result = await consumeTurnStream({
       provider: fakeProvider(['Первое предложение. Второе предло'], undefined, 'incomplete'),
       messages: MESSAGES, apiKey: '', streamOptions: STREAM_OPTIONS, isAlive: () => true,
-      onShapes: () => undefined, onText: () => undefined
+      onAnnotations: () => undefined, onText: () => undefined
     })
 
     expect(result.text).toBe('Первое предложение. Второе предло')

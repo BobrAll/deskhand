@@ -3,9 +3,16 @@ import { appendFile, mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { app } from 'electron'
 
-let warned = false
+/** One warning per process: a failing trace must not flood the log once per row. */
+let warnedOnce = false
 
-function openTrace(directory: string, filename: string) {
+/** What `openTrace` hands back: append one row, then close the file. */
+interface RunTraceWriter {
+  record(row: unknown): void
+  close(): Promise<void>
+}
+
+function openTrace(directory: string, filename: string): RunTraceWriter {
   const path = join(directory, filename)
   let writes = mkdir(directory, { recursive: true, mode: 0o700 })
     .then(() => writeFile(path, '[\n', { mode: 0o600, flag: 'wx' }))
@@ -17,8 +24,8 @@ function openTrace(directory: string, filename: string) {
       if (!failed) await appendFile(path, content())
     }).catch(() => {
       failed = true
-      if (!warned) console.warn('[agent run trace] Unable to write the local trace')
-      warned = true
+      if (!warnedOnce) console.warn('[agent run trace] Unable to write the local trace')
+      warnedOnce = true
     })
   }
 
@@ -44,7 +51,7 @@ export function createRunTrace() {
   const root = app.isPackaged === false ? app.getAppPath() : app.getPath('userData')
   const filename = `${timestamp.replace(/[:.]/g, '-')}-${id}.json`
   const trace = openTrace(join(root, 'agent-runs'), filename)
-  let dialogue: ReturnType<typeof openTrace> | undefined
+  let dialogue: RunTraceWriter | undefined
 
   function record(event: string, data: unknown): void {
     const row = {

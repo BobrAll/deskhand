@@ -1,4 +1,5 @@
 import Foundation
+import AppKit
 import ApplicationServices
 import CoreGraphics
 
@@ -44,18 +45,10 @@ public enum SystemPermissions {
         return CGRequestScreenCaptureAccess()
     }
 
-    public static func openPrivacySettings() {
+    public static func openAccessibilityPrivacySettings() {
         let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")
         if let url {
-            NSWorkspaceShim.open(url)
+            NSWorkspace.shared.open(url)
         }
-    }
-}
-
-import AppKit
-
-private enum NSWorkspaceShim {
-    static func open(_ url: URL) {
-        NSWorkspace.shared.open(url)
     }
 }

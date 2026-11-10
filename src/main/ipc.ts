@@ -27,7 +27,8 @@ import {
   openPermissionPane,
   readPermissions,
   requestMicrophonePermission,
-  requestPermissions
+  requestPermissions,
+  type PermissionPane
 } from './permissions'
 import {
   deleteApiKey,
@@ -38,16 +39,19 @@ import {
   setTtsKey
 } from './settings/secrets'
 import { getSettings, patchSettings } from './settings/store'
-import { speechStatus, synthesize } from './tts'
+import { ttsStatus, synthesize } from './tts'
 import {
   closeOnboardingWindow,
   closeSettingsWindow,
-  markSettingsBusy,
+  setSettingsHeld,
   openSettingsWindow
 } from './windows'
-import { deleteModel, downloadModel, importModel, voiceStatus } from './voice/whisper'
+import { deleteModel, downloadModel, importModel, voiceStatus } from './voice/recognizer'
 
 const PROVIDER_IDS: ProviderId[] = PROVIDERS.map((provider) => provider.id)
+
+/** `defaults read` is a local call; a slow one means the app has no readable plist. */
+const BUNDLE_ID_TIMEOUT_MS = 4000
 
 /**
  * What the settings pane plays when the user asks to hear the voice.
@@ -62,12 +66,19 @@ function isProvider(value: unknown): value is ProviderId {
   return typeof value === 'string' && (PROVIDER_IDS as string[]).includes(value)
 }
 
-function sanitizeSettings(raw: unknown): Partial<AppSettings> {
+/**
+ * Treats an incoming settings draft as a patch.
+ *
+ * A cast, not validation: the settings pane is the only writer and the store
+ * normalises every field on the way in (`normalizeSettings`). Validating a
+ * hostile renderer is a separate concern.
+ */
+function asSettingsPatch(raw: unknown): Partial<AppSettings> {
   if (typeof raw !== 'object' || raw === null) return {}
   return raw as Partial<AppSettings>
 }
 
-async function bundle(): Promise<SettingsBundle> {
+async function loadSettingsBundle(): Promise<SettingsBundle> {
   return {
     settings: getSettings(),
     keys: keyStatuses(),
@@ -80,7 +91,7 @@ async function bundle(): Promise<SettingsBundle> {
 function readBundleId(appPath: string): Promise<string | null> {
   return new Promise((resolve) => {
     const plist = `${appPath}/Contents/Info`
-    execFile('defaults', ['read', plist, 'CFBundleIdentifier'], { timeout: 4000 }, (error, stdout) => {
+    execFile('defaults', ['read', plist, 'CFBundleIdentifier'], { timeout: BUNDLE_ID_TIMEOUT_MS }, (error, stdout) => {
       if (error) resolve(null)
       else resolve(stdout.trim() || null)
     })
@@ -114,6 +125,47 @@ export interface IpcDeps {
   quit(): void
 }
 
+/**
+ * Applies the parts of a settings patch that live outside the store.
+ *
+ * Returns a bundle carrying `hotkeyError` when the new combination could not be
+ * registered (the patch is rolled back first), and null when everything applied.
+ */
+async function applySettingsSideEffects(
+  previous: AppSettings,
+  next: AppSettings,
+  deps: Pick<IpcDeps, 'applyHotkey' | 'applyLaunchAtLogin' | 'voice'>
+): Promise<SettingsBundle | null> {
+  if (next.rememberConversation !== previous.rememberConversation ||
+    JSON.stringify(next.excludedApps) !== JSON.stringify(previous.excludedApps)) {
+    applyHistorySettings(next.rememberConversation, next.excludedApps)
+  }
+
+  if (next.hotkey !== previous.hotkey) {
+    const ok = deps.applyHotkey(next.hotkey)
+    if (!ok) {
+      // Roll back so the UI and the actual binding never disagree.
+      patchSettings({ hotkey: previous.hotkey })
+      deps.applyHotkey(previous.hotkey)
+      return { ...(await loadSettingsBundle()), settings: getSettings(), hotkeyError: true }
+    }
+  }
+  if (next.launchAtLogin !== previous.launchAtLogin) {
+    deps.applyLaunchAtLogin(next.launchAtLogin)
+  }
+  // The voice hotkey is not a `globalShortcut`: it is a separate CGEventTap, so
+  // it is restarted here instead of through `applyHotkey`.
+  //
+  // Only when the voice settings actually moved, though. The window now writes
+  // on every pause in typing, and `applySettings` tears down and respawns the
+  // helper process — restarting it for a keystroke in a system prompt would be
+  // a worse bug than the one auto-apply fixed.
+  if (JSON.stringify(next.voice) !== JSON.stringify(previous.voice)) {
+    deps.voice.applySettings()
+  }
+  return null
+}
+
 export function registerIpc(deps: IpcDeps): void {
   // ---- overlay -----------------------------------------------------------
   ipcMain.handle(CH.overlay.getState, () => deps.overlay.state())
@@ -141,54 +193,27 @@ export function registerIpc(deps: IpcDeps): void {
   ipcMain.handle(CH.overlay.paste, (_event, text: string) => deps.overlay.paste(text))
 
   // ---- settings ----------------------------------------------------------
-  ipcMain.handle(CH.settings.load, () => bundle())
+  ipcMain.handle(CH.settings.load, () => loadSettingsBundle())
 
   ipcMain.handle(CH.settings.save, async (_event, incoming: unknown) => {
     const previous = getSettings()
-    const patch = sanitizeSettings(incoming)
+    const patch = asSettingsPatch(incoming)
     // Only the native dialog can add approvals. Settings drafts can be stale.
     if (patch.agent) patch.agent = { ...patch.agent, rememberedApprovals: previous.agent.rememberedApprovals }
     const next = patchSettings(patch)
-    if (next.rememberConversation !== previous.rememberConversation ||
-      JSON.stringify(next.excludedApps) !== JSON.stringify(previous.excludedApps)) {
-      applyHistorySettings(next.rememberConversation, next.excludedApps)
-    }
-
-    if (next.hotkey !== previous.hotkey) {
-      const ok = deps.applyHotkey(next.hotkey)
-      if (!ok) {
-        // Roll back so the UI and the actual binding never disagree.
-        patchSettings({ hotkey: previous.hotkey })
-        deps.applyHotkey(previous.hotkey)
-        return { ...(await bundle()), settings: getSettings(), hotkeyError: true }
-      }
-    }
-    if (next.launchAtLogin !== previous.launchAtLogin) {
-      deps.applyLaunchAtLogin(next.launchAtLogin)
-    }
-    // The voice hotkey is not a `globalShortcut`: it is a separate CGEventTap, so
-    // it is restarted here instead of through `applyHotkey`.
-    //
-    // Only when the voice settings actually moved, though. The window now writes
-    // on every pause in typing, and `applySettings` tears down and respawns the
-    // helper process — restarting it for a keystroke in a system prompt would be
-    // a worse bug than the one auto-apply fixed.
-    if (JSON.stringify(next.voice) !== JSON.stringify(previous.voice)) {
-      deps.voice.applySettings()
-    }
-    return bundle()
+    return (await applySettingsSideEffects(previous, next, deps)) ?? loadSettingsBundle()
   })
 
   ipcMain.handle(CH.settings.setKey, async (_event, provider: unknown, key: string) => {
     if (!isProvider(provider)) throw new Error('unknown-provider')
     setApiKey(provider, String(key ?? ''))
-    return bundle()
+    return loadSettingsBundle()
   })
 
   ipcMain.handle(CH.settings.deleteKey, async (_event, provider: unknown) => {
     if (!isProvider(provider)) throw new Error('unknown-provider')
     deleteApiKey(provider)
-    return bundle()
+    return loadSettingsBundle()
   })
 
   ipcMain.handle(CH.settings.testKey, (_event, provider: unknown, key: string, baseUrl?: string) => {
@@ -204,7 +229,7 @@ export function registerIpc(deps: IpcDeps): void {
   // The renderer says "edits are still being written" before it asks to close and
   // clears the flag once the last write has landed. Without it, ⌘W during the
   // 450 ms debounce would destroy the window and take the edit with it.
-  ipcMain.on(CH.settings.hold, (_event, busy: boolean) => markSettingsBusy(Boolean(busy)))
+  ipcMain.on(CH.settings.hold, (_event, held: boolean) => setSettingsHeld(Boolean(held)))
   ipcMain.on(CH.settings.recording, (_event, active: boolean) => deps.setRecording(Boolean(active)))
 
   // ---- permissions -------------------------------------------------------
@@ -213,7 +238,7 @@ export function registerIpc(deps: IpcDeps): void {
   ipcMain.handle(CH.permissions.requestMicrophone, () => requestMicrophonePermission())
   ipcMain.on(
     CH.permissions.open,
-    (_event, kind: 'accessibility' | 'screenRecording' | 'microphone') => {
+    (_event, kind: PermissionPane) => {
       openPermissionPane(kind)
     }
   )
@@ -304,14 +329,14 @@ export function registerIpc(deps: IpcDeps): void {
   ipcMain.handle(CH.tts.speak, (_event, text: unknown) =>
     synthesize(typeof text === 'string' ? text : '')
   )
-  ipcMain.handle(CH.tts.status, () => speechStatus())
+  ipcMain.handle(CH.tts.status, () => ttsStatus())
   ipcMain.handle(CH.tts.setKey, (_event, key: unknown) => {
     setTtsKey(typeof key === 'string' ? key : '')
-    return speechStatus()
+    return ttsStatus()
   })
   ipcMain.handle(CH.tts.deleteKey, () => {
     deleteTtsKey()
-    return speechStatus()
+    return ttsStatus()
   })
   ipcMain.handle(CH.tts.preview, () => synthesize(PREVIEW_LINE))
 

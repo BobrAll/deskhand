@@ -20,16 +20,6 @@
 
 import type { AgentPhase } from '@shared/types'
 
-/**
- * The agent row's phase.
- *
- * Re-exported under a local name so the key policy stays readable: this file
- * asks "what is the run doing" and the answer is the same union the card gets.
- * The phases it distinguishes are the ones with a key of their own; the rest
- * behave like "nothing running".
- */
-export type RunPhase = AgentPhase
-
 /** What the card should do about the key press. */
 export type KeyAction =
   | 'close'
@@ -49,9 +39,7 @@ export interface KeyInput {
   /** `tagName` of the focused element, when there is one. */
   tagName: string | null
   /** The agent row's phase, when a run is on screen. */
-  agentPhase: RunPhase | null
-  /** Whether a request is in flight — a check can be cancelled, a run stopped. */
-  hasRequestId: boolean
+  agentPhase: AgentPhase | null
   /** Whether anything is selected on the page. */
   hasSelection: boolean
   /** Whether there is an answer to copy. */
@@ -68,7 +56,7 @@ export function keyPolicy(input: KeyInput): KeyAction {
   if (input.key === 'Escape') {
     // While a plan runs, Escape is "стоп", not "закрыть": the card closing would
     // hide the very row that reports what was interrupted, and the user pressing
-    // Escape is watching the screen, not the bubble.
+    // Escape is watching the screen, not the card.
     if (input.agentPhase === 'asking') {
       // A question is a stop point like any other: Escape refuses it. It is not
       // `cancel` — the card has no request of its own to abort here — and it is

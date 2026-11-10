@@ -81,7 +81,12 @@ export function patchSettings(patch: Partial<AppSettings>): AppSettings {
   return next
 }
 
-/** True when the stored file had to be discarded or bypassed during this run. */
+/**
+ * True when the stored file had to be discarded or bypassed during this run.
+ *
+ * Exists for the store tests: recovery is otherwise silent, and this is the only
+ * way to observe that the corrupt file was actually replaced.
+ */
 export function settingsWereRecovered(): boolean {
   return storeRecovered
 }
