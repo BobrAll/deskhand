@@ -84,7 +84,7 @@
       ],
       "extendInfo": {
         "NSAppleEventsUsageDescription": "Deskhand управляет другими приложениями, чтобы читать выделенный текст и вставлять ответ.",
-        "NSMicrophoneUsageDescription": "Deskhand записывает голос, пока вы удерживаете клавишу, и распознаёт его локально — звук не покидает Mac.",
+        "NSMicrophoneUsageDescription": "Deskhand записывает голос, пока ты удерживаешь клавишу, и распознаёт его локально — звук не покидает Mac.",
         "LSApplicationCategoryType": "public.app-category.productivity"
       }
     },

@@ -5,6 +5,14 @@
 - Before every code change, read and follow [UB Mode Lite](.agents/skills/ub-mode-lite/SKILL.md).
 - Read and follow [Refactoring](.agents/skills/refactoring/SKILL.md) only on an explicit refactoring request or invocation by name.
 
+## Copy and tone
+
+- Every user-facing Russian string addresses the user as «ты»: «нажми», «попробуй ещё раз», «твой ключ». No «вы» forms in UI text, errors, approvals, notifications or recorded voice lines.
+- Imperative mood over polite formulas: «Проверь ключ» instead of «Пожалуйста, проверьте ключ». No «пожалуйста», no «извините», no diminutives.
+- Voice lines follow [docs/voice-phrases.md](docs/voice-phrases.md); that document is the source of truth for what may be spoken. When a card string is also spoken, both must already be on «ты».
+- Text the model reads (tool results, prompts) is English and unaffected by this rule.
+- The rule is enforced: `src/shared/copyTone.test.ts` scans `src/` for polite forms and fails the suite.
+
 ## Agent behavior
 
 - Fix the underlying capability or decision rule. Use specific apps, sites, and prompts as regression cases. Keep names and aliases out of runtime routing and tool instructions.
@@ -17,7 +25,7 @@
 - Swift (`native/deskhand`) owns the agent loop and machine interaction. TypeScript owns UI, settings, keys, and approval decisions.
 - Spawn `deskhand-agent --serve` on the first action request and reuse it. It inherits Accessibility and Screen Recording grants from the app.
 - Use newline-delimited JSON over stdin/stdout. Keep both sides compatible with the real transcript replayed by `src/main/agent/sidecar.test.ts`.
-- `ToolPolicy` blocks before each mutating call until `src/main/agent/approval.ts` answers. Keep the decision in TypeScript.
+- The policy lives in Swift: the `ToolPolicy` protocol in `native/deskhand/Sources/DeskhandCore/ToolPolicy.swift` blocks before each mutating call and waits for an answer. TypeScript only answers that question — keep the decision in `src/main/agent/approval.ts`.
 - Install `ActionPresenter` only with `options.visualize`. Pass geometry after approval and before execution. Return immediately. Background runs use the same tool path without a presenter.
 - Keep `SyntheticEvent.tag` (`0x53434752`) equal to `kAgentEventTag` in `src/main/native/helper.m` so synthetic input does not abort the run.
 - Keep the card click-through during actions. Escape stops the run. Only inline approval captures clicks.
@@ -26,4 +34,4 @@
 
 - Build the sidecar with `npm run build:agent` (universal) or `AGENT_ARCH=arm64 npm run build:agent`.
 - Both suites must pass for code changes. Run `npm test` from the root and `swift test` from `native/deskhand`.
-- `src/main/agent/timing.integration.test.ts` and `trace.integration.test.ts` need a built binary *and* a granted Accessibility permission: the agent checks the grant before it accepts a run, so without it they fail with `error` instead of a stream. The wire contract still has `src/main/agent/sidecar.test.ts`, which replays a recorded transcript and needs neither.
+- `src/main/agent/timing.integration.test.ts` and `trace.integration.test.ts` need a built binary and the Accessibility grant. Without either they are reported as *skipped*, not failed: `agentAcceptsRuns` in `src/main/agent/grant.ts` sends one `run` to the real sidecar and reads the answer, and a refusal (`code: "accessibility"`) or a timeout turns both files into `describe.skipIf`. The wire contract still has `src/main/agent/sidecar.test.ts`, which replays a recorded transcript and needs neither.
