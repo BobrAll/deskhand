@@ -3,7 +3,6 @@
  * streaming LLM implementation.
  */
 
-import { providerInfo } from '@shared/defaults'
 import type { AppSettings, ProviderId } from '@shared/types'
 import { AnthropicProvider } from './anthropic'
 import { OpenAIProvider } from './openai'
@@ -25,9 +24,9 @@ export function getProvider(id: ProviderId): LlmProvider {
 }
 
 export function resolveChatModel(settings: AppSettings): string {
-  const configured = settings.models[settings.provider]?.trim()
-  if (configured) return configured
-  // An id outside the registry has no default to fall back to; the empty string
-  // is what the caller treats as "no model configured".
-  return providerInfo(settings.provider)?.defaultModel ?? ''
+  // The model is the user's to name. There is no built-in default: an id shipped
+  // in the build is a guess about an account we cannot see, and a wrong guess
+  // fails at request time with an error that says "model not found" instead of
+  // "you have not chosen a model".
+  return settings.models[settings.provider]?.trim() ?? ''
 }

@@ -98,7 +98,6 @@ export function App() {
   const configured = bundle?.keys.find((item) => item.provider === provider)?.configured ?? false
   const baseUrlInvalid = baseUrl.trim() !== '' && normalizeBaseUrl(baseUrl) === ''
   const defaultBaseUrl = providerInfo(provider)?.defaultBaseUrl
-  const defaultModel = providerInfo(provider)?.defaultModel
 
   return (
     <div className="wizard">
@@ -212,12 +211,11 @@ export function App() {
                 <input
                   value={model}
                   onChange={(event) => setModel(event.target.value)}
-                  placeholder={defaultModel}
                   aria-label="Модель"
                   spellCheck={false}
                 />
                 <div className="hint">
-                  ID модели {providerInfo(provider)?.label}. Пусто — {defaultModel}.
+                  ID модели {providerInfo(provider)?.label}. Его задаёте вы — встроенного значения нет.
                 </div>
               </div>
 

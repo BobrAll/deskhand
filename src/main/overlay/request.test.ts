@@ -63,7 +63,6 @@ function input(overrides: Partial<BuildTurnRequestInput> = {}): BuildTurnRequest
     request: request(),
     session,
     settings: settings(),
-    visionSupported: true,
     availability: { ready: true, reason: null },
     ensureFreshScreenshot: async () => session.snapshot.screenshot,
     describeScreen: async () => null,
@@ -221,8 +220,8 @@ describe('buildTurnRequest: tools are a capability', () => {
     expect(turn.area).toEqual(AREA)
   })
 
-  it('offers neither tool when the model cannot see', async () => {
-    const turn = await buildTurnRequest(input({ visionSupported: false }))
+  it('offers neither tool when the image could not be taken', async () => {
+    const turn = await buildTurnRequest(input({ ensureFreshScreenshot: async () => null, omitImage: true }))
 
     expect(turn.useImage).toBe(false)
     expect(turn.canDraw).toBe(false)
@@ -276,7 +275,7 @@ describe('buildTurnRequest: the two awaits', () => {
     await buildTurnRequest(
       input({ ensureFreshScreenshot: ensure, request: request({ includeScreenshot: false }) })
     )
-    await buildTurnRequest(input({ ensureFreshScreenshot: ensure, visionSupported: false }))
+    await buildTurnRequest(input({ ensureFreshScreenshot: ensure, omitImage: true }))
 
     expect(ensure).toHaveBeenCalledTimes(1)
   })

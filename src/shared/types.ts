@@ -706,10 +706,8 @@ export interface AnnotationsEvent {
 export interface ProviderInfo {
   id: ProviderId
   label: string
-  defaultModel: string
   /** Used when the user leaves the base URL field empty. */
   defaultBaseUrl: string
-  supportsVision: boolean
   keyUrl: string
 }
 

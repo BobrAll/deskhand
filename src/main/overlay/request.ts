@@ -50,8 +50,13 @@ export interface BuildTurnRequestInput {
   history?: Exchange[]
   previousCommand?: string
   settings: RequestSettings
-  /** Whether the chosen provider/model can take an image at all. */
-  visionSupported: boolean
+  /**
+   * Send the screenshot even though the user asked for one.
+   *
+   * False only on the retry after the provider refused the image: the turn keeps
+   * going without it rather than failing, and the card says why.
+   */
+  omitImage?: boolean
   /** Whether acting is allowed at all, and why not when it is not. */
   availability: { ready: boolean; reason: string | null }
   /** Takes a fresh screenshot when the current one is too old. */
@@ -121,8 +126,14 @@ export async function buildTurnRequest(input: BuildTurnRequestInput): Promise<Tu
   // taken when the overlay opens, which can be minutes earlier (the user reads
   // the answer, types, asks a follow-up), so a fresh capture is taken here for
   // every request that actually sends an image.
+  //
+  // Whether the model *accepts* images is not answerable before the call: the
+  // user names the model, and it may sit behind a proxy or be one we have never
+  // heard of. So the image goes out, and a provider that refuses it is handled
+  // at the call site — the turn continues without the picture instead of dying
+  // on a request the user could not have known was impossible.
   let shot: ScreenshotInfo | null = null
-  if (wantImage && input.visionSupported) {
+  if (wantImage && !input.omitImage) {
     shot = await input.ensureFreshScreenshot()
     if (input.aborted()) {
       return {

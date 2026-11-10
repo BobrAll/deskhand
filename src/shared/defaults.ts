@@ -29,25 +29,19 @@ export const PROVIDERS: ProviderInfo[] = [
   {
     id: 'openai',
     label: 'OpenAI',
-    defaultModel: 'gpt-4o-mini',
     defaultBaseUrl: 'https://api.openai.com/v1',
-    supportsVision: true,
     keyUrl: 'https://platform.openai.com/api-keys'
   },
   {
     id: 'openrouter',
     label: 'OpenRouter',
-    defaultModel: 'openai/gpt-4o-mini',
     defaultBaseUrl: 'https://openrouter.ai/api/v1',
-    supportsVision: true,
     keyUrl: 'https://openrouter.ai/keys'
   },
   {
     id: 'anthropic',
     label: 'Anthropic',
-    defaultModel: 'claude-sonnet-4-5',
     defaultBaseUrl: 'https://api.anthropic.com/v1',
-    supportsVision: true,
     keyUrl: 'https://console.anthropic.com/settings/keys'
   }
 ]
@@ -56,20 +50,19 @@ export function providerInfo(id: string): ProviderInfo | undefined {
   return PROVIDERS.find((provider) => provider.id === id)
 }
 
-export const OPENAI_DEFAULT_SEARCH_MODEL = 'gpt-5-search-api'
-
 type SearchModelDefaults = Pick<AppSettings, 'provider' | 'models' | 'baseUrls'>
 
-export function defaultSearchModel(settings: SearchModelDefaults): string {
-  const { provider } = settings
-  if (provider === 'openai' && !isPlusVibeApi(resolveBaseUrl(provider, settings.baseUrls[provider]))) {
-    return OPENAI_DEFAULT_SEARCH_MODEL
-  }
-  return settings.models[provider].trim() || providerInfo(provider)?.defaultModel || ''
+/**
+ * What web search uses when the user left the search field empty: the same model
+ * they chose for chat. There is no built-in search model — a name shipped in the
+ * build would be a guess about a provider account we cannot see.
+ */
+export function searchModelFallback(settings: SearchModelDefaults): string {
+  return settings.models[settings.provider].trim()
 }
 
 export function resolveSearchModel(settings: SearchModelDefaults & Pick<AppSettings, 'searchModels'>): string {
-  return settings.searchModels[settings.provider].trim() || defaultSearchModel(settings)
+  return settings.searchModels[settings.provider].trim() || searchModelFallback(settings)
 }
 
 /**
@@ -318,9 +311,9 @@ export const AGENT_MIN_OUTPUT_TOKENS = 4096
 export const DEFAULT_SETTINGS: AppSettings = {
   provider: 'openai',
   models: {
-    openrouter: 'openai/gpt-4o-mini',
-    openai: 'gpt-4o-mini',
-    anthropic: 'claude-sonnet-4-5'
+    openrouter: '',
+    openai: '',
+    anthropic: ''
   },
   searchModels: { openrouter: '', openai: '', anthropic: '' },
   baseUrls: {
@@ -564,14 +557,4 @@ export function parseExtraBody(text: string | undefined): Record<string, unknown
   return Object.fromEntries(
     Object.entries(value as Record<string, unknown>).filter(([key]) => !RESERVED_BODY_FIELDS.has(key))
   )
-}
-
-/** Models that are known to reject image input; used for the vision warning. */
-export function modelSupportsVision(provider: ProviderId, model: string): boolean {
-  const info = providerInfo(provider)
-  if (!info) return false
-  if (provider !== 'openrouter') return info.supportsVision
-  const name = model.toLowerCase()
-  const textOnly = ['o1-mini', 'o3-mini', 'deepseek', 'mistral-7b', 'llama-3.1-8b']
-  return !textOnly.some((needle) => name.includes(needle))
 }

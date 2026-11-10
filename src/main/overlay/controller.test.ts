@@ -43,7 +43,12 @@ const state = vi.hoisted(() => ({
   agentReady: false,
   onAgentRun: () => {},
   agentResult: { answer: '', actions: [] } as AgentRunResult,
-  agentCalls: [] as { prompt: string }[]
+  agentCalls: [] as { prompt: string }[],
+  /** Whether the built turn says an image is going out. */
+  useImage: false,
+  /** How the mocked provider answers: refuse the image, then succeed. */
+  imageRefusedOnce: false,
+  streams: 0
 }))
 
 vi.mock('electron', () => ({ app: {}, BrowserWindow: {}, systemPreferences: { isTrustedAccessibilityClient: () => true } }))
@@ -98,16 +103,23 @@ vi.mock('../llm/webSearch', () => ({ searchWeb: vi.fn() }))
 vi.mock('../util', () => ({ delay: vi.fn().mockResolvedValue(undefined) }))
 vi.mock('./request', () => ({
   buildTurnRequest: vi.fn(async () => ({
-    messages: [], maxTokens: 1024, area: null, canDraw: false
+    messages: [], maxTokens: 1024, area: null, canDraw: false, useImage: state.useImage
   }))
 }))
-vi.mock('../turnStream', () => ({
-  consumeTurnStream: vi.fn(async (options: { onText: (text: string) => void }) => {
-    if (state.fail) throw new Error('Request failed')
-    if (state.stream) { options.onText(state.text); state.afterChunk() }
-    return { text: state.text, webLookup: state.webLookup }
-  })
-}))
+vi.mock('../turnStream', async () => {
+  const { ProviderError } = await import('../llm/provider')
+  return {
+    consumeTurnStream: vi.fn(async (options: { onText: (text: string) => void }) => {
+      state.streams += 1
+      if (state.imageRefusedOnce && state.streams === 1) {
+        throw new ProviderError('Модель не принимает изображения', true, 400, true)
+      }
+      if (state.fail) throw new Error('Request failed')
+      if (state.stream) { options.onText(state.text); state.afterChunk() }
+      return { text: state.text, webLookup: state.webLookup }
+    })
+  }
+})
 
 beforeEach(() => {
   state.settings = structuredClone(DEFAULT_SETTINGS)
@@ -123,6 +135,9 @@ beforeEach(() => {
   state.onAgentRun = () => {}
   state.agentResult = { answer: '', actions: [] }
   state.agentCalls = []
+  state.useImage = false
+  state.imageRefusedOnce = false
+  state.streams = 0
   applyHistorySettings(false, [])
 })
 
@@ -301,6 +316,46 @@ describe('the agent turn on the card', () => {
     expect(h.send).toHaveBeenCalledWith('overlay:stream', expect.objectContaining({
       type: 'done', text: 'Остановлено.'
     }))
+  })
+})
+
+describe('a provider that refuses the screenshot', () => {
+  it('asks again without the image and still answers', async () => {
+    state.useImage = true
+    state.imageRefusedOnce = true
+    const h = await harness()
+
+    await h.controller.send({ ...h.request, voice: false })
+
+    // Two rounds: the refused one, then the same question without the picture.
+    expect(state.streams).toBe(2)
+    expect(h.send).toHaveBeenCalledWith('overlay:stream', expect.objectContaining({
+      type: 'done', text: 'Ответ'
+    }))
+  })
+
+  it('says why the answer has no drawing', async () => {
+    state.useImage = true
+    state.imageRefusedOnce = true
+    const h = await harness()
+
+    await h.controller.send({ ...h.request, voice: false })
+
+    const stateEvent = h.send.mock.calls
+      .filter(([channel]) => channel === 'overlay:state')
+      .at(-1)?.[1] as { warnings: string[] } | undefined
+    expect(stateEvent?.warnings.join(' ')).toContain('не принимает изображения')
+  })
+
+  it('does not retry a failure that is not about the image', async () => {
+    state.useImage = true
+    state.fail = true
+    const h = await harness()
+
+    await h.controller.send({ ...h.request, voice: false })
+
+    expect(state.streams).toBe(1)
+    expect(h.send).toHaveBeenCalledWith('overlay:stream', expect.objectContaining({ type: 'error' }))
   })
 })
 

@@ -4,9 +4,9 @@ import {
   DEFAULT_SETTINGS,
   PROVIDERS,
   WHISPER_MODELS,
-  modelSupportsVision,
   normalizeBaseUrl,
   providerInfo,
+  resolveSearchModel,
   resolveBaseUrl,
   whisperModel
 } from './defaults'
@@ -47,12 +47,10 @@ describe('PROVIDERS: the catalog itself', () => {
     }
   })
 
-  it('declares vision support for all three providers today', () => {
-    expect(PROVIDERS.filter((provider) => provider.supportsVision).map((provider) => provider.id)).toEqual([
-      'openai',
-      'openrouter',
-      'anthropic'
-    ])
+  it('names no model of its own: the id is the user’s to choose', () => {
+    for (const id of Object.keys(DEFAULT_SETTINGS.models) as Array<keyof typeof DEFAULT_SETTINGS.models>) {
+      expect(DEFAULT_SETTINGS.models[id], id).toBe('')
+    }
   })
 
   it('is the source the default provider comes from', () => {
@@ -161,35 +159,25 @@ describe('resolveBaseUrl: override or provider default', () => {
   })
 })
 
-describe('modelSupportsVision: the warning before an image is sent', () => {
-  it('reports what the catalog says for a fixed provider', () => {
-    expect(modelSupportsVision('openai', 'gpt-4o-mini')).toBe(true)
-    expect(modelSupportsVision('anthropic', '')).toBe(true)
+describe('resolveSearchModel: the search model falls back to the chat model', () => {
+  const settings = {
+    ...DEFAULT_SETTINGS,
+    models: { openrouter: '', openai: 'user-model', anthropic: '' },
+    searchModels: { openrouter: '', openai: '', anthropic: '' }
+  }
+
+  it('uses the search override when the user set one', () => {
+    expect(resolveSearchModel({
+      ...settings,
+      searchModels: { ...settings.searchModels, openai: 'search-model' }
+    })).toBe('search-model')
   })
 
-  it('returns false for an unknown provider', () => {
-    expect(modelSupportsVision('gemini' as never, 'gemini-2.5-flash')).toBe(false)
+  it('falls back to the chat model the user chose, not to a built-in name', () => {
+    expect(resolveSearchModel({ ...settings, provider: 'openai' })).toBe('user-model')
   })
 
-  it('rejects the known text-only OpenRouter models', () => {
-    for (const model of [
-      'openai/o1-mini',
-      'openai/o3-mini',
-      'deepseek/deepseek-chat',
-      'mistralai/mistral-7b-instruct',
-      'meta-llama/llama-3.1-8b-instruct'
-    ]) {
-      expect(modelSupportsVision('openrouter', model), model).toBe(false)
-    }
-  })
-
-  it('accepts any other OpenRouter model', () => {
-    expect(modelSupportsVision('openrouter', 'openai/gpt-4o-mini')).toBe(true)
-    expect(modelSupportsVision('openrouter', 'google/gemini-2.5-flash')).toBe(true)
-    expect(modelSupportsVision('openrouter', '')).toBe(true)
-  })
-
-  it('matches the text-only list case-insensitively', () => {
-    expect(modelSupportsVision('openrouter', 'DeepSeek/DeepSeek-V3')).toBe(false)
+  it('is empty when the user has chosen nothing at all', () => {
+    expect(resolveSearchModel({ ...settings, provider: 'anthropic' })).toBe('')
   })
 })

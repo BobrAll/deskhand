@@ -59,7 +59,23 @@ export interface HttpErrorBody {
   error?: { message?: string; type?: string; code?: string }
 }
 
-/** Turns a non-2xx response into a localised, actionable error. */
+/**
+ * The provider's own words for "this model cannot take an image".
+ *
+ * There is no standard code for it: OpenAI-compatible servers answer 400 with
+ * prose, Anthropic answers 400 with a type, proxies invent their own. The
+ * phrases below are the ones actually seen; a miss costs a failed turn, not
+ * silence, because the caller falls back to the ordinary error path.
+ */
+const IMAGE_REJECTION = /image|vision|multimodal|modality|content[-_ ]?type/i
+
+/**
+ * Turns a non-2xx response into a localised, actionable error.
+ *
+ * `imageRejected` is set when the body blames the image: the caller then retries
+ * the same turn without it, which is the only way to know for certain — the user
+ * names the model, and it may be one we have never heard of.
+ */
 export async function toProviderError(response: Response, providerLabel: string): Promise<ProviderError> {
   let detail = ''
   try {
@@ -108,7 +124,8 @@ export async function toProviderError(response: Response, providerLabel: string)
       return new ProviderError(
         `Ошибка ${providerLabel} (${status})${detail ? `: ${detail}` : ''}`,
         true,
-        status
+        status,
+        (status === 400 || status === 422) && IMAGE_REJECTION.test(detail)
       )
   }
 }

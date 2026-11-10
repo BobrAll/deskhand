@@ -1,5 +1,5 @@
 import {
-  OPENAI_DEFAULT_SEARCH_MODEL, isPlusVibeApi, providerInfo, resolveBaseUrl, resolveSearchModel
+  isPlusVibeApi, providerInfo, resolveBaseUrl, resolveSearchModel
 } from '@shared/defaults'
 import type { AppSettings } from '@shared/types'
 import { toProviderError, toTransportError } from './http'
@@ -57,7 +57,7 @@ export async function searchWeb(
   const maxTokens = Math.max(MIN_SEARCH_TOKENS, settings.maxTokens)
   const anthropic = provider === 'anthropic'
   const plusVibe = provider === 'openai' && isPlusVibeApi(baseUrl)
-  const useResponsesApi = provider === 'openai' && !plusVibe && model !== OPENAI_DEFAULT_SEARCH_MODEL
+  const useResponsesApi = provider === 'openai' && !plusVibe
   const endpoint = anthropic ? 'messages' : useResponsesApi ? 'responses' : 'chat/completions'
   const headers: Record<string, string> = anthropic
     ? { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' }

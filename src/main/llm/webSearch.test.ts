@@ -13,14 +13,6 @@ describe('searchWeb', () => {
       choices: [{ message: { content: 'Курс на 5 ноября. https://example.com/rate' } }],
       usage: { server_tool_use: { web_search_requests: 1 } }
     }],
-    ['openai', '', '/chat/completions', {
-      model: 'gpt-5-search-api', web_search_options: { search_context_size: 'low' }
-    }, {
-      choices: [{ message: {
-        content: 'Курс на 5 ноября.',
-        annotations: [{ url_citation: { url: 'https://example.com/rate' } }]
-      } }]
-    }],
     ['openai', 'gpt-6-astra', '/responses', {
       model: 'gpt-6-astra', store: false,
       tools: [{ type: 'web_search', search_context_size: 'low' }], tool_choice: 'required'

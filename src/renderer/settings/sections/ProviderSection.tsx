@@ -19,7 +19,7 @@
  */
 
 import type { AppSettings, KeyStatus, ProviderId } from '@shared/types'
-import { DEFAULT_SYSTEM_PROMPT, PROVIDERS, SETTINGS_BOUNDS, defaultSearchModel, normalizeBaseUrl, parseExtraBody, providerInfo } from '@shared/defaults'
+import { DEFAULT_SYSTEM_PROMPT, PROVIDERS, SETTINGS_BOUNDS, normalizeBaseUrl, parseExtraBody, providerInfo, searchModelFallback } from '@shared/defaults'
 import { Disclosure, Group, Row, Toggle } from '../Row'
 
 interface ProviderSectionProps {
@@ -49,7 +49,7 @@ export function ProviderSection({
   const info = providerInfo(draft.provider)
   const keyStatus = providerKeys[draft.provider]
   const searchModel = draft.searchModels[draft.provider]
-  const fallbackSearchModel = defaultSearchModel(draft)
+  const fallbackSearchModel = searchModelFallback(draft)
   // An invalid override is rejected instead of being silently replaced by the
   // default, so a typo cannot quietly send traffic to the official host.
   const baseUrlError = invalidBaseUrls.includes(draft.provider)
@@ -82,7 +82,7 @@ export function ProviderSection({
           title="Модель"
           hint={
             info
-              ? `ID модели ${info.label}. Пусто — ${info.defaultModel}.`
+              ? `ID модели ${info.label}. Без неё запрос не отправится.`
               : 'ID модели провайдера.'
           }
         >
@@ -91,7 +91,6 @@ export function ProviderSection({
             onChange={(event) =>
               patch({ models: { ...draft.models, [draft.provider]: event.target.value } })
             }
-            placeholder={info?.defaultModel}
             spellCheck={false}
           />
         </Row>

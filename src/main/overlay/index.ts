@@ -9,7 +9,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { app, BrowserWindow } from 'electron'
 import { allowsWebLookup, looksLikeAction } from '@shared/intent'
 import { CH } from '@shared/ipc'
-import { modelSupportsVision, parseExtraBody, providerInfo, resolveBaseUrl } from '@shared/defaults'
+import { parseExtraBody, providerInfo, resolveBaseUrl } from '@shared/defaults'
 import type {
   ActiveAppInfo,
   AgentAvailability,
@@ -68,7 +68,6 @@ interface TurnContext {
   history: CardExchange[]
   previousCommand: string | undefined
   useHistory: boolean
-  visionSupported: boolean
   availability: AgentAvailability
   abort: AbortController
 }
@@ -117,6 +116,15 @@ interface Session {
    * one turn with several requests and the budget is per turn.
    */
   rounds: number
+  /**
+   * What went wrong during this turn but did not stop it.
+   *
+   * Its own list rather than a field on the snapshot: a context warning describes
+   * the screen, and these describe the request. The card shows the first one, so
+   * "the model rejected the screenshot, so this answer is text only" reaches the
+   * person who asked rather than only the log.
+   */
+  notices: string[]
 }
 
 /**
@@ -126,6 +134,16 @@ interface Session {
  * just keeps the first placement from flipping sides afterwards.
  */
 const INITIAL_HEIGHT = 31
+
+/**
+ * Shown when the provider refuses the screenshot.
+ *
+ * The turn continues without it, so this is a notice, not an error: the answer
+ * arrives, and the only thing that changed is that the model could not see the
+ * screen and therefore did not draw on it.
+ */
+const MODEL_REFUSED_IMAGE =
+  'Модель не принимает изображения — ответ получен без скриншота и рисунка.'
 
 /**
  * How long a spoken transcript stays on screen while its request is already
@@ -291,15 +309,7 @@ export function createOverlayController(host: OverlayHost) {
 
   function overlayState(): OverlayState | null {
     if (!session) return null
-    const settings = getSettings()
-    const warnings = [...session.snapshot.warnings]
-    const vision = modelSupportsVision(settings.provider, resolveChatModel(settings))
-    if (!vision && session.flags.includeScreenshot) {
-      // The drawing tool needs an image: a model without vision never receives
-      // one, so it silently loses the tool. Say so instead of letting answers
-      // arrive without drawings for no visible reason.
-      warnings.push('Модель не принимает изображения — скриншот и рисунок недоступны.')
-    }
+    const warnings = [...session.snapshot.warnings, ...session.notices]
     return {
       sessionId: session.id,
       context: session.snapshot,
@@ -713,7 +723,8 @@ export function createOverlayController(host: OverlayHost) {
       annotations: [],
       history: [],
       live: { timer: null, inFlight: false },
-      rounds: 0
+      rounds: 0,
+      notices: []
     }
 
     // Focus is taken only now, once the context is safely collected: the card was
@@ -996,7 +1007,6 @@ export function createOverlayController(host: OverlayHost) {
     if (request.voice) voiceTurn = abort
     session.requestId = request.requestId
     session.answer = ''
-    const visionSupported = modelSupportsVision(settings.provider, model)
     const availability = agent.availability()
     /**
      * Whether this turn is for the agent rather than for the writer.
@@ -1084,7 +1094,6 @@ export function createOverlayController(host: OverlayHost) {
         history,
         previousCommand,
         useHistory,
-        visionSupported,
         availability,
         abort
       }
@@ -1220,7 +1229,7 @@ export function createOverlayController(host: OverlayHost) {
   async function runWriterTurn(turn: TurnContext): Promise<TurnResult | null> {
     const {
       request, session: turnSession, settings, apiKey, refine, history, previousCommand,
-      visionSupported, availability, abort
+      availability, abort
     } = turn
     let observedApp: RawFrontApp | undefined
     let drawingTargets: AxElementInfo[] = []
@@ -1243,7 +1252,6 @@ export function createOverlayController(host: OverlayHost) {
       history,
       previousCommand,
       settings,
-      visionSupported,
       availability,
       ensureFreshScreenshot: async () => {
         const shot = await ensureFreshScreenshot(turnSession, settings.agent.enabled)
@@ -1267,17 +1275,56 @@ export function createOverlayController(host: OverlayHost) {
     })
     if (built.abandoned || abort.signal.aborted || session !== turnSession) return null
 
-    const round = await streamRound({
-      messages: built.messages,
-      requestId: request.requestId,
-      maxTokens: built.maxTokens,
-      signal: abort.signal,
-      canDraw: built.canDraw,
-      area: built.area,
-      apiKey,
-      drawingTargets,
-      revealText: request.voice
-    })
+    let round: { text: string; webLookup?: boolean }
+    try {
+      round = await streamRound({
+        messages: built.messages,
+        requestId: request.requestId,
+        maxTokens: built.maxTokens,
+        signal: abort.signal,
+        canDraw: built.canDraw,
+        area: built.area,
+        apiKey,
+        drawingTargets,
+        revealText: request.voice
+      })
+    } catch (error) {
+      // The provider refused the picture. Whether a model takes images is not
+      // knowable before the call — the user names it — so the refusal itself is
+      // the answer, and it is not worth ending the turn over: the same question
+      // is asked again without the screenshot, and the card says why the answer
+      // has no drawing.
+      if (!(error instanceof ProviderError) || !error.imageRejected || !built.useImage) throw error
+      if (abort.signal.aborted || session !== turnSession) return null
+      turnSession.notices = [...turnSession.notices, MODEL_REFUSED_IMAGE]
+      publishState()
+      trace('turn.imageRejected', { retried: true })
+      const retried = await buildTurnRequest({
+        request,
+        session: turnSession,
+        history,
+        previousCommand,
+        settings,
+        availability,
+        omitImage: true,
+        ensureFreshScreenshot: async () => null,
+        describeScreen: async () => null,
+        aborted: () => abort.signal.aborted || session !== turnSession
+      })
+      if (retried.abandoned || abort.signal.aborted || session !== turnSession) return null
+      drawingTargets = []
+      round = await streamRound({
+        messages: retried.messages,
+        requestId: request.requestId,
+        maxTokens: retried.maxTokens,
+        signal: abort.signal,
+        canDraw: false,
+        area: null,
+        apiKey,
+        drawingTargets,
+        revealText: request.voice
+      })
+    }
     if (abort.signal.aborted || session !== turnSession) return null
 
     const webLookup = !refine && round.webLookup && allowsWebLookup(request.prompt)

@@ -85,6 +85,40 @@ public final class AgentLoop {
     private static let stallWarnSteps = 6
     private static let stallStopSteps = 12
 
+    /// What the card is told when a provider refuses the screenshot.
+    ///
+    /// A notice rather than a stop: the same step is asked again without the
+    /// image, so the run continues and only the drawing is lost.
+    static let imageRefusalNotice = "Модель не принимает изображения — продолжаю без скриншотов."
+
+    /// The provider's own words for "this model cannot take an image".
+    ///
+    /// There is no standard code for it, so this reads the body of a 400 or 422.
+    /// A miss costs a failed step, not silence — the ordinary error path still
+    /// reports it.
+    private static func isImageRefusal(_ error: Error) -> Bool {
+        guard case let LLMError.http(status, body) = error, status == 400 || status == 422 else {
+            return false
+        }
+        let lower = body.lowercased()
+        return ["image", "vision", "multimodal", "modality"].contains { lower.contains($0) }
+    }
+
+    private static func hasImages(_ messages: [ChatMessage]) -> Bool {
+        messages.contains { !$0.images.isEmpty }
+    }
+
+    /// The same history with every image dropped. Text stays: it is what the
+    /// model can still read, and the screenshot's description lives there.
+    private static func strippedImages(_ messages: [ChatMessage]) -> [ChatMessage] {
+        messages.map { message in
+            guard !message.images.isEmpty else { return message }
+            var copy = message
+            copy.images = []
+            return copy
+        }
+    }
+
     /// Set by the host for one run; nil when nobody is watching.
     public var observer: AgentObserver?
 
@@ -160,6 +194,10 @@ public final class AgentLoop {
         var seenStates = Set<String>()
         var lastProgressStep = 1
         var warnedStall = false
+        // Set once a provider refuses images. From then on the run stops asking
+        // for screenshots: the model cannot see them anyway, and every call that
+        // carried one would pay for a failed request before the retry.
+        var imagesRefused = false
         // Counted here rather than read back from `timingLog`: the timing table is
         // opt-in and grouped by label, so it cannot answer "how many calls
         // failed" without the host parsing strings.
@@ -181,10 +219,13 @@ public final class AgentLoop {
             stepsRun = step
             log("step \(step): asking \(provider.config.model)")
 
-            let prompt = trimmedHistory(messages)
-            let promptBytes = prompt.reduce(0) { $0 + $1.text.utf8.count }
+            // Mutable because a provider that refuses images is asked the same step
+            // again without them, rather than the run ending on a request the
+            // user could not have known was impossible.
+            var prompt = trimmedHistory(messages)
+            var promptBytes = prompt.reduce(0) { $0 + $1.text.utf8.count }
             let stepClock = TimingClock()
-            let completion: Completion
+            var completion: Completion
             // Streaming is reported as a growing prefix, throttled so a host
             // that resizes a window for every token does not spend the saved
             // latency on layout. The first delta goes out immediately: that is
@@ -202,27 +243,37 @@ public final class AgentLoop {
                 }
             }
             do {
-                if let streaming = provider as? StreamingChatProvider {
-                    completion = try await streaming.complete(
-                        messages: prompt,
-                        tools: tools,
-                        systemPrompt: systemPrompt,
-                        onText: onText
-                    )
-                    // The last delta may have arrived inside the throttle window.
-                    if !streamed.isEmpty, streamed.count != lastStreamLength {
-                        self.observer?.stepStreamed(step, text: streamed)
-                    }
-                } else {
-                    completion = try await provider.complete(
-                        messages: prompt,
-                        tools: tools,
-                        systemPrompt: systemPrompt
-                    )
+                completion = try await askModel(prompt, systemPrompt: systemPrompt, onText: onText)
+                // The last delta may have arrived inside the throttle window.
+                if !streamed.isEmpty, streamed.count != lastStreamLength {
+                    self.observer?.stepStreamed(step, text: streamed)
                 }
             } catch {
-                timingLog.record(TimingLabel.model, milliseconds: stepClock.milliseconds)
-                throw error
+                // The provider refused the picture. Whether a model takes images
+                // is not knowable before the call — the user names it, and it may
+                // sit behind a proxy — so the refusal itself is the answer. Drop
+                // the images, say so once, and keep the run alive.
+                guard !imagesRefused, Self.hasImages(prompt), Self.isImageRefusal(error) else {
+                    timingLog.record(TimingLabel.model, milliseconds: stepClock.milliseconds)
+                    throw error
+                }
+                imagesRefused = true
+                prompt = Self.strippedImages(prompt)
+                promptBytes = prompt.reduce(0) { $0 + $1.text.utf8.count }
+                streamed = ""
+                lastStreamAt = -1
+                lastStreamLength = 0
+                observer?.loopWarned(Self.imageRefusalNotice)
+                log("provider refused images; asking again without them")
+                do {
+                    completion = try await askModel(prompt, systemPrompt: systemPrompt, onText: onText)
+                } catch {
+                    timingLog.record(TimingLabel.model, milliseconds: stepClock.milliseconds)
+                    throw error
+                }
+                if !streamed.isEmpty, streamed.count != lastStreamLength {
+                    self.observer?.stepStreamed(step, text: streamed)
+                }
             }
             let llmMilliseconds = stepClock.milliseconds
             if let record = ModelTrace.record {
@@ -394,7 +445,7 @@ public final class AgentLoop {
                 // result they belong to: the OpenAI and Anthropic schemas both
                 // reject images inside tool messages, but both accept them in a
                 // user message. `trimmedHistory` drops the older ones.
-                let images = result.isError ? [] : result.images
+                let images = (result.isError || imagesRefused) ? [] : result.images
                 if !images.isEmpty {
                     messages.append(ChatMessage(
                         role: .user,
@@ -569,6 +620,31 @@ public final class AgentLoop {
     /// newest tree of each app preserves the "indices stay valid" promise
     /// across switches while still bounding growth by `keepTrees` apps, most
     /// recently seen first.
+    /// One model call, streaming when the provider supports it.
+    ///
+    /// Extracted so the step can be asked twice: once with the screenshots the
+    /// run has accumulated, and once without them after a provider refuses an
+    /// image. The retry is the same question, so nothing about the call changes.
+    private func askModel(
+        _ messages: [ChatMessage],
+        systemPrompt: String,
+        onText: @escaping (String) -> Void
+    ) async throws -> Completion {
+        if let streaming = provider as? StreamingChatProvider {
+            return try await streaming.complete(
+                messages: messages,
+                tools: tools,
+                systemPrompt: systemPrompt,
+                onText: onText
+            )
+        }
+        return try await provider.complete(
+            messages: messages,
+            tools: tools,
+            systemPrompt: systemPrompt
+        )
+    }
+
     func trimmedHistory(_ messages: [ChatMessage]) -> [ChatMessage] {
         var seenImages = 0
         var treesKeptPerApp: [String: Int] = [:]
