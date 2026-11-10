@@ -27,15 +27,17 @@
 import { BrowserWindow, screen } from 'electron'
 import { CH } from '@shared/ipc'
 import type { AgentEvent, AgentPointerFrame, AgentPresentation, ScreenRect } from '@shared/types'
-import { createLayerWindow } from '../layerWindow'
+import {
+  createLayerWindow,
+  ensureLayerWindow,
+  placeLayer,
+  type LayerWindowState
+} from '../layerWindow'
 
 /** The renderer's fade-out; the window is hidden right after it. */
-const EXIT_MS = 240
-/** How long to wait for the page before painting anyway. */
-const LOAD_TIMEOUT_MS = 1500
+const POINTER_FADE_MS = 240
 
-let win: BrowserWindow | null = null
-let loaded: Promise<void> | null = null
+const layer: LayerWindowState = { window: null, loaded: null }
 /** Whether the layer should be on screen; stays true for the whole run. */
 let visible = false
 /** Where the layer currently sits, so an unchanged display is not re-applied. */
@@ -53,48 +55,14 @@ function createWindow(): BrowserWindow {
     page: 'presenter',
     acceptFirstMouse: false,
     onClosed: () => {
-      win = null
-      loaded = null
+      layer.window = null
+      layer.loaded = null
       visible = false
       placedOn = null
       lastFrame = null
       lastPoint = null
     }
   })
-}
-
-/**
- * Resolves once the page can receive messages.
- *
- * Bounded for the same reason as the other layers: a page that never loads
- * would otherwise leave the first action waiting on a promise that never
- * settles. A message sent before the load is queued by Electron, so the bound
- * only breaks a deadlock, it does not delay the common path.
- */
-function ensureWindow(): Promise<BrowserWindow | null> {
-  if (win && !win.isDestroyed() && loaded) {
-    return loaded.then(() => (win && !win.isDestroyed() ? win : null))
-  }
-  const created = createWindow()
-  win = created
-  loaded = new Promise<void>((resolve) => {
-    let settled = false
-    const done = (): void => {
-      if (settled) return
-      settled = true
-      resolve()
-    }
-    created.webContents.once('did-finish-load', done)
-    created.webContents.once('did-fail-load', done)
-    created.webContents.once('destroyed', done)
-    setTimeout(done, LOAD_TIMEOUT_MS)
-  })
-  return loaded.then(() => (win && !win.isDestroyed() ? win : null))
-}
-
-function sameRect(a: ScreenRect | null, b: ScreenRect): boolean {
-  if (!a) return false
-  return a.x === b.x && a.y === b.y && a.width === b.width && a.height === b.height
 }
 
 /** The display a global point belongs to, in whole points. */
@@ -109,12 +77,12 @@ function displayBounds(point: { x: number; y: number }): ScreenRect {
 }
 
 /** A global point in the layer's own coordinates. */
-function local(point: { x: number; y: number }, bounds: ScreenRect): { x: number; y: number } {
+function toLayerPoint(point: { x: number; y: number }, bounds: ScreenRect): { x: number; y: number } {
   return { x: Math.round(point.x - bounds.x), y: Math.round(point.y - bounds.y) }
 }
 
 /** A global rectangle in the layer's own coordinates. */
-function localRect(rect: ScreenRect, bounds: ScreenRect): ScreenRect {
+function toLayerRect(rect: ScreenRect, bounds: ScreenRect): ScreenRect {
   return {
     x: Math.round(rect.x - bounds.x),
     y: Math.round(rect.y - bounds.y),
@@ -124,7 +92,7 @@ function localRect(rect: ScreenRect, bounds: ScreenRect): ScreenRect {
 }
 
 /** The middle of a rectangle, or null when there is no rectangle. */
-function centre(rect: ScreenRect | undefined): { x: number; y: number } | null {
+function rectCenter(rect: ScreenRect | undefined): { x: number; y: number } | null {
   if (!rect) return null
   return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 }
 }
@@ -137,11 +105,11 @@ function clampToLayer(point: { x: number; y: number }, bounds: ScreenRect): { x:
   }
 }
 
+/** Whether the layer had to move; the caller animates the jump when it did. */
 function place(target: BrowserWindow, bounds: ScreenRect): boolean {
-  if (sameRect(placedOn, bounds)) return false
-  target.setBounds(bounds)
-  placedOn = bounds
-  return true
+  const placement = placeLayer(target, placedOn, bounds)
+  placedOn = placement.placedOn
+  return placement.moved
 }
 
 function send(target: BrowserWindow, frame: AgentPointerFrame): void {
@@ -180,7 +148,7 @@ export function showAgentPointer(): void {
 async function reveal(): Promise<void> {
   if (visible) return
   const token = ++paintToken
-  const target = await ensureWindow()
+  const target = await ensureLayerWindow(layer, createWindow, { watchDestroyed: true })
   if (!target || token !== paintToken || visible) return
 
   const point = restingPoint()
@@ -189,7 +157,7 @@ async function reveal(): Promise<void> {
   send(target, {
     visible: true,
     idle: true,
-    point: local(point, bounds)
+    point: toLayerPoint(point, bounds)
   })
   lastPoint = point
   visible = true
@@ -203,7 +171,7 @@ async function reveal(): Promise<void> {
  * and the action it describes has already been allowed and is about to run.
  */
 export function presentAgentAction(action: AgentPresentation): void {
-  const point = action.point ?? centre(action.target) ?? centre(action.window)
+  const point = action.point ?? rectCenter(action.target) ?? rectCenter(action.window)
   // A key press into an app that was never read has no point. The window still
   // came forward (the agent does that), and inventing a position would point the
   // user at a control the action never named. The mark stays where it is.
@@ -214,7 +182,7 @@ export function presentAgentAction(action: AgentPresentation): void {
 async function paint(action: AgentPresentation, point: { x: number; y: number }): Promise<void> {
   cancelExit()
   const token = ++paintToken
-  const target = await ensureWindow()
+  const target = await ensureLayerWindow(layer, createWindow, { watchDestroyed: true })
   if (!target || token !== paintToken) return
 
   const bounds = displayBounds(point)
@@ -230,18 +198,18 @@ async function paint(action: AgentPresentation, point: { x: number; y: number })
   // last target when the layer had to move to another display. On a normal step
   // there is no `from`; the renderer transitions from its current position.
   const from = !visible
-    ? (cursorInside ? local(cursor, bounds) : null)
+    ? (cursorInside ? toLayerPoint(cursor, bounds) : null)
     : moved && lastPoint
-      ? clampToLayer(local(lastPoint, bounds), bounds)
+      ? clampToLayer(toLayerPoint(lastPoint, bounds), bounds)
       : null
 
   send(target, {
     visible: true,
     idle: false,
-    point: local(point, bounds),
+    point: toLayerPoint(point, bounds),
     gesture: action.gesture,
     ...(from ? { from } : {}),
-    ...(action.target ? { target: localRect(action.target, bounds) } : {})
+    ...(action.target ? { target: toLayerRect(action.target, bounds) } : {})
   })
   lastPoint = point
   if (!visible) {
@@ -283,7 +251,7 @@ function hide(): void {
   // page to load must not show the layer after the run it belonged to has ended.
   const token = ++paintToken
   if (!visible) return
-  const target = win
+  const target = layer.window
   const frame = lastFrame
   if (!target || target.isDestroyed()) {
     visible = false
@@ -305,7 +273,7 @@ function hide(): void {
     placedOn = null
     lastFrame = null
     lastPoint = null
-  }, EXIT_MS)
+  }, POINTER_FADE_MS)
 }
 
 /**
@@ -329,7 +297,8 @@ export function destroyAgentPresentation(): void {
   placedOn = null
   lastFrame = null
   lastPoint = null
-  if (win && !win.isDestroyed()) win.destroy()
-  win = null
-  loaded = null
+  const target = layer.window
+  if (target && !target.isDestroyed()) target.destroy()
+  layer.window = null
+  layer.loaded = null
 }

@@ -10,110 +10,37 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type { AgentEvent, AgentPointerFrame, AgentPresentation, ScreenRect } from '@shared/types'
+import type { AgentEvent, AgentPointerFrame, AgentPresentation } from '@shared/types'
+import type { FakeLayerWindow } from '../test/layerWindowMock'
+import { lastLayerWindow } from '../test/layerWindowMock'
 
 const state = vi.hoisted(() => ({
   cursor: { x: 500, y: 400 },
   display: { x: 0, y: 0, width: 1440, height: 900 },
-  windows: [] as Array<{
-    bounds: ScreenRect | null
-    shown: number
-    hidden: number
-    destroyed: boolean
-    sent: AgentPointerFrame[]
-    loadHandlers: Record<string, () => void>
-  }>
+  windows: [] as FakeLayerWindow<AgentPointerFrame>[]
 }))
 
-vi.mock('electron', () => ({
-  BrowserWindow: class {
-    readonly webContents = {
-      setWindowOpenHandler: (_handler: unknown) => {
-        // This layer never opens anything.
-      },
-      once: (event: string, handler: () => void) => {
-        this.entry.loadHandlers[event] = handler
-        return this.webContents
-      },
-      send: (_channel: string, payload: AgentPointerFrame) => {
-        this.entry.sent.push(payload)
+vi.mock('electron', async () => {
+  const { layerWindowClass } = await import('../test/layerWindowMock')
+  return {
+    BrowserWindow: layerWindowClass(state),
+    screen: {
+      getCursorScreenPoint: () => state.cursor,
+      getDisplayNearestPoint: (point: { x: number; y: number }) => {
+        const inMain =
+          point.x >= state.display.x &&
+          point.x <= state.display.x + state.display.width &&
+          point.y >= state.display.y &&
+          point.y <= state.display.y + state.display.height
+        // The second display is the one the tests move to, at -1920.
+        return { bounds: inMain ? state.display : { x: -1920, y: 0, width: 1920, height: 1080 } }
       }
+    },
+    shell: {
+      openExternal: async () => undefined
     }
-    readonly entry: {
-      bounds: ScreenRect | null
-      shown: number
-      hidden: number
-      destroyed: boolean
-      sent: AgentPointerFrame[]
-      loadHandlers: Record<string, () => void>
-    }
-
-    constructor() {
-      this.entry = {
-        bounds: null,
-        shown: 0,
-        hidden: 0,
-        destroyed: false,
-        sent: [],
-        loadHandlers: {}
-      }
-      state.windows.push(this.entry)
-      queueMicrotask(() => this.entry.loadHandlers['did-finish-load']?.())
-    }
-
-    loadURL(): void {
-      // Not used: the dev-server branch is off in tests.
-    }
-    loadFile(): void {
-      // Not used: the dev-server branch is off in tests.
-    }
-    setBounds(bounds: ScreenRect): void {
-      this.entry.bounds = bounds
-    }
-    setAlwaysOnTop(): void {
-      // Part of the contract: the layer sits above full-screen apps.
-    }
-    setVisibleOnAllWorkspaces(): void {
-      // Part of the contract: the layer is visible across spaces.
-    }
-    on(event: string, handler: () => void): void {
-      this.entry.loadHandlers[event] = handler
-    }
-    setIgnoreMouseEvents(): void {
-      // Part of the contract: the layer never eats clicks.
-    }
-    setContentProtection(): void {
-      // Part of the contract: the layer never ends up in a screenshot.
-    }
-    showInactive(): void {
-      this.entry.shown += 1
-    }
-    hide(): void {
-      this.entry.hidden += 1
-    }
-    isDestroyed(): boolean {
-      return this.entry.destroyed
-    }
-    destroy(): void {
-      this.entry.destroyed = true
-    }
-  },
-  screen: {
-    getCursorScreenPoint: () => state.cursor,
-    getDisplayNearestPoint: (point: { x: number; y: number }) => {
-      const inMain =
-        point.x >= state.display.x &&
-        point.x <= state.display.x + state.display.width &&
-        point.y >= state.display.y &&
-        point.y <= state.display.y + state.display.height
-      // The second display is the one the tests move to, at -1920.
-      return { bounds: inMain ? state.display : { x: -1920, y: 0, width: 1920, height: 1080 } }
-    }
-  },
-  shell: {
-    openExternal: async () => undefined
   }
-}))
+})
 
 type PresentationModule = typeof import('./presentation')
 
@@ -139,8 +66,8 @@ async function settle(): Promise<void> {
   for (let index = 0; index < 5; index += 1) await Promise.resolve()
 }
 
-function win(): (typeof state.windows)[number] {
-  return state.windows[state.windows.length - 1]
+function win(): FakeLayerWindow<AgentPointerFrame> {
+  return lastLayerWindow(state)
 }
 
 beforeEach(async () => {

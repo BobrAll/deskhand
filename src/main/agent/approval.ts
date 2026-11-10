@@ -33,9 +33,40 @@ export type ApprovalDecision =
  *
  * Inflected Russian, so these are stems. `[^а-яё]` stands in for a word boundary
  * because `\b` is ASCII-only and treats every Cyrillic letter as a boundary.
+ *
+ * Grouped by what the action commits to, because that is the judgement this list
+ * encodes: money leaves, something is said in public, something is destroyed,
+ * access is granted, a credential changes, an agreement is signed. The groups are
+ * joined into one expression, since the classifier only asks whether any of them
+ * is present.
  */
-const CRITICAL =
-  /оплат|купить|покупк|оформить заказ|подтвердить заказ|подписаться|продлить подписк|перевести деньги|денежн\S* перевод|оформить кредит|взять займ|криптовалют|отправить|опубликовать|удалить|очистить корзину|предоставить доступ|разрешить доступ|поделиться|сменить пароль|изменить пароль|отключить.*(?:2fa|защит|аутентификац)|подписать|принять условия|установить|\b(?:pay|purchase|buy|checkout|place order|subscribe|send|publish|delete|erase|empty trash|transfer money|wire transfer|take out a loan|share|grant access|allow access|change password|disable security|disable 2fa|sign contract|accept terms|install)\b/i
+const PAYMENT_WORDS =
+  'оплат|купить|покупк|оформить заказ|подтвердить заказ|подписаться|продлить подписк|' +
+  'перевести деньги|денежн\\S* перевод|оформить кредит|взять займ|криптовалют'
+const SENDING_WORDS = 'отправить|опубликовать'
+const DELETION_WORDS = 'удалить|очистить корзину'
+const ACCESS_WORDS = 'предоставить доступ|разрешить доступ|поделиться'
+const PASSWORD_WORDS = 'сменить пароль|изменить пароль|отключить.*(?:2fa|защит|аутентификац)'
+const AGREEMENT_WORDS = 'подписать|принять условия|установить'
+/** English has real word boundaries, so the whole group is anchored to them. */
+const ENGLISH_WORDS =
+  '\\b(?:pay|purchase|buy|checkout|place order|subscribe|send|publish|delete|erase|' +
+  'empty trash|transfer money|wire transfer|take out a loan|share|grant access|' +
+  'allow access|change password|disable security|disable 2fa|sign contract|' +
+  'accept terms|install)\\b'
+
+const COMMITTING_ACTION = new RegExp(
+  [
+    PAYMENT_WORDS,
+    SENDING_WORDS,
+    DELETION_WORDS,
+    ACCESS_WORDS,
+    PASSWORD_WORDS,
+    AGREEMENT_WORDS,
+    ENGLISH_WORDS
+  ].join('|'),
+  'i'
+)
 
 const MESSAGE_FIELD = /сообщени|письмо|комментари|\b(?:message|reply|comment|chat)\b/i
 
@@ -44,6 +75,14 @@ const SECRET =
 
 /** Keys that submit something, in the xdotool grammar the agent uses. */
 const SUBMIT_KEY = /(^|\+)(Return|KP_Enter|enter)$/i
+
+/** The modifiers that make a keystroke a command rather than a character. */
+const COMMAND_MODIFIER = /(^|\+)(ctrl|super|cmd)/i
+
+/** The Finder key that sends a file to the Trash. */
+const FINDER_DELETE_KEY = /(^|\+)(BackSpace|Delete)$/i
+
+const FINDER_BUNDLE_ID = 'com.apple.finder'
 
 /**
  * Tools that only read, or that prepare a change without committing it.
@@ -65,7 +104,7 @@ function text(value: unknown): string {
 }
 
 /** Everything the call is about, for the keyword match to look at. */
-function describe(request: AgentToolRequest): string {
+function matchableText(request: AgentToolRequest): string {
   const args = request.arguments
   return [
     request.title,
@@ -136,20 +175,21 @@ export function rememberKey(fingerprint: string): string {
 /**
  * Decides whether one call needs the user.
  *
- * `remembered` holds the fingerprints the user already allowed forever; a call
- * that matches one of them is not asked about again. The fingerprint comes from
- * the agent (app, role, title, button, key) and never contains typed text, so a
- * remembered approval covers the same button and not the same sentence.
+ * `rememberedKeys` holds the digests of the fingerprints the user already allowed
+ * forever; a call that matches one of them is not asked about again. The
+ * fingerprint comes from the agent (app, role, title, button, key) and never
+ * contains typed text, so a remembered approval covers the same button and not
+ * the same sentence.
  */
-export function classifyCall(request: AgentToolRequest, remembered: string[]): ApprovalDecision {
-  const context = describe(request)
+export function classifyCall(request: AgentToolRequest, rememberedKeys: string[]): ApprovalDecision {
+  const context = matchableText(request)
 
   // Never: a password typed by an assistant is a password in a transcript.
   if (request.tool === 'type_text' && SECRET.test(context)) {
     return { kind: 'deny', reason: 'Секреты и пароли введите вручную.' }
   }
 
-  if (request.fingerprint && remembered.includes(rememberKey(request.fingerprint))) {
+  if (request.fingerprint && rememberedKeys.includes(rememberKey(request.fingerprint))) {
     return { kind: 'allow' }
   }
   if (HARMLESS.has(request.tool)) return { kind: 'allow' }
@@ -158,14 +198,14 @@ export function classifyCall(request: AgentToolRequest, remembered: string[]): A
   if (request.tool === 'type_text' || request.tool === 'set_value') return { kind: 'allow' }
   if (request.tool === 'click' && request.textField) return { kind: 'allow' }
 
-  let critical = CRITICAL.test(context)
+  let critical = COMMITTING_ACTION.test(context)
   if (request.tool === 'press_key') {
     const key = text(request.arguments.key)
     const submit = SUBMIT_KEY.test(key)
-    const command = /(^|\+)(ctrl|super|cmd)/i.test(key)
+    const command = COMMAND_MODIFIER.test(key)
     critical = (submit && critical) ||
       (submit && (command || MESSAGE_FIELD.test(context))) ||
-      (request.bundleId === 'com.apple.finder' && command && /(^|\+)(BackSpace|Delete)$/i.test(key))
+      (request.bundleId === FINDER_BUNDLE_ID && command && FINDER_DELETE_KEY.test(key))
   }
   if (!critical) return { kind: 'allow' }
 

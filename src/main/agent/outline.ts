@@ -42,6 +42,18 @@ function nameTexts(element: AxElementInfo): string[] {
 
 const MAX_ITEMS = 70
 const MAX_NAME = 46
+/**
+ * How many candidates to collect before sorting.
+ *
+ * The list is capped after it is put into reading order, so the cap has to be
+ * applied to a larger set: otherwise the last row of the window could be dropped
+ * while an element from the first row was kept.
+ */
+const OVERCOLLECT_FACTOR = 3
+/** Elements whose vertical centres are this close are on the same row. */
+const SAME_ROW_POINTS = 12
+/** A frame smaller than this on either side is a hairline or a collapsed row. */
+const MIN_FRAME_SIDE = 2
 
 /**
  * The Accessibility API's word for a widget, shortened for the list.
@@ -84,28 +96,46 @@ function inside(frame: ScreenRect, area: ScreenRect): boolean {
 }
 
 /**
+ * Whether an element is a usable target at all: a real frame of at least 2×2,
+ * with its centre inside the capture the model saw and inside the window the
+ * request is about.
+ *
+ * The two callers start here and then diverge, and the difference is kept rather
+ * than unified: `formatOutline` also requires a visible name and lists an
+ * editable only when it is a text field, while the grounding set keeps every
+ * editable — a checkbox carries a name the model may quote even though it is not
+ * a place to type.
+ */
+function isListable(
+  element: AxElementInfo,
+  captureArea: ScreenRect,
+  windowBounds: ScreenRect | null
+): element is AxElementInfo & { frame: ScreenRect } {
+  const rect = element.frame
+  if (!rect || rect.width < MIN_FRAME_SIDE || rect.height < MIN_FRAME_SIDE) return false
+  if (!inside(rect, captureArea)) return false
+  if (!inside(rect, windowBounds ?? captureArea)) return false
+  return Boolean(element.pressable || element.editable)
+}
+
+/**
  * One line per named control, in the order the eye reads them.
  *
- * Elements outside `bounds` — a virtualised list reports rows that are scrolled
- * out of the window — are dropped: the model cannot have seen them, and naming
- * one would aim a click below the window's edge.
+ * Elements outside `windowBounds` — a virtualised list reports rows that are
+ * scrolled out of the window — are dropped: the model cannot have seen them, and
+ * naming one would aim a click below the window's edge.
  */
 export function formatOutline(
   probe: AxProbe,
-  bounds: ScreenRect | null,
-  area: ScreenRect
+  windowBounds: ScreenRect | null,
+  captureArea: ScreenRect
 ): string | null {
-  const limit = bounds ?? area
   const seen = new Set<string>()
   const rows: { x: number; y: number; line: string }[] = []
 
   for (const element of probe.targets) {
+    if (!isListable(element, captureArea, windowBounds)) continue
     const rect = element.frame
-    if (!rect) continue
-    if (!element.pressable && !element.editable) continue
-    if (rect.width < 2 || rect.height < 2) continue
-    if (!inside(rect, area)) continue
-    if (!inside(rect, limit)) continue
     if (element.editable && element.role !== 'AXTextField' && element.role !== 'AXTextArea') {
       continue
     }
@@ -115,15 +145,17 @@ export function formatOutline(
     const key = `${name}|${Math.round(rect.x)},${Math.round(rect.y)}`
     if (seen.has(key)) continue
     seen.add(key)
-    const cx = (rect.x + rect.width / 2 - area.x) / area.width
-    const cy = (rect.y + rect.height / 2 - area.y) / area.height
+    const cx = (rect.x + rect.width / 2 - captureArea.x) / captureArea.width
+    const cy = (rect.y + rect.height / 2 - captureArea.y) / captureArea.height
     const line = `  ${round3(cx)} ${round3(cy)}  ${kind ? `${kind} ` : ''}«${name}»`
     rows.push({ x: rect.x, y: rect.y, line })
-    if (rows.length >= MAX_ITEMS * 3) break
+    if (rows.length >= MAX_ITEMS * OVERCOLLECT_FACTOR) break
   }
 
   if (rows.length === 0) return null
-  rows.sort((a, b) => (Math.abs(a.y - b.y) > 12 ? a.y - b.y : a.x - b.x))
+  rows.sort((a, b) =>
+    Math.abs(a.y - b.y) > SAME_ROW_POINTS ? a.y - b.y : a.x - b.x
+  )
   const kept = rows.slice(0, MAX_ITEMS)
 
   return [
@@ -147,17 +179,14 @@ export function formatOutline(
  */
 export async function describeScreen(
   pid: number | null,
-  bounds: ScreenRect | null,
-  area: ScreenRect,
+  windowBounds: ScreenRect | null,
+  captureArea: ScreenRect,
   onTargets?: (targets: AxElementInfo[]) => void
 ): Promise<string | null> {
   const probe = await helperProbe(pid, null)
   if (!probe || probe.targets.length === 0) return null
-  onTargets?.(probe.targets.filter((element) => {
-    const rect = element.frame
-    return Boolean(rect && rect.width >= 2 && rect.height >= 2 &&
-      inside(rect, area) && inside(rect, bounds ?? area) &&
-      (element.pressable || element.editable))
-  }).map((element) => ({ ...element, pid: element.pid ?? probe.pid })))
-  return formatOutline(probe, bounds, area)
+  onTargets?.(probe.targets
+    .filter((element) => isListable(element, captureArea, windowBounds))
+    .map((element) => ({ ...element, pid: element.pid ?? probe.pid })))
+  return formatOutline(probe, windowBounds, captureArea)
 }

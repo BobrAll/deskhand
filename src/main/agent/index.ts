@@ -84,7 +84,7 @@ export interface AgentRunInput {
   provider: AgentProvider
 }
 
-const EMPTY: AgentEvent = { phase: 'idle', step: 0, total: 0, label: '' }
+const IDLE_EVENT: AgentEvent = { phase: 'idle', step: 0, total: 0, label: '' }
 
 /**
  * A question nobody answers must not hang the run.
@@ -140,6 +140,30 @@ function plural(count: number, one: string, few: string, many: string): string {
 }
 
 /**
+ * The reasons the loop gives for ending a run without finishing it, as the
+ * substrings it writes them with.
+ *
+ * The loop's diagnostics are English sentences assembled in Swift
+ * ("the step budget ran out", "the model's reply was cut off at the token
+ * limit"), and they are matched here rather than compared whole because each
+ * one carries the numbers of the run it happened in. These strings are the
+ * contract with the loop: change them only together with the Swift side.
+ */
+const STOP_BUDGET = 'budget'
+const STOP_TOKEN_LIMIT = 'token limit'
+const STOP_REPEATED = 'repeated'
+const STOP_RETURNING_TO_SCREEN = 'returning to a screen'
+
+/**
+ * The fallback reason for a run that ended unfinished without saying why.
+ *
+ * Not one of the loop's diagnostics: it never sends this. It exists so a `done`
+ * that contradicts itself — not complete, no stop event before it — is still
+ * explained to the user rather than drawn as a success.
+ */
+const UNKNOWN_STOP = 'incomplete'
+
+/**
  * Why the run ended without finishing, in the user's language.
  *
  * The loop's reasons are its own English diagnostics ("the step budget ran
@@ -149,11 +173,11 @@ function plural(count: number, one: string, few: string, many: string): string {
  * finishing the task") is worse still, because it reads like an answer.
  */
 function stopMessage(reason: string, total: number): string {
-  if (reason.includes('budget')) {
+  if (reason.includes(STOP_BUDGET)) {
     return `Не успел за ${total} ${plural(total, 'шаг', 'шага', 'шагов')} — задача осталась ` +
       'невыполненной. Увеличьте лимит шагов в настройках или уточните запрос.'
   }
-  if (reason.includes('token limit')) {
+  if (reason.includes(STOP_TOKEN_LIMIT)) {
     // Not the same problem as running out of steps: the run had budget left, but
     // every answer was cut in half, so the model never got to say what it wanted
     // to do. Raising the step limit would not help — the fix is the output
@@ -161,11 +185,11 @@ function stopMessage(reason: string, total: number): string {
     return 'Остановился: ответ модели обрывался по лимиту длины. Увеличьте максимум ' +
       'токенов в настройках — задача осталась невыполненной.'
   }
-  if (reason.includes('repeated')) {
+  if (reason.includes(STOP_REPEATED)) {
     return 'Остановился: одно и то же действие повторялось без изменений. ' +
       'Задача осталась невыполненной.'
   }
-  if (reason.includes('returning to a screen')) {
+  if (reason.includes(STOP_RETURNING_TO_SCREEN)) {
     // Not the same as a repeated call: the run tried different things and kept
     // arriving at the same screen. Raising the step limit would only buy more of
     // the same, so the honest answer names the loop instead.
@@ -223,7 +247,8 @@ export function createAgentController(host: AgentHost) {
   /** Bumped by `stop()`; a run compares it and gives up. */
   let generation = 0
   let running = false
-  let last: AgentEvent = EMPTY
+  /** The last event the card was told about. */
+  let lastPublished: AgentEvent = IDLE_EVENT
 
   /** The run in flight, if any. */
   let current: {
@@ -301,21 +326,21 @@ export function createAgentController(host: AgentHost) {
 
   /** Merges a patch into the last event and publishes it. */
   function publish(patch: Partial<AgentEvent> & { phase: AgentEvent['phase'] }): void {
-    last = {
+    lastPublished = {
       phase: patch.phase,
-      step: patch.step ?? last.step,
-      total: patch.total ?? last.total,
-      label: patch.label ?? last.label,
+      step: patch.step ?? lastPublished.step,
+      total: patch.total ?? lastPublished.total,
+      label: patch.label ?? lastPublished.label,
       completed: patch.completed ?? (patch.phase === 'done' ? true : undefined),
-      approval: patch.approval !== undefined ? patch.approval : (last.approval ?? null),
-      actions: patch.actions ?? last.actions,
+      approval: patch.approval !== undefined ? patch.approval : (lastPublished.approval ?? null),
+      actions: patch.actions ?? lastPublished.actions,
       message: patch.message
     }
-    host.emit(last)
+    host.emit(lastPublished)
   }
 
   /** The rows the card lists: what was done, oldest first. */
-  function rows(): AgentActionRow[] {
+  function actionRows(): AgentActionRow[] {
     return current ? [...current.actions] : []
   }
 
@@ -420,24 +445,8 @@ export function createAgentController(host: AgentHost) {
     // for each question and put back after the answer.
     host.setPassthrough(true)
 
-    // The mouse is the most reliable "no" there is: reaching for the pointer takes
-    // control back before the next click lands. Escape works always.
-    watcher = watchForAbort({ watchMouse: settings.agent.abortOnMouseMove }, (reason) => {
-      if (token !== generation) return
-      trace('agent.abort', { reason })
-      stop(reason === 'mousemove' ? 'Остановлено: вы взяли мышь.' : 'Остановлено по Escape.')
-    })
-
-    const off = sidecar.onEvent((event) => {
-      if (token !== generation) return
-      if (event.kind === 'modelTrace') {
-        runTrace.record(event.event, { step: current?.step, ...event.data })
-        return
-      }
-      // The wire response carries the stream. Avoid writing every growing
-      // prefix a second time as the UI receives it.
-      if (event.kind !== 'stream') runTrace.record(event.kind, event)
-      handle(event)
+    const stopListening = subscribeToRun(token, runTrace, {
+      abortOnMouseMove: settings.agent.abortOnMouseMove
     })
 
     try {
@@ -456,29 +465,71 @@ export function createAgentController(host: AgentHost) {
       })
       trace('agent.accepted', { maxSteps: total })
     } catch (error) {
-      finish({
+      settleRun({
         answer: '',
-        actions: rows(),
+        actions: actionRows(),
         message: error instanceof Error ? error.message : 'Не удалось запустить агента.',
         blocked: true
       })
     }
 
     const result = await done
-    off()
-    watcher?.stop()
-    watcher = null
+    stopListening()
+    releaseRun()
+    return result
+  }
+
+  /**
+   * Starts listening for the run: the user's way out, and the agent's events.
+   *
+   * Returns the function that stops both. The run is identified by `token`, so a
+   * callback that outlives it — a mouse move after the next run started — is
+   * ignored rather than applied to the wrong run.
+   */
+  function subscribeToRun(
+    token: number,
+    runTrace: ReturnType<typeof createRunTrace>,
+    options: { abortOnMouseMove: boolean }
+  ): () => void {
+    // The mouse is the most reliable "no" there is: reaching for the pointer takes
+    // control back before the next click lands. Escape works always.
+    watcher = watchForAbort({ watchMouse: options.abortOnMouseMove }, (reason) => {
+      if (token !== generation) return
+      trace('agent.abort', { reason })
+      stop(reason === 'mousemove' ? 'Остановлено: вы взяли мышь.' : 'Остановлено по Escape.')
+    })
+
+    const off = sidecar.onEvent((event) => {
+      if (token !== generation) return
+      if (event.kind === 'modelTrace') {
+        runTrace.record(event.event, { step: current?.step, ...event.data })
+        return
+      }
+      // The wire response carries the stream. Avoid writing every growing
+      // prefix a second time as the UI receives it.
+      if (event.kind !== 'stream') runTrace.record(event.kind, event)
+      handleSidecarEvent(event)
+    })
+
+    return () => {
+      off()
+      watcher?.stop()
+      watcher = null
+    }
+  }
+
+  /** Forgets the finished run and gives the card its mouse back. */
+  function releaseRun(): void {
     running = false
     current = null
     activeTrace = null
     // Whatever ended the run, the card takes the mouse back: leaving it
     // click-through would leave a panel nobody can press a button on.
     host.setPassthrough(false)
-    return result
   }
 
   /** One event from the agent, as the card sees it. */
-  function handle(event: AgentSidecarEvent): void {
+  function handleSidecarEvent(event: AgentSidecarEvent): void {
     const active = current
     if (!active) return
     switch (event.kind) {
@@ -492,8 +543,8 @@ export function createAgentController(host: AgentHost) {
           phase: 'acting',
           step: event.step,
           total: active.total,
-          label: last.label || 'Работаю',
-          actions: rows()
+          label: lastPublished.label || 'Работаю',
+          actions: actionRows()
         })
         return
       case 'stream':
@@ -506,11 +557,11 @@ export function createAgentController(host: AgentHost) {
             trace('agent.firstToken', { step: active.step, chars: event.text.length })
           }
           publish({
-            phase: last.phase === 'asking' ? 'acting' : last.phase,
+            phase: lastPublished.phase === 'asking' ? 'acting' : lastPublished.phase,
             step: active.step,
             total: active.total,
             label: caption(event.text),
-            actions: rows()
+            actions: actionRows()
           })
         }
         return
@@ -519,11 +570,11 @@ export function createAgentController(host: AgentHost) {
         // than anything this file could invent from a tool name.
         if (event.text.trim()) {
           publish({
-            phase: last.phase === 'asking' ? 'acting' : last.phase,
+            phase: lastPublished.phase === 'asking' ? 'acting' : lastPublished.phase,
             step: active.step,
             total: active.total,
             label: event.text.trim(),
-              actions: rows()
+              actions: actionRows()
           })
         }
         return
@@ -543,7 +594,7 @@ export function createAgentController(host: AgentHost) {
             fingerprint: '',
             narration: event.narration
           }),
-          actions: rows()
+          actions: actionRows()
         })
         return
       case 'present':
@@ -570,7 +621,7 @@ export function createAgentController(host: AgentHost) {
       case 'result': {
         active.actions.push({
           tool: event.name,
-          label: last.label || event.name,
+          label: lastPublished.label || event.name,
           ok: event.ok
         })
         // The phases are recorded separately because they have different fixes;
@@ -581,7 +632,7 @@ export function createAgentController(host: AgentHost) {
           ok: event.ok,
           ...roundedTiming(event.timing)
         })
-        publish({ phase: 'acting', step: event.step, total: active.total, actions: rows() })
+        publish({ phase: 'acting', step: event.step, total: active.total, actions: actionRows() })
         return
       }
       case 'runReport':
@@ -626,7 +677,7 @@ export function createAgentController(host: AgentHost) {
         // ("Stopped after 3 steps without finishing the task"), not the model's,
         // so it is not the answer — the card says what happened in the user's
         // language instead.
-        const stopped = event.complete ? null : (active.stopped ?? 'incomplete')
+        const stopped = event.complete ? null : (active.stopped ?? UNKNOWN_STOP)
         if (stopped !== null) {
           const explanation = stopMessage(stopped, active.total)
           publish({
@@ -635,11 +686,11 @@ export function createAgentController(host: AgentHost) {
             step: 0,
             total: 0,
             label: explanation,
-            actions: rows(),
+            actions: actionRows(),
             approval: null,
             message: explanation
           })
-          finish({ answer: '', actions: rows(), message: explanation, incomplete: true })
+          settleRun({ answer: '', actions: actionRows(), message: explanation, incomplete: true })
           return
         }
         publish({
@@ -648,10 +699,10 @@ export function createAgentController(host: AgentHost) {
           step: 0,
           total: 0,
           label: 'Готово',
-          actions: rows(),
+          actions: actionRows(),
           approval: null
         })
-        finish({ answer: event.answer, actions: rows() })
+        settleRun({ answer: event.answer, actions: actionRows() })
         return
       }
       case 'cancelled':
@@ -660,11 +711,11 @@ export function createAgentController(host: AgentHost) {
           step: 0,
           total: 0,
           label: '',
-          actions: rows(),
+          actions: actionRows(),
           approval: null,
           message: 'Остановлено.'
         })
-        finish({ answer: '', actions: rows(), aborted: true, message: 'Остановлено.' })
+        settleRun({ answer: '', actions: actionRows(), aborted: true, message: 'Остановлено.' })
         return
       case 'error':
         publish({
@@ -672,11 +723,11 @@ export function createAgentController(host: AgentHost) {
           step: active.step,
           total: active.total,
           label: '',
-          actions: rows(),
+          actions: actionRows(),
           approval: null,
           message: event.message
         })
-        finish({ answer: '', actions: rows(), message: event.message })
+        settleRun({ answer: '', actions: actionRows(), message: event.message })
         return
     }
   }
@@ -700,7 +751,7 @@ export function createAgentController(host: AgentHost) {
       trace('agent.approval', { outcome: 'denied' })
       approve(request.id, false, decision.reason)
       active.actions.push({ tool: request.tool, label: decision.reason, ok: false })
-      publish({ phase: 'acting', actions: rows() })
+      publish({ phase: 'acting', actions: actionRows() })
       return
     }
 
@@ -732,13 +783,13 @@ export function createAgentController(host: AgentHost) {
         // The panel had the mouse and the focus for a moment; the agent's next
         // click must not land on it.
         host.setPassthrough(true)
-        publish({ phase: 'acting', approval: null, actions: rows() })
+        publish({ phase: 'acting', approval: null, actions: actionRows() })
       } else {
         publish({
           phase: 'aborted',
           label: '',
           approval: null,
-          actions: rows(),
+          actions: actionRows(),
           message: 'Действие отклонено.'
         })
       }
@@ -754,14 +805,14 @@ export function createAgentController(host: AgentHost) {
       step: active.step,
       total: active.total,
       label: describeCall(request),
-      actions: rows(),
+      actions: actionRows(),
       approval: request,
       message: decision.detail
     })
   }
 
   /** Ends the run: the answer has arrived, or something went wrong. */
-  function finish(result: AgentRunResult): void {
+  function settleRun(result: AgentRunResult): void {
     const active = current
     if (!active) return
     if (active.pending) {
@@ -802,7 +853,7 @@ export function createAgentController(host: AgentHost) {
       approval: null,
       message
     })
-    finish({ answer: '', actions: rows(), aborted: true, message })
+    settleRun({ answer: '', actions: actionRows(), aborted: true, message })
   }
 
   /** Releases the process; called on quit so no agent outlives the window. */
@@ -818,9 +869,19 @@ export function createAgentController(host: AgentHost) {
     stop,
     answer,
     dispose,
-    last: () => last
+    last: () => lastPublished
   }
 }
+
+/**
+ * How much of one earlier turn the agent needs.
+ *
+ * The whole point of the block is the noun the current request leaves out, and
+ * that noun is almost always in the first sentences. The card already trims its
+ * history; this is the second ceiling, because a long answer would otherwise be
+ * paid for on every step of the run, not once.
+ */
+const HISTORY_TURN_CHARS = 900
 
 /**
  * The task, as the agent reads it.
@@ -856,16 +917,6 @@ function taskText(input: AgentRunInput): string {
   lines.push(input.prompt.trim())
   return lines.join('\n')
 }
-
-/**
- * How much of one earlier turn the agent needs.
- *
- * The whole point of the block is the noun the current request leaves out, and
- * that noun is almost always in the first sentences. The card already trims its
- * history; this is the second ceiling, because a long answer would otherwise be
- * paid for on every step of the run, not once.
- */
-const HISTORY_TURN_CHARS = 900
 
 function clipHistory(text: string): string {
   const line = text.replace(/\s+/g, ' ').trim()

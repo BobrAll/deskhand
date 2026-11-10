@@ -1,5 +1,8 @@
 import type { Annotation, AxElementInfo, ScreenRect } from '@shared/types'
 
+/** A frame covering more than this share of either axis is a container, not a target. */
+const MAX_TARGET_SHARE = 0.95
+
 function normalized(value: string): string {
   return value.normalize('NFKC').replace(/\s+/g, ' ').trim().toLocaleLowerCase()
 }
@@ -13,15 +16,17 @@ export function groundAnnotation(
   if (!annotation.label || area.width <= 0 || area.height <= 0) return annotation
   const name = normalized(annotation.label)
   if (!name) return annotation
-  const matches = targets.filter((element) => {
-    const raw = element.title ?? element.description ?? (element.editable ? '' : element.value) ?? ''
-    return normalized(String(raw)) === name && element.frame
-  })
+  const matches = targets.filter(
+    (element): element is AxElementInfo & { frame: ScreenRect } => {
+      const raw = element.title ?? element.description ?? (element.editable ? '' : element.value) ?? ''
+      return normalized(String(raw)) === name && Boolean(element.frame)
+    }
+  )
   if (matches.length !== 1) return annotation
-  const rect = matches[0].frame!
+  const rect = matches[0].frame
   // Off-screen or oversized containers are not useful drawing targets.
-  if (rect.width < 2 || rect.height < 2 || rect.width >= area.width * 0.95 ||
-    rect.height >= area.height * 0.95 || rect.x < area.x || rect.y < area.y ||
+  if (rect.width < 2 || rect.height < 2 || rect.width >= area.width * MAX_TARGET_SHARE ||
+    rect.height >= area.height * MAX_TARGET_SHARE || rect.x < area.x || rect.y < area.y ||
     rect.x + rect.width > area.x + area.width || rect.y + rect.height > area.y + area.height) {
     return annotation
   }

@@ -25,8 +25,29 @@ import type { Annotation, AnnotationKind, Point01 } from '@shared/types'
 
 const KINDS: AnnotationKind[] = ['circle', 'box', 'arrow', 'underline']
 
-/** A shape that is bigger than this in one axis is treated as a misunderstanding. */
+/** The markers that open a drawing line; `@point` and `@draw` are the generic ones. */
+const MARKERS = ['point', 'draw', ...KINDS]
+
+const MARKER = new RegExp(`^@(?:${MARKERS.join('|')})\\b`, 'i')
+
+/**
+ * The smallest extent, in 0–1 units, that a drawing can have and still be meant.
+ *
+ * A shape below this in *both* axes is a point rather than a drawing: the model
+ * wrote one coordinate and meant to point at it. A circle survives that — a
+ * default size is added later — while an arrow, an underline or a box with no
+ * length is dropped, because there is nothing to draw and nothing was meant.
+ */
 const MIN_SIDE = 0.004
+
+/** Above this a coordinate is a percentage written by accident (50, 80), not 0–1. */
+const PERCENT_COORDINATE = 1.5
+
+/** The side of the default circle when the model gave a single point. */
+const DEFAULT_SIDE = 0.03
+
+/** A box covering more than this share of either axis is a hallucination. */
+const MAX_BOX_SHARE = 0.95
 
 const MAX_LABEL = 90
 
@@ -62,7 +83,7 @@ function cleanLabel(raw: string): string | undefined {
  */
 export function parseAnnotationLine(line: string): ParsedLine | null {
   const trimmed = line.trim()
-  if (!/^@(point|draw|arrow|circle|box|underline)\b/i.test(trimmed)) return null
+  if (!MARKER.test(trimmed)) return null
 
   // Everything after the leading marker, split on whitespace and commas so both
   // "@point arrow 0.5 0.8 0.8 0.1" and "@point arrow, 0.5, 0.8, 0.8, 0.1" work.
@@ -95,11 +116,13 @@ export function parseAnnotationLine(line: string): ParsedLine | null {
 
   // Two numbers describe a circle centre plus a default radius; four describe a
   // full start→end pair. Coordinates may be given as percentages by accident.
-  const scaled = numbers.map((value) => (Math.abs(value) > 1.5 ? value / 100 : value))
+  const scaled = numbers.map((value) =>
+    Math.abs(value) > PERCENT_COORDINATE ? value / 100 : value
+  )
   const x1 = clamp01(scaled[0])
   const y1 = clamp01(scaled[1])
-  const x2 = scaled.length >= 4 ? clamp01(scaled[2]) : clamp01(x1 + 0.03)
-  const y2 = scaled.length >= 4 ? clamp01(scaled[3]) : clamp01(y1 + 0.03)
+  const x2 = scaled.length >= 4 ? clamp01(scaled[2]) : clamp01(x1 + DEFAULT_SIDE)
+  const y2 = scaled.length >= 4 ? clamp01(scaled[3]) : clamp01(y1 + DEFAULT_SIDE)
 
   const from: Point01 = { x: x1, y: y1 }
   const to: Point01 = { x: x2, y: y2 }
@@ -127,8 +150,8 @@ export function isDrawable(annotation: Annotation): boolean {
   if (!inside) return false
   const width = Math.abs(to.x - from.x)
   const height = Math.abs(to.y - from.y)
-  if (kind === 'circle') return width + height > MIN_SIDE
-  if (kind === 'underline' || kind === 'arrow') return width + height > MIN_SIDE
+  // A line needs some length in either direction; a box needs both.
+  if (kind !== 'box') return width + height > MIN_SIDE
   // Boxes: reject ones that swallow most of the screen.
-  return width > MIN_SIDE && height > MIN_SIDE && width < 0.95 && height < 0.95
+  return width > MIN_SIDE && height > MIN_SIDE && width < MAX_BOX_SHARE && height < MAX_BOX_SHARE
 }
