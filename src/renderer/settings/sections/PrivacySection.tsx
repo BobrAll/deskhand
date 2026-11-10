@@ -40,7 +40,7 @@ export function PrivacySection({
       <Group title="Доступ">
         <PermissionRow
           title="Универсальный доступ"
-          hint="Читать выделенный текст и вставлять ответ."
+          hint="Читать выделенный текст и вставлять ответ; управлять мышью — только если включён режим «Агент»."
           granted={permissions?.accessibility ?? false}
           onRequest={async () => {
             const next = await window.deskhand.permissions.request()

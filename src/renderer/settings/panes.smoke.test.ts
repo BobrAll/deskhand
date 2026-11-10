@@ -104,6 +104,24 @@ describe('the settings panes', () => {
     expect(privacy()).toContain('Исключённые приложения')
   })
 
+  it('tells the three states of the agent switch apart', () => {
+    const render = (enabled: boolean): string =>
+      renderToStaticMarkup(
+        createElement(AgentTab, {
+          agent: { ...DEFAULT_SETTINGS.agent, enabled },
+          onChange: noop,
+          onEnabledChange: async () => ({ enabled: true, ready: true, reason: null })
+        })
+      )
+
+    // Off: said plainly, and no grant button — the grant is a different question
+    // from the mode, which is exactly what the panel used to leave unsaid.
+    expect(render(false)).toContain('Режим выключен')
+    expect(render(false)).not.toContain('Открыть доступ')
+    // On, but the machine has not said whether it is ready yet: no claim either way.
+    expect(render(true)).not.toContain('Права выданы')
+  })
+
   it('keeps the address next to the key it belongs to', () => {
     const html = provider()
     const key = html.indexOf('Ключ API')
