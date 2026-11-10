@@ -53,11 +53,9 @@ export function routeStream(event: StreamEvent, state: StreamState): StreamActio
   // A request the card has already given up on: anything still in flight for it is
   // a leftover, not an answer.
   if (event.requestId === state.ignoredRequest) return { kind: 'ignore' }
-  // A request that is not the one being waited on. The guard is written exactly
-  // as it was — including the fact that it only applies *while* there is
-  // something to wait for. With `requestId === null` the card is not waiting, and
-  // an event is still let through; that is the behaviour being carried over
-  // unchanged, not an oversight introduced here.
+  // A request that is not the one being waited on is a leftover. The guard only
+  // applies while there is a request to wait for: with none in flight the card is
+  // not waiting, so any event is accepted.
   if (state.requestId !== null && event.requestId !== state.requestId) return { kind: 'ignore' }
 
   const clearSpoken = state.spokenPrompt

@@ -38,14 +38,12 @@ import {
   CARET_SLACK,
   CHROME_WIDTH,
   FIELD_FONT,
-  REFINE_HINT,
-  REFINE_LABEL,
   STOP_CHROME,
   clamp
 } from './cardMetrics'
+import { REFINE_HINT, REFINE_LABEL } from './copy'
 import { useSpeech } from './useSpeech'
 import { useWaiting } from './useWaiting'
-import { waitingStage } from './waiting'
 import { useVoice } from './useVoice'
 import { deriveView } from './viewFlags'
 import { agentLabel, agentMark } from './agentRow'
@@ -472,10 +470,10 @@ export function App() {
   // Drawers and confirmations need room for controls. Progress and answers
   // size to their content.
   const waiting = useWaiting(requestIdRef.current, busy && !failure && !listening)
-  const waitStage = waitingStage(waiting.elapsed)
+  const waitStage = waiting.stage
   const agentRunning = busy && agent !== null
   const agentStatus = agent && agentLabel(agent, answer)
-  const agentDone = !busy && !hasAnswer && agent?.phase === 'done' && agent.completed === true
+  const agentDone = !busy && !hasAnswer && agent !== null && agentMark(agent) === 'done'
   const showWaiting = waitStage !== 'quiet' && !hasAnswer && !agent
   const wantsWide = (expanded && !agentRunning) || Boolean(failure) ||
     agent?.phase === 'asking' || showWaiting
@@ -1094,6 +1092,8 @@ export function App() {
   const { context, flags, setupNotice } = state
   const selection = context.selection
   const screenshot = context.screenshot
+  /** The call the run is waiting on an answer for, if any. */
+  const approval = agent?.approval ?? null
 
   return (
     // While the assistant is painting on the screen the card turns into a much
@@ -1259,7 +1259,7 @@ export function App() {
           </svg>
           <span className="agent-label">Готово</span>
         </div>
-      ) : agent && (agentStatus || agent.approval) ? (
+      ) : agent && (agentStatus || approval) ? (
         <div
           className="agent"
           data-phase={agent.phase}
@@ -1280,25 +1280,25 @@ export function App() {
             appears where the step it belongs to appears, so the user reads the
             run and the question as one thing.
           */}
-          {agent.phase === 'asking' && agent.approval && (
+          {agent.phase === 'asking' && approval && (
             <div className="agent-ask" role="group" aria-label="Подтверждение действия">
               {agent.message && <div className="agent-ask-detail">{agent.message}</div>}
               <div className="agent-ask-buttons">
                 <button
                   className="agent-allow"
-                  onClick={() => void answerAgent(agent.approval!, true, false)}
+                  onClick={() => void answerAgent(approval, true, false)}
                 >
                   Разрешить
                 </button>
                 <button
                   className="agent-always"
-                  onClick={() => void answerAgent(agent.approval!, true, true)}
+                  onClick={() => void answerAgent(approval, true, true)}
                 >
                   Разрешить всегда
                 </button>
                 <button
                   className="agent-deny"
-                  onClick={() => void answerAgent(agent.approval!, false, false)}
+                  onClick={() => void answerAgent(approval, false, false)}
                 >
                   Отменить
                 </button>

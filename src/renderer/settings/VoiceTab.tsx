@@ -81,7 +81,7 @@ function ModelList({
       <div className="models">
         {VOICE_MODELS.map((entry) => {
           const modelReady = installed.has(entry.id)
-          const busy = progress?.model === entry.id && !progress.done
+          const downloadingThisModel = progress?.model === entry.id && !progress.done
           const share = progress && progress.total > 0 ? progress.received / progress.total : 0
           return (
             <div key={entry.id} className="model-row" data-active={model === entry.id}>
@@ -99,7 +99,7 @@ function ModelList({
                   <span className="model-state ok">Готово</span>
                   {renderDeleteButton(entry.id, entry.label)}
                 </div>
-              ) : busy ? (
+              ) : downloadingThisModel ? (
                 <span className="model-state">
                   {progress.received > 0
                     ? `${megabytes(progress.received)} из ${megabytes(progress.total)}`
@@ -114,7 +114,7 @@ function ModelList({
                   Скачать
                 </button>
               )}
-              {busy && (
+              {downloadingThisModel && (
                 <div className="model-bar">
                   <i style={{ width: `${Math.round(share * 100)}%` }} />
                 </div>
@@ -335,7 +335,7 @@ interface ReadinessSectionProps {
   model: string
   savedModel: string
   status: VoiceStatus | null
-  error: string | null
+  testError: string | null
   checking: boolean
   onCheck(): void
 }
@@ -345,7 +345,7 @@ function ReadinessSection({
   model,
   savedModel,
   status,
-  error,
+  testError,
   checking,
   onCheck
 }: ReadinessSectionProps) {
@@ -373,9 +373,9 @@ function ReadinessSection({
           <div className="row-hint err">{status.listenerError}</div>
         </Row>
       )}
-      {error && (
+      {testError && (
         <Row stacked>
-          <div className="row-hint err">{error}</div>
+          <div className="row-hint err">{testError}</div>
         </Row>
       )}
       {status?.modelPath && (
@@ -397,7 +397,7 @@ export function VoiceTab({ voice, tts, savedModel, onVoiceChange, onTtsChange }:
   const [deleting, setDeleting] = useState<string | null>(null)
   const [progress, setProgress] = useState<DownloadProgress | null>(null)
   const [downloadError, setDownloadError] = useState<string | null>(null)
-  const [error, setError] = useState<string | null>(null)
+  const [testError, setTestError] = useState<string | null>(null)
   const [checking, setChecking] = useState(false)
 
   const refreshVoice = useCallback(() => {
@@ -465,7 +465,7 @@ export function VoiceTab({ voice, tts, savedModel, onVoiceChange, onTtsChange }:
     setChecking(true)
     try {
       const result = await window.deskhand.voice.test()
-      setError(result.ok ? null : (result.message ?? 'Голосовой ввод не готов.'))
+      setTestError(result.ok ? null : (result.message ?? 'Голосовой ввод не готов.'))
       refreshVoice()
     } finally {
       setChecking(false)
@@ -614,7 +614,7 @@ export function VoiceTab({ voice, tts, savedModel, onVoiceChange, onTtsChange }:
         model={voice.model}
         savedModel={savedModel}
         status={status}
-        error={error}
+        testError={testError}
         checking={checking}
         onCheck={() => void testVoice()}
       />

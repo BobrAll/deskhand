@@ -22,8 +22,6 @@ import {
   CHROME_WIDTH,
   FIELD_FONT,
   MAX_FIELD_HEIGHT,
-  REFINE_HINT,
-  REFINE_LABEL,
   STOP_CHROME,
   clamp
 } from './cardMetrics'
@@ -92,14 +90,6 @@ describe('metrics: the chrome the CSS spends', () => {
     // The same family, in the same order: the measurement has to shape the run
     // exactly as the textarea will, or the card widens by the wrong step.
     expect(FIELD_FONT).toBe(`${size?.[1]}px ${family?.[1]?.trim()}`)
-  })
-})
-
-describe('metrics: the rewrite buttons', () => {
-  it('labels both directions and explains them in the tooltip', () => {
-    expect(REFINE_LABEL).toEqual({ shorter: 'Короче', longer: 'Длиннее' })
-    expect(REFINE_HINT.shorter).toBe('Сократить ответ, сохранив суть')
-    expect(REFINE_HINT.longer).toBe('Развернуть ответ подробнее')
   })
 })
 

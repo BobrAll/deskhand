@@ -214,6 +214,43 @@ export function App() {
   const failedRef = useRef<string | null>(null)
 
   /**
+   * Lines the draft up with what the store actually kept.
+   *
+   * The store may normalise a value, and may refuse the hotkey outright; the
+   * draft has to follow either, or the window keeps writing a snapshot the other
+   * side never accepted. Returns whether the hotkey was the thing that did not
+   * land.
+   */
+  const reconcileSavedBundle = useCallback((saved: SettingsBundle, written: string): boolean => {
+    setBundle(saved)
+    writtenRef.current = written
+    failedRef.current = null
+    const hotkeyRejected = Boolean(saved.hotkeyError)
+    setDraft((current) => {
+      if (!current) return current
+      // A rejected hotkey comes back with the previous binding restored, and the
+      // draft has to follow it: keeping the rejected combination would leave the
+      // window retrying a write the system refuses, forever.
+      if (hotkeyRejected) return { ...current, hotkey: saved.settings.hotkey }
+      return JSON.stringify(current) === written ? saved.settings : current
+    })
+    return hotkeyRejected
+  }, [])
+
+  /** Says the hotkey did not land, and clears the snapshot so a retry can happen. */
+  const reportHotkeyRejected = useCallback(() => {
+    // The rejected binding is the one thing that did not land, so the write
+    // snapshot must not be remembered: the draft is about to be dragged back to
+    // the stored hotkey, and treating the refused combination as "already
+    // applied" would hide a retry that can never succeed.
+    writtenRef.current = null
+    setHotkeyMessage('Комбинация занята — оставлена прежняя.')
+    setApplyState('error')
+    setNotice({ kind: 'err', text: 'Не удалось назначить горячую клавишу.' })
+    window.setTimeout(() => setNotice(null), BANNER_WRITE_ERROR_MS)
+  }, [])
+
+  /**
    * Writes one snapshot of the draft.
    *
    * `snapshot` is passed in rather than read from state: a write is triggered by
@@ -221,50 +258,33 @@ export function App() {
    * than the change it was scheduled for. The comparison after the round trip is
    * what keeps a slow disk from clobbering keys the user has typed since.
    */
-  const flush = useCallback(async (snapshot: AppSettings): Promise<boolean> => {
-    const written = JSON.stringify(snapshot)
-    setApplyState('saving')
-    try {
-      const saved = await window.deskhand.settings.save(snapshot)
-      setBundle(saved)
-      writtenRef.current = written
-      failedRef.current = null
-      const hotkeyRejected = Boolean(saved.hotkeyError)
-      setDraft((current) => {
-        if (!current) return current
-        // A rejected hotkey comes back with the previous binding restored, and the
-        // draft has to follow it: keeping the rejected combination would leave the
-        // window retrying a write the system refuses, forever.
-        if (hotkeyRejected) return { ...current, hotkey: saved.settings.hotkey }
-        return JSON.stringify(current) === written ? saved.settings : current
-      })
-      if (hotkeyRejected) {
-        // The rejected binding is the one thing that did not land, so the write
-        // snapshot must not be remembered: the draft is about to be dragged back
-        // to the stored hotkey, and treating the refused combination as "already
-        // applied" would hide a retry that can never succeed.
+  const flush = useCallback(
+    async (snapshot: AppSettings): Promise<boolean> => {
+      const written = JSON.stringify(snapshot)
+      setApplyState('saving')
+      try {
+        const saved = await window.deskhand.settings.save(snapshot)
+        if (reconcileSavedBundle(saved, written)) {
+          reportHotkeyRejected()
+          return false
+        }
+        setHotkeyMessage(null)
+        setApplyState('saved')
+        return true
+      } catch {
+        // Nothing reached the disk, so a later change must be allowed to try again —
+        // but this exact snapshot must not, or the timer would retry it every
+        // `AUTOSAVE_DEBOUNCE_MS` for as long as the window stayed open.
         writtenRef.current = null
-        setHotkeyMessage('Комбинация занята — оставлена прежняя.')
+        failedRef.current = written
         setApplyState('error')
-        setNotice({ kind: 'err', text: 'Не удалось назначить горячую клавишу.' })
+        setNotice({ kind: 'err', text: 'Не удалось сохранить настройки.' })
         window.setTimeout(() => setNotice(null), BANNER_WRITE_ERROR_MS)
         return false
       }
-      setHotkeyMessage(null)
-      setApplyState('saved')
-      return true
-    } catch {
-      // Nothing reached the disk, so a later change must be allowed to try again —
-      // but this exact snapshot must not, or the timer would retry it every
-      // `AUTOSAVE_DEBOUNCE_MS` for as long as the window stayed open.
-      writtenRef.current = null
-      failedRef.current = written
-      setApplyState('error')
-      setNotice({ kind: 'err', text: 'Не удалось сохранить настройки.' })
-      window.setTimeout(() => setNotice(null), BANNER_WRITE_ERROR_MS)
-      return false
-    }
-  }, [])
+    },
+    [reconcileSavedBundle, reportHotkeyRejected]
+  )
 
   /**
    * Applies the draft as it is edited.
@@ -277,7 +297,7 @@ export function App() {
   useEffect(() => {
     if (!draft || !bundle) return
     const current = JSON.stringify(draft)
-    if (current === JSON.stringify(bundle.settings) || current === writtenRef.current) {
+    if (!hasUnsaved(draft, bundle, writtenRef.current)) {
       // Nothing to write. `saved` is kept so the footer can say "Применено"
       // instead of blinking back to an empty line the moment the write lands.
       setApplyState((state) => (state === 'saved' ? state : 'idle'))

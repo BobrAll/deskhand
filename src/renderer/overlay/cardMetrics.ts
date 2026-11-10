@@ -12,8 +12,6 @@
  * the card at rest and unfolded, line wrapping at 112/80/360, and the agent row.
  */
 
-import type { RefineDirection } from '@shared/types'
-
 /** Outer padding, border and the answer's text-column indent. */
 export const ANSWER_CHROME = 8 * 2 + 2 + 12
 
@@ -78,21 +76,4 @@ export const AGENT_FONT = FIELD_FONT.replace('13px', '11.5px')
 
 export function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max)
-}
-
-/**
- * The two rewrite buttons under a finished answer.
- *
- * `label` is what the button says; `hint` is the tooltip, which is where the
- * difference between them is actually explained — "Короче" alone does not say
- * whether the meaning survives.
- */
-export const REFINE_LABEL: Record<RefineDirection, string> = {
-  shorter: 'Короче',
-  longer: 'Длиннее'
-}
-
-export const REFINE_HINT: Record<RefineDirection, string> = {
-  shorter: 'Сократить ответ, сохранив суть',
-  longer: 'Развернуть ответ подробнее'
 }
