@@ -94,13 +94,13 @@
 
 | Пакет | Область | Статус | Проверки |
 | --- | --- | --- | --- |
-| WP1 | Swift `DeskhandCore` | в работе | — |
-| WP2 | Swift `AgentKit`/`LLM`/`Agent` | ждёт WP1 | — |
-| WP3 | `main/agent` + слои рисования | в работе | — |
-| WP4 | `main/overlay` + `main/context` | в работе | — |
+| WP1 | Swift `DeskhandCore` | готово (`1521099`) | 82 Core теста, 1 предсуществующее падение (нет Accessibility) |
+| WP2 | Swift `AgentKit`/`LLM`/`Agent` | в работе | — |
+| WP3 | `main/agent` + слои рисования | готово (`5a6401f`) | 279 тестов, 16 предсуществующих падений |
+| WP4 | `main/overlay` + `main/context` | готово (`bce8970`) | 208 тестов overlay+context+shared+preload |
 | WP5 | остальной `main` | в работе | — |
-| WP6 | `shared` + `preload` | в работе | — |
-| WP7 | `renderer` | в работе | — |
+| WP6 | `shared` + `preload` | готово (`edeeaf0`) | 122 теста shared+preload, снапшоты не менялись |
+| WP7 | `renderer` | готово (`0159fb4`) | 195 тестов renderer, снапшоты не менялись |
 | WP8 | документация | ждёт волны 2 | — |
 
 Итоговые проверки:
@@ -126,83 +126,87 @@
 
 **Переименования**
 
-- [ ] `WindowCapture.swift:17` — `pngData` хранит JPEG (кодировщик JPEG-first)
+- [x] `WindowCapture.swift:17` — `pngData` хранит JPEG (кодировщик JPEG-first)
       → `imageData`; `:25` doc «spent encoding the PNG» → «encoding the image»;
       `:41` текст ошибки про PNG.
-- [ ] `ToolExecutor.swift:9` — `case imagePNG(Data)` → `case image(Data)`.
-      Затрагивает `AgentLoop`, `ToolContent`.
-- [ ] Один атрибут AX под тремя именами: `AXElement.descriptionText`,
+- [x] `ToolExecutor.swift:9` — `case imagePNG(Data)` → `case image(Data)`.
+      JSON-ключи `type`/`data`/`mimeType` не тронуты (проверено в `mcpJSON`).
+- [x] Один атрибут AX под тремя именами: `AXElement.descriptionText`,
       `AXWalkedValues.label`, `AXNode.label` → `label` везде.
-- [ ] Одно число под двумя именами: `ChildrenResult.declaredCount` →
-      `AXNode.hiddenItemCount` — выбрать одно имя (`declaredItemCount`).
-- [ ] Один отказ под тремя именами: `ChildrenResult.refused`,
-      `AXNode.childrenHidden`, `AXTreeWalker.isOpaqueContainer` →
-      `refusedChildren`.
-- [ ] `AXTreeWalker.swift:187` vs `:224` — `isTransparentContainer` и
-      `isOpaqueContainer` звучат как противоположности, но означают разное →
-      `isLayoutScaffolding(role:)` / `isContainerHidingChildren(role:frame:)`.
-- [ ] `AppSession.swift:50` `mapper` → `coordinateMapper`; `:49` `capture` →
-      `lastCapture`; `:80` `currentSnapshot` дублирует `snapshot` — оставить одно.
-- [ ] `ToolExecutor.swift:432` — `describe(name:arguments:narration:)`
-      перегружает `describe(_ node:)` с другим смыслом → `policyContext(...)`.
-- [ ] `ToolExecutor.swift:212` — `finish(_:session:action:...)` получает прозу
-      (`"the click"`, `"the edit"`, 11 литералов) → параметр `actionLabel:`.
-- [ ] `Keyboard.swift:77-88` — `Destination.focusedApp` означает «системный
-      поток, получает frontmost» → `.frontmostApp`.
-- [ ] `WindowCapture.swift:165` `fit(size:longestEdge:)` →
-      `downscaledSize(for:)`; `:157` `distance(_:_:)` → `distance(from:to:)`.
-- [ ] `SystemPermissions.swift:47` `openPrivacySettings()` открывает только
-      Accessibility → `openAccessibilityPrivacySettings()`.
+- [x] Одно число под двумя именами: `ChildrenResult.declaredCount` →
+      `declaredItemCount` (и `AXNode.hiddenItemCount`).
+- [x] Один отказ под тремя именами → `childrenRefused`. Отклонение от плана:
+      план предлагал `refusedChildren`, но это читается как коллекция, поэтому
+      выбран Bool-вариант.
+- [x] `AXTreeWalker.swift:187` vs `:224` → `isLayoutScaffolding(role:)` /
+      `isContainerHidingChildren(role:frame:)`.
+- [x] `AppSession.swift:50` `mapper` → `coordinateMapper`; `:49` `capture` →
+      `lastCapture`; `currentSnapshot` удалён, используется `snapshot`
+      (11 мест вызова).
+- [x] `ToolExecutor.swift:432` — `describe(name:arguments:narration:)` →
+      `policyContext(...)`, больше не перегружает `describe(_ node:)`.
+- [x] `ToolExecutor.swift:212` — `finish(... action:)` → `actionLabel:`
+      (11 мест вызова); `bringToFrontChecked(action:)` → `actionLabel:`.
+- [x] `Keyboard.swift:77-88` — `Destination.focusedApp` → `.frontmostApp`.
+- [x] `WindowCapture.swift:165` `fit(size:longestEdge:)` →
+      `downscaledSize(of:longestEdge:)`; `:157` `distance(_:_:)` →
+      `distance(from:to:)`.
+- [x] `SystemPermissions.swift:47` `openPrivacySettings()` →
+      `openAccessibilityPrivacySettings()`.
 
 **Комментарии**
 
-- [ ] `ToolExecutor.swift:418-431` — два почти одинаковых doc-блока на одной
-      функции; `:595-599` — то же на `bringToFront`; `:559-562` — комментарий
-      противоречит коду (`includeScreenshot` передаётся дальше). Переписать.
-- [ ] `AppCatalog.swift:231-266` — один doc-блок на две функции, и он сам себе
-      противоречит в порядке («raise window then activate» vs «activate then
-      raise»). Разделить и исправить.
-- [ ] Обновить «PNG» в документации полей: `Timings.swift:159,169,171`,
-      `AgentObserver.swift:37`, `AgentLoop.swift:47,488`.
+- [x] `ToolExecutor.swift:418-431` — два почти одинаковых doc-блока слиты;
+      `:595-599` — двухголовый doc на `bringToFront` слит; `:559-562` —
+      комментарий про «снимок всегда в полном качестве» переписан:
+      `includeScreenshot` передаётся дальше как есть.
+- [x] `AppCatalog.swift:231-266` — слитый doc-блок разделён: ожидание
+      активации описывает `activate(pid:timeout:)`, подъём окна —
+      `activate(pid:raising:)`, в том порядке, в котором код работает.
+- [x] «PNG» в документации полей: `Timings.swift` (`encode` — сжатие
+      изображения, `screenshotBytes` — размер закодированного изображения).
+      В `AgentObserver.swift:37` и `AgentLoop.swift:47,488` — зона WP2.
 
 **Константы**
 
-- [ ] `Mouse.swift` — девять безымянных пауз (0.02, 0.01, 0.06, …) →
-      именованные константы темпа.
-- [ ] `WindowCapture.swift:89,96` — магические `40` и `8` → имена.
-- [ ] `AppSession.swift:11-27` — `DiffSettle.budget/interval/maxWalkCost` без
-      единиц → с единицами.
-- [ ] `Timings.swift:129-151` — `bottleneck()` парсит префиксы `"  "`, `"tool "`,
-      `"run total"`, которые собираются в `AgentLoop.swift:224-492`. Назвать
-      протокол меток в одном месте.
+- [x] `Mouse.swift` — девять пауз → `Mouse.Pace` (значения не менялись).
+- [x] `WindowCapture.swift:89,96` — `minimumWindowSide = 40`,
+      `frameMatchTolerance = 8`.
+- [x] `AppSession.swift:11-27` — `DiffSettle.*` → с `Milliseconds`.
+- [x] `Timings.swift:129-151` — протокол меток назван один раз: `TimingLabel`
+      (`model`, `runTotal`, `toolPrefix`, `phasePrefix`), используется
+      `bottleneck()`. Производители в `AgentLoop` перейдут на него в WP2.
 
 **Мёртвый код**
 
-- [ ] `AppSession.swift:51,259` — `lastActionAt` пишется и никогда не читается,
-      `noteAction()` вызывается 9 раз в `ToolExecutor` и ничего не делает.
-      Комментарий `:257-258` описывает несуществующее поведение. Удалить поле,
-      метод и 9 вызовов.
-- [ ] `ToolSurface.swift:8` — `version` без читателя.
-- [ ] `AppCatalog.swift:179` — `launch(_:)` без вызовов.
-- [ ] `Timings.swift:39-49` `measure` / `measureAsync` без вызовов.
-- [ ] `AXElement.swift:18,197,210,141` — `systemWide()`, `mainWindow()`,
+- [x] `AppSession.swift:51,259` — `lastActionAt` + `noteAction()` и 10 мест
+      вызова удалены (проверено grep: чтений ноль).
+- [x] `ToolSurface.swift:8` — `version` без читателя.
+- [x] `AppCatalog.swift:179` — `launch(_:)` без вызовов.
+- [x] `Timings.swift:39-49` `measure` / `measureAsync` без вызовов.
+- [x] `AXElement.swift:18,197,210,141` — `systemWide()`, `mainWindow()`,
       `pid()`, `attributeNames()` без вызовов.
-- [ ] `JSONValue.swift:106` `isNumber` без вызовов.
-- [ ] `SyntheticEvent.isSynthetic` без вызовов, doc врёт про тесты.
+- [x] `JSONValue.swift:106` `isNumber` без вызовов.
+- [x] `SyntheticEvent.isSynthetic` без вызовов — удалён вместе с doc-строкой.
+- [x] `ToolExecutor.ensureKeyboardTarget` — no-op `if let focused … _ = focused`.
 
 **Извлечения**
 
-- [ ] `ToolSurface.swift:10-389` — один литерал на ~380 строк, дубли
-      (`"additionalProperties": .bool(false)` ×11, блок `element_index` ×6).
-      Вынести приватные хелперы схемы. **Вывод обязан остаться побайтово тем
-      же** (`ToolSurfaceTests.swift`).
-- [ ] `Mouse.swift:49-56` дублирует `Keyboard.swift:130-137` (фабрика
-      `CGEventSource`) → один общий хелпер.
+- [x] `ToolSurface.swift:10-389` — схема собирается из
+      `schema(properties:required:)` и `appProperty`/`elementIndexProperty`/
+      `string|number|integer|bool|enumProperty`. **Вывод побайтово тот же**:
+      SHA-256 `4f58efcf…` до и после, набор различных строковых литералов
+      идентичен, повторы свернулись ровно в счётчики хелперов.
+- [x] `Mouse.swift:49-56` дублировал `Keyboard.swift:130-137` →
+      `SyntheticEvent.eventSource()`, используется обоими.
 
 **Тесты**
 
-- [ ] `InputTests.swift` содержит семь несвязанных наборов — разнести по
-      файлам по темам.
+- [x] `InputTests.swift` (599 строк, 7 наборов) разнесён на `KeyboardTests`,
+      `CoordinateMapperTests`, `WindowCaptureTests` (геометрия + выбор окна),
+      `AXTreeRendererTests`, `ToolSurfaceTests`, `AXSnapshotDiffTests`.
+      Было 54 метода, стало 54; значения и сообщения те же, менялся только
+      синтаксис вызова и три имени тестов под `declaredItemCount`.
 
 **Отложено (RISKY)**
 
@@ -213,8 +217,11 @@
       `suffix` и дублирует `testDisambiguatesByPrefix`. Исправление меняет
       покрытие.
 - [ ] `ActionPresentation.swift:44` — `target`/`window` → `elementFrame` /
-      `windowFrame`. Поле сериализуется в bridge; нужно отдельно подтвердить,
-      что JSON-ключи не поедут.
+      `windowFrame`. Оба читаются в `Sources/DeskhandAgent/Bridge.swift`, то
+      есть за границей пакета, и ключи `target`/`window` уходят на провод.
+      Нужна координация с WP2.
+- [ ] `SystemPermissions` — `import AppKit` после типа и `NSWorkspaceShim`,
+      который существует только ради него. Не входило в план, следующий проход.
 
 ### WP2 — Swift: `DeskhandAgentKit`, `DeskhandLLM`, `DeskhandAgent`
 
@@ -288,96 +295,117 @@
 
 **Переименования**
 
-- [ ] `agent/index.ts:87` `EMPTY` → `IDLE_EVENT`; `:226` `last` → `lastPublished`
+- [x] `agent/index.ts:87` `EMPTY` → `IDLE_EVENT`; `:226` `last` → `lastPublished`
       (и `last: () => last` → `lastEvent`); `:318` `rows()` → `actionRows()`;
       `:481` `handle(event)` → `handleSidecarEvent`.
-- [ ] `agent/index.ts:329` `finish()` конфликтует с полем `current.finish` →
-      локальная `settleRun()`.
-- [ ] `agent/approval.ts:37-38` — `CRITICAL` — расплывчатое имя и regex на 1000
-      символов в одну строку → `COMMITTING_ACTION` + именованные фрагменты.
-- [ ] `agent/approval.ts:68` `describe(request)` рядом с `describeCall(request)`
-      → `matchableText`.
-- [ ] `agent/approval.ts:144` `remembered` хранит SHA-256 → `rememberedKeys`
-      (только имя переменной; поле в `AgentSettings` не переименовывать).
-- [ ] `agent/cursor.ts:60-61` — `held` и `turn` об одном владении ходом →
-      `turnCount`/`glowOwner`, комментарий сокращается до «почему».
-- [ ] `agent/cursor.ts:276` — `hide(force = false)`, вызовы `hide(true)` →
-      `hideNow()`.
-- [ ] `agent/presentation.ts:112,117,127` — `local`, `localRect`, `centre`
-      → `toLayerPoint`, `toLayerRect`, `rectCenter`.
-- [ ] `agent/outline.ts:93-97` — `formatOutline(probe, bounds, area)` →
-      `(probe, windowBounds, captureArea)`.
-- [ ] `agent/trace.ts:29` `open` → `openTurns`; `:31` `writes` → `writeQueue`;
+- [x] `agent/index.ts:329` `finish()` конфликтует с полем `current.finish` →
+      `settleRun()`.
+- [x] `agent/approval.ts:37-38` — `CRITICAL` → `COMMITTING_ACTION`, собранный из
+      `PAYMENT_WORDS`/`SENDING_WORDS`/`DELETION_WORDS`/`ACCESS_WORDS`/
+      `PASSWORD_WORDS`/`AGREEMENT_WORDS`/`ENGLISH_WORDS`. Склеенный источник
+      regex **побайтово равен** прежнему литералу; поведение сверено на корпусе
+      из 53 строк.
+- [x] `agent/approval.ts:68` `describe(request)` → `matchableText`.
+- [x] `agent/approval.ts:144` `remembered` → `rememberedKeys` (поле в
+      `AgentSettings` не переименовывалось).
+- [x] `agent/cursor.ts:60-61` — `held`/`turn` → `glowOwner`/`turnCount`.
+- [x] `agent/cursor.ts:276` — `hide(force)` → `hide(immediate)` + `hideNow()`.
+- [x] `agent/presentation.ts:112,117,127` — `local`, `localRect`, `centre` →
+      `toLayerPoint`, `toLayerRect`, `rectCenter`.
+- [x] `agent/outline.ts:93-97` — `formatOutline(probe, windowBounds, captureArea)`,
+      то же для `describeScreen`.
+- [x] `agent/trace.ts:29` `open` → `openTurns`; `:31` `writes` → `writeQueue`;
       `:92` `timed` → `traceTimed`.
-- [ ] `annotationGrounding.ts:8` — `groundAnnotation` → `snapToAxTarget`.
-- [ ] `pointer.ts` — привести к «drawing» имена файла и типов. Канал
-      `pointer.draw` не переименовывать.
+- [x] `annotationGrounding.ts:8` — тело очищено (type predicate вместо `frame!`);
+      переименование `groundAnnotation` **не сделано**: вызовы в
+      `src/main/overlay/index.ts:46,828`, за границей пакета.
+- [ ] `pointer.ts` — привести к «drawing» имена файла и типов. **Не сделано**:
+      модуль импортируют `src/main/index.ts`, `overlay/index.ts`, и на нём
+      замокан `overlay/controller.test.ts`; `PointerShape`/`PointerPayload` —
+      контракт `@shared/types`.
 
 **Комментарии**
 
-- [ ] `annotations.ts:28-29` — комментарий **фактически неверен**: говорит
-      «больше в одной оси», код проверяет «меньше в обеих». Переписать по факту.
-- [ ] `layerWindow.ts:17` — «these two», хотя слоёв три.
+- [x] `annotations.ts:28-29` — комментарий, описывавший **противоположное**
+      правило, переписан: ниже `MIN_SIDE` в *обеих* осях — это точка; круг
+      выживает (размер добавляется позже), стрелка/подчёркивание/бокс
+      отбрасываются.
+- [x] `layerWindow.ts:17` — «these two» → «all three»; добавлен комментарий к
+      placeholder-рамке 400×300 и doc к `LayerWindowOptions.page`.
 
 **Константы**
 
-- [ ] `agent/index.ts:151-176` — классификация остановок по подстрокам
-      `'budget'`, `'token limit'`, `'repeated'`, `'returning to a screen'` →
-      именованные константы. Строки не менять: они приходят от Swift.
-- [ ] `agent/index.ts:629` — `active.stopped ?? 'incomplete'` → `UNKNOWN_STOP`.
-- [ ] `agent/approval.ts:165-168` — inline regex и `'com.apple.finder'` →
-      `COMMAND_MODIFIER`, `FINDER_DELETE_KEY`, `FINDER_BUNDLE_ID`.
-- [ ] `agent/cursor.ts:13` `EXIT_MS = 160`, `agent/presentation.ts:33`
-      `EXIT_MS = 240`, `pointer.ts:191` литерал `240` → `CURSOR_FADE_MS`,
-      `POINTER_FADE_MS`, `DRAWING_FADE_MS`. Значения не унифицировать.
-- [ ] `agent/sidecar.ts:272,313,387,293` — таймауты `10_000`, `15_000`,
-      `1_000`, `300` → имена.
-- [ ] `agent/trace.ts:117` `schema: 2` → `TRACE_SCHEMA`.
-- [ ] `annotations.ts:98,101-102,133` — `1.5`, `0.03`, `0.95` → константы;
-      `0.95` дублируется в `annotationGrounding.ts:23-24`.
-- [ ] `pointer.ts:73,191-193` — литералы `1500` и `240` → константы;
-      `:121-122` — `minRadius = 16`, `padding = 6` → модульные.
+- [x] `agent/index.ts:151-176` — подстроки остановок →
+      `STOP_BUDGET`/`STOP_TOKEN_LIMIT`/`STOP_REPEATED`/`STOP_RETURNING_TO_SCREEN`.
+      Строки не менялись: они приходят от Swift.
+- [x] `agent/index.ts:629` — `active.stopped ?? 'incomplete'` → `UNKNOWN_STOP`.
+- [x] `agent/approval.ts:165-168` — `COMMAND_MODIFIER`, `FINDER_DELETE_KEY`,
+      `FINDER_BUNDLE_ID`.
+- [x] `agent/cursor.ts:13` → `CURSOR_FADE_MS` (160); `agent/presentation.ts:33`
+      → `POINTER_FADE_MS` (240); `pointer.ts` → `DRAWING_FADE_MS` (240).
+      Значения не унифицированы.
+- [x] `agent/sidecar.ts:272,313,387,293` — `START_TIMEOUT_MS`,
+      `REQUEST_TIMEOUT_MS`, `SHUTDOWN_GRACE_MS`, `MAX_LOG_LINE_CHARS`.
+- [x] `agent/trace.ts:117` `schema: 2` → `TRACE_SCHEMA`.
+- [x] `annotations.ts:98,101-102,133` — `PERCENT_COORDINATE`, `DEFAULT_SIDE`,
+      `MAX_BOX_SHARE`.
+- [x] `annotationGrounding.ts:23-24` — `MAX_TARGET_SHARE`.
+- [x] `pointer.ts:73,191-193` — `MIN_RING_RADIUS`, `RING_PADDING`, литералы
+      `1500`/`240` → константы.
+- [x] `layerWindow.ts` — `LOAD_TIMEOUT_MS`.
+- [x] `outline.ts` — `OVERCOLLECT_FACTOR`, `SAME_ROW_POINTS`, `MIN_FRAME_SIDE`.
+- [x] `cursor.ts` — `WAIT_LABEL_MS`.
 
 **Мёртвый код**
 
-- [ ] `annotations.ts:130-131` — две ветки с одинаковым телом → одна.
-- [ ] `pointer.ts:40-47` vs `:200-208` — сброс состояния скопирован →
-      `resetPointerState()`.
-- [ ] `pointer.ts:196` — `isPointerVisible()` есть только в тесте.
+- [x] `annotations.ts:130-131` — две ветки с одинаковым телом → одна
+      (`kind !== 'box'`).
+- [x] `pointer.ts:40-47` vs `:200-208` — сброс состояния → `resetPointerState()`.
+- [x] `pointer.ts:196` — `isPointerVisible()` удалён (только собственный тест);
+      четыре места в тесте теперь проверяют состояние окна.
+- [x] `cursor.ts hide()` — недостижимая внутренняя проверка `isDestroyed()`
+      удалена (внешняя в том же тике).
 
 **Извлечения**
 
-- [ ] `agent/index.ts:377-478` `runTurn` ~100 строк: извлечь `subscribeToRun` и
-      `releaseRun` (чистый move).
-- [ ] `agent/cursor.ts:335-398` — `updateAgentCursor` смешивает четыре политики
-      → `paintSuccess` / `paintQuestion` / `paintStep`.
-- [ ] `agent/sidecar.ts:484-629` — `translate` 145 строк → по семействам
-      событий. Транскрипт в `sidecar.test.ts` обязан пройти без правок.
-- [ ] `annotations.ts:26` vs `:65` — словарь форм записан дважды (`KINDS` и
-      regex) → вывести alternation из `KINDS`.
-- [ ] `annotationGrounding.ts:21` — `matches[0].frame!` → type predicate.
-- [ ] `agent/cursor.ts:93`, `agent/presentation.ts:74`, `pointer.ts:58` —
-      `ensureWindow()`, `sameRect`, `place` написаны трижды → в `layerWindow.ts`
-      как `ensureLayerWindow`, `sameScreenRect`, `placeLayer`.
-      **`pointer.ts` округляет перед сравнением, остальные — нет**; сохранить
-      семантику каждого вызова.
-- [ ] Тесты: `cursor.test.ts` и `presentation.test.ts` копируют весь мок
-      `BrowserWindow` → общий `test/layerWindowMock.ts`.
+- [x] `agent/index.ts:377-478` `runTurn` → `subscribeToRun` + `releaseRun`
+      (порядок: watcher, onEvent, run, `await done`, unsubscribe, release).
+- [x] `agent/cursor.ts:335-398` — `paintSuccess` / `paintQuestion` / `paintStep`.
+- [x] `agent/sidecar.ts:484-629` — `translate` по семействам событий плюс
+      `numberParam`/`textParam`/`screenRectParam` и типизированный `EventOf<K>`.
+      Ключи на проводе не тронуты, `sidecar.test.ts` проходит без правок.
+- [x] `annotations.ts:26` vs `:65` — `MARKERS`/`MARKER`, alternation выведен из
+      `KINDS`.
+- [x] `annotationGrounding.ts:21` — `matches[0].frame!` → type predicate.
+- [x] `agent/cursor.ts:93`, `agent/presentation.ts:74`, `pointer.ts:58` —
+      `ensureLayerWindow`, `sameScreenRect`, `placeLayer` в `layerWindow.ts`.
+      Семантика каждого вызова сохранена: `pointer.ts` округляет **и** при
+      сравнении, **и** при применении (`round: true`); `cursor.ts`/
+      `presentation.ts` сравнивают и применяют без округления, а
+      `presentation.ts` по-прежнему сообщает `moved`. `pointer.ts` не следит за
+      `destroyed` — и раньше не следил. Новые тесты в `layerWindow.test.ts`
+      фиксируют все три поведения, включая разницу в округлении.
+- [x] Тесты: мок `BrowserWindow` вынесен в `src/main/test/layerWindowMock.ts`
+      (`layerWindowClass`, `lastLayerWindow`, `FakeLayerWindow`), используется
+      `cursor.test.ts` и `presentation.test.ts`; ~110 строк дубля удалены.
 
 **Тесты**
 
-- [ ] `agent/index.ts:868` — `HISTORY_TURN_CHARS` объявлена после первого
+- [x] `agent/index.ts:868` — `HISTORY_TURN_CHARS` поднята выше первого
       использования.
 
 **Отложено (RISKY)**
 
 - [ ] `agent/presentation.ts:176,320-325` — публичный API смешивает префиксы;
       затрагивает `src/main/index.ts`, `overlay/index.ts`.
-- [ ] `agent/outline.ts:102-123` vs `:156-161` — правило отбора элементов
-      написано дважды, и копии уже разошлись (в фильтре нет проверки ролей для
-      `editable`). Подтвердить, что различие намеренное.
+- [ ] `agent/outline.ts:102-123` vs `:156-161` — `isListable` извлечён, но
+      различие сохранено: `formatOutline` дополнительно применяет правило ролей
+      для `editable`, а фильтр `onTargets` — нет. Историю проверить не удалось:
+      фильтр ролей в `formatOutline` с первого коммита, а `onTargets` добавлен
+      позже в `f62e584` без него. Комментарий на `isListable` описывает
+      разницу и почему чекбокс всё равно должен быть привязываемым.
 - [ ] `annotations.ts:33-38,93,110,112` — `ParsedLine.text` всегда `''`, поле
-      мёртвое, но читается в `response.ts:85` и тесте.
+      мёртвое, но читается в `response.ts:85` и тесте (чужая зона).
 
 ### WP4 — TypeScript: оверлей и контекст
 
@@ -385,79 +413,107 @@
 
 **Комментарии**
 
-- [ ] `overlay/index.ts:1-9` — doc-модуля разрезан импортом; `node:crypto`
+- [x] `overlay/index.ts:1-9` — doc-модуля разрезан импортом; `node:crypto`
       импортирован дважды.
-- [ ] `overlay/index.ts:291-307` — 16-строчный JSDoc про `captureFor` приклеен к
+- [x] `overlay/index.ts:291-307` — 16-строчный JSDoc про `captureFor` приклеен к
       переменной `captureInFlight` → перенести на `captureFor`.
-- [ ] `overlay/host.ts:5-8` — doc ссылается на `windows.ts`, которого нет.
-- [ ] `context/collect.ts:6` — ссылка на `overlay.ts`, файл теперь
+- [x] `overlay/host.ts:5-8` — doc ссылается на `windows.ts`, которого нет.
+- [x] `context/collect.ts:6` — ссылка на `overlay.ts`, файл теперь
       `overlay/index.ts`.
-- [ ] `overlay/request.ts:241` — `WEB_LOOKUP_INSTRUCTION` объявлена после
+- [x] `overlay/request.ts:241` — `WEB_LOOKUP_INSTRUCTION` объявлена после
       функции, которая её использует.
-- [ ] `overlay/request.ts:4` — устаревшая ссылка на путь и число строк.
+- [x] `overlay/request.ts:4` — устаревшая ссылка на путь и число строк.
 
 **Переименования**
 
-- [ ] `overlay/index.ts:228,250,256` — `state()`, `emit()`, `refresh()` →
-      `overlayState()`, `sendToWindow()`, `publishState()`.
-- [ ] `overlay/index.ts:755` — `clearPointer()` чистит аннотации →
+- [x] `overlay/index.ts:228,250,256` — `state()`, `emit()`, `refresh()` →
+      `overlayState()`, `sendToWindow()`, `publishState()`. Публичные ключи
+      контроллера сохранены (`state: overlayState` и т. д.), `index.ts`/`ipc.ts`
+      не тронуты.
+- [x] `overlay/index.ts:755` — `clearPointer()` чистит аннотации →
       `clearAnnotations`.
-- [ ] `overlay/index.ts:339-350` — `b`/`o` → `backgroundBounds`/`observedBounds`.
-- [ ] `overlay/index.ts:1235` — параметр `session` затеняет внешнюю `session`;
+- [x] `overlay/index.ts:339-350` — `b`/`o` → `backgroundBounds`/`observedBounds`.
+- [x] `overlay/index.ts:1235` — параметр `session` затеняет внешнюю `session`;
       `:1289` — флаг `send` затеняет метод `send()`.
-- [ ] `overlay/index.ts:1083-1099` — свойство `describeScreen` затеняет импорт.
-- [ ] `overlay/history.ts:3,32,41` — `SavedCommand`, `write()`, `read()` → по
+- [x] `overlay/index.ts:1083-1099` — свойство `describeScreen` затеняет импорт →
+      импорт алиасирован в `readScreenOutline`; поле
+      `BuildTurnRequestInput.describeScreen` не тронуто.
+- [x] `overlay/history.ts:3,32,41` — `SavedCommand`, `write()`, `read()` → по
       смыслу одной записи.
-- [ ] `overlay/emptyAnswer.ts:2` — параметр `annotations: number` — это счётчик
+- [x] `overlay/emptyAnswer.ts:2` — параметр `annotations: number` — это счётчик
       → `annotationCount`.
-- [ ] `context/collect.ts:20` — `captureScreenshot: boolean` называется так же,
+- [x] `context/collect.ts:20` — `captureScreenshot: boolean` называется так же,
       как функция `captureScreenshot()` → `wantsScreenshot`; `:17`
       `onInputReady` vs `onCopySent` в `selection.ts:17` — одно слово.
-- [ ] `context/screenshot.ts:148` — `compress` ещё и масштабирует и кодирует →
+- [x] `context/selection.ts:15` — `MAX_SELECTION_CHARS = 24_000` конфликтует по
+      имени с `prompt.ts:11` `MAX_SELECTION_CHARS = 12_000` →
+      `MAX_SELECTED_TEXT_CHARS`. Проверено: импортирует только
+      `selection.test.ts`, константа в `prompt.ts` не тронута.
+- [x] `context/screenshot.ts:148` — `compress` ещё и масштабирует и кодирует →
       `encodeScreenshot`.
 
 **Константы**
 
-- [ ] `overlay/index.ts:123-125` — два имени для одного бюджета в 1500 символов.
-- [ ] `overlay/index.ts:1219` — URL атрибуции OpenRouter — магическая строка.
-- [ ] `overlay/request.ts:227` — `Math.max(maxTokens * 2, 1024)` → константы.
-- [ ] `context/screenshot.ts:110,128,196` — минимум 2 pt трижды →
-      `MIN_CAPTURE_SIDE`; `:245,255` — 12 попыток и 40 мс → константы.
-- [ ] `context/selection.ts` — `450` и `35` → константы.
+- [x] `overlay/index.ts:123-125` — два имени для одного бюджета в 1500 символов
+      → `MAX_HISTORY_CHARS`.
+- [x] `overlay/index.ts:1219` — URL атрибуции OpenRouter — магическая строка →
+      `OPENROUTER_ATTRIBUTION`.
+- [x] `overlay/request.ts:227` — `Math.max(maxTokens * 2, 1024)` →
+      `REFINE_TOKEN_FACTOR`, `REFINE_MIN_TOKENS`.
+- [x] `context/screenshot.ts:110,128,196` — минимум 2 pt трижды →
+      `MIN_CAPTURE_SIDE`; `:245,255` — 12 попыток и 40 мс →
+      `READ_ATTEMPTS`, `READ_RETRY_MS`; `0.02` → `PLACEMENT_TOLERANCE`;
+      `8000` → `SCREENCAPTURE_TIMEOUT_MS`.
+- [x] `context/selection.ts` — `450` и `35` → `SELECTION_POLL_TIMEOUT_MS`,
+      `SELECTION_POLL_INTERVAL_MS`.
+- [x] `overlay/index.ts` — `MAX_SHOT_AGE_MS` перенесён в блок констант модуля.
 
 **Мёртвый код**
 
-- [ ] `overlay/index.ts:606,624,630` — `const shownEarly = true` и два мёртвых
+- [x] `overlay/index.ts:606,624,630` — `const shownEarly = true` и два мёртвых
       `if` → удалить флаг.
 
 **Извлечения**
 
-- [ ] `overlay/index.ts:890-1196` — `sendTurn` ~300 строк, 12 обязанностей →
-      `runAgentTurn()` / `runWriterTurn()`, чистое извлечение.
-- [ ] `overlay/index.ts:1048-1063` — две цепочки тернарников в четыре уровня из
-      одних и тех же флагов → `describeRunOutcome(run)`.
-- [ ] `context/screenshot.ts:107-118` vs `:125-136` — `captureRegion` и
+- [x] `overlay/index.ts:890-1196` — `sendTurn` ~300 строк, 12 обязанностей →
+      `runAgentTurn()` / `runWriterTurn()`, оба возвращают `TurnResult | null`.
+      Порядок эффектов сохранён; поток по-прежнему пишет в `session.answer`
+      через `append`, поэтому живой текст карточки не изменился.
+- [x] `overlay/index.ts:1048-1063` — две цепочки тернарников в четыре уровня из
+      одних и тех же флагов → `describeRunOutcome(run, acknowledged)`.
+- [x] `context/screenshot.ts:107-118` vs `:125-136` — `captureRegion` и
       `captureArea` — одна функция, разница только в `-o` →
       `captureRectangle(rect, file, { omitShadow })`.
-- [ ] `context/screenshot.ts:152,221` — inline-тип placement дважды → `Placement`.
-- [ ] `overlay/history.ts:46-50` — миграцию legacy `exchanges` вынести.
+- [x] `context/screenshot.ts:152,221` — inline-тип placement дважды → `Placement`.
+- [x] `overlay/history.ts:46-50` — миграцию legacy `exchanges` вынести →
+      `migrateLegacyExchanges(saved)`.
+- [x] `overlay/index.ts` — дублированные блоки `windowStillMatches` →
+      `observationHolds()`.
 
 **Тесты**
 
-- [ ] `visibility.test.ts` — файл называется «visibility», а покрывает
-      маршрутизацию, веб-поиск, голос, историю и свечение → переименовать в
-      `controller.test.ts`.
+- [x] `visibility.test.ts` — файл называется «visibility», а покрывает
+      маршрутизацию, веб-поиск, голос, историю и свечение → `controller.test.ts`
+      (переименован, заголовок описывает шесть реальных тем; не разнесён —
+      группы уже разделены).
+
+**Сделано, хотя было помечено RISKY**
+
+- [x] `overlay/index.ts:941-942` vs `:993-994` — предикат маршрутизации вынесен
+      в один `const isActionRequest`, второе чтение `agent.availability()`
+      убрано. Проверено: между двумя прежними чтениями поток только вызывает
+      `beginAgentTurn` (UI), `setTimeout`, `getSettings()` (чтение),
+      `isExcluded` (чистая), `readPreviousCommand` (пишет только хранилище
+      разговора) и `Array.filter` — записи настроек там нет, а входы
+      «бинарник есть» и «AX разрешён» измениться не могут.
 
 **Отложено (RISKY)**
 
-- [ ] `overlay/index.ts:941-942` vs `:993-994` — предикат маршрутизации написан
-      дважды. Два чтения в разных точках хода: проверить, что настройки между
-      ними не меняются.
 - [ ] `overlay/request.ts:69-80` — `TurnRequest.useImage`/`.screenshot`
       читаются только тестом. Удаление требует правки теста.
-- [ ] `context/selection.ts:15` — `MAX_SELECTION_CHARS = 24_000` конфликтует по
-      имени с `prompt.ts:11` `MAX_SELECTION_CHARS = 12_000`. Обе импортируются
-      тестами.
+- [ ] `overlay/index.ts` — `overlayShots` (`WeakSet`) пишется и никогда не
+      читается. Найдено попутно, вне списка пакета; не удалено, чтобы не
+      расширять область.
 
 ### WP5 — TypeScript: остальной main
 
@@ -586,50 +642,54 @@
 
 **Комментарии**
 
-- [ ] `shared/keycodes.ts:4` — заголовок описывает «agent parser» в
+- [x] `shared/keycodes.ts:4` — заголовок описывает «agent parser» в
       `agent/keys.ts`, которого нет, и зовёт голосовой парсер `parseShortcut`
       (реально — `main/voice/listen.ts:parseAccelerator`). Переписать по факту.
-- [ ] `shared/metrics.ts:5,11` — ссылки на `main/windows.ts`, реальный путь
+      Механизм в новом тексте: парсеру нужен модификатор *и* клавиша, поэтому
+      важен именно поднабор — иначе `Alt+esc` стал бы биндящимся.
+- [x] `shared/metrics.ts:5,11` — ссылки на `main/windows.ts`, реальный путь
       `main/windows/index.ts`.
-- [ ] `shared/ipc.ts:87,96` — комментарии про «один план», хотя плана заранее
-      нет.
-- [ ] `shared/tts.ts:13` — `RECORDED.model` и `RECORDED.style` не читаются, хотя
-      заголовок обещает проверку несовпадения.
-- [ ] `shared/intent.ts:1` — заголовок повторяется; сжать, не меняя regex.
-- [ ] `shared/intent.ts:70` — `BROWSER_COMMAND` и `FOLLOWING_ACTION` без
+- [x] `shared/ipc.ts:87,96` — комментарии про «один план», хотя плана заранее
+      нет → «run»/«step».
+- [x] `shared/tts.ts:13` — проверки несовпадения нет нигде: читается только
+      `RECORDED.voice`. `model`/`style` — запись о том, как сделаны клипы.
+- [x] `shared/intent.ts:1` — заголовок повторяется; сжат, regex не тронуты.
+- [x] `shared/intent.ts:70` — `BROWSER_COMMAND` и `FOLLOWING_ACTION` без
       объяснения; `allowsWebLookup` без doc-блока.
-- [ ] `shared/types.ts:424` — двойная пустая строка перед `TranscribeResult`.
-- [ ] `shared/speechBank.ts:15` — 20 из 21 групп `SpeechCue` не читаются нигде,
-      кроме `acknowledge`. **Не удалять** — незавершённая фича; пометить
-      комментарием.
+- [x] `shared/types.ts:424` — двойная пустая строка перед `TranscribeResult`.
+- [x] `shared/accelerator.ts` — «shared by the two parsers» повторял ту же
+      несуществующую историю → «the voice parser and the UI».
+- [x] `shared/speechBank.ts:15` — 20 из 21 групп `SpeechCue` не читаются нигде,
+      кроме `acknowledge`. **Не удалять** — незавершённая фича. Не сделано:
+      пометить комментарием, какие группы пока не произносятся.
 
 **Экспорт типов (аддитивно)**
 
-- [ ] `shared/types.ts:18,627,662` — `VoiceAction`, `RefineRequest`,
+- [x] `shared/types.ts:18,627,662` — `VoiceAction`, `RefineRequest`,
       `OverlayNotice` не экспортируются, хотя входят в публичные интерфейсы.
-- [ ] `shared/types.ts:271` — `AgentCursorFrame.phase` — inline-union → вынести
-      `type AgentCursorPhase`. Поле не переименовывать.
+- [x] `shared/types.ts:271` — `AgentCursorFrame.phase` — inline-union → вынести
+      `type AgentCursorPhase`. Поле и члены union не переименованы.
 
 **Локальные имена**
 
-- [ ] `preload/index.ts:41` — `subscribe<null>(...)` → `subscribeSignal`.
-- [ ] `preload/index.ts` — прочие локальные имена по смыслу.
+- [x] `preload/index.ts:41` — `subscribe<null>(...)` → `subscribeSignal`.
 
 **Тесты**
 
-- [ ] `preload/index.test.ts:74` — `pendingName` присваивается и только
+- [x] `preload/index.test.ts:74` — `pendingName` присваивается и только
       `void`-ится.
-- [ ] `shared/defaults.test.ts:38` — «see the note in PROGRESS» — файла нет.
-- [ ] `shared/keycodes.test.ts:10` — повторяет несуществующую историю про
+- [x] `shared/defaults.test.ts:38` — «see the note in PROGRESS» — файла нет.
+- [x] `shared/keycodes.test.ts:10` — повторяет несуществующую историю про
       `parseShortcut` и парсер агента.
 
 **Отложено (нужна правка вне пакета)**
 
-- [ ] `shared/defaults.ts:343-344` — `MIN_SIDE`/`MAX_SIDE` →
-      `SCREENSHOT_MIN_SIDE`/`SCREENSHOT_MAX_SIDE` и свести границы к одному
-      источнику с `ProviderSection.tsx` и `applyGate.ts`.
+- [ ] `shared/defaults.ts:343-344` — **исходная посылка неверна**: `MIN_SIDE` и
+      `MAX_SIDE` не экспортируются и вне `defaults.ts` не читаются, а renderer
+      жёстко пишет `480`/`2400`. Следующий шаг — не переименование, а «вынести
+      и заставить renderer потреблять».
 - [ ] `shared/defaults.ts:171` — `whisperModel` экспортируется, используется
-      только тестом.
+      только тестом; задокументирован как тестовый экспорт, не удалён.
 - [ ] `shared/defaults.ts:360` — `sanitizeVoice` смешивает четыре приведения.
 - [ ] `shared/defaults.ts:420` — `slice(-256)` → `MAX_REMEMBERED_APPROVALS`.
 - [ ] `shared/defaults.ts:103` — три хоста инлайном → `PLUSVIBE_HOSTS`.
@@ -638,7 +698,12 @@
 - [ ] `shared/intent.ts:23,32,73` — основа глаголов записана трижды. Якорность
       и лишний `сделай` должны сохраниться побайтово.
 - [ ] `preload/index.d.ts:3` — то же объявление `Window.deskhand`, что и в
-      `renderer/env.d.ts:3`. Оставить одно (правка в `renderer`).
+      `renderer/env.d.ts:3`. Оставить `renderer/env.d.ts` (его видит
+      `tsconfig.web.json`), удалить `preload/index.d.ts` — правка в
+      `renderer`/конфиге.
+- [ ] `src/main/agent/cursor.ts` — `paintStep` всё ещё пишет
+      `phase: 'arming' | 'acting'` инлайном; теперь можно `AgentCursorPhase`.
+      Правка в WP3.
 
 ### WP7 — Renderer
 
