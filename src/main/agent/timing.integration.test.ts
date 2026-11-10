@@ -9,8 +9,10 @@
  * a field renamed on one side, a rounding that erases the cheap path, or a
  * phase that never leaves the process.
  *
- * The binary is skipped when it has not been built, so a checkout without
- * `npm run build:agent` still runs the rest of the suite.
+ * The binary is skipped when it has not been built, and so is the grant: the
+ * sidecar refuses a run without Accessibility, so on a Mac that has not granted
+ * it these tests would report a wall of failures that says nothing about the
+ * code. A checkout without `npm run build:agent` runs the rest of the suite.
  */
 
 import { spawn } from 'node:child_process'
@@ -19,12 +21,14 @@ import { existsSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import type { AddressInfo } from 'node:net'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { agentAcceptsRuns } from './grant'
 import { translate, type AgentSidecarEvent, type Message } from './sidecar'
 
 const BINARY = fileURLToPath(
   new URL('../../../native/deskhand/.build/release/deskhand-agent', import.meta.url)
 )
 const built = existsSync(BINARY)
+const canRun = built && (await agentAcceptsRuns(BINARY))
 
 /**
  * What the stub model does on its first answer.
@@ -162,14 +166,14 @@ function runAgent(task: string, maxSteps = 3): Promise<AgentSidecarEvent[]> {
 }
 
 beforeAll(async () => {
-  if (built) await startModel()
+  if (canRun) await startModel()
 })
 
 afterAll(() => {
   server?.close()
 })
 
-describe.skipIf(!built)('a run that never finishes is reported as unfinished', () => {
+describe.skipIf(!canRun)('a run that never finishes is reported as unfinished', () => {
   /**
    * The failure this pins down: a task the agent could not complete ended with
    * a `done` carrying the loop's own English sentence, and the card drew a
@@ -217,7 +221,7 @@ describe.skipIf(!built)('a run that never finishes is reported as unfinished', (
   })
 })
 
-describe.skipIf(!built)('the agent reports its timings over the wire', () => {
+describe.skipIf(!canRun)('the agent reports its timings over the wire', () => {
   it('emits a step timing for every model round trip', async () => {
     const events = await runAgent('Посмотри, что открыто')
 
