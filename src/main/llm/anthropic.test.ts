@@ -396,7 +396,7 @@ describe('AnthropicProvider: failures', () => {
     respond(null, 401)
 
     await expect(drain(new AnthropicProvider().stream(messages, 'sk-ant', options()))).rejects.toThrow(
-      'Ключ Anthropic не принят. Проверьте ключ в настройках.'
+      'Ключ Anthropic не принят. Проверь ключ в настройках.'
     )
   })
 

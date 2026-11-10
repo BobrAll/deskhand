@@ -8,7 +8,7 @@ import {
   providerInfo,
   resolveSearchModel,
   resolveBaseUrl,
-  whisperModel
+  voiceModel
 } from './defaults'
 
 describe('providerInfo: the lookup that guards a provider id', () => {
@@ -58,17 +58,21 @@ describe('PROVIDERS: the catalog itself', () => {
   })
 })
 
-describe('whisperModel: the lookup that guards a model id', () => {
-  it('finds every catalog model by id', () => {
+describe('voiceModel: the lookup that guards a model id', () => {
+  it('finds every whisper catalog model by id', () => {
+    // The whisper entries are wrapped into `VOICE_MODELS` with an engine and a
+    // download URL, so the identity check is on what the wrapper copies over.
     for (const model of WHISPER_MODELS) {
-      expect(whisperModel(model.id)).toBe(model)
+      const resolved = voiceModel(model.id)
+      expect(resolved?.file, model.id).toBe(model.file)
+      expect(resolved?.engine, model.id).toBe('whisper')
     }
   })
 
   it('returns undefined for an unknown id', () => {
-    expect(whisperModel('')).toBeUndefined()
-    expect(whisperModel('large-v4')).toBeUndefined()
-    expect(whisperModel('Small')).toBeUndefined()
+    expect(voiceModel('')).toBeUndefined()
+    expect(voiceModel('large-v4')).toBeUndefined()
+    expect(voiceModel('Small')).toBeUndefined()
   })
 
   it('has unique ids and unique file names ending in .bin', () => {

@@ -245,6 +245,10 @@ if (!app.requestSingleInstanceLock()) {
   console.warn('[app] another copy is already running; this launch will exit')
   app.quit()
 } else {
+  // The only `second-instance` handler: `ipc.ts` used to register a second one
+  // that called the same `open()`. It was invisible, because `open()` coalesces
+  // an open that is already collecting, but it meant two places owned one
+  // lifecycle event.
   app.on('second-instance', () => {
     void overlay.open()
   })

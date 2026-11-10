@@ -163,6 +163,15 @@ export function App() {
   const promptRef = useRef('')
   /** Latest agent phase, so the key handler does not resubscribe on every tick. */
   const agentRef = useRef<AgentEvent | null>(null)
+  /**
+   * The answer on screen, readable from callbacks that must stay stable.
+   *
+   * The answer grows once per streamed chunk, so any callback that closes over
+   * it is rebuilt on every chunk. The key handler is one of those callbacks:
+   * depending on the answer would re-register the window listener hundreds of
+   * times per reply.
+   */
+  const answerTextRef = useRef('')
   const busyRef = useRef(false)
   const requestIdRef = useRef<string | null>(null)
   /**
@@ -229,6 +238,7 @@ export function App() {
 
   stateRef.current = state
   promptRef.current = prompt
+  answerTextRef.current = answer
   busyRef.current = busy
   agentRef.current = agent
 
@@ -252,6 +262,29 @@ export function App() {
     window.setTimeout(() => sendRef.current(text, true), 0)
   }, [])
 
+  /**
+   * Everything one turn leaves behind, cleared in one place.
+   *
+   * Both ways a card can be replaced — a fresh session (`reset`) and a session
+   * that has not been collected yet (`onPreparing`) — have to drop the same
+   * fields, and a width the person dragged belongs to the card they dragged it
+   * on, not to the next one.
+   */
+  const clearTurn = useCallback((typing: boolean) => {
+    setAnswer('')
+    setFailure(null)
+    setNotice(null)
+    setBusy(false)
+    setDrawn(0)
+    setTyping(typing)
+    setExpanded(false)
+    setUserWidth(null)
+    requestIdRef.current = null
+    replaceOnChunkRef.current = false
+    spokenPromptRef.current = false
+    setAgent(null)
+  }, [])
+
   const reset = useCallback(
     (next: OverlayState) => {
       /**
@@ -270,20 +303,11 @@ export function App() {
       stateRef.current = next
       setState(next)
       if (!typedWhileEmpty) setPrompt('')
-      setAnswer('')
-      setFailure(null)
-      setNotice(null)
-      setBusy(false)
-      setDrawn(0)
-      setTyping(typedWhileEmpty)
-      setExpanded(false)
-      requestIdRef.current = null
-      replaceOnChunkRef.current = false
-      setAgent(null)
+      clearTurn(typedWhileEmpty)
       inputRef.current?.focus()
       resumePendingSend()
     },
-    [resumePendingSend]
+    [clearTurn, resumePendingSend]
   )
 
   const applyState = useCallback(
@@ -371,18 +395,7 @@ export function App() {
       stateRef.current = null
       setState(null)
       if (!joinedCollecting) setPrompt('')
-      setAnswer('')
-      setFailure(null)
-      setNotice(null)
-      setBusy(false)
-      setAgent(null)
-      setDrawn(0)
-      setTyping(false)
-      setExpanded(false)
-      setUserWidth(null)
-      requestIdRef.current = null
-      replaceOnChunkRef.current = false
-      spokenPromptRef.current = false
+      clearTurn(false)
     })
     const offContext = window.deskhand.overlay.onContextUpdate((snapshot: ContextSnapshot) => {
       setState((prev) => (prev ? { ...prev, context: snapshot } : prev))
@@ -487,6 +500,16 @@ export function App() {
   const chromeWidth = CHROME_WIDTH + (busy ? STOP_CHROME : 0)
 
   /**
+   * The line the field wants, in whole points.
+   *
+   * Rounded once and used for both decisions — how wide the card opens and
+   * whether the question wraps — because two roundings of the same measurement
+   * disagree at the boundary: a line that exactly fills the card would wrap
+   * while the width said it fits.
+   */
+  const wantedLineWidth = Math.ceil(textWidth) + chromeWidth + CARET_SLACK
+
+  /**
    * The width the card needs for the question being written.
    *
    * Nothing is added for empty space: the field gets as many points as the
@@ -496,11 +519,7 @@ export function App() {
    * open to a panel the moment you start typing — the latter is loud in precisely
    * the moment a person is still deciding whether they want to say anything.
    */
-  const composedWidth = clamp(
-    Math.ceil(textWidth) + chromeWidth + CARET_SLACK,
-    CARD_NARROW_WIDTH,
-    CARD_WIDTH
-  )
+  const composedWidth = clamp(wantedLineWidth, CARD_NARROW_WIDTH, CARD_WIDTH)
 
   // Recompute from current content so a shorter answer shrinks the card again.
   const answerWidth = hasAnswer
@@ -547,7 +566,7 @@ export function App() {
   // room would briefly add rows that disappear as the window catches up. The
   // question wraps at the card's own width, so a card the user widened holds a
   // longer line and one they narrowed wraps sooner.
-  const wrapped = textWidth + chromeWidth + CARET_SLACK > cardWidth
+  const wrapped = wantedLineWidth > cardWidth
 
   // Measure layout, not the entrance transform. getBoundingClientRect includes
   // the appear animation's scale, which used to feed false heights back to macOS.
@@ -744,7 +763,7 @@ export function App() {
       // cannot retroactively become an action. Saying that out loud is the
       // difference between "включил и ничего не изменилось" and a user who
       // presses «Повторить».
-      setNotice('Управление включено. Повторите просьбу — теперь я её выполню.')
+      setNotice('Управление включено. Повтори просьбу — теперь я её выполню.')
     }
   }, [])
 
@@ -793,16 +812,18 @@ export function App() {
   }, [])
 
   const paste = useCallback(async () => {
-    if (!answer.trim()) return
-    const result = await window.deskhand.overlay.paste(answer)
+    const text = answerTextRef.current
+    if (!text.trim()) return
+    const result = await window.deskhand.overlay.paste(text)
     if (!result.ok && result.message) setNotice(result.message)
-  }, [answer])
+  }, [])
 
   const copy = useCallback(async () => {
-    if (!answer.trim()) return
-    await window.deskhand.overlay.copy(answer)
+    const text = answerTextRef.current
+    if (!text.trim()) return
+    await window.deskhand.overlay.copy(text)
     setNotice('Скопировано в буфер обмена')
-  }, [answer])
+  }, [])
 
   /**
    * The width the content itself wants, and the one «Шире» opens to.
@@ -922,9 +943,9 @@ export function App() {
         void copy()
         return
       }
-      send(prompt)
+      send(promptRef.current)
     },
-    [copy, paste, prompt, send]
+    [copy, paste, send]
   )
 
   useEffect(() => {
@@ -936,7 +957,7 @@ export function App() {
         tagName: (event.target as HTMLElement | null)?.tagName ?? null,
         agentPhase: agentRef.current?.phase ?? null,
         hasSelection: Boolean(window.getSelection()?.toString()),
-        hasAnswer: Boolean(answer.trim())
+        hasAnswer: Boolean(answerTextRef.current.trim())
       })
       if (!action) return
       // ⌘C without a selection is ours; with one, `keyPolicy` has already said
@@ -947,7 +968,7 @@ export function App() {
 
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [answer, perform])
+  }, [perform])
 
   // Nothing at all until the renderer knows whether a turn is running — see
   // `ready` in `useVoice`.
@@ -1227,8 +1248,8 @@ export function App() {
         <div className="line" data-tone={promptLooksLikeAction ? 'warn' : undefined}>
           <span>
             {promptLooksLikeAction
-              ? 'Это можно было сделать, а не показать: включите управление — и я нажму сам.'
-              : 'Могу и нажать за вас — управление мышью пока выключено.'}
+              ? 'Это можно было сделать, а не показать: включи управление — и я нажму сам.'
+              : 'Могу и нажать за тебя — управление мышью пока выключено.'}
           </span>
           <button className="tag" onClick={() => void setAgentEnabled(true)}>
             Включить
@@ -1310,7 +1331,7 @@ export function App() {
 
       {showWaiting && (
         <div className="waiting" role="status" aria-live="polite">
-          {!agent && !hasAnswer && <div className="waiting-label">Готовлю ответ…</div>}
+          <div className="waiting-label">Готовлю ответ…</div>
           {waitStage === 'long' ? (
             <div>Ответ занимает больше времени. Esc — остановить.</div>
           ) : waitStage === 'tip' ? (
@@ -1360,11 +1381,9 @@ export function App() {
       */}
       {hasAnswer && (!busy || speech.speaking) && (
         <div className="foot answer-actions">
-          {(!busy || speech.speaking) && (
-            <button className="link" onClick={() => speech.speaking ? speech.stop() : speech.speak(answer)}>
-              {speech.speaking ? 'Остановить озвучку' : 'Прослушать'}
-            </button>
-          )}
+          <button className="link" onClick={() => speech.speaking ? speech.stop() : speech.speak(answer)}>
+            {speech.speaking ? 'Остановить озвучку' : 'Прослушать'}
+          </button>
           {answerReady && (
             <>
               <span className="spacer" />

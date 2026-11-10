@@ -146,7 +146,7 @@ export function AgentTab({ agent, onChange, onEnabledChange }: AgentTabProps) {
       >
         <ToggleRow
           title="Показывать действия"
-          hint="Нужное окно выходит вперёд, и по экрану ходит курсор агента. Выключите, если он не должен забирать экран."
+          hint="Нужное окно выходит вперёд, и по экрану ходит курсор агента. Выключи, если он не должен забирать экран."
           checked={agent.showActions}
           onChange={(showActions) => onChange({ showActions })}
         />
@@ -173,7 +173,7 @@ export function AgentTab({ agent, onChange, onEnabledChange }: AgentTabProps) {
 
         <ToggleRow
           title="Останавливать, если я взял мышь"
-          hint="Потянулись за курсором — управление сразу вернулось к вам."
+          hint="Потянулся за курсором — управление сразу вернулось к тебе."
           checked={agent.abortOnMouseMove}
           onChange={(abortOnMouseMove) => onChange({ abortOnMouseMove })}
         />

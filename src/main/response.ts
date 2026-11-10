@@ -29,7 +29,6 @@ export interface ParsedChunk {
 
 export class ResponseStream {
   private pending = ''
-  private recordedAnnotations: Annotation[] = []
   webLookup = false
 
   /** Feeds one delta; returns everything that can be acted on right now. */
@@ -47,14 +46,10 @@ export class ResponseStream {
 
     // A tail that still looks like the start of a marker waits for its newline;
     // flushing it would print "@po" into the answer and then lose the annotation.
-    if (this.pending.trimStart().startsWith('@')) {
-      this.recordAnnotations(result)
-      return result
-    }
+    if (this.pending.trimStart().startsWith('@')) return result
 
     result.text += this.pending
     this.pending = ''
-    this.recordAnnotations(result)
     return result
   }
 
@@ -65,13 +60,7 @@ export class ResponseStream {
     const result: ParsedChunk = { text: '', annotations: [] }
     if (!tail) return result
     this.consume(tail, result)
-    this.recordAnnotations(result)
     return result
-  }
-
-  /** Every annotation asked for during this answer, in arrival order. */
-  annotations(): Annotation[] {
-    return this.recordedAnnotations
   }
 
   private consume(line: string, result: ParsedChunk): void {
@@ -85,9 +74,5 @@ export class ResponseStream {
       return
     }
     result.text += `${line}\n`
-  }
-
-  private recordAnnotations(result: ParsedChunk): void {
-    this.recordedAnnotations.push(...result.annotations)
   }
 }

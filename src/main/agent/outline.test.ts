@@ -21,7 +21,7 @@ function element(overrides: Partial<AxElementInfo> = {}): AxElementInfo {
 }
 
 function probe(targets: AxElementInfo[]): AxProbe {
-  return { pid: 42, app: 'Safari', chain: [], targets, focused: null, elapsedMs: 5 }
+  return { pid: 42, targets, elapsedMs: 5 }
 }
 
 /** The element lines only: two spaces, then the x fraction. Skips the header. */
@@ -69,20 +69,26 @@ describe('formatOutline: which elements are listed', () => {
     expect(formatOutline(probe([inside]), bounds, area)).not.toBeNull()
   })
 
-  it('keeps an editable field only when it is a text field or a text area', () => {
+  it('keeps an editable only when it is a place to type', () => {
     const outline = formatOutline(
       probe([
         element({ role: 'AXTextField', title: 'Поиск', pressable: false, editable: true }),
         element({ role: 'AXButton', pressable: false, editable: true }),
-        element({ role: 'AXTextArea', title: 'Заметка', pressable: false, editable: true })
+        element({ role: 'AXTextArea', title: 'Заметка', pressable: false, editable: true }),
+        // The native side marks these two editable as well (`axRoleIsField`), and
+        // a search box the model cannot name is a search box it has to hit by eye.
+        element({ role: 'AXSearchField', title: 'Найти', pressable: false, editable: true }),
+        element({ role: 'AXComboBox', title: 'Страна', pressable: false, editable: true })
       ]),
       null,
       area
     )
 
-    expect(body(outline)).toHaveLength(2)
+    expect(body(outline)).toHaveLength(4)
     expect(outline).toContain('поле «Поиск»')
     expect(outline).toContain('поле «Заметка»')
+    expect(outline).toContain('поле поиска «Найти»')
+    expect(outline).toContain('поле «Страна»')
   })
 
   it('drops an element with no visible name', () => {
@@ -230,10 +236,10 @@ describe('formatOutline: the header the model reads', () => {
 })
 
 describe('describeScreen', () => {
-  it('asks the helper about the given pid without a point', async () => {
+  it('asks the helper about the given pid', async () => {
     helperProbe.mockResolvedValue(probe([element()]))
     await describeScreen(42, null, area)
-    expect(helperProbe).toHaveBeenCalledWith(42, null)
+    expect(helperProbe).toHaveBeenCalledWith(42)
   })
 
   it('returns null when the probe failed', async () => {
@@ -252,9 +258,9 @@ describe('describeScreen', () => {
     expect(outline).toContain('кнопка «Экспорт»')
   })
 
-  it('returns null for a null pid (no target application)', async () => {
+  it('still probes and renders when the pid is null', async () => {
     helperProbe.mockResolvedValue(probe([element()]))
-    expect(await describeScreen(null, null, area)).not.toBeNull()
-    expect(helperProbe).toHaveBeenCalledWith(null, null)
+    expect(await describeScreen(null, null, area)).toContain('кнопка «Экспорт»')
+    expect(helperProbe).toHaveBeenCalledWith(null)
   })
 })

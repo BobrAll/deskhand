@@ -102,7 +102,7 @@ export class VoiceKeyListener extends TapListener<TapEvent> {
 
   protected onExitWithoutReady(): void {
     // The permission is missing; retrying that in a loop would only fill the log.
-    this.lastError = 'Слушатель клавиатуры не запустился — проверьте «Универсальный доступ».'
+    this.lastError = 'Слушатель клавиатуры не запустился — проверь «Универсальный доступ».'
     this.options.onError(this.lastError)
   }
 
@@ -134,7 +134,7 @@ function describeTapError(code: string): string {
     return 'Нет доступа «Универсальный доступ» — удержание клавиши не работает.'
   }
   if (code === 'tap-create-failed') {
-    return 'Не удалось перехватить клавиатуру: проверьте «Универсальный доступ» и перезапустите приложение.'
+    return 'Не удалось перехватить клавиатуру: проверь «Универсальный доступ» и перезапусти приложение.'
   }
   return `Слушатель клавиатуры: ${code}`
 }

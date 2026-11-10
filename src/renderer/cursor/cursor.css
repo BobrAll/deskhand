@@ -17,7 +17,9 @@ body,
 }
 
 :root {
-  /* The same blue as `--accent` in `base.css` / the overlay's accent. */
+  /* Deliberately not `--accent`: this layer sits on arbitrary content (a white
+     document, a dark editor, a photo), so it is the same hue a step brighter —
+     `--accent` disappears as a thin line on white. */
   --cursor-accent: #5b78ff;
   --cursor-text: #f4f5f7;
 }

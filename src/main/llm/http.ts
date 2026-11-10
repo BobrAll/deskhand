@@ -97,7 +97,7 @@ export async function toProviderError(response: Response, providerLabel: string)
     case 401:
     case 403:
       return new ProviderError(
-        `Ключ ${providerLabel} не принят. Проверьте ключ в настройках.`,
+        `Ключ ${providerLabel} не принят. Проверь ключ в настройках.`,
         false,
         status
       )
@@ -105,15 +105,15 @@ export async function toProviderError(response: Response, providerLabel: string)
       return new ProviderError(`Недостаточно средств на счёте ${providerLabel}.`, false, status)
     case 404:
       return new ProviderError(
-        `Модель не найдена у ${providerLabel}. Проверьте название модели.${detail ? ` (${detail})` : ''}`,
+        `Модель не найдена у ${providerLabel}. Проверь название модели.${detail ? ` (${detail})` : ''}`,
         false,
         status
       )
     case 413:
-      return new ProviderError('Контекст слишком большой: уменьшите скриншот или выделение.', false, status)
+      return new ProviderError('Контекст слишком большой: уменьши скриншот или выделение.', false, status)
     case 429:
       return new ProviderError(
-        `Лимит запросов ${providerLabel} исчерпан. Подождите немного и повторите.`,
+        `Лимит запросов ${providerLabel} исчерпан. Подожди немного и повтори.`,
         true,
         status
       )

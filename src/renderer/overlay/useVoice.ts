@@ -176,7 +176,7 @@ export function useVoice(): VoiceHook {
         pendingStopTranscribeRef.current = null
         const message =
           error instanceof DOMException && error.name === 'NotAllowedError'
-            ? 'Нет доступа к микрофону — разрешите его в настройках macOS.'
+            ? 'Нет доступа к микрофону — разреши его в настройках macOS.'
             : error instanceof Error
               ? error.message
               : 'Микрофон недоступен.'
@@ -266,8 +266,10 @@ export function useVoice(): VoiceHook {
         // recognition — otherwise a short phrase shows no animation at all.
         setState({ phase: 'transcribing', level: 0, message: null, error: false })
       }
-      setReady(true)
-    })
+    }).catch(() => {
+      // Nothing to attach to: the card still has to open. `ready` gates the whole
+      // overlay, so leaving it false would blank the window on a failed pull.
+    }).finally(() => setReady(true))
 
     // Warming the microphone is the expensive part of the first turn on macOS,
     // and doing it here — while the user is not speaking — is what keeps the first
@@ -275,7 +277,7 @@ export function useVoice(): VoiceHook {
     // or a tap there is nothing to warm.
     void api.status().then((status) => {
       if (status.ready && status.enabled) void primeRecorder()
-    })
+    }).catch(() => null)
 
     return () => {
       offRecord()

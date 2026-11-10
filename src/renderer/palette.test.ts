@@ -27,6 +27,7 @@ const WINDOWS: Record<string, string[]> = {
   settings: ['styles/base.css', 'settings/settings.css'],
   onboarding: ['styles/base.css', 'onboarding/onboarding.css'],
   cursor: ['styles/base.css', 'cursor/cursor.css'],
+  presenter: ['styles/base.css', 'presenter/presenter.css'],
   pointer: ['styles/base.css', 'pointer/pointer.css']
 }
 

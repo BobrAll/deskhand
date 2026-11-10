@@ -193,8 +193,8 @@ export function createVoiceController(host: VoiceHost) {
       if (mine !== turn) return
       abortTurnWithError(
         busy
-          ? 'Распознавание не ответило — попробуйте ещё раз.'
-          : 'Запись не дошла до распознавания — попробуйте ещё раз.'
+          ? 'Распознавание не ответило — попробуй ещё раз.'
+          : 'Запись не дошла до распознавания — попробуй ещё раз.'
       )
     }, limit)
   }
@@ -356,7 +356,7 @@ export function createVoiceController(host: VoiceHost) {
       // The recorder ran but found no speech: silence, or a press too short to be
       // a phrase. An error message would be wrong — nothing failed.
       busy = false
-      finishIdle({ error: 'Ничего не расслышал — попробуйте ещё раз.' })
+      finishIdle({ error: 'Ничего не расслышал — попробуй ещё раз.' })
       return { ok: false, text: '', ms: 0, message: 'Речь не распознана.' }
     }
 

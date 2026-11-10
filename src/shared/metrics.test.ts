@@ -41,19 +41,27 @@ describe('metrics: the card widths', () => {
 
 describe('metrics: the literals are gone from both processes', () => {
   const read = (path: string): string => readFileSync(resolve(__dirname, '..', path), 'utf8')
+  const sizing = [
+    'main/windows/index.ts',
+    'renderer/overlay/App.tsx',
+    'renderer/overlay/cardWidth.ts',
+    'renderer/overlay/cardMetrics.ts'
+  ]
 
-  it('does not let the main process write the widths out again', () => {
-    const source = read('main/windows/index.ts')
-    expect(source).not.toMatch(/=\s*360\b/)
-    expect(source).not.toMatch(/=\s*112\b/)
-    expect(source).not.toMatch(/=\s*80\b/)
+  it('does not let a width be written out again where the card is sized', () => {
+    for (const path of sizing) {
+      const source = read(path)
+      expect(source, path).not.toMatch(/=\s*360\b/)
+      expect(source, path).not.toMatch(/=\s*112\b/)
+      expect(source, path).not.toMatch(/=\s*80\b/)
+    }
   })
 
-  it('does not let the overlay renderer write the widths out again', () => {
-    const source = read('renderer/overlay/App.tsx')
-    expect(source).not.toMatch(/=\s*360\b/)
-    expect(source).not.toMatch(/=\s*112\b/)
-    expect(source).not.toMatch(/=\s*80\b/)
+  it('does not let a local name stand in for one of these widths', () => {
+    for (const path of sizing) {
+      const source = read(path)
+      expect(source, path).not.toMatch(/const (NARROW_WIDTH|VOICE_WIDTH|FULL_WIDTH) = \d/)
+    }
   })
 })
 

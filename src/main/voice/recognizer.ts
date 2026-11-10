@@ -143,10 +143,10 @@ export async function voiceStatus(): Promise<VoiceStatus> {
   if (!binary) {
     detail =
       engine === 'transcribe'
-        ? 'Не найден transcribe-cli — выполните npm run build:transcribe.'
-        : 'Не найден whisper-cli — пересоберите приложение (npm run build:whisper).'
+        ? 'Не найден transcribe-cli — выполни npm run build:transcribe.'
+        : 'Не найден whisper-cli — пересобери приложение (npm run build:whisper).'
   }
-  else if (!model.path) detail = 'Не скачана модель распознавания — выберите её в настройках.'
+  else if (!model.path) detail = 'Не скачана модель распознавания — выбери её в настройках.'
   return {
     ready: Boolean(binary && model.path),
     enabled: voice.enabled,
@@ -227,7 +227,7 @@ export async function transcribe(options: TranscribeOptions): Promise<Transcribe
     if (!text) {
       // Silence is not alarming, but it must not look like a successful empty
       // answer either: the card would sit there with nothing in it.
-      return { ok: false, text: '', ms, message: 'Речь не распознана — попробуйте ещё раз.' }
+      return { ok: false, text: '', ms, message: 'Речь не распознана — попробуй ещё раз.' }
     }
     return { ok: true, text, ms }
   } catch (error) {
@@ -322,7 +322,7 @@ export function downloadModel(
   const task = (async (): Promise<void> => {
     await mkdir(modelsDir(), { recursive: true })
     const controller = new AbortController()
-    const timeout = new Error('Сервер загрузки модели не отвечает. Попробуйте снова.')
+    const timeout = new Error('Сервер загрузки модели не отвечает. Попробуй снова.')
     const abort = (): void => controller.abort(timeout)
     let timer = setTimeout(abort, DOWNLOAD_IDLE_TIMEOUT_MS)
     let received = 0
@@ -358,7 +358,7 @@ export function downloadModel(
 
       await pipeline(chunks(), createWriteStream(part), { signal: controller.signal })
       if (!received || (contentLength && !response.headers.has('content-encoding') && received !== contentLength)) {
-        throw new Error('Файл модели загрузился не полностью. Попробуйте снова.')
+        throw new Error('Файл модели загрузился не полностью. Попробуй снова.')
       }
     } catch (error) {
       if (controller.signal.aborted) throw timeout
@@ -393,7 +393,7 @@ export function downloadModel(
 /** Removes only model files stored in the app's models directory. */
 export async function deleteModel(id: string): Promise<void> {
   const model = voiceModel(id) ?? WHISPER_MODELS.find((model) => model.file === id)
-  if (model && isDownloading(model.id)) throw new Error('Дождитесь окончания загрузки модели.')
+  if (model && isDownloading(model.id)) throw new Error('Дождись окончания загрузки модели.')
   const file = model?.file ?? id
   if (!model && !isModelFile(file)) throw new Error('Неизвестная модель распознавания.')
   await rm(join(modelsDir(), file), { force: true })

@@ -153,7 +153,7 @@ export function useSpeech() {
       voice = pick()
     }
     if (!synth || !voice) {
-      setError('Нет доступного системного голоса для этого языка. Добавьте голос в настройках macOS.')
+      setError('Нет доступного системного голоса для этого языка. Добавь голос в настройках macOS.')
       return
     }
 

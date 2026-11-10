@@ -265,7 +265,7 @@ export class AgentSidecar {
   private spawnProcess(): Promise<void> {
     const binary = agentBinary()
     if (!binary) {
-      return Promise.reject(new Error('Компонент агента не собран. Выполните `npm run build:agent`.'))
+      return Promise.reject(new Error('Компонент агента не собран. Выполни `npm run build:agent`.'))
     }
     this.buffer = ''
     const child = spawn(binary, ['--serve'], {

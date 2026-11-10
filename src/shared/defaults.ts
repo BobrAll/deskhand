@@ -164,15 +164,6 @@ export const WHISPER_MODELS: WhisperModelMeta[] = [
   }
 ]
 
-/**
- * Test seam: production resolves ids through `voiceModel`; this whisper-only
- * lookup exists for `defaults-guards.test.ts` to assert that every catalog id
- * resolves and an unknown id does not.
- */
-export function whisperModel(id: string): WhisperModelMeta | undefined {
-  return WHISPER_MODELS.find((model) => model.id === id)
-}
-
 export interface VoiceModelMeta extends WhisperModelMeta {
   engine: 'whisper' | 'transcribe'
   url: string

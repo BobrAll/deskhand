@@ -69,14 +69,14 @@ describe('the agent row’s label', () => {
   })
 
   it('leaves a repeated terminal message in the answer only', () => {
-    const message = 'Остановлено: вы взяли мышь.'
+    const message = 'Остановлено: ты взял мышь.'
     const aborted = event({ phase: 'aborted', message })
     expect(agentLabel(aborted, ` ${message} `)).toBeNull()
     expect(agentLabel(aborted, 'Другой ответ')).toBe(message)
   })
 
   it('shows the stop reason on an aborted run', () => {
-    expect(agentLabel(event({ phase: 'aborted', message: 'Остановлено: вы взяли мышь.' })))
-      .toBe('Остановлено: вы взяли мышь.')
+    expect(agentLabel(event({ phase: 'aborted', message: 'Остановлено: ты взял мышь.' })))
+      .toBe('Остановлено: ты взял мышь.')
   })
 })

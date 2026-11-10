@@ -25,13 +25,13 @@ async function fetchWithTimeout(url: string, init: RequestInit): Promise<Respons
 }
 
 function describe(status: number, body: string): string {
-  if (status === 401 || status === 403) return 'Ключ не принят: проверьте правильность ключа.'
+  if (status === 401 || status === 403) return 'Ключ не принят: проверь правильность ключа.'
   if (status === 402) return 'Ключ действителен, но на счёте нет средств.'
   if (status === 429) return 'Ключ действителен, но лимит запросов исчерпан.'
   if (status === 404) {
-    return 'Сервис ответил 404: проверьте base URL (нужен корень API, например …/v1).'
+    return 'Сервис ответил 404: проверь base URL (нужен корень API, например …/v1).'
   }
-  if (status >= 500) return 'Сервис провайдера недоступен, попробуйте позже.'
+  if (status >= 500) return 'Сервис провайдера недоступен, попробуй позже.'
   return `Неожиданный ответ ${status}: ${body.slice(0, BODY_PREVIEW_CHARS)}`
 }
 
@@ -45,7 +45,7 @@ export async function testApiKey(
   baseUrl?: string
 ): Promise<TestKeyResult> {
   const apiKey = key.trim()
-  if (!apiKey) return { ok: false, message: 'Введите ключ.' }
+  if (!apiKey) return { ok: false, message: 'Введи ключ.' }
 
   const fallback = providerInfo(provider)?.defaultBaseUrl ?? ''
   const root = normalizeBaseUrl(baseUrl) || fallback

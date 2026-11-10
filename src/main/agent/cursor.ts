@@ -1,5 +1,11 @@
 /**
- * A display-sized glow with a status caption that follows the pointer.
+ * A display-sized glow that follows the pointer and marks where the agent is
+ * working.
+ *
+ * The text about what is happening lives on the card, not here: at the pointer
+ * there is no room for a sentence that competes with the thing being pointed
+ * at. This layer carries only the phase and the anchor.
+ *
  * The window passes clicks through, stays unfocused and is excluded from captures.
  */
 
@@ -20,22 +26,12 @@ const SUCCESS_MS = 1100
 
 /**
  * Follow rate. 16 ms is roughly one display frame: the helper warps the pointer
- * in one jump, so anything slower would show the caption arriving after the click.
+ * in one jump, so anything slower would show the glow arriving after the click.
  */
 const FOLLOW_MS = 16
 
-/** Clearance above the pointer for the caption, in points. Kept in step with CSS. */
-const CAPTION_GAP = 26
-
-/**
- * The caption needs this much room above the pointer: the gap, plus the tallest
- * the one-line caption can get. Below it the caption is flipped under the
- * pointer instead of being clamped into the menu bar.
- */
-const CAPTION_ROOM = CAPTION_GAP + 38
-
-/** How long the pause between two plans has to last before the caption changes. */
-const WAIT_LABEL_MS = 700
+/** How long a pause between two plans has to last before the glow says it is still working. */
+const WAIT_PHASE_MS = 700
 
 const layer: LayerWindowState = { window: null, loaded: null }
 let visible = false
@@ -101,21 +97,11 @@ function displayBounds(): { bounds: ScreenRect; cursor: { x: number; y: number }
   }
 }
 
-/**
- * The pointer's position inside the layer, plus which side the caption goes on.
- *
- * The caption sits above the pointer by default: that is the half of the screen
- * the click is *not* about to change. Near the top of the display there is no
- * room, so it flips below.
- */
-function measure(): { bounds: ScreenRect; anchor: { x: number; y: number }; side: 'above' | 'below' } {
+/** The pointer's position inside the layer, in the layer's own points. */
+function measure(): { bounds: ScreenRect; anchor: { x: number; y: number } } {
   const { bounds, cursor } = displayBounds()
   const anchor = { x: cursor.x - bounds.x, y: cursor.y - bounds.y }
-  return {
-    bounds,
-    anchor,
-    side: anchor.y < CAPTION_ROOM ? 'below' : 'above'
-  }
+  return { bounds, anchor }
 }
 
 function place(target: BrowserWindow, bounds: ScreenRect): void {
@@ -128,10 +114,11 @@ function send(target: BrowserWindow, nextFrame: AgentCursorFrame): void {
 }
 
 /**
- * Paints the glow on the active display and starts following the pointer for the caption.
+ * Paints the glow on the active display and starts following the pointer.
  *
  * Awaiting the window is safe here: the first `arming` event arrives before the
- * run's start delay, so the glow still appears while "приготовился" is on screen.
+ * run's start delay, so the glow still appears while the card is still saying it
+ * is getting ready.
  */
 async function paint(): Promise<void> {
   cancelSuccess()
@@ -152,8 +139,7 @@ async function paint(): Promise<void> {
   send(target, {
     ...shown,
     visible: true,
-    anchor: spot.anchor,
-    side: spot.side
+    anchor: spot.anchor
   })
 
   if (!visible) {
@@ -180,14 +166,8 @@ function startFollow(): void {
     const spot = measure()
     // The pointer may have crossed to another display: move the layer once.
     place(target, spot.bounds)
-    if (
-      spot.anchor.x === frame.anchor.x &&
-      spot.anchor.y === frame.anchor.y &&
-      spot.side === frame.side
-    ) {
-      return
-    }
-    send(target, { ...frame, anchor: spot.anchor, side: spot.side })
+    if (spot.anchor.x === frame.anchor.x && spot.anchor.y === frame.anchor.y) return
+    send(target, { ...frame, anchor: spot.anchor })
   }, FOLLOW_MS)
 }
 
@@ -203,8 +183,8 @@ function stopFollow(): void {
  *
  * Between two plans there is no step to name and no click to mark, but the
  * assistant is not finished: the screen is being read again before it continues.
- * Wait briefly before replacing the last step caption with "Смотрю…", since
- * the turn might finish before the new caption would be readable.
+ * Wait briefly before parking the glow in its waiting phase, since the turn
+ * might finish before that state would be readable.
  *
  * Returns `false` when there is nothing to park (the glow was never shown), so
  * the caller can fall through to a real hide.
@@ -215,7 +195,7 @@ function park(): boolean {
   if (!shown || !visible || !target || target.isDestroyed()) return false
   if (waitTimer || shown.phase === 'waiting') return true
   // The pause belongs to *this* turn: a newer turn already painting its own step
-  // must not be relabelled by a timer the previous one left behind.
+  // must not be repainted by a timer the previous one left behind.
   const owner = glowOwner
   waitTimer = setTimeout(() => {
     waitTimer = null
@@ -223,15 +203,8 @@ function park(): boolean {
     const stillTarget = layer.window
     if (!stillShown || !visible || !stillTarget || stillTarget.isDestroyed() || glowOwner === null) return
     if (glowOwner !== owner) return
-    send(stillTarget, {
-      ...stillShown,
-      visible: true,
-      phase: 'waiting',
-      label: 'Смотрю на экран…',
-      step: 0,
-      total: 0
-    })
-  }, WAIT_LABEL_MS)
+    send(stillTarget, { ...stillShown, visible: true, phase: 'waiting' })
+  }, WAIT_PHASE_MS)
   return true
 }
 
@@ -252,9 +225,9 @@ function hide(immediate = false): void {
   cancelWait()
 
   // Already fading (or hidden): the pending timer owns the window. Clearing it
-  // here would cancel the only thing that actually hides the layer — and the
+  // here would cancel the only thing that actually hides the layer — and a
   // second `hide` call is routine, because the runner publishes `done`/`aborted`
-  // and then calls `hideAgentCursor()` again from its `finally`.
+  // and then releases the turn from its `finally` (`endAgentTurn`).
   if (!frame) {
     if (!hideTimer) {
       visible = false
@@ -300,30 +273,22 @@ function paintSuccess(): void {
   frame = {
     visible: true,
     anchor: frame?.anchor ?? { x: 0, y: 0 },
-    side: frame?.side ?? 'above',
-    phase: 'success',
-    label: 'Готово',
-    step: 0,
-    total: 0
+    phase: 'success'
   }
   void paint()
 }
 
 /**
  * The glow parks with the question, so the eye goes to the card instead of
- * following a caption that says nothing new.
+ * staying on the pointer.
  */
-function paintQuestion(event: AgentEvent): void {
+function paintQuestion(): void {
   if (!frame && glowOwner === null) return
   cancelWait()
   const waiting: AgentCursorFrame = {
     visible: true,
     anchor: frame?.anchor ?? { x: 0, y: 0 },
-    side: frame?.side ?? 'above',
-    phase: 'waiting',
-    label: event.label || 'Нужно подтверждение',
-    step: 0,
-    total: 0
+    phase: 'waiting'
   }
   trace('cursor.waiting', { asking: true })
   const target = layer.window
@@ -334,21 +299,12 @@ function paintQuestion(event: AgentEvent): void {
   }
 }
 
-/** A step of a run: the caption moves with the work. */
-function paintStep(event: AgentEvent, phase: AgentCursorPhase): void {
-  const acting = phase === 'acting'
-  const previous = frame
-  const label =
-    event.label ||
-    (acting ? 'Действие' : 'Приготовился')
+/** A step of a run: the glow changes phase and follows the pointer. */
+function paintStep(phase: AgentCursorPhase): void {
   const next: AgentCursorFrame = {
     visible: true,
-    anchor: previous?.anchor ?? { x: 0, y: 0 },
-    side: previous?.side ?? 'above',
-    phase,
-    label,
-    step: acting ? event.step : 0,
-    total: event.total
+    anchor: frame?.anchor ?? { x: 0, y: 0 },
+    phase
   }
 
   frame = next
@@ -372,7 +328,7 @@ export function updateAgentCursor(event: AgentEvent): void {
   // A run that is waiting for the user to answer is not progress and not a
   // failure: the pointer glow parks with the question.
   if (event.phase === 'asking') {
-    paintQuestion(event)
+    paintQuestion()
     return
   }
 
@@ -382,19 +338,7 @@ export function updateAgentCursor(event: AgentEvent): void {
     return
   }
 
-  paintStep(event, event.phase)
-}
-
-/**
- * Hides the glow unless a turn is still running.
- *
- * This is the safety net the runner calls from its `finally`: after a plan it
- * must not leave a stale mark behind, but between two plans of the same turn it
- * must not take the glow down either. It parks instead, and the turn's own
- * release (`endAgentTurn`) is what finally hides it.
- */
-export function hideAgentCursor(): void {
-  hide()
+  paintStep(event.phase)
 }
 
 /**
@@ -403,15 +347,19 @@ export function hideAgentCursor(): void {
  * Called once per turn, before its first plan runs. Until the matching
  * `endAgentTurn` the glow only ever parks, so a turn that runs several plans
  * shows one continuous glow instead of one per plan.
+ *
+ * `showNow` is for a turn that is about to work with the machine: the glow
+ * appears at once, before the first plan arrives, so the pointer is already
+ * marked while the screenshot and the tree are being read. A writing turn has
+ * nothing to mark and shows nothing.
  */
-export function beginAgentTurn(label?: string): number {
+export function beginAgentTurn(showNow: boolean): number {
   turnCount += 1
-  // A new request supersedes the previous turn's glow and caption.
+  // A new request supersedes the previous turn's glow.
   if (frame) hideNow()
   glowOwner = turnCount
-  if (label) {
-    frame = { visible: true, anchor: { x: 0, y: 0 }, side: 'above',
-      phase: 'waiting', label, step: 0, total: 0 }
+  if (showNow) {
+    frame = { visible: true, anchor: { x: 0, y: 0 }, phase: 'waiting' }
     void paint()
   }
   return glowOwner

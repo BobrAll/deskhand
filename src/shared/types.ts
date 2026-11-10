@@ -288,21 +288,14 @@ export interface AgentRunResult {
  */
 export type AgentCursorPhase = 'arming' | 'acting' | 'waiting' | 'success'
 
-/** State of the agent’s screen glow and its caption at the pointer. */
+/** State of the agent's screen glow at the pointer. */
 export interface AgentCursorFrame {
   /** `false` plays the fade-out; the window is hidden right after it. */
   visible: boolean
   /** Pointer position *inside* the layer, in points. */
   anchor: { x: number; y: number }
-  /** Which side of the pointer the caption hangs on. */
-  side: 'above' | 'below'
   /** What the glow is doing; see `AgentCursorPhase` for how it maps to `AgentPhase`. */
   phase: AgentCursorPhase
-  /** What is happening, in the user's language ("Клик: «Экспорт»"). */
-  label: string
-  /** 1-based index of the running step; 0 while arming. */
-  step: number
-  total: number
 }
 
 /**
@@ -591,18 +584,12 @@ export interface AxElementInfo {
 /**
  * What the Accessibility API reported for one look at the screen.
  *
- * `chain` is the element under a concrete point and its ancestors (a static text
- * inside a button inside a toolbar), `targets` is the flat list of everything
- * actionable in the focused window and the menu bar, and `focused` is what has
- * the keyboard right now — the difference between "the click landed in the field"
- * and "the click landed next to it, and the text is about to go somewhere else".
+ * `targets` is the flat list of everything actionable in the focused window and
+ * the menu bar — what the outline offers the model to aim at.
  */
 export interface AxProbe {
   pid: number
-  app: string
-  chain: AxElementInfo[]
   targets: AxElementInfo[]
-  focused: AxElementInfo | null
   elapsedMs: number
 }
 
@@ -681,17 +668,15 @@ export interface ContextFlags {
 }
 
 export interface OverlayNotice {
-  kind: 'info' | 'warning' | 'error'
+  /** A setup problem the card cannot fix itself: `error` is the red tone, `warning` the amber one. */
+  kind: 'warning' | 'error'
   message: string
-  /** Optional call to action rendered as a link-button in the overlay. */
-  action?: 'openSettings' | 'openPermissions'
 }
 
 export interface OverlayState {
   sessionId: string
   context: ContextSnapshot
   flags: ContextFlags
-  defaults: ContextFlags
   /** Set when provider/model/key are not ready; the overlay still opens. */
   setupNotice: OverlayNotice | null
   warnings: string[]
@@ -714,7 +699,6 @@ export type StreamEvent =
 /** Sent to the overlay whenever the drawing layer gained or lost shapes. */
 export interface AnnotationsEvent {
   count: number
-  visible: boolean
 }
 
 export interface ProviderInfo {

@@ -8,10 +8,10 @@
  *    same points — a local copy is how the card ends up clipped or jumping, and
  *    nothing throws when it does. This module re-exports none of them: every use
  *    site imports the `CARD_*` names directly.
- * 2. The chrome numbers describe the CSS. They cannot be derived from it (the
- *    renderer has no stylesheet parser and the values are hand-summed from
- *    `overlay.css`), so they are pinned instead: changing one is a deliberate act
- *    that has to show up in a diff, not a typo that silently moves the chevron.
+ * 2. The chrome numbers describe the CSS, so they are checked against it. They
+ *    cannot be imported from the stylesheet, and a hand-summed number that has
+ *    drifted from the rule it describes is exactly how the chevron ends up
+ *    sitting on the last letter: nothing throws, it just looks wrong.
  */
 
 import { describe, expect, it } from 'vitest'
@@ -26,44 +26,50 @@ import {
   clamp
 } from './cardMetrics'
 
+const overlayCss = readFileSync(join(__dirname, 'overlay.css'), 'utf8')
+
+/** The declarations of one rule, so a property can be read from the rule it belongs to. */
+function rule(selector: string): string {
+  const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const match = new RegExp(`${escaped}\\s*\\{([^}]*)\\}`).exec(overlayCss)
+  expect(match, `overlay.css must still declare ${selector}`).not.toBeNull()
+  return match?.[1] ?? ''
+}
+
+function px(block: string, property: string): number {
+  const match = new RegExp(`(?:^|\\n)\\s*${property}:\\s*(\\d+)px`).exec(block)
+  expect(match, `${property} must still be declared in px`).not.toBeNull()
+  return Number(match?.[1])
+}
+
 describe('metrics: the widths stay in @shared/metrics', () => {
   const read = (name: string): string => readFileSync(join(__dirname, name), 'utf8')
 
+  // The width literals themselves are guarded once, in `@shared/metrics.test.ts`,
+  // where all four files that could carry a copy are checked together. What is
+  // worth checking here is that this module adds none of its own.
   it('does not re-export the widths under local names', () => {
     const source = read('cardMetrics.ts')
 
     expect(source).not.toMatch(/export const (NARROW_WIDTH|VOICE_WIDTH|FULL_WIDTH)\b/)
   })
-
-  it('does not repeat the literals in this module', () => {
-    const source = read('cardMetrics.ts')
-
-    expect(source).not.toMatch(/=\s*360\b/)
-    expect(source).not.toMatch(/=\s*112\b/)
-    expect(source).not.toMatch(/=\s*80\b/)
-  })
-
-  it('is what the card lays itself out with', () => {
-    // The two files that size the card import the shared names; neither may
-    // carry a copy of a width.
-    for (const name of ['cardWidth.ts', 'App.tsx']) {
-      const source = read(name)
-      expect(source, name).toMatch(/CARD_(WIDTH|NARROW_WIDTH|VOICE_WIDTH)/)
-      expect(source, name).not.toMatch(/=\s*360\b/)
-      expect(source, name).not.toMatch(/=\s*112\b/)
-      expect(source, name).not.toMatch(/=\s*80\b/)
-    }
-  })
 })
 
 describe('metrics: the chrome the CSS spends', () => {
   it('sums the padding, the edge, the gap and the chevron', () => {
-    // 8px padding on both sides + 2px edge + 6 gap + 16 chevron.
-    expect(CHROME_WIDTH).toBe(40)
+    const card = rule('.card')
+    const padding = /(?:^|\n)\s*padding:\s*(\d+)px\s+(\d+)px/.exec(card)
+    expect(padding, '.card must still declare "padding: <vertical>px <horizontal>px"').not.toBeNull()
+    const horizontalPadding = Number(padding?.[2])
+    const edge = px(card, 'border') * 2
+    const gap = px(rule('.line'), 'gap')
+    const chevron = px(rule('button.toggle'), 'width')
+
+    expect(CHROME_WIDTH).toBe(horizontalPadding * 2 + edge + gap + chevron)
   })
 
   it('counts the stop button and its gap', () => {
-    expect(STOP_CHROME).toBe(24)
+    expect(STOP_CHROME).toBe(px(rule('button.stop'), 'width') + px(rule('.line'), 'gap'))
   })
 
   it('leaves room for the caret and for a lost sub-pixel', () => {

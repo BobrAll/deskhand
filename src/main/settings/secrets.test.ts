@@ -98,11 +98,20 @@ describe('secrets: getApiKey', () => {
     expect(secrets.getApiKey('anthropic')).toBe('sk-enc')
   })
 
-  it('returns null for a locked Keychain', async () => {
+  it('returns null for a locked Keychain, and says so in the log', async () => {
+    // The slot is still on disk, so the card will ask for the key again. That is
+    // the right behaviour, but without the warning the only trace of a Keychain
+    // reset was a user wondering why the key they entered is being asked for.
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     fake.decryptThrows = true
     fake.data.secrets = { openai: `enc:${b64('enc(sk)')}` }
     const secrets = await loadSecrets()
     expect(secrets.getApiKey('openai')).toBeNull()
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining('cannot be decrypted'),
+      expect.anything()
+    )
+    warn.mockRestore()
   })
 
   it('returns null when the payload is empty', async () => {

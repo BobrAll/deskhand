@@ -184,13 +184,11 @@ describe('ResponseStream: «» labels', () => {
   })
 })
 
-describe('ResponseStream: accumulated results', () => {
+describe('ResponseStream: what a chunk carries', () => {
   it('collects shapes in arrival order', () => {
-    const stream = new ResponseStream()
-    stream.push('@point circle 0.2 0.2 0.3 0.3\n@point arrow 0.1 0.1 0.4 0.4\n')
-    stream.finish()
+    const out = whole('@point circle 0.2 0.2 0.3 0.3\n@point arrow 0.1 0.1 0.4 0.4\n')
 
-    expect(stream.annotations().map((shape) => shape.kind)).toEqual(['circle', 'arrow'])
+    expect(out.annotations.map((shape) => shape.kind)).toEqual(['circle', 'arrow'])
   })
 
   it('prints an action-shaped line as text now that acting is not a marker', () => {
@@ -205,10 +203,11 @@ describe('ResponseStream: accumulated results', () => {
 
   it('does not double count when finish() has nothing to flush', () => {
     const stream = new ResponseStream()
-    stream.push('@point circle 0.2 0.2 0.3 0.3\n')
-    stream.finish()
+    const pushed = stream.push('@point circle 0.2 0.2 0.3 0.3\n')
+    const flushed = stream.finish()
 
-    expect(stream.annotations()).toHaveLength(1)
+    expect(pushed.annotations).toHaveLength(1)
+    expect(flushed.annotations).toEqual([])
   })
 })
 

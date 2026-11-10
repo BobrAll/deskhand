@@ -203,7 +203,7 @@ export function classifyCall(request: AgentToolRequest, rememberedKeys: string[]
 
   // Never: a password typed by an assistant is a password in a transcript.
   if (request.tool === 'type_text' && SECRET.test(context)) {
-    return { kind: 'deny', reason: 'Секреты и пароли введите вручную.' }
+    return { kind: 'deny', reason: 'Секреты и пароли введи вручную.' }
   }
 
   if (request.fingerprint && rememberedKeys.includes(rememberKey(request.fingerprint))) {
@@ -231,7 +231,7 @@ export function classifyCall(request: AgentToolRequest, rememberedKeys: string[]
   return {
     kind: 'confirm',
     detail: `${subject}${request.app ? ` — ${request.app}` : ''}\n\n` +
-      'Проверьте последствия в приложении: для оплаты — продавца, сумму и подписку; ' +
+      'Проверь последствия в приложении: для оплаты — продавца, сумму и подписку; ' +
       'для отправки — получателя и содержимое. «Разрешить всегда» запомнит это действие ' +
       'для этого приложения.'
   }

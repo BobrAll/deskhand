@@ -7,7 +7,7 @@
  */
 
 import { execFile } from 'node:child_process'
-import { app, dialog, ipcMain } from 'electron'
+import { dialog, ipcMain } from 'electron'
 import { CH } from '@shared/ipc'
 import { PROVIDERS } from '@shared/defaults'
 import type {
@@ -100,7 +100,7 @@ function readBundleId(appPath: string): Promise<string | null> {
 
 async function pickApplication(): Promise<AppPickResult | null> {
   const result = await dialog.showOpenDialog({
-    title: 'Выберите приложение',
+    title: 'Выбери приложение',
     defaultPath: '/Applications',
     properties: ['openFile'],
     filters: [{ name: 'Приложения', extensions: ['app'] }]
@@ -295,7 +295,7 @@ export function registerIpc(deps: IpcDeps): void {
 
   ipcMain.handle(CH.voice.importModel, async () => {
     const picked = await dialog.showOpenDialog({
-      title: 'Выберите модель whisper',
+      title: 'Выбери модель whisper',
       properties: ['openFile'],
       filters: [{ name: 'Модель whisper', extensions: ['bin'] }]
     })
@@ -363,9 +363,5 @@ export function registerIpc(deps: IpcDeps): void {
   ipcMain.handle(CH.agent.answer, (_event, id: unknown, allow: unknown, remember: unknown) => {
     if (typeof id !== 'string' || !id) return
     deps.overlay.answerAgent(id, allow === true, remember === true)
-  })
-
-  app.on('second-instance', () => {
-    void deps.overlay.open()
   })
 }

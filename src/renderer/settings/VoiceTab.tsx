@@ -230,7 +230,7 @@ function TtsSection({
       >
         <ToggleRow
           title="Включить синтез"
-          hint="Endpoint, модель, голос и стиль — ваши. Ключ хранится в Keychain и не показывается."
+          hint="Endpoint, модель, голос и стиль — твои. Ключ хранится в Keychain и не показывается."
           checked={tts.enabled}
           onChange={(enabled) => onTtsChange({ enabled })}
         />
@@ -312,7 +312,7 @@ function TtsSection({
             previewError
               ? previewError
               : !speech?.configured
-                ? (speech?.reason ?? 'Заполните адрес, модель, голос и ключ.')
+                ? (speech?.reason ?? 'Заполни адрес, модель, голос и ключ.')
                 : speech.reason
                   ? `Последний синтез не удался: ${speech.reason}`
                   : 'Прозвучит короткий пример текущим голосом.'
@@ -435,7 +435,7 @@ export function VoiceTab({ voice, tts, savedModel, onVoiceChange, onTtsChange }:
       try {
         setStatus(await window.deskhand.voice.download(id))
       } catch {
-        setDownloadError('Не удалось скачать модель. Проверьте соединение и попробуйте снова.')
+        setDownloadError('Не удалось скачать модель. Проверь соединение и попробуй снова.')
       } finally {
         setProgress(null)
       }
@@ -444,8 +444,13 @@ export function VoiceTab({ voice, tts, savedModel, onVoiceChange, onTtsChange }:
   )
 
   async function importModel(): Promise<void> {
-    const next = await window.deskhand.voice.importModel()
-    if (next) setStatus(next)
+    setDownloadError(null)
+    try {
+      const next = await window.deskhand.voice.importModel()
+      if (next) setStatus(next)
+    } catch {
+      setDownloadError('Не удалось импортировать модель. Попробуй снова.')
+    }
   }
 
   async function remove(id: string, label: string): Promise<void> {
@@ -455,7 +460,7 @@ export function VoiceTab({ voice, tts, savedModel, onVoiceChange, onTtsChange }:
     try {
       setStatus(await window.deskhand.voice.deleteModel(id))
     } catch {
-      setDownloadError('Не удалось удалить модель. Попробуйте снова.')
+      setDownloadError('Не удалось удалить модель. Попробуй снова.')
     } finally {
       setDeleting(null)
     }
@@ -467,6 +472,8 @@ export function VoiceTab({ voice, tts, savedModel, onVoiceChange, onTtsChange }:
       const result = await window.deskhand.voice.test()
       setTestError(result.ok ? null : (result.message ?? 'Голосовой ввод не готов.'))
       refreshVoice()
+    } catch (error) {
+      setTestError(error instanceof Error ? error.message : 'Голосовой ввод не готов.')
     } finally {
       setChecking(false)
     }
@@ -519,7 +526,7 @@ export function VoiceTab({ voice, tts, savedModel, onVoiceChange, onTtsChange }:
       <Group title="Ввод">
         <ToggleRow
           title="Включить голосовой ввод"
-          hint="Удерживайте клавишу. Распознавание локальное — звук не покидает Mac."
+          hint="Удерживай клавишу. Распознавание локальное — звук не покидает Mac."
           checked={voice.enabled}
           onChange={(enabled) => onVoiceChange({ enabled })}
         />

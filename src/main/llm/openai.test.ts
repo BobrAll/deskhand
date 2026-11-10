@@ -290,7 +290,7 @@ describe('[OI]Provider: failures', () => {
     respond(null, 401)
 
     await expect(drain(provider().stream(messages, '', options()))).rejects.toThrow(
-      'Ключ [OI] не принят. Проверьте ключ в настройках.'
+      'Ключ [OI] не принят. Проверь ключ в настройках.'
     )
   })
 

@@ -262,7 +262,7 @@ describe('voiceStatus', () => {
 
     expect(status.ready).toBe(false)
     expect(status.detail).toBe(
-      'Не найден whisper-cli — пересоберите приложение (npm run build:whisper).'
+      'Не найден whisper-cli — пересобери приложение (npm run build:whisper).'
     )
   })
 
@@ -272,7 +272,7 @@ describe('voiceStatus', () => {
     const status = await recognizer.voiceStatus()
 
     expect(status.ready).toBe(false)
-    expect(status.detail).toBe('Не скачана модель распознавания — выберите её в настройках.')
+    expect(status.detail).toBe('Не скачана модель распознавания — выбери её в настройках.')
   })
 })
 
@@ -409,7 +409,7 @@ describe('transcribe', () => {
     expect(await recognizer.transcribe({ wav: WAV })).toMatchObject({
       ok: false,
       text: '',
-      message: 'Речь не распознана — попробуйте ещё раз.'
+      message: 'Речь не распознана — попробуй ещё раз.'
     })
   })
 

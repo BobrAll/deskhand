@@ -70,9 +70,9 @@ describe('automatic speech lifecycle', () => {
     await flush()
     expect(speak).toHaveBeenCalledOnce()
     expect(speak.mock.calls[0][0].rate).toBe(1.3)
-    await speech.finish('one', 'Справа сверху. Затем откройте меню.')
+    await speech.finish('one', 'Справа сверху. Затем открой меню.')
     await flush()
-    expect(speak.mock.calls.map(call => call[0].text)).toEqual(['Справа сверху.', 'Затем откройте меню.'])
+    expect(speak.mock.calls.map(call => call[0].text)).toEqual(['Справа сверху.', 'Затем открой меню.'])
   })
   it('waits for the verified result of an action', async () => {
     const speech = useSpeech()

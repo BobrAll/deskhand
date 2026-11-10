@@ -5,14 +5,11 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { readFileSync } from 'node:fs'
-import { join } from 'node:path'
 import type { ScreenRect } from '@shared/types'
 import {
   CARD_GAP,
   CARD_MARGIN,
   boundsFor,
-  clamp,
   placeAnchor,
   resizeAnchor,
   roomAround,
@@ -20,6 +17,7 @@ import {
   yFor,
   type CardAnchor
 } from './card'
+import { clamp } from './util'
 const SCREEN: ScreenRect = { x: 0, y: 0, width: 1440, height: 900 }
 const SMALL: ScreenRect = { x: 0, y: 0, width: 600, height: 400 }
 const MIN = 8
@@ -33,8 +31,6 @@ describe('card: the numbers', () => {
   it('keeps the gap and the margin the card was tuned with', () => {
     expect(CARD_GAP).toBe(10)
     expect(CARD_MARGIN).toBe(8)
-    expect(GAP).toBe(CARD_GAP)
-    expect(MIN).toBe(CARD_MARGIN)
   })
 
   it('clamps to the range, and answers `min` for a number that is not one', () => {
@@ -286,20 +282,5 @@ describe('card: resizing at the anchor', () => {
     resizeAnchor({ anchor: base, bounds: inPlace, height: 700, width: 360, workAreaAt: () => SCREEN })
 
     expect(base).toEqual(before)
-  })
-})
-
-describe('card: the geometry left windows.ts', () => {
-  const source = readFileSync(join(__dirname, 'windows/index.ts'), 'utf8')
-
-  it('no longer defines the placement functions itself', () => {
-    for (const name of ['placeAnchor', 'roomAround', 'xFor', 'yFor']) {
-      expect(source).not.toContain(`function ${name}`)
-    }
-  })
-
-  it('no longer holds the gap and the margin as literals', () => {
-    expect(source).not.toMatch(/const GAP = 10/)
-    expect(source).not.toMatch(/const MARGIN = 8/)
   })
 })

@@ -46,7 +46,7 @@ describe('applyStatusText: a write that did not happen', () => {
 
   it('reports a failed write without pretending to know why', () => {
     expect(applyStatusText('error', null)).toEqual({
-      text: 'Не применено — попробуйте ещё раз',
+      text: 'Не применено — попробуй ещё раз',
       isProblem: true
     })
   })

@@ -74,7 +74,11 @@ export function App() {
         return
       }
       await window.deskhand.settings.setKey(provider, key)
-      const settings = bundle?.settings ?? ({} as never)
+      // The bundle may still be loading: onboarding step 1 is reachable before
+      // the first `load()` resolves. Writing a partial `AppSettings` in that
+      // window would let the store fill the gaps from defaults and overwrite
+      // what is already on disk, so the current values are read first.
+      const settings = bundle?.settings ?? (await window.deskhand.settings.load()).settings
       await window.deskhand.settings.save({
         ...settings,
         provider,
@@ -150,7 +154,7 @@ export function App() {
                 Микрофон {permissions.microphone ? <span className="ok">✓</span> : null}
               </div>
               <div className="hint">
-                Голосовой ввод: удерживайте хоткей или три пальца на трекпаде и говорите.
+                Голосовой ввод: удерживай хоткей или три пальца на трекпаде и говори.
                 Необязательно — без него всё работает с клавиатуры.
               </div>
             </div>
@@ -215,14 +219,14 @@ export function App() {
                   spellCheck={false}
                 />
                 <div className="hint">
-                  ID модели {providerInfo(provider)?.label}. Его задаёте вы — встроенного значения нет.
+                  ID модели {providerInfo(provider)?.label}. Его задаёшь ты — встроенного значения нет.
                 </div>
               </div>
 
               <div className="key-entry">
                 <input
                   type="password"
-                  placeholder="Вставьте ключ"
+                  placeholder="Вставь ключ"
                   value={keyInput}
                   onChange={(event) => setKeyInput(event.target.value)}
                   onKeyDown={(event) => {
@@ -285,7 +289,7 @@ export function App() {
         <section className="panel">
           <h1>Всё готово</h1>
           <p className="lead">
-            Нажмите <kbd>{prettyAccelerator(hotkey)}</kbd> в любой момент, чтобы открыть ассистента рядом
+            Нажми <kbd>{prettyAccelerator(hotkey)}</kbd> в любой момент, чтобы открыть ассистента рядом
             с курсором.
           </p>
 
