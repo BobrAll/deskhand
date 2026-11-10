@@ -133,7 +133,7 @@ export async function showAnnotations(area: ScreenRect, annotations: Annotation[
     visible = true
     // showInactive: keep the user's app frontmost — this is the whole point.
     win.showInactive()
-    interactionWatcher = watchForAbort({ watchMouse: false, interaction: true }, () => {
+    interactionWatcher = watchForAbort('interaction', () => {
       hideAnnotations()
       onDismiss?.()
     })

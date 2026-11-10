@@ -152,7 +152,7 @@ textarea.prompt {
    * wrap landing inside that gap would add a second row and drop it again — a
    * flicker of the bubble's height on every letter. Keeping the field on a single
    * line and letting it overflow sideways for that one frame keeps the growth
-   * monotonic; `data-wrap` turns wrapping back on once `FULL_WIDTH` is reached and
+   * monotonic; `data-wrap` turns wrapping back on once `BUBBLE_WIDTH` is reached and
    * there is nowhere left to grow.
    */
   white-space: pre;

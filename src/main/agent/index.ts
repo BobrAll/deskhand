@@ -493,7 +493,7 @@ export function createAgentController(host: AgentHost) {
   ): () => void {
     // The mouse is the most reliable "no" there is: reaching for the pointer takes
     // control back before the next click lands. Escape works always.
-    watcher = watchForAbort({ watchMouse: options.abortOnMouseMove }, (reason) => {
+    watcher = watchForAbort(options.abortOnMouseMove ? 'mouse' : 'key', (reason) => {
       if (token !== generation) return
       trace('agent.abort', { reason })
       stop(reason === 'mousemove' ? 'Остановлено: вы взяли мышь.' : 'Остановлено по Escape.')

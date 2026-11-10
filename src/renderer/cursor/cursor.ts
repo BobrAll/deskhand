@@ -12,7 +12,7 @@ export interface CursorHighlight {
 }
 
 /**
- * Unlike `clamp` in `overlay/metrics.ts`, the upper bound here never falls below
+ * Unlike `clamp` in `overlay/cardMetrics.ts`, the upper bound here never falls below
  * `min`: in a window too narrow for the mark and its margin, the mark still sits
  * at the margin instead of at a negative offset.
  */

@@ -21,8 +21,11 @@ interface AppWindowOptions {
 let settingsWindow: BrowserWindow | null = null
 let onboardingWindow: BrowserWindow | null = null
 
-/** Set by `settings:hold` while the renderer still has edits to write. */
-let settingsBusy = false
+/**
+ * Set through the `settings.hold` channel while the renderer still has edits to
+ * write; one word with the channel and with `DeskhandApi.settings.hold`.
+ */
+let settingsHeld = false
 
 /**
  * Creates one of the standalone windows and shows it on its first paint.
@@ -73,7 +76,7 @@ export function openSettingsWindow(): BrowserWindow {
    */
   let closing = false
   win.on('close', (event) => {
-    if (closing || !settingsBusy) return
+    if (closing || !settingsHeld) return
     event.preventDefault()
     closing = true
     // Polled rather than a fixed wait: a write usually lands in a few
@@ -83,7 +86,7 @@ export function openSettingsWindow(): BrowserWindow {
     const deadline = Date.now() + CLOSE_GRACE_MS
     const attempt = (): void => {
       if (win.isDestroyed()) return
-      if (!settingsBusy || Date.now() >= deadline) {
+      if (!settingsHeld || Date.now() >= deadline) {
         win.close()
         return
       }
@@ -93,7 +96,7 @@ export function openSettingsWindow(): BrowserWindow {
   })
   win.on('closed', () => {
     settingsWindow = null
-    settingsBusy = false
+    settingsHeld = false
   })
   denyExternalLinks(win)
   return win
@@ -135,8 +138,8 @@ export function closeSettingsWindow(): void {
   if (settingsWindow && !settingsWindow.isDestroyed()) settingsWindow.close()
 }
 
-export function markSettingsBusy(busy: boolean): void {
-  settingsBusy = busy
+export function setSettingsHeld(held: boolean): void {
+  settingsHeld = held
 }
 
 export function settingsWindows(): Array<BrowserWindow | null> {

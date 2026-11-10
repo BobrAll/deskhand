@@ -21,8 +21,10 @@ export interface RequestInput {
   mode: ResponseMode
   snapshot: ContextSnapshot | null
   includeSelection: boolean
-  includeScreenshot: boolean
-  hasImage: boolean
+  /** The user asked for a screenshot with this request. */
+  requestedScreenshot: boolean
+  /** A screenshot really is attached: the request carries the image itself. */
+  imageAttached: boolean
   /**
    * Whether the drawing tool is usable at all: there is an image to aim at and a
    * layer to paint on. It is *not* a user-facing mode — when it is true the model
@@ -293,7 +295,7 @@ export function buildRequest(input: RequestInput): BuiltRequest {
       if (snapshot.selection.truncated) lines.push('(выделение обрезано из-за размера)')
     }
 
-    if (input.hasImage) {
+    if (input.imageAttached) {
       const what = snapshot?.screenshot?.fullScreen ? 'весь экран' : 'активное окно'
       lines.push(`Приложен скриншот — ${what}. Используй его как основной контекст.`)
       if (input.draw) {
@@ -302,7 +304,7 @@ export function buildRequest(input: RequestInput): BuiltRequest {
             'левый верхний угол, (1,1) — правый нижний.'
         )
       }
-    } else if (input.includeScreenshot) {
+    } else if (input.requestedScreenshot) {
       lines.push('Скриншот недоступен, опирайся только на текст.')
     }
 

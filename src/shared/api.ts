@@ -142,10 +142,10 @@ export interface DeskhandApi {
      * Tells the main process whether edits are still being written.
      *
      * The window saves as it is edited, so `close()` can arrive mid-write. While
-     * this is `true` the main process waits a moment before destroying the window
-     * instead of discarding the last keystroke.
+     * the hold is `true` the main process waits a moment before destroying the
+     * window instead of discarding the last keystroke.
      */
-    hold(busy: boolean): void
+    hold(held: boolean): void
     /**
      * Tells the main process that a hotkey recorder is armed.
      *

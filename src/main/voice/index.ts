@@ -20,7 +20,7 @@ import { pasteAnswer } from '../paste'
 import { helperBinary } from '../native/helper'
 import { getSettings } from '../settings/store'
 import { VoiceKeyListener, type TapEvent } from './listen'
-import { transcribe, voiceStatus } from './whisper'
+import { transcribe, voiceStatus } from './recognizer'
 
 export interface VoiceHost {
   /** Builds the overlay renderer ahead of a turn, so the bars can be instant. */
@@ -480,7 +480,7 @@ export function createVoiceController(host: VoiceHost) {
     return { ...base, listenerError }
   }
 
-  /** Settings the overlay needs: whether to offer the hold-to-talk hint at all. */
+  /** Settings the overlay needs: whether to offer the hold-to-talk hint at all. Tests read it too. */
   function mode(): { enabled: boolean; action: 'command' | 'dictate'; hotkey: string } {
     const settings = getSettings()
     return {
@@ -490,6 +490,7 @@ export function createVoiceController(host: VoiceHost) {
     }
   }
 
+  /** Exists for tests: nothing outside them needs "is a turn running" as a single flag. */
   function isBusy(): boolean {
     return busy || phase !== 'idle'
   }
@@ -538,6 +539,7 @@ export function createVoiceController(host: VoiceHost) {
     press,
     release,
     cancel,
+    /** Exists for tests: the renderer learns the phase from `attach()` and the events. */
     phase: (): VoicePhase => phase
   }
 }

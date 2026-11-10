@@ -6,10 +6,10 @@
  */
 
 import type { ActiveAppInfo } from '@shared/types'
-import { helperFront } from '../native/helper'
+import { helperFrontWindow } from '../native/helper'
 
 export async function getActiveApp(): Promise<ActiveAppInfo | null> {
-  const front = await helperFront()
+  const front = await helperFrontWindow()
   if (!front) return null
   return {
     bundleId: front.bundleId,

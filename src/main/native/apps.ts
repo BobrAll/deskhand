@@ -52,7 +52,7 @@ export async function helperWindow(pid: number): Promise<RawFrontApp | null> {
 }
 
 /** Frontmost application plus its focused window, as seen by macOS. */
-export async function helperFront(): Promise<RawFrontApp | null> {
+export async function helperFrontWindow(): Promise<RawFrontApp | null> {
   const mapped = mapFront(await runHelper(['front']))
   if (mapped) return mapped
 
@@ -86,7 +86,7 @@ export async function helperFront(): Promise<RawFrontApp | null> {
  * identity of the application — the plan's working app, a launch check, a focus
  * guard — should not pay for a fact they do not read, and most of them do not.
  */
-export async function helperFrontApp(): Promise<RawFrontApp | null> {
+export async function helperFrontApplication(): Promise<RawFrontApp | null> {
   return mapFront(await runHelper(['front-quick']))
 }
 

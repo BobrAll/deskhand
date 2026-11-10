@@ -3,10 +3,11 @@
  *
  * Two things are worth a test here and neither is arithmetic:
  *
- * 1. The three widths are *not* written out in this file. They come from
+ * 1. The widths are *not* written out in the renderer. They come from
  *    `@shared/metrics` because the main process clamps the window to the very
  *    same points — a local copy is how the card ends up clipped or jumping, and
- *    nothing throws when it does.
+ *    nothing throws when it does. This module re-exports none of them: every use
+ *    site imports the `BUBBLE_*` names directly.
  * 2. The chrome numbers describe the CSS. They cannot be derived from it (the
  *    renderer has no stylesheet parser and the values are hand-summed from
  *    `overlay.css`), so they are pinned instead: changing one is a deliberate act
@@ -16,40 +17,44 @@
 import { describe, expect, it } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { BUBBLE_NARROW_WIDTH, BUBBLE_VOICE_WIDTH, BUBBLE_WIDTH } from '@shared/metrics'
 import {
   CARET_SLACK,
   CHROME_WIDTH,
   FIELD_FONT,
-  FULL_WIDTH,
   MAX_FIELD_HEIGHT,
-  NARROW_WIDTH,
   REFINE_HINT,
   REFINE_LABEL,
   STOP_CHROME,
-  VOICE_WIDTH,
   clamp
-} from './metrics'
+} from './cardMetrics'
 
-describe('metrics: the widths come from @shared/metrics', () => {
-  it('is the same three numbers the main process clamps the window to', () => {
-    expect(NARROW_WIDTH).toBe(BUBBLE_NARROW_WIDTH)
-    expect(VOICE_WIDTH).toBe(BUBBLE_VOICE_WIDTH)
-    expect(FULL_WIDTH).toBe(BUBBLE_WIDTH)
-  })
+describe('metrics: the widths stay in @shared/metrics', () => {
+  const read = (name: string): string => readFileSync(join(__dirname, name), 'utf8')
 
-  it('keeps the values the card was tuned with', () => {
-    expect(NARROW_WIDTH).toBe(112)
-    expect(VOICE_WIDTH).toBe(80)
-    expect(FULL_WIDTH).toBe(360)
+  it('does not re-export the widths under local names', () => {
+    const source = read('cardMetrics.ts')
+
+    expect(source).not.toMatch(/export const (NARROW_WIDTH|VOICE_WIDTH|FULL_WIDTH)\b/)
   })
 
   it('does not repeat the literals in this module', () => {
-    const source = readFileSync(join(__dirname, 'metrics.ts'), 'utf8')
+    const source = read('cardMetrics.ts')
 
     expect(source).not.toMatch(/=\s*360\b/)
     expect(source).not.toMatch(/=\s*112\b/)
     expect(source).not.toMatch(/=\s*80\b/)
+  })
+
+  it('is what the card lays itself out with', () => {
+    // The two files that size the card import the shared names; neither may
+    // carry a copy of a width.
+    for (const name of ['cardWidth.ts', 'App.tsx']) {
+      const source = read(name)
+      expect(source, name).toMatch(/BUBBLE_(WIDTH|NARROW_WIDTH|VOICE_WIDTH)/)
+      expect(source, name).not.toMatch(/=\s*360\b/)
+      expect(source, name).not.toMatch(/=\s*112\b/)
+      expect(source, name).not.toMatch(/=\s*80\b/)
+    }
   })
 })
 

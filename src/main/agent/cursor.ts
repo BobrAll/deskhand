@@ -5,7 +5,7 @@
 
 import { BrowserWindow, screen } from 'electron'
 import { CH } from '@shared/ipc'
-import type { AgentCursorFrame, AgentEvent, ScreenRect } from '@shared/types'
+import type { AgentCursorFrame, AgentCursorPhase, AgentEvent, ScreenRect } from '@shared/types'
 import { trace } from './trace'
 import {
   createLayerWindow,
@@ -335,7 +335,7 @@ function paintQuestion(event: AgentEvent): void {
 }
 
 /** A step of a run: the caption moves with the work. */
-function paintStep(event: AgentEvent, phase: 'arming' | 'acting'): void {
+function paintStep(event: AgentEvent, phase: AgentCursorPhase): void {
   const acting = phase === 'acting'
   const previous = frame
   const label =

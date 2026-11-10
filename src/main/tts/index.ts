@@ -63,8 +63,13 @@ function cacheKey(settings: TtsSettings, text: string): string {
     .digest('hex')
 }
 
-/** Why live synthesis cannot run, or null when it can. */
-export function speechBlockReason(settings: AppSettings = getSettings()): string | null {
+/**
+ * Why live synthesis cannot run, or null when it can.
+ *
+ * The single rule both `synthesize` and `ttsStatus` ask; exported so the
+ * tests can assert each reason without spending a request.
+ */
+export function ttsBlockReason(settings: AppSettings = getSettings()): string | null {
   const tts = settings.tts
   if (!tts.enabled) return 'Синтез выключен.'
   if (!tts.baseUrl) return 'Не указан адрес сервиса.'
@@ -121,7 +126,7 @@ async function pruneCache(): Promise<void> {
   }
 }
 
-async function requestSpeech(text: string, settings: TtsSettings): Promise<TtsResult> {
+async function requestSynthesis(text: string, settings: TtsSettings): Promise<TtsResult> {
   const key = getTtsKey()
   if (!key) return { ok: false, message: 'Ключ синтеза не настроен.' }
 
@@ -168,7 +173,7 @@ export async function synthesize(text: string): Promise<TtsResult> {
   if (!line) return { ok: false, message: 'Нечего произносить.' }
 
   const settings = getSettings()
-  const blocked = speechBlockReason(settings)
+  const blocked = ttsBlockReason(settings)
   if (blocked) return { ok: false, message: blocked }
 
   const key = cacheKey(settings.tts, line)
@@ -178,7 +183,7 @@ export async function synthesize(text: string): Promise<TtsResult> {
   const pending = inFlight.get(key)
   if (pending) return pending
 
-  const job = requestSpeech(line, settings.tts)
+  const job = requestSynthesis(line, settings.tts)
     .then(async (result): Promise<TtsResult> => {
       if (result.ok) {
         await writeCache(key, Buffer.from(result.audio, 'base64'))
@@ -196,11 +201,13 @@ export async function synthesize(text: string): Promise<TtsResult> {
  * What the settings pane shows about the voice.
  *
  * It answers "will a new line be spoken, and by what" without spending a
- * request: availability is a set of local facts.
+ * request: availability is a set of local facts. Named after the `TtsStatus` it
+ * returns, which is also what the `tts.status` channel and `DeskhandApi.tts`
+ * call it.
  */
-export function speechStatus(): TtsStatus {
+export function ttsStatus(): TtsStatus {
   const settings = getSettings()
-  const blocked = speechBlockReason(settings)
+  const blocked = ttsBlockReason(settings)
   return {
     configured: blocked === null,
     // A configuration can be complete and still fail at the service; saying so

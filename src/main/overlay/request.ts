@@ -194,8 +194,8 @@ export async function buildTurnRequest(input: BuildTurnRequestInput): Promise<Tu
         includeSelection: request.includeSelection,
         // The effective value, not the chip: an image sent with the request is
         // what the prompt has to describe.
-        includeScreenshot: request.includeScreenshot || useImage,
-        hasImage: useImage,
+        requestedScreenshot: request.includeScreenshot || useImage,
+        imageAttached: useImage,
         draw: canDraw,
         actReason,
         hasHistory: history.length > 0 || Boolean(previousCommand),

@@ -45,7 +45,7 @@ vi.mock('../paste', () => ({
   }
 }))
 
-vi.mock('./whisper', () => ({
+vi.mock('./recognizer', () => ({
   transcribe: (options: { wav: Buffer }) =>
     state.transcribed?.(options) ?? Promise.resolve({ ok: true, text: 'привет', ms: 5 }),
   voiceStatus: async () => ({

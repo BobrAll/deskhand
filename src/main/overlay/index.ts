@@ -34,7 +34,7 @@ import { describeScreen as readScreenOutline } from '../agent/outline'
 import { collectContext } from '../context/collect'
 import { isExcluded } from '../context/activeApp'
 import { captureScreenshot } from '../context/screenshot'
-import { getProvider, resolveModel } from '../llm'
+import { getProvider, resolveChatModel } from '../llm'
 import { ProviderError, type ChatMessage } from '../llm/provider'
 import { searchWeb } from '../llm/webSearch'
 import { copyText, pasteAnswer } from '../paste'
@@ -47,7 +47,7 @@ import { groundAnnotation } from '../annotationGrounding'
 import type { OverlayHost } from './host'
 import { consumeTurnStream } from '../turnStream'
 import { sameObservedWindow } from '../agent/observation'
-import { helperActivate, helperFront, helperFrontApp, helperWindow, type RawFrontApp } from '../native/helper'
+import { helperActivate, helperFrontApplication, helperFrontWindow, helperWindow, type RawFrontApp } from '../native/helper'
 import { getApiKey } from '../settings/secrets'
 import { getSettings, patchSettings } from '../settings/store'
 import { delay } from '../util'
@@ -272,7 +272,7 @@ export function createOverlayController(host: OverlayHost) {
   function setupNotice(): OverlayState['setupNotice'] {
     const settings = getSettings()
     const label = providerInfo(settings.provider)?.label ?? settings.provider
-    if (!resolveModel(settings)) {
+    if (!resolveChatModel(settings)) {
       return {
         kind: 'warning',
         message: `Выберите модель ${label} в настройках.`,
@@ -293,7 +293,7 @@ export function createOverlayController(host: OverlayHost) {
     if (!session) return null
     const settings = getSettings()
     const warnings = [...session.snapshot.warnings]
-    const vision = modelSupportsVision(settings.provider, resolveModel(settings))
+    const vision = modelSupportsVision(settings.provider, resolveChatModel(settings))
     if (!vision && session.flags.includeScreenshot) {
       // The drawing tool needs an image: a model without vision never receives
       // one, so it silently loses the tool. Say so instead of letting answers
@@ -379,7 +379,7 @@ export function createOverlayController(host: OverlayHost) {
     // window is read below only when that branch needs one. Reading the full
     // `front` here cost a cold Accessibility round trip on every comparison, and
     // a comparison happens several times per capture.
-    const front = await helperFrontApp()
+    const front = await helperFrontApplication()
     const background = front?.pid === process.pid ? await helperWindow(observed.pid) : front
     const same = sameObservedWindow(observed, background)
     // Which field disagreed, without recording what was on screen: a window
@@ -401,7 +401,7 @@ export function createOverlayController(host: OverlayHost) {
     if (!same) return false
     // Nothing may steal focus while the tree is read: a window that came forward
     // between the two reads is a screen that no longer matches the picture.
-    const after = await helperFrontApp()
+    const after = await helperFrontApplication()
     return after?.pid === process.pid || after?.pid === observed.pid
   }
 
@@ -441,7 +441,7 @@ export function createOverlayController(host: OverlayHost) {
           // Give the compositor a beat to apply the new sharing state.
           await delay(45)
         }
-        const front = settings.agent.enabled ? await helperFront() : null
+        const front = settings.agent.enabled ? await helperFrontWindow() : null
         const underOverlay = front?.pid === process.pid
         const observed = underOverlay && target.rounds === 0 && target.target
           ? await helperWindow(target.target.pid)
@@ -617,7 +617,7 @@ export function createOverlayController(host: OverlayHost) {
       //
       // The context has to be read before the focus is taken: our own card is
       // what the frontmost app becomes a moment later.
-      const front = await helperFrontApp()
+      const front = await helperFrontApplication()
       const elsewhere = front && front.pid > 0 && front.pid !== process.pid
       if (elsewhere) {
         const settings = getSettings()
@@ -917,7 +917,7 @@ export function createOverlayController(host: OverlayHost) {
       messages,
       apiKey,
       streamOptions: {
-        model: resolveModel(settings) ?? '',
+        model: resolveChatModel(settings) ?? '',
         temperature: settings.temperature,
         maxTokens,
         baseUrl: resolveBaseUrl(settings.provider, settings.baseUrls[settings.provider]),
@@ -925,9 +925,9 @@ export function createOverlayController(host: OverlayHost) {
         signal
       },
       isAlive: () => !signal.aborted && Boolean(session),
-      onShapes: paint,
+      onAnnotations: paint,
       onText: append
-    }), { provider: settings.provider, model: resolveModel(settings) ?? '', withImage: Boolean(area),
+    }), { provider: settings.provider, model: resolveChatModel(settings) ?? '', withImage: Boolean(area),
       imageBase64Bytes: messages.reduce((size, message) => size + message.parts.reduce(
         (total, part) => total + (part.type === 'image' ? part.base64.length : 0), 0), 0) })
     return result
@@ -940,7 +940,7 @@ export function createOverlayController(host: OverlayHost) {
     // group runs by configuration without recording any of the values — a model
     // name and a temperature are the user's business, not the log's.
     const config = createHash('sha256').update(JSON.stringify([
-      settings.provider, resolveModel(settings), settings.temperature, settings.maxTokens,
+      settings.provider, resolveChatModel(settings), settings.temperature, settings.maxTokens,
       settings.agent.enabled, settings.agent.maxSteps, settings.agent.verifyResult,
       settings.agent.abortOnMouseMove,
       settings.screenshotMaxSide, settings.screenshotQuality
@@ -955,7 +955,7 @@ export function createOverlayController(host: OverlayHost) {
       trace('turn.outcome', { outcome: 'blocked', reason: 'excluded-app' })
       return
     }
-    const model = resolveModel(settings)
+    const model = resolveChatModel(settings)
     const apiKey = getApiKey(settings.provider)
 
     const fail = (message: string, retryable: boolean): void => {
@@ -1313,7 +1313,7 @@ export function createOverlayController(host: OverlayHost) {
     return {
       wire: settings.provider === 'anthropic' ? 'anthropic' : 'openai',
       baseUrl: resolveBaseUrl(settings.provider, settings.baseUrls[settings.provider]),
-      model: resolveModel(settings) ?? '',
+      model: resolveChatModel(settings) ?? '',
       apiKey,
       maxTokens: settings.maxTokens,
       temperature: settings.temperature,

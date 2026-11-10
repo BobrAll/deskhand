@@ -348,8 +348,22 @@ export const DEFAULT_SETTINGS: AppSettings = {
   agent: DEFAULT_AGENT
 }
 
-const MIN_SIDE = 480
-const MAX_SIDE = 2400
+/**
+ * The range every numeric setting is kept inside.
+ *
+ * Two processes need the same numbers: `normalizeSettings` clamps what reaches
+ * the store, and the settings pane offers the same range in its sliders and
+ * number field. A second copy is how a slider ends up able to produce a value the
+ * store then quietly replaces, so both sides read this object. The values are
+ * inclusive; a step size is a property of the control, not of the setting, and
+ * stays with the control.
+ */
+export const SETTINGS_BOUNDS = {
+  screenshotMaxSide: { min: 480, max: 2400 },
+  screenshotQuality: { min: 30, max: 95 },
+  temperature: { min: 0, max: 2 },
+  maxTokens: { min: 64, max: 8192 }
+} as const
 
 function clamp(value: unknown, min: number, max: number, fallback: number): number {
   const num = typeof value === 'number' && Number.isFinite(value) ? value : fallback
@@ -459,8 +473,18 @@ export function normalizeSettings(input: unknown): AppSettings {
       anthropic: normalizeBaseUrl(baseUrls.anthropic)
     },
     extraBody: normalizeExtraBody(raw.extraBody),
-    temperature: clamp(raw.temperature, 0, 2, DEFAULT_SETTINGS.temperature),
-    maxTokens: Math.round(clamp(raw.maxTokens, 64, 8192, DEFAULT_SETTINGS.maxTokens)),
+    temperature: clamp(
+      raw.temperature,
+      SETTINGS_BOUNDS.temperature.min,
+      SETTINGS_BOUNDS.temperature.max,
+      DEFAULT_SETTINGS.temperature
+    ),
+    maxTokens: Math.round(clamp(
+      raw.maxTokens,
+      SETTINGS_BOUNDS.maxTokens.min,
+      SETTINGS_BOUNDS.maxTokens.max,
+      DEFAULT_SETTINGS.maxTokens
+    )),
     systemPrompt:
       typeof raw.systemPrompt === 'string' && raw.systemPrompt.trim()
         ? raw.systemPrompt
@@ -471,10 +495,18 @@ export function normalizeSettings(input: unknown): AppSettings {
       typeof raw.captureScreenshotByDefault === 'boolean'
         ? raw.captureScreenshotByDefault
         : DEFAULT_SETTINGS.captureScreenshotByDefault,
-    screenshotMaxSide: Math.round(
-      clamp(raw.screenshotMaxSide, MIN_SIDE, MAX_SIDE, DEFAULT_SETTINGS.screenshotMaxSide)
-    ),
-    screenshotQuality: Math.round(clamp(raw.screenshotQuality, 30, 95, DEFAULT_SETTINGS.screenshotQuality)),
+    screenshotMaxSide: Math.round(clamp(
+      raw.screenshotMaxSide,
+      SETTINGS_BOUNDS.screenshotMaxSide.min,
+      SETTINGS_BOUNDS.screenshotMaxSide.max,
+      DEFAULT_SETTINGS.screenshotMaxSide
+    )),
+    screenshotQuality: Math.round(clamp(
+      raw.screenshotQuality,
+      SETTINGS_BOUNDS.screenshotQuality.min,
+      SETTINGS_BOUNDS.screenshotQuality.max,
+      DEFAULT_SETTINGS.screenshotQuality
+    )),
     excludedApps: sanitizeStringList(raw.excludedApps, DEFAULT_EXCLUDED_APPS),
     rememberConversation: typeof raw.rememberConversation === 'boolean'
       ? raw.rememberConversation

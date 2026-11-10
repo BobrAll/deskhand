@@ -29,7 +29,7 @@ export interface ParsedChunk {
 
 export class ResponseStream {
   private pending = ''
-  private annotations: Annotation[] = []
+  private recordedAnnotations: Annotation[] = []
   webLookup = false
 
   /** Feeds one delta; returns everything that can be acted on right now. */
@@ -70,8 +70,8 @@ export class ResponseStream {
   }
 
   /** Every annotation asked for during this answer, in arrival order. */
-  collected(): Annotation[] {
-    return this.annotations
+  annotations(): Annotation[] {
+    return this.recordedAnnotations
   }
 
   private consume(line: string, result: ParsedChunk): void {
@@ -89,6 +89,6 @@ export class ResponseStream {
   }
 
   private recordAnnotations(result: ParsedChunk): void {
-    this.annotations.push(...result.annotations)
+    this.recordedAnnotations.push(...result.annotations)
   }
 }

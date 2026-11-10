@@ -190,7 +190,7 @@ describe('ResponseStream: accumulated results', () => {
     stream.push('@point circle 0.2 0.2 0.3 0.3\n@point arrow 0.1 0.1 0.4 0.4\n')
     stream.finish()
 
-    expect(stream.collected().map((shape) => shape.kind)).toEqual(['circle', 'arrow'])
+    expect(stream.annotations().map((shape) => shape.kind)).toEqual(['circle', 'arrow'])
   })
 
   it('prints an action-shaped line as text now that acting is not a marker', () => {
@@ -208,7 +208,7 @@ describe('ResponseStream: accumulated results', () => {
     stream.push('@point circle 0.2 0.2 0.3 0.3\n')
     stream.finish()
 
-    expect(stream.collected()).toHaveLength(1)
+    expect(stream.annotations()).toHaveLength(1)
   })
 })
 

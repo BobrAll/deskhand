@@ -228,7 +228,7 @@ describe('runHelper: the shared call shape', () => {
   })
 })
 
-describe('helperFront: the frontmost app', () => {
+describe('helperFrontWindow: the frontmost app', () => {
   it('maps a full payload', async () => {
     answerWith({
       front: {
@@ -245,7 +245,7 @@ describe('helperFront: the frontmost app', () => {
       }
     })
 
-    expect(await helper.helperFront()).toEqual({
+    expect(await helper.helperFrontWindow()).toEqual({
       bundleId: 'com.apple.Safari',
       name: 'Safari',
       pid: 512,
@@ -268,7 +268,7 @@ describe('helperFront: the frontmost app', () => {
       }
     })
 
-    const front = await helper.helperFront()
+    const front = await helper.helperFrontWindow()
     expect(front?.pid).toBe(512)
     expect(front?.bounds).toEqual({ x: 1, y: 2, width: 3, height: 4 })
   })
@@ -278,7 +278,7 @@ describe('helperFront: the frontmost app', () => {
       front: { stdout: JSON.stringify({ ok: true, bundleId: 'a.b', pid: 1, title: '' }) }
     })
 
-    const front = await helper.helperFront()
+    const front = await helper.helperFrontWindow()
     expect(front?.name).toBe('a.b')
     expect(front?.windowTitle).toBeNull()
   })
@@ -288,13 +288,13 @@ describe('helperFront: the frontmost app', () => {
       front: { stdout: JSON.stringify({ ok: true, bundleId: 'a', pid: 1, bounds: { x: 1 } }) }
     })
 
-    expect((await helper.helperFront())?.bounds).toBeNull()
+    expect((await helper.helperFrontWindow())?.bounds).toBeNull()
   })
 
   it('returns null when the pid is missing', async () => {
     answerWith({ front: { stdout: JSON.stringify({ ok: true, bundleId: 'a' }) } })
 
-    expect(await helper.helperFront()).toBeNull()
+    expect(await helper.helperFrontWindow()).toBeNull()
   })
 
   it('degrades to osascript when the helper fails', async () => {
@@ -310,7 +310,7 @@ describe('helperFront: the frontmost app', () => {
       return { error: new Error('helper failed') }
     }
 
-    expect(await helper.helperFront()).toEqual({
+    expect(await helper.helperFrontWindow()).toEqual({
       bundleId: 'com.apple.Notes',
       name: 'Notes',
       pid: 900,
@@ -325,7 +325,7 @@ describe('helperFront: the frontmost app', () => {
     answerWith({ front: { error: new Error('helper failed') } })
     state.handler = () => ({ error: new Error('osascript failed') })
 
-    expect(await helper.helperFront()).toBeNull()
+    expect(await helper.helperFrontWindow()).toBeNull()
   })
 
   it('falls back to pid 0 when osascript cannot read the unix id', async () => {
@@ -338,7 +338,7 @@ describe('helperFront: the frontmost app', () => {
       return { error: new Error('helper failed') }
     }
 
-    const front = await helper.helperFront()
+    const front = await helper.helperFrontWindow()
     expect(front?.pid).toBe(0)
     expect(front?.name).toBe('com.apple.Notes')
   })
@@ -590,9 +590,9 @@ describe('helperProbe and helperFocused', () => {
 })
 
 describe('watchForAbort: the long-lived watcher', () => {
-  it('spawns the helper in key mode by default', async () => {
+  it('spawns the helper in key mode', async () => {
     const spawn = vi.spyOn(await import('node:child_process'), 'spawn')
-    helper.watchForAbort({ watchMouse: false }, () => undefined)
+    helper.watchForAbort('key', () => undefined)
 
     expect(spawn).toHaveBeenCalledWith('/resources/deskhand-helper', ['watch', 'key'], {
       stdio: ['ignore', 'pipe', 'ignore']
@@ -601,9 +601,18 @@ describe('watchForAbort: the long-lived watcher', () => {
 
   it('asks for mouse events when requested', async () => {
     const spawn = vi.spyOn(await import('node:child_process'), 'spawn')
-    helper.watchForAbort({ watchMouse: true }, () => undefined)
+    helper.watchForAbort('mouse', () => undefined)
 
     expect(spawn).toHaveBeenCalledWith('/resources/deskhand-helper', ['watch', 'mouse'], {
+      stdio: ['ignore', 'pipe', 'ignore']
+    })
+  })
+
+  it('asks for the helper\'s interaction detector when requested', async () => {
+    const spawn = vi.spyOn(await import('node:child_process'), 'spawn')
+    helper.watchForAbort('interaction', () => undefined)
+
+    expect(spawn).toHaveBeenCalledWith('/resources/deskhand-helper', ['watch', 'interaction'], {
       stdio: ['ignore', 'pipe', 'ignore']
     })
   })
@@ -612,7 +621,7 @@ describe('watchForAbort: the long-lived watcher', () => {
     state.existing = new Set()
     helper = await load()
 
-    expect(helper.watchForAbort({ watchMouse: true }, () => undefined)).toBeNull()
+    expect(helper.watchForAbort('mouse', () => undefined)).toBeNull()
   })
 
   it('reports escape and mousemove lines and ignores the rest', async () => {
@@ -625,14 +634,14 @@ describe('watchForAbort: the long-lived watcher', () => {
     ]
     const seen: string[] = []
 
-    helper.watchForAbort({ watchMouse: true }, (reason) => seen.push(reason))
+    helper.watchForAbort('mouse', (reason) => seen.push(reason))
     await Promise.resolve()
 
     expect(seen).toEqual(['escape', 'mousemove'])
   })
 
   it('stop() closes the reader and kills the process', async () => {
-    const watcher = helper.watchForAbort({ watchMouse: true }, () => undefined)
+    const watcher = helper.watchForAbort('mouse', () => undefined)
     watcher?.stop()
 
     expect(state.watchClosed).toBe(1)
@@ -642,7 +651,7 @@ describe('watchForAbort: the long-lived watcher', () => {
   it('survives a spawn error', async () => {
     state.watchSpawnError = true
 
-    expect(() => helper.watchForAbort({ watchMouse: true }, () => undefined)).not.toThrow()
+    expect(() => helper.watchForAbort('mouse', () => undefined)).not.toThrow()
     await Promise.resolve()
   })
 })

@@ -10,9 +10,9 @@
 
 import { clipboard } from 'electron'
 import type { ActiveAppInfo, PasteResult } from '@shared/types'
-import { helperActivate, helperFront, helperSendKey } from '../native/helper'
+import { helperActivate, helperFrontWindow, helperSendKey } from '../native/helper'
 import { delay, waitFor } from '../util'
-import { restoreClipboard, snapshotClipboard, withClipboard } from './clipboard'
+import { copyText, restoreClipboard, snapshotClipboard, withClipboard } from './clipboard'
 
 export { copyText } from './clipboard'
 
@@ -33,23 +33,17 @@ async function focusTarget(target: ActiveAppInfo | null): Promise<boolean> {
   // Waiting for the app to actually become frontmost is what makes Cmd+V land in
   // the right window instead of in whatever had focus a moment ago.
   return waitFor(async () => {
-    const front = await helperFront()
+    const front = await helperFrontWindow()
     if (!front) return false
     if (front.bundleId && front.bundleId === target.bundleId) return true
     return target.pid > 0 && front.pid === target.pid
   }, FOCUS_TIMEOUT_MS, FOCUS_POLL_MS)
 }
 
-async function putOnClipboard(text: string): Promise<void> {
-  await withClipboard(async () => {
-    clipboard.writeText(text)
-  })
-}
-
 export async function pasteAnswer(text: string, target: ActiveAppInfo | null): Promise<PasteResult> {
   const focused = await focusTarget(target)
   if (!focused) {
-    await putOnClipboard(text)
+    await copyText(text)
     return {
       ok: false,
       copiedOnly: true,
@@ -75,7 +69,7 @@ export async function pasteAnswer(text: string, target: ActiveAppInfo | null): P
   })
 
   if (!typed) {
-    await putOnClipboard(text)
+    await copyText(text)
     return {
       ok: false,
       copiedOnly: true,

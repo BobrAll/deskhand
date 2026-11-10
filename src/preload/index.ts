@@ -93,7 +93,7 @@ const api: DeskhandApi = {
     pickApp: () => ipcRenderer.invoke(CH.settings.pickApp),
     open: () => ipcRenderer.send(CH.settings.open),
     close: () => ipcRenderer.send(CH.settings.close),
-    hold: (busy: boolean) => ipcRenderer.send(CH.settings.hold, busy),
+    hold: (held: boolean) => ipcRenderer.send(CH.settings.hold, held),
     recording: (active: boolean) => ipcRenderer.send(CH.settings.recording, active)
   },
   onboarding: {

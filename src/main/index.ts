@@ -187,7 +187,7 @@ function bootstrap(): void {
   })
 
   createTray({
-    toggle: () => {
+    openAssistant: () => {
       void overlay.open()
     },
     openSettings: () => openSettingsWindow(),

@@ -3,35 +3,16 @@
  *
  * None of these may be inlined at a use site: a copy of one of them is exactly
  * how the card ends up clipped or jumping — nothing throws, it just looks wrong.
- * The three widths are the strongest case and live one level up, in
- * `@shared/metrics`, because the main process clamps the window to the very same
- * numbers; everything here is the renderer's own business.
+ * The widths are the strongest case and live one level up, in `@shared/metrics`,
+ * because the main process clamps the window to the very same numbers; they are
+ * imported under their `BUBBLE_*` names at every use site instead of being
+ * re-exported here. Everything below is the renderer's own business.
  *
  * A layout change is a change to this file, and it is checked by eye:
  * the card at rest and unfolded, line wrapping at 112/80/360, and the agent row.
  */
 
-import { BUBBLE_NARROW_WIDTH, BUBBLE_VOICE_WIDTH, BUBBLE_WIDTH } from '@shared/metrics'
 import type { RefineDirection } from '@shared/types'
-
-/**
- * Card widths, in the same points the main process clamps the window to.
- *
- * The folded, empty card is a small pill — roughly three times as wide as the one
- * line it is tall, which is what makes it read as a foothold on the screen rather
- * than a panel. It does not jump to a fixed width when typing starts: it grows by
- * the width of each glyph as it is typed, and only wraps onto a second line once
- * the question no longer fits in `FULL_WIDTH`. A panel that doubles in size on
- * the first keystroke is loud at exactly the moment a person is still deciding
- * whether they have anything to say.
- */
-export const NARROW_WIDTH = BUBBLE_NARROW_WIDTH
-
-/** While a voice turn runs the card is nothing but the bars, so it shrinks to them. */
-export const VOICE_WIDTH = BUBBLE_VOICE_WIDTH
-
-/** The widest the card gets, whether it is a question or an answer inside it. */
-export const FULL_WIDTH = BUBBLE_WIDTH
 
 /** Outer padding, border and the answer's text-column indent. */
 export const ANSWER_CHROME = 8 * 2 + 2 + 12

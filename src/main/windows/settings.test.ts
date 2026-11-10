@@ -72,11 +72,11 @@ describe('settings window lifecycle', () => {
   it('waits in 80 ms steps for an in-flight write', async () => {
     const api = await load()
     api.openSettingsWindow()
-    api.markSettingsBusy(true)
+    api.setSettingsHeld(true)
     api.closeSettingsWindow()
     vi.advanceTimersByTime(80)
     expect(state.windows[0].destroyed).toBe(false)
-    api.markSettingsBusy(false)
+    api.setSettingsHeld(false)
     vi.advanceTimersByTime(79)
     expect(state.windows[0].destroyed).toBe(false)
     vi.advanceTimersByTime(1)
@@ -86,7 +86,7 @@ describe('settings window lifecycle', () => {
   it('closes after the 1200 ms ceiling even if the renderer stays busy', async () => {
     const api = await load()
     api.openSettingsWindow()
-    api.markSettingsBusy(true)
+    api.setSettingsHeld(true)
     state.windows[0].close()
     vi.advanceTimersByTime(1199)
     expect(state.windows[0].destroyed).toBe(false)
@@ -97,7 +97,7 @@ describe('settings window lifecycle', () => {
   it('clears both the singleton and busy flag on closed', async () => {
     const api = await load()
     api.openSettingsWindow()
-    api.markSettingsBusy(true)
+    api.setSettingsHeld(true)
     state.windows[0].emit('closed')
     api.openSettingsWindow()
     api.closeSettingsWindow()

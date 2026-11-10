@@ -24,7 +24,7 @@ const env = vi.hoisted(() => ({
 }))
 
 vi.mock('./native/helper', () => ({
-  watchForAbort: (_options: unknown, callback: () => void) => {
+  watchForAbort: (_mode: unknown, callback: () => void) => {
     env.dismiss = callback
     return { stop: env.stopWatcher }
   }

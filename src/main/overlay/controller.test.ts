@@ -55,8 +55,8 @@ vi.mock('../settings/store', () => ({
 vi.mock('../settings/secrets', () => ({ getApiKey: () => state.apiKey }))
 vi.mock('../native/helper', () => ({
   helperBinary: () => '/tmp/helper',
-  helperFront: vi.fn(),
-  helperFrontApp: vi.fn(),
+  helperFrontWindow: vi.fn(),
+  helperFrontApplication: vi.fn(),
   helperActivate: vi.fn(),
   helperWindow: vi.fn(),
   watchForAbort: vi.fn(() => ({ stop: vi.fn() }))
@@ -93,7 +93,7 @@ vi.mock('../context/collect', () => ({
     flags: { includeSelection: false, includeScreenshot: false }
   })
 }))
-vi.mock('../llm', () => ({ resolveModel: () => 'gpt-4o', getProvider: vi.fn() }))
+vi.mock('../llm', () => ({ resolveChatModel: () => 'gpt-4o', getProvider: vi.fn() }))
 vi.mock('../llm/webSearch', () => ({ searchWeb: vi.fn() }))
 vi.mock('../util', () => ({ delay: vi.fn().mockResolvedValue(undefined) }))
 vi.mock('./request', () => ({

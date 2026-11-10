@@ -7,8 +7,7 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { BUBBLE_MAX_WIDTH } from '@shared/metrics'
-import { FULL_WIDTH, NARROW_WIDTH, VOICE_WIDTH } from './metrics'
+import { BUBBLE_MAX_WIDTH, BUBBLE_NARROW_WIDTH, BUBBLE_VOICE_WIDTH, BUBBLE_WIDTH } from '@shared/metrics'
 import { draggedWidth, expandedWidth, userWidthCeiling, resolveWidth } from './cardWidth'
 import type { WidthInputs } from './cardWidth'
 
@@ -31,12 +30,12 @@ describe('resolveWidth: content', () => {
   })
 
   it('never opens narrower than the pill or wider than the content cap', () => {
-    expect(width({ contentWidth: 20 })).toBe(NARROW_WIDTH)
-    expect(width({ contentWidth: 2000 })).toBe(FULL_WIDTH)
+    expect(width({ contentWidth: 20 })).toBe(BUBBLE_NARROW_WIDTH)
+    expect(width({ contentWidth: 2000 })).toBe(BUBBLE_WIDTH)
   })
 
   it('gives the drawer the full width', () => {
-    expect(width({ wantsWide: true, contentWidth: 120 })).toBe(FULL_WIDTH)
+    expect(width({ wantsWide: true, contentWidth: 120 })).toBe(BUBBLE_WIDTH)
   })
 })
 
@@ -48,7 +47,7 @@ describe('resolveWidth: the user', () => {
   it('lets the drawer open a card the user made narrow, and not the other way', () => {
     // The drawer's buttons need the full width; a card dragged down to 200 would
     // clip them. A card the user made wider is already roomy enough.
-    expect(width({ userWidth: 200, wantsWide: true })).toBe(FULL_WIDTH)
+    expect(width({ userWidth: 200, wantsWide: true })).toBe(BUBBLE_WIDTH)
     expect(width({ userWidth: 500, wantsWide: true })).toBe(500)
   })
 
@@ -63,7 +62,7 @@ describe('resolveWidth: the user', () => {
   })
 
   it('never lets a voice turn be widened', () => {
-    expect(width({ showingVoiceBars: true, userWidth: 500 })).toBe(VOICE_WIDTH)
+    expect(width({ showingVoiceBars: true, userWidth: 500 })).toBe(BUBBLE_VOICE_WIDTH)
   })
 })
 
@@ -73,7 +72,7 @@ describe('userWidthCeiling', () => {
   })
 
   it('never falls below the content cap on a narrow one', () => {
-    expect(userWidthCeiling(320)).toBe(FULL_WIDTH)
+    expect(userWidthCeiling(320)).toBe(BUBBLE_WIDTH)
   })
 })
 
@@ -95,7 +94,7 @@ describe('draggedWidth', () => {
   it('respects a floor above the window minimum', () => {
     // An unfolded drawer cannot be narrower than the full width; a drag that
     // ignored it would snap back the moment the pointer came up.
-    expect(draggedWidth(360, -200, SCREEN, FULL_WIDTH)).toBe(FULL_WIDTH)
+    expect(draggedWidth(360, -200, SCREEN, BUBBLE_WIDTH)).toBe(BUBBLE_WIDTH)
   })
 })
 
@@ -109,11 +108,11 @@ describe('expandedWidth: what «Шире» opens to', () => {
   })
 
   it('has nothing to offer when the content already fits', () => {
-    expect(expandedWidth(FULL_WIDTH, SCREEN)).toBeNull()
+    expect(expandedWidth(BUBBLE_WIDTH, SCREEN)).toBeNull()
     expect(expandedWidth(120, SCREEN)).toBeNull()
   })
 
   it('never opens narrower than the full width', () => {
-    expect(expandedWidth(FULL_WIDTH + 0.4, SCREEN)).toBe(FULL_WIDTH)
+    expect(expandedWidth(BUBBLE_WIDTH + 0.4, SCREEN)).toBe(BUBBLE_WIDTH)
   })
 })

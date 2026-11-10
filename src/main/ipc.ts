@@ -39,14 +39,14 @@ import {
   setTtsKey
 } from './settings/secrets'
 import { getSettings, patchSettings } from './settings/store'
-import { speechStatus, synthesize } from './tts'
+import { ttsStatus, synthesize } from './tts'
 import {
   closeOnboardingWindow,
   closeSettingsWindow,
-  markSettingsBusy,
+  setSettingsHeld,
   openSettingsWindow
 } from './windows'
-import { deleteModel, downloadModel, importModel, voiceStatus } from './voice/whisper'
+import { deleteModel, downloadModel, importModel, voiceStatus } from './voice/recognizer'
 
 const PROVIDER_IDS: ProviderId[] = PROVIDERS.map((provider) => provider.id)
 
@@ -229,7 +229,7 @@ export function registerIpc(deps: IpcDeps): void {
   // The renderer says "edits are still being written" before it asks to close and
   // clears the flag once the last write has landed. Without it, ⌘W during the
   // 450 ms debounce would destroy the window and take the edit with it.
-  ipcMain.on(CH.settings.hold, (_event, busy: boolean) => markSettingsBusy(Boolean(busy)))
+  ipcMain.on(CH.settings.hold, (_event, held: boolean) => setSettingsHeld(Boolean(held)))
   ipcMain.on(CH.settings.recording, (_event, active: boolean) => deps.setRecording(Boolean(active)))
 
   // ---- permissions -------------------------------------------------------
@@ -329,14 +329,14 @@ export function registerIpc(deps: IpcDeps): void {
   ipcMain.handle(CH.tts.speak, (_event, text: unknown) =>
     synthesize(typeof text === 'string' ? text : '')
   )
-  ipcMain.handle(CH.tts.status, () => speechStatus())
+  ipcMain.handle(CH.tts.status, () => ttsStatus())
   ipcMain.handle(CH.tts.setKey, (_event, key: unknown) => {
     setTtsKey(typeof key === 'string' ? key : '')
-    return speechStatus()
+    return ttsStatus()
   })
   ipcMain.handle(CH.tts.deleteKey, () => {
     deleteTtsKey()
-    return speechStatus()
+    return ttsStatus()
   })
   ipcMain.handle(CH.tts.preview, () => synthesize(PREVIEW_LINE))
 

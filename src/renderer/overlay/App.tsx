@@ -11,7 +11,7 @@
  * answer when nothing is selected.
  *
  * Width is the one thing the card lets a person overrule. It sizes itself to its
- * content up to `FULL_WIDTH`, which is right for a sentence and wrong for a table;
+ * content up to `BUBBLE_WIDTH`, which is right for a sentence and wrong for a table;
  * the right edge can be dragged, and «Шире» does the same thing in one click. The
  * decision itself lives in `cardWidth.ts`.
  */
@@ -27,6 +27,7 @@ import type {
   ResponseMode,
   StreamEvent
 } from '@shared/types'
+import { BUBBLE_NARROW_WIDTH, BUBBLE_WIDTH } from '@shared/metrics'
 import {
   ANSWER_CHROME,
   ACTIONS_CHROME,
@@ -37,13 +38,11 @@ import {
   CARET_SLACK,
   CHROME_WIDTH,
   FIELD_FONT,
-  FULL_WIDTH,
-  NARROW_WIDTH,
   REFINE_HINT,
   REFINE_LABEL,
   STOP_CHROME,
   clamp
-} from './metrics'
+} from './cardMetrics'
 import { useSpeech } from './useSpeech'
 import { useWaiting } from './useWaiting'
 import { waitingStage } from './waiting'
@@ -494,15 +493,15 @@ export function App() {
    *
    * Nothing is added for empty space: the field gets as many points as the
    * sentence takes, so every keystroke widens the bubble by exactly one glyph and
-   * the card only starts wrapping once it has reached `FULL_WIDTH`. That is the
+   * the card only starts wrapping once it has reached `BUBBLE_WIDTH`. That is the
    * difference between a bubble that grows under your hands and one that snaps
    * open to a panel the moment you start typing — the latter is loud in precisely
    * the moment a person is still deciding whether they want to say anything.
    */
   const composedWidth = clamp(
     Math.ceil(textWidth) + chromeWidth + CARET_SLACK,
-    NARROW_WIDTH,
-    FULL_WIDTH
+    BUBBLE_NARROW_WIDTH,
+    BUBBLE_WIDTH
   )
 
   // Recompute from current content so a shorter answer shrinks the card again.
@@ -522,17 +521,17 @@ export function App() {
     ? Math.ceil(measureLine(agentStatus, AGENT_FONT)) +
       AGENT_ROW_CHROME + (agentRunning ? 0 : AGENT_STATUS_INSET) + CARET_SLACK
     : 0
-  const inputWidth = agentRunning ? NARROW_WIDTH : composedWidth
+  const inputWidth = agentRunning ? BUBBLE_NARROW_WIDTH : composedWidth
   /**
    * What the content would like, before any cap.
    *
    * Kept unclamped because «Шире» has to know how much room the answer actually
-   * wants: the capped number is always `FULL_WIDTH` once the answer is long, and
+   * wants: the capped number is always `BUBBLE_WIDTH` once the answer is long, and
    * a button that opens the card to the same width for every long reply is the
    * bug it was reported as.
    */
   const naturalWidth = Math.max(inputWidth, answerWidth, actionsWidth, agentWidth)
-  const contentWidth = clamp(naturalWidth, NARROW_WIDTH, FULL_WIDTH)
+  const contentWidth = clamp(naturalWidth, BUBBLE_NARROW_WIDTH, BUBBLE_WIDTH)
   // While a drag runs the width lives in a ref, because updating state a hundred
   // times a second re-renders the answer for nothing. But a render can still
   // happen mid-drag — the next chunk of a streaming answer is exactly that — and
@@ -858,7 +857,7 @@ export function App() {
     if (!drag || !node) return
     // The drawer's buttons need the full width, so an unfolded card cannot be
     // dragged narrower than that: it would snap back on release.
-    const floor = wantsWide ? FULL_WIDTH : undefined
+    const floor = wantsWide ? BUBBLE_WIDTH : undefined
     const width = draggedWidth(
       drag.startWidth,
       event.screenX - drag.startX,

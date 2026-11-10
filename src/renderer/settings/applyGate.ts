@@ -7,22 +7,13 @@
  * the value up" does not throw, it produces a quiet write loop every 450 ms, or a
  * field rewritten under the user's hands while they are still typing in it.
  *
- * Everything here is pure. The bounds of the token field appear once, here, and
- * the JSX takes them from the constants — three copies of `64…8192` was exactly
- * the disagreement this module exists to prevent.
+ * Everything here is pure. The bounds of the token field come from
+ * `@shared/defaults`, where the store's own clamp reads them too: three copies of
+ * `64…8192` was exactly the disagreement this module exists to prevent.
  */
 
 import type { AppSettings, ProviderId } from '@shared/types'
-import { PROVIDERS, normalizeBaseUrl } from '@shared/defaults'
-
-/**
- * The token ceiling the field and the store both accept.
- *
- * Below the floor a reply is too short to be an answer; above the ceiling the
- * request is refused by the provider. Both ends are inclusive.
- */
-export const MAX_TOKENS_MIN = 64
-export const MAX_TOKENS_MAX = 8192
+import { PROVIDERS, SETTINGS_BOUNDS, normalizeBaseUrl } from '@shared/defaults'
 
 /**
  * Values the settings window cannot store as they are, and what it says instead.
@@ -34,7 +25,7 @@ export const MAX_TOKENS_MAX = 8192
  */
 export const HOLD_REASON = {
   baseUrl: 'Проверьте адрес API — изменения не применены.',
-  maxTokens: `Максимум токенов: от ${MAX_TOKENS_MIN} до ${MAX_TOKENS_MAX}.`,
+  maxTokens: `Максимум токенов: от ${SETTINGS_BOUNDS.maxTokens.min} до ${SETTINGS_BOUNDS.maxTokens.max}.`,
   prompt: 'Пустой системный промпт оставлен прежним.',
   hotkey: 'Горячая клавиша не задана.',
   ttsBaseUrl: 'Проверьте адрес сервиса синтеза — изменения не применены.'
@@ -65,7 +56,7 @@ export function ttsBaseUrlInvalid(draft: AppSettings): boolean {
 
 /** Whether a token count is one the store will keep as it is. */
 export function tokensInRange(value: number): boolean {
-  return Number.isFinite(value) && value >= MAX_TOKENS_MIN && value <= MAX_TOKENS_MAX
+  return Number.isFinite(value) && value >= SETTINGS_BOUNDS.maxTokens.min && value <= SETTINGS_BOUNDS.maxTokens.max
 }
 
 /**

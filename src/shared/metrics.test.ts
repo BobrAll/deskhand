@@ -69,14 +69,15 @@ describe('metrics: the widths have one source', () => {
   })
 
   it('is what the overlay renderer lays itself out with', () => {
-    // R13 moved the renderer's constants into `overlay/metrics.ts`, so the
-    // renderer half of this guard reads that file: the widths still have to come
-    // from here and still must not be written out anywhere in the renderer.
-    const source = read('renderer/overlay/metrics.ts')
+    // The renderer imports these names instead of re-exporting them, and
+    // `cardMetrics.ts` deliberately holds none of them, so the guard reads the
+    // file that actually sizes the card.
+    const cardWidth = read('renderer/overlay/cardWidth.ts')
     for (const name of ['BUBBLE_WIDTH', 'BUBBLE_NARROW_WIDTH', 'BUBBLE_VOICE_WIDTH']) {
-      expect(source, name).toContain(name)
+      expect(cardWidth, name).toContain(name)
     }
-    expect(source).not.toMatch(/const (NARROW_WIDTH|VOICE_WIDTH|FULL_WIDTH) = \d/)
-    expect(read('renderer/overlay/App.tsx')).not.toMatch(/const (NARROW_WIDTH|VOICE_WIDTH|FULL_WIDTH) = \d/)
+    for (const file of ['renderer/overlay/cardWidth.ts', 'renderer/overlay/App.tsx', 'renderer/overlay/cardMetrics.ts']) {
+      expect(read(file), file).not.toMatch(/const (NARROW_WIDTH|VOICE_WIDTH|FULL_WIDTH) = \d/)
+    }
   })
 })

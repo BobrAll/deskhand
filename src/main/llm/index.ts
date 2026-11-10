@@ -24,7 +24,7 @@ export function getProvider(id: ProviderId): LlmProvider {
   return registry[id]
 }
 
-export function resolveModel(settings: AppSettings): string {
+export function resolveChatModel(settings: AppSettings): string {
   const configured = settings.models[settings.provider]?.trim()
   if (configured) return configured
   // An id outside the registry has no default to fall back to; the empty string

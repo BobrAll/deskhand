@@ -103,19 +103,19 @@ vi.mock('./windows', () => ({
   openSettingsWindow: () => undefined,
   closeSettingsWindow: () => undefined,
   closeOnboardingWindow: () => undefined,
-  markSettingsBusy: () => undefined,
+  setSettingsHeld: () => undefined,
   showActiveWindow: () => undefined
 }))
 
 vi.mock('./native/helper', () => ({
   helperRunningApps: async () => [],
   helperPermissions: async () => ({ accessibility: false, screenRecording: false, microphone: false }),
-  helperFront: async () => null,
-  helperFrontApp: async () => null,
+  helperFrontWindow: async () => null,
+  helperFrontApplication: async () => null,
   helperBinary: () => null
 }))
 
-vi.mock('./voice/whisper', () => ({
+vi.mock('./voice/recognizer', () => ({
   downloadModel: async () => undefined,
   importModel: async () => 'tiny',
   deleteModel: async () => undefined,

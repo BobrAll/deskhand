@@ -9,11 +9,9 @@
 
 import { describe, expect, it } from 'vitest'
 import type { AppSettings } from '@shared/types'
-import { DEFAULT_SETTINGS } from '@shared/defaults'
+import { DEFAULT_SETTINGS, SETTINGS_BOUNDS } from '@shared/defaults'
 import {
   HOLD_REASON,
-  MAX_TOKENS_MAX,
-  MAX_TOKENS_MIN,
   hasUnsaved,
   holdReasonFor,
   invalidBaseUrlProviders,
@@ -28,15 +26,15 @@ function settings(overrides: Partial<AppSettings> = {}): AppSettings {
 
 describe('applyGate: the token bounds appear once', () => {
   it('is 64 to 8192, inclusive', () => {
-    expect(MAX_TOKENS_MIN).toBe(64)
-    expect(MAX_TOKENS_MAX).toBe(8192)
+    expect(SETTINGS_BOUNDS.maxTokens.min).toBe(64)
+    expect(SETTINGS_BOUNDS.maxTokens.max).toBe(8192)
   })
 
   it('accepts both ends and rejects what is outside them', () => {
-    expect(tokensInRange(MAX_TOKENS_MIN)).toBe(true)
-    expect(tokensInRange(MAX_TOKENS_MAX)).toBe(true)
-    expect(tokensInRange(MAX_TOKENS_MIN - 1)).toBe(false)
-    expect(tokensInRange(MAX_TOKENS_MAX + 1)).toBe(false)
+    expect(tokensInRange(SETTINGS_BOUNDS.maxTokens.min)).toBe(true)
+    expect(tokensInRange(SETTINGS_BOUNDS.maxTokens.max)).toBe(true)
+    expect(tokensInRange(SETTINGS_BOUNDS.maxTokens.min - 1)).toBe(false)
+    expect(tokensInRange(SETTINGS_BOUNDS.maxTokens.max + 1)).toBe(false)
   })
 
   it('rejects a field that is not a number at all', () => {
@@ -100,13 +98,13 @@ describe('applyGate: why a write is held', () => {
   })
 
   it('holds a token count out of range, at both ends', () => {
-    expect(holdReasonFor(settings({ maxTokens: MAX_TOKENS_MIN - 1 }), [])).toBe(HOLD_REASON.maxTokens)
-    expect(holdReasonFor(settings({ maxTokens: MAX_TOKENS_MAX + 1 }), [])).toBe(HOLD_REASON.maxTokens)
+    expect(holdReasonFor(settings({ maxTokens: SETTINGS_BOUNDS.maxTokens.min - 1 }), [])).toBe(HOLD_REASON.maxTokens)
+    expect(holdReasonFor(settings({ maxTokens: SETTINGS_BOUNDS.maxTokens.max + 1 }), [])).toBe(HOLD_REASON.maxTokens)
   })
 
   it('does not hold a count exactly on a bound', () => {
-    expect(holdReasonFor(settings({ maxTokens: MAX_TOKENS_MIN }), [])).toBeNull()
-    expect(holdReasonFor(settings({ maxTokens: MAX_TOKENS_MAX }), [])).toBeNull()
+    expect(holdReasonFor(settings({ maxTokens: SETTINGS_BOUNDS.maxTokens.min }), [])).toBeNull()
+    expect(holdReasonFor(settings({ maxTokens: SETTINGS_BOUNDS.maxTokens.max }), [])).toBeNull()
   })
 
   it('holds an emptied prompt rather than letting the default replace it', () => {

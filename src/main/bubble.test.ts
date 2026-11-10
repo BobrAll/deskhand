@@ -7,6 +7,7 @@
 import { describe, expect, it } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import type { ScreenRect } from '@shared/types'
 import {
   BUBBLE_GAP,
   BUBBLE_MARGIN,
@@ -17,12 +18,10 @@ import {
   roomAround,
   xFor,
   yFor,
-  type BubbleAnchor,
-  type BubbleRect
+  type BubbleAnchor
 } from './bubble'
-
-const SCREEN: BubbleRect = { x: 0, y: 0, width: 1440, height: 900 }
-const SMALL: BubbleRect = { x: 0, y: 0, width: 600, height: 400 }
+const SCREEN: ScreenRect = { x: 0, y: 0, width: 1440, height: 900 }
+const SMALL: ScreenRect = { x: 0, y: 0, width: 600, height: 400 }
 const MIN = 8
 const GAP = 10
 
@@ -163,10 +162,10 @@ describe('bubble: resizing at the anchor', () => {
     above: false,
     right: true
   }
-  const inPlace: BubbleRect = { x: 710, y: 410, width: 112, height: 31 }
+  const inPlace: ScreenRect = { x: 710, y: 410, width: 112, height: 31 }
 
   it('re-derives both edges when the card is still where it was placed', () => {
-    const next = resizeAnchor(base, inPlace, 200, 360, () => SCREEN)
+    const next = resizeAnchor({ anchor: base, bounds: inPlace, height: 200, width: 360, workAreaAt: () => SCREEN })
 
     expect(next.x).toBe(710)
     expect(next.above).toBe(false)
@@ -177,8 +176,8 @@ describe('bubble: resizing at the anchor', () => {
     // Pointer at y=700: 182 pt of room below, 682 above. A 500 pt answer only
     // fits on the side the card did not open on.
     const low: BubbleAnchor = { ...base, point: at(700, 700), x: 710 }
-    const dropped: BubbleRect = { x: 710, y: 710, width: 112, height: 31 }
-    const next = resizeAnchor(low, dropped, 500, 360, () => SCREEN)
+    const dropped: ScreenRect = { x: 710, y: 710, width: 112, height: 31 }
+    const next = resizeAnchor({ anchor: low, bounds: dropped, height: 500, width: 360, workAreaAt: () => SCREEN })
 
     expect(next.above).toBe(true)
     expect(yFor(next, 500)).toBe(700 - GAP - 500)
@@ -189,10 +188,10 @@ describe('bubble: resizing at the anchor', () => {
     // fits. A card that hopped above the pointer and then shrinks stays there:
     // hopping back down mid-answer is the movement the anchor exists to prevent.
     const low: BubbleAnchor = { ...base, point: at(700, 700), x: 710 }
-    const dropped: BubbleRect = { x: 710, y: 710, width: 112, height: 31 }
-    const flipped = resizeAnchor(low, dropped, 500, 360, () => SCREEN)
+    const dropped: ScreenRect = { x: 710, y: 710, width: 112, height: 31 }
+    const flipped = resizeAnchor({ anchor: low, bounds: dropped, height: 500, width: 360, workAreaAt: () => SCREEN })
     const bounds = boundsFor(flipped, 500, 360)
-    const back = resizeAnchor(flipped, bounds, 31, 360, () => SCREEN)
+    const back = resizeAnchor({ anchor: flipped, bounds: bounds, height: 31, width: 360, workAreaAt: () => SCREEN })
 
     expect(back.above).toBe(true)
   })
@@ -201,23 +200,23 @@ describe('bubble: resizing at the anchor', () => {
     // Above the pointer there are 382 pt of room, below 482. A 400 pt answer
     // fits only below, so the card hops back down.
     const above: BubbleAnchor = { ...base, above: true, point: at(700, 400), x: 710 }
-    const bounds: BubbleRect = { x: 710, y: 8, width: 360, height: 400 }
-    const next = resizeAnchor(above, bounds, 400, 360, () => SCREEN)
+    const bounds: ScreenRect = { x: 710, y: 8, width: 360, height: 400 }
+    const next = resizeAnchor({ anchor: above, bounds: bounds, height: 400, width: 360, workAreaAt: () => SCREEN })
 
     expect(next.above).toBe(false)
   })
 
   it('leaves a card the user dragged where they put it', () => {
-    const dropped: BubbleRect = { x: 200, y: 300, width: 112, height: 31 }
-    const next = resizeAnchor(base, dropped, 31, 112, () => SCREEN)
+    const dropped: ScreenRect = { x: 200, y: 300, width: 112, height: 31 }
+    const next = resizeAnchor({ anchor: base, bounds: dropped, height: 31, width: 112, workAreaAt: () => SCREEN })
 
     expect(next.x).toBe(200)
     expect(next.point.y).toBe(300 - GAP)
   })
 
   it('pulls a dragged card back when growing wider would carry it off screen', () => {
-    const dropped: BubbleRect = { x: 1400, y: 300, width: 112, height: 31 }
-    const next = resizeAnchor(base, dropped, 31, 360, () => SCREEN)
+    const dropped: ScreenRect = { x: 1400, y: 300, width: 112, height: 31 }
+    const next = resizeAnchor({ anchor: base, bounds: dropped, height: 31, width: 360, workAreaAt: () => SCREEN })
 
     expect(next.x).toBe(1440 - 360 - MIN)
   })
@@ -225,35 +224,41 @@ describe('bubble: resizing at the anchor', () => {
   it('keeps the left edge while the user drags the right one', () => {
     // The edge under the pointer has to follow the pointer, so the card grows
     // away from its own left edge instead of away from the anchor.
-    const next = resizeAnchor(base, inPlace, 31, 480, () => SCREEN, true)
+    const next = resizeAnchor({ anchor: base, bounds: inPlace, height: 31, width: 480, workAreaAt: () => SCREEN, pin: true })
 
     expect(next.x).toBe(710)
     expect(next.pinned).toBe(true)
   })
 
   it('keeps the left edge for the resizes that follow the drag', () => {
-    const dragged = resizeAnchor(base, inPlace, 31, 480, () => SCREEN, true)
+    const dragged = resizeAnchor({ anchor: base, bounds: inPlace, height: 31, width: 480, workAreaAt: () => SCREEN, pin: true })
     const bounds = boundsFor(dragged, 31, 480)
     // A content-driven resize with no `pin`: the answer reflowed, the person did
     // not touch the edge. The card must stay where the drag left it.
-    const after = resizeAnchor(dragged, bounds, 200, 480, () => SCREEN)
+    const after = resizeAnchor({ anchor: dragged, bounds: bounds, height: 200, width: 480, workAreaAt: () => SCREEN })
 
     expect(after.x).toBe(710)
   })
 
   it('pulls a pinned card back only when it would leave the display', () => {
     const pinned = { ...base, pinned: true }
-    const atEdge: BubbleRect = { x: 1380, y: 410, width: 480, height: 31 }
-    const next = resizeAnchor(pinned, atEdge, 31, 560, () => SCREEN)
+    const atEdge: ScreenRect = { x: 1380, y: 410, width: 480, height: 31 }
+    const next = resizeAnchor({ anchor: pinned, bounds: atEdge, height: 31, width: 560, workAreaAt: () => SCREEN })
 
     expect(next.x).toBe(1440 - 560 - MIN)
   })
 
   it('re-reads the work area of the display the pointer is on', () => {
     const seen: Array<{ x: number; y: number }> = []
-    resizeAnchor(base, inPlace, 200, 360, (point) => {
-      seen.push(point)
-      return SCREEN
+    resizeAnchor({
+      anchor: base,
+      bounds: inPlace,
+      height: 200,
+      width: 360,
+      workAreaAt: (point) => {
+        seen.push(point)
+        return SCREEN
+      }
     })
 
     expect(seen).toEqual([at(700, 400)])
@@ -261,10 +266,16 @@ describe('bubble: resizing at the anchor', () => {
 
   it('re-reads the work area of the display the card was dropped on', () => {
     const seen: Array<{ x: number; y: number }> = []
-    const dropped: BubbleRect = { x: 200, y: 300, width: 112, height: 31 }
-    resizeAnchor(base, dropped, 31, 112, (point) => {
-      seen.push(point)
-      return SCREEN
+    const dropped: ScreenRect = { x: 200, y: 300, width: 112, height: 31 }
+    resizeAnchor({
+      anchor: base,
+      bounds: dropped,
+      height: 31,
+      width: 112,
+      workAreaAt: (point) => {
+        seen.push(point)
+        return SCREEN
+      }
     })
 
     expect(seen).toEqual([at(700, 400), at(200, 300)])
@@ -272,7 +283,7 @@ describe('bubble: resizing at the anchor', () => {
 
   it('does not mutate the anchor it was given', () => {
     const before = JSON.parse(JSON.stringify(base)) as BubbleAnchor
-    resizeAnchor(base, inPlace, 700, 360, () => SCREEN)
+    resizeAnchor({ anchor: base, bounds: inPlace, height: 700, width: 360, workAreaAt: () => SCREEN })
 
     expect(base).toEqual(before)
   })

@@ -98,7 +98,7 @@ export async function installedModels(): Promise<string[]> {
  * around, otherwise the largest `ggml-*.bin` found anywhere — a bigger whisper is
  * a strictly better transcript for the same short command.
  */
-export async function resolveModel(
+export async function resolveWhisperModel(
   configured = voiceModel(getSettings().voice.model)
 ): Promise<{ path: string | null; auto: boolean }> {
   if (configured) {
@@ -138,7 +138,7 @@ export async function voiceStatus(): Promise<VoiceStatus> {
   const configured = voiceModel(voice.model)
   const engine = configured?.engine ?? 'whisper'
   const binary = resolveBinary(engine)
-  const model = await resolveModel(configured)
+  const model = await resolveWhisperModel(configured)
   let detail: string | null = null
   if (!binary) {
     detail =
@@ -200,7 +200,7 @@ export async function transcribe(options: TranscribeOptions): Promise<Transcribe
   const binary = resolveBinary(engine)
   if (!binary) return { ok: false, text: '', ms: 0, message: `Не найден ${binaryName(engine)}.` }
 
-  const model = await resolveModel(configured)
+  const model = await resolveWhisperModel(configured)
   if (!model.path) {
     return { ok: false, text: '', ms: 0, message: 'Не скачана модель распознавания.' }
   }
@@ -304,7 +304,7 @@ export function isDownloading(id: string): boolean {
  * Downloads one catalog model into `modelsDir()`.
  *
  * Written to a `.part` file and renamed only when complete, so an interrupted
- * download can never be picked up by `resolveModel()` as a usable model.
+ * download can never be picked up by `resolveWhisperModel()` as a usable model.
  */
 export function downloadModel(
   id: string,

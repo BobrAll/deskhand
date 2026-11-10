@@ -11,7 +11,7 @@ import { resourcePath } from './paths'
 import { getSettings } from './settings/store'
 
 export interface TrayActions {
-  toggle(): void
+  openAssistant(): void
   openSettings(): void
   openOnboarding(): void
   quit(): void
@@ -30,7 +30,7 @@ function trayImage(): Electron.NativeImage {
 function buildMenu(): Menu {
   const hotkey = prettyAccelerator(getSettings().hotkey)
   return Menu.buildFromTemplate([
-    { label: openAssistantLabel(hotkey), click: () => actions?.toggle() },
+    { label: openAssistantLabel(hotkey), click: () => actions?.openAssistant() },
     { type: 'separator' },
     { label: SETTINGS_LABEL, accelerator: SETTINGS_ACCELERATOR, click: () => actions?.openSettings() },
     { label: 'Права доступа и первый запуск…', click: () => actions?.openOnboarding() },
@@ -52,7 +52,7 @@ export function createTray(trayActions: TrayActions): Tray {
   tray = new Tray(trayImage())
   tray.setToolTip('Deskhand')
   tray.setContextMenu(buildMenu())
-  tray.on('click', () => actions?.toggle())
+  tray.on('click', () => actions?.openAssistant())
   return tray
 }
 

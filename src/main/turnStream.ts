@@ -34,8 +34,8 @@ export interface TurnStreamOptions {
    * still writing. False means "stop now and keep whatever was parsed".
    */
   isAlive(): boolean
-  /** Drawable shapes parsed out of the last delta; called only when non-empty. */
-  onShapes(shapes: Annotation[]): void
+  /** Drawable annotations parsed out of the last delta; called only when non-empty. */
+  onAnnotations(annotations: Annotation[]): void
   /** Prose parsed out of the last delta; called only when non-empty. */
   onText(delta: string): void
 }
@@ -53,7 +53,7 @@ export interface TurnStreamResult {
  * treat a held round, a streamed one and a cancelled one uniformly.
  */
 export async function consumeTurnStream(options: TurnStreamOptions): Promise<TurnStreamResult> {
-  const { provider, messages, apiKey, streamOptions, isAlive, onShapes, onText } = options
+  const { provider, messages, apiKey, streamOptions, isAlive, onAnnotations, onText } = options
 
   // The stream is filtered even when the tools were not offered: a raw
   // `@point circle …` or `@click 0.4 0.5` printing into the card or into a
@@ -76,9 +76,9 @@ export async function consumeTurnStream(options: TurnStreamOptions): Promise<Tur
   }
 
   /** Unusable coordinates are dropped here, once, for every round. */
-  const paint = (shapes: Annotation[]): void => {
-    const drawable = shapes.filter(isDrawable)
-    if (drawable.length > 0) onShapes(drawable)
+  const paint = (annotations: Annotation[]): void => {
+    const drawable = annotations.filter(isDrawable)
+    if (drawable.length > 0) onAnnotations(drawable)
   }
 
   const started = performance.now()

@@ -30,7 +30,7 @@ export {
   openOnboardingWindow,
   closeOnboardingWindow,
   closeSettingsWindow,
-  markSettingsBusy
+  setSettingsHeld
 } from './settings'
 
 /**
@@ -211,7 +211,14 @@ function resizeAtAnchor(win: BrowserWindow, height: number, width: number, pin =
     positionOverlay(win, height, width)
     return
   }
-  anchor = resizeAnchor(anchor, resizeBounds ?? win.getBounds(), height, width, workAreaAt, pin)
+  anchor = resizeAnchor({
+    anchor,
+    bounds: resizeBounds ?? win.getBounds(),
+    height,
+    width,
+    workAreaAt,
+    pin
+  })
   resizeBounds = boundsFor(anchor, height, width)
   // Native animation is right for a card that grows as text arrives — one small
   // step, eased. It is wrong for a drag: macOS animates every `setBounds` over

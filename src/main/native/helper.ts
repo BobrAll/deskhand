@@ -21,8 +21,8 @@ import { helperBinary, numberOf, runHelper } from './process'
 export { helperBinary } from './process'
 export {
   helperActivate,
-  helperFront,
-  helperFrontApp,
+  helperFrontApplication,
+  helperFrontWindow,
   helperLaunch,
   helperRunningApps,
   helperWindow
@@ -41,6 +41,15 @@ export {
 export type { HelperClickButton, NativeInputTarget } from './input'
 
 /**
+ * What the watcher listens to.
+ *
+ * `key` is Escape only, `mouse` adds pointer movement, and `interaction` is the
+ * helper's own gesture detector — used where the drawing layer must disappear on
+ * the first thing the user does with either device.
+ */
+export type AbortWatchMode = 'key' | 'mouse' | 'interaction'
+
+/**
  * Starts the long-lived Escape / mouse-movement watcher.
  *
  * Returns a handle rather than a promise: the process prints `ready` and then
@@ -52,12 +61,12 @@ export interface AbortWatcher {
 }
 
 export function watchForAbort(
-  options: { watchMouse: boolean; interaction?: boolean },
+  mode: AbortWatchMode,
   onAbort: (reason: 'escape' | 'mousemove') => void
 ): AbortWatcher | null {
   const binary = helperBinary()
   if (!binary) return null
-  const child = spawn(binary, ['watch', options.interaction ? 'interaction' : options.watchMouse ? 'mouse' : 'key'], {
+  const child = spawn(binary, ['watch', mode], {
     stdio: ['ignore', 'pipe', 'ignore']
   })
   const lines = createInterface({ input: child.stdout })

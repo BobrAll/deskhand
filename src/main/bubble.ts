@@ -26,6 +26,7 @@
  *   from under the eyes that are reading it.
  */
 
+import type { ScreenRect } from '@shared/types'
 import { clamp } from './util'
 
 // Re-exported for existing callers; `util.ts` owns the implementation.
@@ -40,16 +41,16 @@ export const BUBBLE_MARGIN = 8
 /** How far the window may drift from where it was placed before it counts as dragged. */
 const DRAG_SLACK = 2
 
+/**
+ * A point in global screen points.
+ *
+ * Not `Point01` from `@shared/types`: that one is documented as normalised image
+ * coordinates, and passing a screen point where an annotation point is expected
+ * is the mistake the two names exist to keep apart.
+ */
 export interface BubblePoint {
   x: number
   y: number
-}
-
-export interface BubbleRect {
-  x: number
-  y: number
-  width: number
-  height: number
 }
 
 /**
@@ -64,7 +65,7 @@ export interface BubbleRect {
 export interface BubbleAnchor {
   /** The pointer at the moment the bubble appeared, in global screen points. */
   point: BubblePoint
-  area: BubbleRect
+  area: ScreenRect
   /** Left edge of the bubble; it may sit left of the pointer when flipped. */
   x: number
   /** `true` when the bubble hangs above the pointer instead of below it. */
@@ -92,7 +93,7 @@ export interface BubbleAnchor {
 /** Remaining room on either side of the pointer, inside the given work area. */
 export function roomAround(
   point: BubblePoint,
-  area: BubbleRect
+  area: ScreenRect
 ): { below: number; above: number } {
   return {
     below: area.y + area.height - BUBBLE_MARGIN - (point.y + BUBBLE_GAP),
@@ -133,7 +134,7 @@ export function yFor(placed: BubbleAnchor, height: number): number {
  */
 export function placeAnchor(
   point: BubblePoint,
-  area: BubbleRect,
+  area: ScreenRect,
   height: number,
   width: number
 ): BubbleAnchor {
@@ -152,7 +153,7 @@ export function placeAnchor(
 }
 
 /** The window rectangle for an anchor and a size. */
-export function boundsFor(anchor: BubbleAnchor, height: number, width: number): BubbleRect {
+export function boundsFor(anchor: BubbleAnchor, height: number, width: number): ScreenRect {
   return {
     x: Math.round(anchor.x),
     y: Math.round(yFor(anchor, height)),
@@ -175,19 +176,25 @@ export function boundsFor(anchor: BubbleAnchor, height: number, width: number): 
  * which is the only way a right-edge drag can keep the edge under the pointer.
  * The anchor remembers the decision (`pinned`), because the next content-driven
  * resize must not pull the card back to the pointer mid-answer.
- *
- * `workAreaAt` is the caller's `screen.getDisplayNearestPoint(...).workArea`: the
- * pointer may have been on another display when the bubble opened, and a card the
- * user dragged away has to stay inside the work area of *that* display.
  */
-export function resizeAnchor(
-  anchor: BubbleAnchor,
-  bounds: BubbleRect,
-  height: number,
-  width: number,
-  workAreaAt: (point: BubblePoint) => BubbleRect,
-  pin = false
-): BubbleAnchor {
+export interface ResizeAnchorOptions {
+  anchor: BubbleAnchor
+  /** The window's current rectangle, as Electron reports it. */
+  bounds: ScreenRect
+  height: number
+  width: number
+  /**
+   * The caller's `screen.getDisplayNearestPoint(...).workArea`: the pointer may
+   * have been on another display when the bubble opened, and a card the user
+   * dragged away has to stay inside the work area of *that* display.
+   */
+  workAreaAt(point: BubblePoint): ScreenRect
+  /** The horizontal edge is the user's: they dragged the card or pulled its edge. */
+  pin?: boolean
+}
+
+export function resizeAnchor(options: ResizeAnchorOptions): BubbleAnchor {
+  const { anchor, bounds, height, width, workAreaAt, pin = false } = options
   const placed: BubbleAnchor = { ...anchor, point: { ...anchor.point } }
   placed.area = workAreaAt(placed.point)
 
