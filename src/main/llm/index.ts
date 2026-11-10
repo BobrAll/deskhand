@@ -27,5 +27,7 @@ export function getProvider(id: ProviderId): LlmProvider {
 export function resolveModel(settings: AppSettings): string {
   const configured = settings.models[settings.provider]?.trim()
   if (configured) return configured
+  // An id outside the registry has no default to fall back to; the empty string
+  // is what the caller treats as "no model configured".
   return providerInfo(settings.provider)?.defaultModel ?? ''
 }

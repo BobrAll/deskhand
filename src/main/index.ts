@@ -1,9 +1,9 @@
 /**
  * Application entry point.
  *
- * Order matters here: the app must be a tray-only accessory before any window
- * exists, permissions must be known before the first hotkey press, and the hotkey
- * must be registered only after `app.whenReady()`.
+ * Order matters here: the autoplay policy has to be set before any window
+ * exists, permissions must be known before the first hotkey press, and the
+ * hotkey must be registered only after `app.whenReady()`.
  */
 
 import { app, Menu, nativeTheme } from 'electron'
@@ -20,6 +20,7 @@ import { openOnboardingWindow, openSettingsWindow, overlayHost, showActiveWindow
 import { getSettings, patchSettings } from './settings/store'
 import { readPermissions } from './permissions'
 import { encryptionAvailable } from './settings/secrets'
+import { QUIT_LABEL, SETTINGS_ACCELERATOR, SETTINGS_LABEL } from './menus'
 import { DEFAULT_SETTINGS } from '@shared/defaults'
 
 /**
@@ -121,7 +122,8 @@ function handleSignal(signal: NodeJS.Signals): void {
 process.on('SIGTERM', handleSignal)
 process.on('SIGINT', handleSignal)
 
-function bootstrap(): void {
+/** The application menu: the same Settings and Quit entries the tray offers. */
+function buildApplicationMenu(): void {
   Menu.setApplicationMenu(
     Menu.buildFromTemplate([
       {
@@ -129,12 +131,12 @@ function bootstrap(): void {
         submenu: [
           { role: 'about', label: 'О Deskhand' },
           { type: 'separator' },
-          { label: 'Настройки…', accelerator: 'CommandOrControl+,', click: () => openSettingsWindow() },
+          { label: SETTINGS_LABEL, accelerator: SETTINGS_ACCELERATOR, click: () => openSettingsWindow() },
           { type: 'separator' },
           { role: 'hide', label: 'Скрыть' },
           { role: 'hideOthers', label: 'Скрыть остальные' },
           { type: 'separator' },
-          { role: 'quit', label: 'Выйти из Deskhand' }
+          { role: 'quit', label: QUIT_LABEL }
         ]
       },
       {
@@ -151,6 +153,27 @@ function bootstrap(): void {
       }
     ])
   )
+}
+
+/**
+ * Logs what the first turn will be missing.
+ *
+ * Both facts are fixed in the onboarding window or the settings pane, so this
+ * only records them; it opens nothing and changes nothing.
+ */
+function reportStartupPermissions(): void {
+  void readPermissions().then((permissions) => {
+    if (!permissions.accessibility) {
+      console.log('[permissions] accessibility is not granted yet — see the onboarding window')
+    }
+    if (!encryptionAvailable()) {
+      console.warn('[secrets] safeStorage is unavailable; keys cannot be stored securely')
+    }
+  })
+}
+
+function bootstrap(): void {
+  buildApplicationMenu()
 
   // IPC registration must happen before anything that can throw: without it the
   // settings window opens but every `invoke` rejects, so it stays empty forever.
@@ -193,18 +216,11 @@ function bootstrap(): void {
   // is cheap — one hidden window, created off-screen and reused for every turn.
   overlayHost.prewarm()
 
-  void readPermissions().then((permissions) => {
-    if (!permissions.accessibility) {
-      console.log('[permissions] accessibility is not granted yet — see the onboarding window')
-    }
-    if (!encryptionAvailable()) {
-      console.warn('[secrets] safeStorage is unavailable; keys cannot be stored securely')
-    }
-  })
+  reportStartupPermissions()
 
   // A manual launch (double-click on the app icon) must produce something visible:
-  // the app is tray-only, so without this the click looks like a no-op. A launch
-  // by the login item must stay quiet instead.
+  // otherwise the click looks like a no-op. A launch by the login item must stay
+  // quiet instead.
   let launchedManually = true
   try {
     launchedManually = !app.getLoginItemSettings().wasOpenedAtLogin
@@ -236,7 +252,8 @@ if (!app.requestSingleInstanceLock()) {
   app.whenReady().then(() => {
     nativeTheme.themeSource = 'system'
     // A failure while wiring the UI must not leave the process half-initialised:
-    // the app is tray-only, so an unhandled throw here just leaves a dead icon.
+    // the app has no main window to report it, so an unhandled throw here just
+    // leaves a dead tray icon.
     try {
       bootstrap()
     } catch (error) {

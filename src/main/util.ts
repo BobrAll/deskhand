@@ -36,3 +36,15 @@ export function truncate(text: string, max: number): { text: string; truncated: 
   return { text: text.slice(0, max), truncated: true }
 }
 
+/**
+ * Clamps a number into a range, treating "not a number" as the floor.
+ *
+ * `overlay:resize` is not type-checked at the IPC boundary, and `setBounds`
+ * throws in the native layer on NaN. The floor is the honest answer for
+ * "there is no number at all".
+ */
+export function clamp(value: number, min: number, max: number): number {
+  if (!Number.isFinite(value)) return min
+  return Math.min(Math.max(value, min), max)
+}
+

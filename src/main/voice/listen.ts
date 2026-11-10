@@ -13,7 +13,7 @@
  * forgetting the accelerator on stop.
  */
 
-import { FUNCTION_CODES, VOICE_KEY_CODES as KEY_CODES } from '@shared/keycodes'
+import { FUNCTION_CODES, VOICE_KEY_CODES } from '@shared/keycodes'
 import { MODIFIER_FLAGS } from '@shared/accelerator'
 import { TapListener } from '../native/tapListener'
 
@@ -56,8 +56,8 @@ export function parseAccelerator(accelerator: string): ParsedAccelerator | null 
     }
     if (keyCode !== null) return null
 
-    if (KEY_CODES[part] !== undefined) {
-      keyCode = KEY_CODES[part]
+    if (VOICE_KEY_CODES[part] !== undefined) {
+      keyCode = VOICE_KEY_CODES[part]
     } else {
       const fn = /^f(\d{1,2})$/.exec(part)
       if (fn) keyCode = FUNCTION_CODES[Number(fn[1])] ?? null
@@ -69,7 +69,7 @@ export function parseAccelerator(accelerator: string): ParsedAccelerator | null 
 }
 
 export class VoiceKeyListener extends TapListener<TapEvent> {
-  private current: string | null = null
+  private boundAccelerator: string | null = null
   /** The combination the running child was started with. */
   private parsed: ParsedAccelerator | null = null
 
@@ -78,7 +78,7 @@ export class VoiceKeyListener extends TapListener<TapEvent> {
   }
 
   get accelerator(): string | null {
-    return this.current
+    return this.boundAccelerator
   }
 
   protected readonly tag = 'voice'
@@ -113,10 +113,10 @@ export class VoiceKeyListener extends TapListener<TapEvent> {
   start(accelerator: string): string | null {
     const parsed = parseAccelerator(accelerator)
     if (!parsed) return `Комбинация «${accelerator}» не подходит для удержания.`
-    if (this.listening && this.current === accelerator) return null
+    if (this.listening && this.boundAccelerator === accelerator) return null
 
     this.stop()
-    this.current = accelerator
+    this.boundAccelerator = accelerator
     this.parsed = parsed
     this.startTap()
     return null
@@ -125,7 +125,7 @@ export class VoiceKeyListener extends TapListener<TapEvent> {
   /** Stops the tap and forgets the accelerator; the helper is signalled. */
   override stop(): void {
     super.stop()
-    this.current = null
+    this.boundAccelerator = null
   }
 }
 

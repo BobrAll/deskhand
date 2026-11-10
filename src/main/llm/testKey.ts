@@ -10,6 +10,8 @@ import { normalizeBaseUrl, providerInfo } from '@shared/defaults'
 import type { TestKeyResult } from '@shared/types'
 
 const TIMEOUT_MS = 12_000
+/** Enough of an unexpected body to identify it, never the whole response. */
+const BODY_PREVIEW_CHARS = 160
 
 async function request(url: string, init: RequestInit): Promise<Response> {
   const controller = new AbortController()
@@ -29,7 +31,7 @@ function describe(status: number, body: string): string {
     return 'Сервис ответил 404: проверьте base URL (нужен корень API, например …/v1).'
   }
   if (status >= 500) return 'Сервис провайдера недоступен, попробуйте позже.'
-  return `Неожиданный ответ ${status}: ${body.slice(0, 160)}`
+  return `Неожиданный ответ ${status}: ${body.slice(0, BODY_PREVIEW_CHARS)}`
 }
 
 /**

@@ -1,9 +1,12 @@
 /**
- * The tray icon: the only persistent surface of the app (no Dock icon, ТЗ §12).
+ * The tray icon: the persistent entry point to the card, the settings and the
+ * data folder (ТЗ §12). The app also has a Dock icon and a Cmd+Tab entry; the
+ * tray is what stays reachable when no window is open.
  */
 
 import { Menu, Tray, app, nativeImage, shell } from 'electron'
 import { prettyAccelerator } from '@shared/accelerator'
+import { openAssistantLabel, QUIT_ACCELERATOR, QUIT_LABEL, SETTINGS_ACCELERATOR, SETTINGS_LABEL } from './menus'
 import { resourcePath } from './paths'
 import { getSettings } from './settings/store'
 
@@ -27,9 +30,9 @@ function trayImage(): Electron.NativeImage {
 function buildMenu(): Menu {
   const hotkey = prettyAccelerator(getSettings().hotkey)
   return Menu.buildFromTemplate([
-    { label: `Открыть ассистента (${hotkey})`, click: () => actions?.toggle() },
+    { label: openAssistantLabel(hotkey), click: () => actions?.toggle() },
     { type: 'separator' },
-    { label: 'Настройки…', accelerator: 'CommandOrControl+,', click: () => actions?.openSettings() },
+    { label: SETTINGS_LABEL, accelerator: SETTINGS_ACCELERATOR, click: () => actions?.openSettings() },
     { label: 'Права доступа и первый запуск…', click: () => actions?.openOnboarding() },
     { type: 'separator' },
     {
@@ -39,7 +42,7 @@ function buildMenu(): Menu {
       }
     },
     { type: 'separator' },
-    { label: 'Выйти из Deskhand', accelerator: 'CommandOrControl+Q', click: () => actions?.quit() }
+    { label: QUIT_LABEL, accelerator: QUIT_ACCELERATOR, click: () => actions?.quit() }
   ])
 }
 

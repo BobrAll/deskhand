@@ -36,6 +36,18 @@ const MODEL_SEARCH_DIRS = [
   join(homedir(), 'whisper.cpp', 'models')
 ]
 
+/** whisper.cpp wants a thread count; half the cores keeps the machine usable while it runs. */
+const MIN_THREADS = 2
+const MAX_THREADS = 8
+/** Only the tail of stderr is kept, and only for the failure message. */
+const STDERR_TAIL_CHARS = 2000
+/** A failure is reported as one line: enough to identify it, not the whole log. */
+const FIRST_LINE_CHARS = 300
+/** Progress is a settings-window courtesy; ten updates a second is plenty. */
+const PROGRESS_INTERVAL_MS = 120
+/** A download that goes this long without a byte is treated as dead. */
+const DOWNLOAD_IDLE_TIMEOUT_MS = 30_000
+
 function binaryName(engine: 'whisper' | 'transcribe'): string {
   return engine === 'transcribe' ? 'transcribe-cli' : 'whisper-cli'
 }
@@ -199,7 +211,7 @@ export async function transcribe(options: TranscribeOptions): Promise<Transcribe
   try {
     await writeFile(wavPath, options.wav)
     const language = configured?.language ?? (voice.language || 'ru')
-    const threads = String(Math.max(2, Math.min(8, Math.floor(cpus().length / 2))))
+    const threads = String(Math.max(MIN_THREADS, Math.min(MAX_THREADS, Math.floor(cpus().length / 2))))
     const transcriptPath = join(dir, 'transcript.txt')
     const args =
       engine === 'transcribe'
@@ -256,7 +268,7 @@ function runRecognizer(
     })
     // Kept short and only for the error message: whisper is chatty on stderr.
     child.stderr.on('data', (chunk: string) => {
-      stderr = (stderr + chunk).slice(-2000)
+      stderr = (stderr + chunk).slice(-STDERR_TAIL_CHARS)
     })
     child.on('error', (error) => {
       cleanup()
@@ -275,7 +287,7 @@ function runRecognizer(
 
 function firstLine(text: string): string {
   const line = text.split('\n').find((item) => item.trim())
-  return line?.trim().slice(0, 300) ?? ''
+  return line?.trim().slice(0, FIRST_LINE_CHARS) ?? ''
 }
 
 // ---------------------------------------------------------------------------
@@ -312,7 +324,7 @@ export function downloadModel(
     const controller = new AbortController()
     const timeout = new Error('Сервер загрузки модели не отвечает. Попробуйте снова.')
     const abort = (): void => controller.abort(timeout)
-    let timer = setTimeout(abort, 30_000)
+    let timer = setTimeout(abort, DOWNLOAD_IDLE_TIMEOUT_MS)
     let received = 0
     let total = meta.mb * 1024 * 1024
 
@@ -330,10 +342,10 @@ export function downloadModel(
             const { done, value } = await reader.read()
             if (done) break
             clearTimeout(timer)
-            timer = setTimeout(abort, 30_000)
+            timer = setTimeout(abort, DOWNLOAD_IDLE_TIMEOUT_MS)
             received += value.byteLength
             const now = Date.now()
-            if (now - lastEmit > 120) {
+            if (now - lastEmit > PROGRESS_INTERVAL_MS) {
               lastEmit = now
               onProgress({ model: id, received, total, done: false })
             }

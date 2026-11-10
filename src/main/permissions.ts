@@ -16,29 +16,32 @@ const SCREEN_PANE = 'x-apple.systempreferences:com.apple.preference.security?Pri
 const MICROPHONE_PANE =
   'x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone'
 
+/**
+ * Reads one permission without letting a missing API take the whole report down.
+ *
+ * Older macOS builds answer some of these calls with an exception instead of a
+ * status; the caller treats that as "not granted".
+ */
+function safe<T>(read: () => T, fallback: T): T {
+  try {
+    return read()
+  } catch {
+    return fallback
+  }
+}
+
 export async function readPermissions(): Promise<PermissionState> {
-  let accessibility = false
-  try {
-    accessibility = systemPreferences.isTrustedAccessibilityClient(false)
-  } catch {
-    accessibility = false
-  }
-
-  let screenRecording = false
-  try {
-    screenRecording = systemPreferences.getMediaAccessStatus('screen') === 'granted'
-  } catch {
-    screenRecording = false
-  }
-
-  let microphone = false
-  try {
-    // `unknown` means the microphone was never touched; only `granted` counts,
-    // because push-to-talk would otherwise fail on the first key press.
-    microphone = systemPreferences.getMediaAccessStatus('microphone') === 'granted'
-  } catch {
-    microphone = false
-  }
+  let accessibility = safe(() => systemPreferences.isTrustedAccessibilityClient(false), false)
+  const screenRecording = safe(
+    () => systemPreferences.getMediaAccessStatus('screen') === 'granted',
+    false
+  )
+  // `unknown` means the microphone was never touched; only `granted` counts,
+  // because push-to-talk would otherwise fail on the first key press.
+  const microphone = safe(
+    () => systemPreferences.getMediaAccessStatus('microphone') === 'granted',
+    false
+  )
 
   if (!accessibility) {
     const fallback = await helperPermissions(false).catch(() => null)
@@ -92,7 +95,10 @@ export function openMicrophonePane(): void {
   void shell.openExternal(MICROPHONE_PANE)
 }
 
-export function openPermissionPane(kind: 'accessibility' | 'screenRecording' | 'microphone'): void {
+/** The System Settings panes the app can send the user to. */
+export type PermissionPane = 'accessibility' | 'screenRecording' | 'microphone'
+
+export function openPermissionPane(kind: PermissionPane): void {
   if (kind === 'microphone') {
     openMicrophonePane()
     return

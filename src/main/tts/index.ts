@@ -21,7 +21,7 @@
 
 import { app } from 'electron'
 import { createHash } from 'node:crypto'
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, readdir, stat, unlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { AppSettings, TtsSettings, TtsStatus } from '@shared/types'
 import { RECORDED, TTS_MAX_CHARS, type TtsResult } from '@shared/tts'
@@ -47,6 +47,9 @@ function cacheDir(): string {
   return join(app.getPath('userData'), 'tts-cache')
 }
 
+/** Separator for the cache-key fields: a character no setting or line can contain. */
+const CACHE_KEY_SEPARATOR = '\u0000'
+
 /**
  * Cache identity: the configuration *and* the text.
  *
@@ -56,7 +59,7 @@ function cacheDir(): string {
  */
 function cacheKey(settings: TtsSettings, text: string): string {
   return createHash('sha256')
-    .update([settings.baseUrl, settings.model, settings.voice, settings.style, text].join('\u0000'))
+    .update([settings.baseUrl, settings.model, settings.voice, settings.style, text].join(CACHE_KEY_SEPARATOR))
     .digest('hex')
 }
 
@@ -102,7 +105,6 @@ const CACHE_LIMIT = 400
 
 async function pruneCache(): Promise<void> {
   try {
-    const { readdir, stat, unlink } = await import('node:fs/promises')
     const dir = cacheDir()
     const names = (await readdir(dir)).filter((name) => name.endsWith('.mp3'))
     if (names.length <= CACHE_LIMIT) return

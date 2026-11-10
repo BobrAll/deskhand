@@ -2,7 +2,12 @@
  * Shared HTTP/SSE plumbing for the OpenAI-compatible providers.
  */
 
-import { ProviderError } from './provider'
+import { ProviderError, type StreamOptions } from './provider'
+
+/** Request base URL: the per-request override wins over the built-in default. */
+export function apiRoot(options: StreamOptions, fallback: string): string {
+  return (options.baseUrl || fallback).replace(/\/+$/, '')
+}
 
 export interface SseEvent {
   event?: string

@@ -1,4 +1,3 @@
-import { trace } from './agent/trace'
 /**
  * One round of a turn, streamed: provider deltas in, painted shapes and prose out.
  *
@@ -15,6 +14,7 @@ import { trace } from './agent/trace'
  * turn cancelled mid-stream — all of it is decided here.
  */
 
+import { trace } from './agent/trace'
 import type { Annotation } from '@shared/types'
 import { isDrawable } from './annotations'
 import { ProviderError, type ChatMessage, type LlmProvider, type StreamEnd, type StreamOptions } from './llm/provider'

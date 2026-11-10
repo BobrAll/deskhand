@@ -3,25 +3,40 @@ import { denyExternalLinks } from '../denyExternalLinks'
 import { loadPage } from '../pageLoad'
 import { baseOptions } from './base'
 
+/** How long ⌘W waits for an in-flight settings write before it closes anyway. */
+const CLOSE_GRACE_MS = 1200
+/** Poll interval while waiting for that write. */
+const CLOSE_POLL_MS = 80
+
+interface AppWindowOptions {
+  title: string
+  width: number
+  height: number
+  page: string
+  resizable?: boolean
+  minWidth?: number
+  minHeight?: number
+}
+
 let settingsWindow: BrowserWindow | null = null
 let onboardingWindow: BrowserWindow | null = null
 
 /** Set by `settings:hold` while the renderer still has edits to write. */
 let settingsBusy = false
 
-export function openSettingsWindow(): BrowserWindow {
-  if (settingsWindow && !settingsWindow.isDestroyed()) {
-    settingsWindow.show()
-    settingsWindow.focus()
-    return settingsWindow
-  }
-
+/**
+ * Creates one of the standalone windows and shows it on its first paint.
+ *
+ * Only the fields a caller passes are set, so the settings window keeps its
+ * minimum size and the onboarding window keeps `resizable: false`.
+ */
+function openAppWindow(options: AppWindowOptions): BrowserWindow {
   const win = new BrowserWindow({
-    ...baseOptions('Deskhand — настройки', 980, 760),
-    minWidth: 820,
-    minHeight: 560
+    ...baseOptions(options.title, options.width, options.height),
+    ...(options.resizable === undefined ? {} : { resizable: options.resizable }),
+    ...(options.minWidth === undefined ? {} : { minWidth: options.minWidth }),
+    ...(options.minHeight === undefined ? {} : { minHeight: options.minHeight })
   })
-  settingsWindow = win
   win.once('ready-to-show', () => {
     win.show()
     try {
@@ -30,6 +45,26 @@ export function openSettingsWindow(): BrowserWindow {
       /* ignore */
     }
   })
+  loadPage(win, options.page)
+  return win
+}
+
+export function openSettingsWindow(): BrowserWindow {
+  if (settingsWindow && !settingsWindow.isDestroyed()) {
+    settingsWindow.show()
+    settingsWindow.focus()
+    return settingsWindow
+  }
+
+  const win = openAppWindow({
+    title: 'Deskhand — настройки',
+    width: 980,
+    height: 760,
+    page: 'settings',
+    minWidth: 820,
+    minHeight: 560
+  })
+  settingsWindow = win
   /**
    * ⌘W and the red traffic light both come through here, not through
    * `settings:close`, so the grace period for an in-flight write has to live on
@@ -45,23 +80,22 @@ export function openSettingsWindow(): BrowserWindow {
     // milliseconds, and making the user watch a 1.2 s pause for it would be its
     // own small bug. The ceiling only exists so a wedged renderer cannot make the
     // window unclosable.
-    const deadline = Date.now() + 1200
+    const deadline = Date.now() + CLOSE_GRACE_MS
     const attempt = (): void => {
       if (win.isDestroyed()) return
       if (!settingsBusy || Date.now() >= deadline) {
         win.close()
         return
       }
-      setTimeout(attempt, 80)
+      setTimeout(attempt, CLOSE_POLL_MS)
     }
-    setTimeout(attempt, 80)
+    setTimeout(attempt, CLOSE_POLL_MS)
   })
   win.on('closed', () => {
     settingsWindow = null
     settingsBusy = false
   })
   denyExternalLinks(win)
-  loadPage(win, 'settings')
   return win
 }
 
@@ -72,20 +106,17 @@ export function openOnboardingWindow(): BrowserWindow {
     return onboardingWindow
   }
 
-  const win = new BrowserWindow({ ...baseOptions('Deskhand', 760, 660), resizable: false })
-  onboardingWindow = win
-  win.once('ready-to-show', () => {
-    win.show()
-    try {
-      app.focus({ steal: true })
-    } catch {
-      /* ignore */
-    }
+  const win = openAppWindow({
+    title: 'Deskhand',
+    width: 760,
+    height: 660,
+    page: 'onboarding',
+    resizable: false
   })
+  onboardingWindow = win
   win.on('closed', () => {
     onboardingWindow = null
   })
-  loadPage(win, 'onboarding')
   return win
 }
 

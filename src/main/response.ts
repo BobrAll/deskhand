@@ -29,7 +29,7 @@ export interface ParsedChunk {
 
 export class ResponseStream {
   private pending = ''
-  private shapes: Annotation[] = []
+  private annotations: Annotation[] = []
   webLookup = false
 
   /** Feeds one delta; returns everything that can be acted on right now. */
@@ -46,15 +46,15 @@ export class ResponseStream {
     }
 
     // A tail that still looks like the start of a marker waits for its newline;
-    // flushing it would print "@po" into the answer and then lose the shape.
+    // flushing it would print "@po" into the answer and then lose the annotation.
     if (this.pending.trimStart().startsWith('@')) {
-      this.remember(result)
+      this.recordAnnotations(result)
       return result
     }
 
     result.text += this.pending
     this.pending = ''
-    this.remember(result)
+    this.recordAnnotations(result)
     return result
   }
 
@@ -65,13 +65,13 @@ export class ResponseStream {
     const result: ParsedChunk = { text: '', annotations: [] }
     if (!tail) return result
     this.consume(tail, result)
-    this.remember(result)
+    this.recordAnnotations(result)
     return result
   }
 
-  /** Every shape asked for during this answer, in arrival order. */
+  /** Every annotation asked for during this answer, in arrival order. */
   collected(): Annotation[] {
-    return this.shapes
+    return this.annotations
   }
 
   private consume(line: string, result: ParsedChunk): void {
@@ -88,7 +88,7 @@ export class ResponseStream {
     result.text += `${line}\n`
   }
 
-  private remember(result: ParsedChunk): void {
-    this.shapes.push(...result.annotations)
+  private recordAnnotations(result: ParsedChunk): void {
+    this.annotations.push(...result.annotations)
   }
 }

@@ -26,6 +26,11 @@
  *   from under the eyes that are reading it.
  */
 
+import { clamp } from './util'
+
+// Re-exported for existing callers; `util.ts` owns the implementation.
+export { clamp }
+
 /** Clearance between the pointer and the bubble, in points. */
 export const BUBBLE_GAP = 10
 
@@ -82,14 +87,6 @@ export interface BubbleAnchor {
    * drag under the hand that made it.
    */
   pinned?: boolean
-}
-
-export function clamp(value: number, min: number, max: number): number {
-  // `overlay:resize` is not type-checked at the IPC boundary, and `setBounds`
-  // throws in the native layer on NaN. The floor is the honest answer for
-  // "there is no number at all".
-  if (!Number.isFinite(value)) return min
-  return Math.min(Math.max(value, min), max)
 }
 
 /** Remaining room on either side of the pointer, inside the given work area. */

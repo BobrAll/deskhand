@@ -16,11 +16,11 @@ import {
 import type { OverlayHost } from '../overlay/host'
 import {
   boundsFor,
-  clamp,
   placeAnchor,
   resizeAnchor,
   type BubbleAnchor
 } from '../bubble'
+import { clamp } from '../util'
 import { denyExternalLinks } from '../denyExternalLinks'
 import { loadPage } from '../pageLoad'
 import { settingsWindows } from './settings'
@@ -38,9 +38,9 @@ export {
  * one-line field, and grows downwards (or upwards, when the pointer is near the
  * bottom of the display) only as an answer is streamed into it.
  *
- * Its three widths live in `@shared/metrics` because the renderer needs the very
- * same numbers to decide where a line wraps. Height and the placement gap are
- * main's business only, so they stay here.
+ * Its widths live in `@shared/metrics` because the renderer needs the very same
+ * numbers to decide where a line wraps and how wide a card to ask for. Height and
+ * the placement gap are main's business only, so they stay here.
  */
 const OVERLAY_MIN_HEIGHT = 31
 const OVERLAY_MAX_HEIGHT = 520
@@ -63,6 +63,13 @@ let overlayReady = false
 let drawing = false
 /** True while a voice turn shows bare bars instead of the card. */
 let voice = false
+/**
+ * Whether the card is currently transparent to input (an agent plan is running).
+ * Tracked so `setIgnoreMouseEvents` is not called on every frame — it is cheap,
+ * but toggling it re-enters the window server and can drop a click that was
+ * already in flight.
+ */
+let passthrough = false
 
 /**
  * One place decides what the *window* contributes to the picture.
@@ -226,16 +233,14 @@ let pendingShow: { height: number; width: number; activate: boolean } | null = n
 function performShow(height: number, width: number, activate: boolean): void {
   const win = overlayWindow
   if (!win || win.isDestroyed()) return
-  /**
-   * A card that is already on screen keeps its own size.
-   *
-   * Both numbers passed here are guesses: the folded card is 31 points tall until
-   * the renderer lays itself out, and 112 wide until the user types something. The
-   * renderer reports the real size a frame later and resizes the window itself, so
-   * re-applying a guess over a card that is already being typed into would shrink
-   * it back to the empty pill between two keystrokes. Keep the position when the
-   * visible card takes focus after context collection.
-   */
+  // A card that is already on screen keeps its own size.
+  //
+  // Both numbers passed here are guesses: the folded card is 31 points tall until
+  // the renderer lays itself out, and 112 wide until the user types something. The
+  // renderer reports the real size a frame later and resizes the window itself, so
+  // re-applying a guess over a card that is already being typed into would shrink
+  // it back to the empty pill between two keystrokes. Keep the position when the
+  // visible card takes focus after context collection.
   const current = overlayVisible ? win.getBounds() : null
   const focusExisting = activate && current && win.isVisible()
   if (!focusExisting) {
@@ -462,18 +467,11 @@ export const overlayHost: OverlayHost = {
 }
 
 /**
- * Whether the card is currently transparent to input (an agent plan is running).
- * Tracked so `setIgnoreMouseEvents` is not called on every frame — it is cheap,
- * but toggling it re-enters the window server and can drop a click that was
- * already in flight.
- */
-let passthrough = false
-
-/**
  * Brings the most relevant open window back to the foreground after the app is
- * re-activated. With the tray-only (accessory) activation policy macOS can leave
- * windows hidden behind other apps, so the user "loses" them after Alt+Tab; this
- * makes sure an already-open window is shown again rather than silently missing.
+ * re-activated. macOS can leave a window behind other apps — a card shown without
+ * focus, a settings window covered by the app it was opened from — so the user
+ * "loses" it after Alt+Tab; this makes sure an already-open window is shown again
+ * rather than silently missing.
  */
 export function showActiveWindow(): void {
   const candidates = [overlayWindow, ...settingsWindows()]
