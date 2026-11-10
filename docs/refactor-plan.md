@@ -131,6 +131,8 @@
 | WP10 | Swift, вторая волна | готово (`2fe48bb`) | 92+45 тестов, +10 новых |
 | WP11 | `renderer`, остатки | готово (`8c40c67`) | 195 тестов, снапшоты не менялись |
 | WP12 | `main`, остатки | готово (`813d0a1`) | 923 теста, 16 предсуществующих падений |
+| WP13 | имена через границы, мёртвый код | готово (`f92ede9`) | 1241 тест, снапшоты не менялись |
+| WP14 | `shared`: правила и имена | готово (`8fa6eae`) | 120 тестов shared+preload |
 
 Отдельно, уже вне косметики (§8): встроенные модели убраны и отказ модели от
 картинки больше не роняет ход — `2ca7e31`, `42f9df5`.
@@ -245,17 +247,17 @@
 
 **Отложено (RISKY)**
 
-- [ ] `Keyboard.swift:43-56` vs `ToolExecutor.swift:936-949` — две таблицы
+- [x] `Keyboard.swift:43-56` vs `ToolExecutor.swift:936-949` — две таблицы
       модификаторов с разными синонимами. Объединение меняет набор
       принимаемых строк.
-- [ ] `ToolExecutorTests.swift:147` `testDisambiguatesBySuffix` не передаёт
+- [x] `ToolExecutorTests.swift:147` `testDisambiguatesBySuffix` не передаёт
       `suffix` и дублирует `testDisambiguatesByPrefix`. Исправление меняет
       покрытие.
-- [ ] `ActionPresentation.swift:44` — `target`/`window` → `elementFrame` /
+- [x] `ActionPresentation.swift:44` — `target`/`window` → `elementFrame` /
       `windowFrame`. Оба читаются в `Sources/DeskhandAgent/Bridge.swift`, то
       есть за границей пакета, и ключи `target`/`window` уходят на провод.
       Нужна координация с WP2.
-- [ ] `SystemPermissions` — `import AppKit` после типа и `NSWorkspaceShim`,
+- [x] `SystemPermissions` — `import AppKit` после типа и `NSWorkspaceShim`,
       который существует только ради него. Не входило в план, следующий проход.
 
 ### WP2 — Swift: `DeskhandAgentKit`, `DeskhandLLM`, `DeskhandAgent`
@@ -431,7 +433,7 @@
 
 **Отложено (RISKY)**
 
-- [ ] `agent/presentation.ts:176,320-325` — публичный API смешивает префиксы;
+- [x] `agent/presentation.ts:176,320-325` — публичный API смешивает префиксы;
       затрагивает `src/main/index.ts`, `overlay/index.ts`.
 - [ ] `agent/outline.ts:102-123` vs `:156-161` — `isListable` извлечён, но
       различие сохранено: `formatOutline` дополнительно применяет правило ролей
@@ -439,7 +441,7 @@
       фильтр ролей в `formatOutline` с первого коммита, а `onTargets` добавлен
       позже в `f62e584` без него. Комментарий на `isListable` описывает
       разницу и почему чекбокс всё равно должен быть привязываемым.
-- [ ] `annotations.ts:33-38,93,110,112` — `ParsedLine.text` всегда `''`, поле
+- [x] `annotations.ts:33-38,93,110,112` — `ParsedLine.text` всегда `''`, поле
       мёртвое, но читается в `response.ts:85` и тесте (чужая зона).
 
 ### WP4 — TypeScript: оверлей и контекст
@@ -546,7 +548,7 @@
 
 - [ ] `overlay/request.ts:69-80` — `TurnRequest.useImage`/`.screenshot`
       читаются только тестом. Удаление требует правки теста.
-- [ ] `overlay/index.ts` — `overlayShots` (`WeakSet`) пишется и никогда не
+- [x] `overlay/index.ts` — `overlayShots` (`WeakSet`) пишется и никогда не
       читается. Найдено попутно, вне списка пакета; не удалено, чтобы не
       расширять область.
 
@@ -652,9 +654,9 @@
 
 **Отложено (RISKY)**
 
-- [ ] `prompt.ts:24-25` — `includeScreenshot` и `hasImage` → переименование
+- [x] `prompt.ts:24-25` — `includeScreenshot` и `hasImage` → переименование
       параметров требует правки `overlay/request.ts` (чужой пакет).
-- [ ] `prompt.ts:250-255` — четыре позиционных аргумента → объект опций;
+- [x] `prompt.ts:250-255` — четыре позиционных аргумента → объект опций;
       проверить, что текст промпта не меняется.
 - [ ] `ipc.ts:343-345` vs `index.ts:232-234` — `second-instance` зарегистрирован
       дважды. Удаление меняет число открытий оверлея.
@@ -662,9 +664,9 @@
       ресурса: у трёх копий разные фолбэки.
 - [ ] `llm/testKey.ts:24-33` — переписывает таблицу статусов из `http.ts` с
       другими формулировками. Тексты видны пользователю.
-- [ ] `voice/index.ts:474-496,531` — `mode()`, `isBusy()`, `phase()` не
+- [x] `voice/index.ts:474-496,531` — `mode()`, `isBusy()`, `phase()` не
       используются вне тестов.
-- [ ] `voice/whisper.ts:39` — модуль `whisper.ts` запускает и `transcribe-cli`
+- [x] `voice/whisper.ts:39` — модуль `whisper.ts` запускает и `transcribe-cli`
       → `voice/recognizer.ts`; переименование файла затрагивает импорты.
 
 ### WP6 — TypeScript: `shared` и `preload`
@@ -723,20 +725,20 @@
       `MAX_SIDE` не экспортируются и вне `defaults.ts` не читаются, а renderer
       жёстко пишет `480`/`2400`. Следующий шаг — не переименование, а «вынести
       и заставить renderer потреблять».
-- [ ] `shared/defaults.ts:171` — `whisperModel` экспортируется, используется
+- [x] `shared/defaults.ts:171` — `whisperModel` экспортируется, используется
       только тестом; задокументирован как тестовый экспорт, не удалён.
-- [ ] `shared/defaults.ts:360` — `sanitizeVoice` смешивает четыре приведения.
-- [ ] `shared/defaults.ts:420` — `slice(-256)` → `MAX_REMEMBERED_APPROVALS`.
-- [ ] `shared/defaults.ts:103` — три хоста инлайном → `PLUSVIBE_HOSTS`.
-- [ ] `shared/api.ts:32,56` — `RunningAppInfo` и `AppPickResult` — идентичные
+- [x] `shared/defaults.ts:360` — `sanitizeVoice` смешивает четыре приведения.
+- [x] `shared/defaults.ts:420` — `slice(-256)` → `MAX_REMEMBERED_APPROVALS`.
+- [x] `shared/defaults.ts:103` — три хоста инлайном → `PLUSVIBE_HOSTS`.
+- [x] `shared/api.ts:32,56` — `RunningAppInfo` и `AppPickResult` — идентичные
       формы для одного понятия.
 - [ ] `shared/intent.ts:23,32,73` — основа глаголов записана трижды. Якорность
       и лишний `сделай` должны сохраниться побайтово.
-- [ ] `preload/index.d.ts:3` — то же объявление `Window.deskhand`, что и в
+- [x] `preload/index.d.ts:3` — то же объявление `Window.deskhand`, что и в
       `renderer/env.d.ts:3`. Оставить `renderer/env.d.ts` (его видит
       `tsconfig.web.json`), удалить `preload/index.d.ts` — правка в
       `renderer`/конфиге.
-- [ ] `src/main/agent/cursor.ts` — `paintStep` всё ещё пишет
+- [x] `src/main/agent/cursor.ts` — `paintStep` всё ещё пишет
       `phase: 'arming' | 'acting'` инлайном; теперь можно `AgentCursorPhase`.
       Правка в WP3.
 
@@ -875,6 +877,7 @@
 | 2 | WP2 (Swift Agent/LLM/Bridge), WP5 (остальной main), WP6 (shared/preload) | WP1 и WP3/WP4 закончили, Swift-пакеты не конкурируют за `.build` |
 | 3 | WP8 (документация), WP9, WP10 | ссылаются на итоговые имена; WP9/WP10 — то, что первый проход отложил из-за границ |
 | 4 | WP11 (renderer, остатки), WP12 (main, остатки) | дерево зафиксировано, пакеты снова непересекающиеся |
+| 5 | WP13 (main: имена через границы), WP14 (shared) | после 4 дерево снова чистое; WP13 трогает `main`, WP14 — `shared` |
 
 Правила нарезки:
 
