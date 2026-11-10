@@ -5,8 +5,6 @@ import Foundation
 /// Definitions live in one place so the MCP server, the agent loop and the
 /// documentation can never drift apart.
 public enum ToolSurface {
-    public static let version = "2025-11-01"
-
     public static func definitions() -> [ToolDefinition] {
         [
             ToolDefinition(
@@ -16,16 +14,9 @@ public enum ToolSurface {
                 only; pass include_installed to also get apps that are installed but not running. \
                 Call this only when you do not know the exact app name.
                 """,
-                inputSchema: .object([
-                    "type": .string("object"),
-                    "properties": .object([
-                        "include_installed": .object([
-                            "type": .string("boolean"),
-                            "description": .string(
-                                "Include apps that are installed but not running. Defaults to false."),
-                        ])
-                    ]),
-                    "additionalProperties": .bool(false),
+                inputSchema: schema(properties: [
+                    "include_installed": boolProperty(
+                        "Include apps that are installed but not running. Defaults to false."),
                 ])
             ),
             ToolDefinition(
@@ -42,34 +33,18 @@ public enum ToolSurface {
                 setting values and sending keys all work on a background window, so the user's \
                 focus is left alone unless you explicitly ask for it with bring_to_front.
                 """,
-                inputSchema: .object([
-                    "type": .string("object"),
-                    "properties": .object([
-                        "app": .object([
-                            "type": .string("string"),
-                            "description": .string("App name, bundle identifier, or full app path."),
-                        ]),
-                        "include_screenshot": .object([
-                            "type": .string("boolean"),
-                            "description": .string("Include a screenshot. Defaults to true."),
-                        ]),
-                        "include_tree": .object([
-                            "type": .string("boolean"),
-                            "description": .string("Include the accessibility tree. Defaults to true."),
-                        ]),
-                        "bring_to_front": .object([
-                            "type": .string("boolean"),
-                            "description": .string(
-                                """
-                                Raise the app's window before reading its state. Defaults to false. \
-                                Only needed when the user asks to see the window, or when a gesture \
-                                has to land on what is visible on screen.
-                                """),
-                        ]),
-                    ]),
-                    "required": .array([.string("app")]),
-                    "additionalProperties": .bool(false),
-                ])
+                inputSchema: schema(properties: [
+                    "app": appProperty("App name, bundle identifier, or full app path."),
+                    "include_screenshot": boolProperty("Include a screenshot. Defaults to true."),
+                    "include_tree": boolProperty(
+                        "Include the accessibility tree. Defaults to true."),
+                    "bring_to_front": boolProperty(
+                        """
+                        Raise the app's window before reading its state. Defaults to false. \
+                        Only needed when the user asks to see the window, or when a gesture \
+                        has to land on what is visible on screen.
+                        """),
+                ], required: ["app"])
             ),
             ToolDefinition(
                 name: "activate_app",
@@ -80,17 +55,9 @@ public enum ToolSurface {
                 own window where it is. Use this when the user explicitly asks to show or focus an \
                 app, or when a screenshot must show the window unobscured by another window.
                 """,
-                inputSchema: .object([
-                    "type": .string("object"),
-                    "properties": .object([
-                        "app": .object([
-                            "type": .string("string"),
-                            "description": .string("App name, bundle identifier, or full app path."),
-                        ])
-                    ]),
-                    "required": .array([.string("app")]),
-                    "additionalProperties": .bool(false),
-                ])
+                inputSchema: schema(properties: [
+                    "app": appProperty("App name, bundle identifier, or full app path."),
+                ], required: ["app"])
             ),
             ToolDefinition(
                 name: "click",
@@ -98,48 +65,21 @@ public enum ToolSurface {
                 Click on an element by index, or at pixel coordinates from the most recent screenshot. \
                 Prefer element indices: they survive window moves and are not affected by scaling.
                 """,
-                inputSchema: .object([
-                    "type": .string("object"),
-                    "properties": .object([
-                        "app": .object([
-                            "type": .string("string"),
-                            "description": .string("App name or bundle identifier."),
-                        ]),
-                        "element_index": .object([
-                            "type": .string("integer"),
-                            "description": .string("Element index from the accessibility tree."),
-                        ]),
-                        "x": .object([
-                            "type": .string("number"),
-                            "description": .string("X coordinate in screenshot pixels."),
-                        ]),
-                        "y": .object([
-                            "type": .string("number"),
-                            "description": .string("Y coordinate in screenshot pixels."),
-                        ]),
-                        "button": .object([
-                            "type": .string("string"),
-                            "enum": .array([.string("left"), .string("right"), .string("middle")]),
-                            "description": .string("Mouse button. Defaults to left."),
-                        ]),
-                        "click_count": .object([
-                            "type": .string("integer"),
-                            "description": .string("Number of clicks, 1-3. Defaults to 1."),
-                        ]),
-                        "modifiers": .object([
-                            "type": .string("array"),
-                            "items": .object([
-                                "type": .string("string"),
-                                "enum": .array([
-                                    .string("cmd"), .string("shift"), .string("alt"), .string("ctrl"),
-                                ]),
-                            ]),
-                            "description": .string("Modifier keys held during the click."),
-                        ]),
+                inputSchema: schema(properties: [
+                    "app": appProperty(),
+                    "element_index": elementIndexProperty(),
+                    "x": numberProperty("X coordinate in screenshot pixels."),
+                    "y": numberProperty("Y coordinate in screenshot pixels."),
+                    "button": enumProperty(
+                        ["left", "right", "middle"],
+                        description: "Mouse button. Defaults to left."),
+                    "click_count": integerProperty("Number of clicks, 1-3. Defaults to 1."),
+                    "modifiers": .object([
+                        "type": .string("array"),
+                        "items": enumProperty(["cmd", "shift", "alt", "ctrl"]),
+                        "description": .string("Modifier keys held during the click."),
                     ]),
-                    "required": .array([.string("app")]),
-                    "additionalProperties": .bool(false),
-                ])
+                ], required: ["app"])
             ),
             ToolDefinition(
                 name: "perform_secondary_action",
@@ -148,25 +88,11 @@ public enum ToolSurface {
                 item's "AXShowMenu" or a table row's "AXOpen". Use the action names printed in the \
                 accessibility tree.
                 """,
-                inputSchema: .object([
-                    "type": .string("object"),
-                    "properties": .object([
-                        "app": .object([
-                            "type": .string("string"),
-                            "description": .string("App name or bundle identifier."),
-                        ]),
-                        "element_index": .object([
-                            "type": .string("integer"),
-                            "description": .string("Element index from the accessibility tree."),
-                        ]),
-                        "action": .object([
-                            "type": .string("string"),
-                            "description": .string("Accessibility action name, e.g. AXShowMenu."),
-                        ]),
-                    ]),
-                    "required": .array([.string("app"), .string("element_index"), .string("action")]),
-                    "additionalProperties": .bool(false),
-                ])
+                inputSchema: schema(properties: [
+                    "app": appProperty(),
+                    "element_index": elementIndexProperty(),
+                    "action": stringProperty("Accessibility action name, e.g. AXShowMenu."),
+                ], required: ["app", "element_index", "action"])
             ),
             ToolDefinition(
                 name: "set_value",
@@ -174,30 +100,13 @@ public enum ToolSurface {
                 Set the value of a settable accessibility element, such as a text field or a slider. \
                 This replaces the whole value; use type_text when the caret should insert text.
                 """,
-                inputSchema: .object([
-                    "type": .string("object"),
-                    "properties": .object([
-                        "app": .object([
-                            "type": .string("string"),
-                            "description": .string("App name or bundle identifier."),
-                        ]),
-                        "element_index": .object([
-                            "type": .string("integer"),
-                            "description": .string("Element index from the accessibility tree."),
-                        ]),
-                        "value": .object([
-                            "type": .string("string"),
-                            "description": .string("New value, as text."),
-                        ]),
-                        "submit": .object([
-                            "type": .string("boolean"),
-                            "description": .string(
-                                "Press Return after setting the value, to commit it. Defaults to false."),
-                        ]),
-                    ]),
-                    "required": .array([.string("app"), .string("element_index"), .string("value")]),
-                    "additionalProperties": .bool(false),
-                ])
+                inputSchema: schema(properties: [
+                    "app": appProperty(),
+                    "element_index": elementIndexProperty(),
+                    "value": stringProperty("New value, as text."),
+                    "submit": boolProperty(
+                        "Press Return after setting the value, to commit it. Defaults to false."),
+                ], required: ["app", "element_index", "value"])
             ),
             ToolDefinition(
                 name: "select_text",
@@ -206,40 +115,16 @@ public enum ToolSurface {
                 text exactly as it appears in the accessibility tree, including Markdown formatting. \
                 If the text occurs more than once, disambiguate it with prefix or suffix text.
                 """,
-                inputSchema: .object([
-                    "type": .string("object"),
-                    "properties": .object([
-                        "app": .object([
-                            "type": .string("string"),
-                            "description": .string("App name or bundle identifier."),
-                        ]),
-                        "element_index": .object([
-                            "type": .string("integer"),
-                            "description": .string("Element index from the accessibility tree."),
-                        ]),
-                        "text": .object([
-                            "type": .string("string"),
-                            "description": .string("Target text as shown in the accessibility tree."),
-                        ]),
-                        "prefix": .object([
-                            "type": .string("string"),
-                            "description": .string("Optional text immediately before the target."),
-                        ]),
-                        "suffix": .object([
-                            "type": .string("string"),
-                            "description": .string("Optional text immediately after the target."),
-                        ]),
-                        "mode": .object([
-                            "type": .string("string"),
-                            "enum": .array([
-                                .string("text"), .string("cursor_before"), .string("cursor_after"),
-                            ]),
-                            "description": .string("Select the text, or place the caret. Defaults to text."),
-                        ]),
-                    ]),
-                    "required": .array([.string("app"), .string("element_index"), .string("text")]),
-                    "additionalProperties": .bool(false),
-                ])
+                inputSchema: schema(properties: [
+                    "app": appProperty(),
+                    "element_index": elementIndexProperty(),
+                    "text": stringProperty("Target text as shown in the accessibility tree."),
+                    "prefix": stringProperty("Optional text immediately before the target."),
+                    "suffix": stringProperty("Optional text immediately after the target."),
+                    "mode": enumProperty(
+                        ["text", "cursor_before", "cursor_after"],
+                        description: "Select the text, or place the caret. Defaults to text."),
+                ], required: ["app", "element_index", "text"])
             ),
             ToolDefinition(
                 name: "scroll",
@@ -247,32 +132,14 @@ public enum ToolSurface {
                 Scroll an element, or the window at a point, in a direction by a number of pages. \
                 Fractional page counts are supported for small nudges.
                 """,
-                inputSchema: .object([
-                    "type": .string("object"),
-                    "properties": .object([
-                        "app": .object([
-                            "type": .string("string"),
-                            "description": .string("App name or bundle identifier."),
-                        ]),
-                        "element_index": .object([
-                            "type": .string("integer"),
-                            "description": .string("Element to scroll. Defaults to the window."),
-                        ]),
-                        "direction": .object([
-                            "type": .string("string"),
-                            "enum": .array([
-                                .string("up"), .string("down"), .string("left"), .string("right"),
-                            ]),
-                            "description": .string("Scroll direction."),
-                        ]),
-                        "pages": .object([
-                            "type": .string("number"),
-                            "description": .string("Number of pages. Defaults to 1."),
-                        ]),
-                    ]),
-                    "required": .array([.string("app"), .string("direction")]),
-                    "additionalProperties": .bool(false),
-                ])
+                inputSchema: schema(properties: [
+                    "app": appProperty(),
+                    "element_index": elementIndexProperty(
+                        "Element to scroll. Defaults to the window."),
+                    "direction": enumProperty(
+                        ["up", "down", "left", "right"], description: "Scroll direction."),
+                    "pages": numberProperty("Number of pages. Defaults to 1."),
+                ], required: ["app", "direction"])
             ),
             ToolDefinition(
                 name: "drag",
@@ -280,36 +147,13 @@ public enum ToolSurface {
                 Drag from one point to another using pixel coordinates from the most recent screenshot. \
                 Useful for selecting text, moving sliders, or reordering items.
                 """,
-                inputSchema: .object([
-                    "type": .string("object"),
-                    "properties": .object([
-                        "app": .object([
-                            "type": .string("string"),
-                            "description": .string("App name or bundle identifier."),
-                        ]),
-                        "from_x": .object([
-                            "type": .string("number"),
-                            "description": .string("Start X in screenshot pixels."),
-                        ]),
-                        "from_y": .object([
-                            "type": .string("number"),
-                            "description": .string("Start Y in screenshot pixels."),
-                        ]),
-                        "to_x": .object([
-                            "type": .string("number"),
-                            "description": .string("End X in screenshot pixels."),
-                        ]),
-                        "to_y": .object([
-                            "type": .string("number"),
-                            "description": .string("End Y in screenshot pixels."),
-                        ]),
-                    ]),
-                    "required": .array([
-                        .string("app"), .string("from_x"), .string("from_y"), .string("to_x"),
-                        .string("to_y"),
-                    ]),
-                    "additionalProperties": .bool(false),
-                ])
+                inputSchema: schema(properties: [
+                    "app": appProperty(),
+                    "from_x": numberProperty("Start X in screenshot pixels."),
+                    "from_y": numberProperty("Start Y in screenshot pixels."),
+                    "to_x": numberProperty("End X in screenshot pixels."),
+                    "to_y": numberProperty("End Y in screenshot pixels."),
+                ], required: ["app", "from_x", "from_y", "to_x", "to_y"])
             ),
             ToolDefinition(
                 name: "press_key",
@@ -317,25 +161,11 @@ public enum ToolSurface {
                 Press a key or key combination on the keyboard. Uses xdotool-style syntax: \
                 "a", "Return", "Tab", "super+c", "ctrl+shift+t", "Up", "KP_0".
                 """,
-                inputSchema: .object([
-                    "type": .string("object"),
-                    "properties": .object([
-                        "app": .object([
-                            "type": .string("string"),
-                            "description": .string("App name or bundle identifier."),
-                        ]),
-                        "key": .object([
-                            "type": .string("string"),
-                            "description": .string("Key or key combination, e.g. \"super+s\"."),
-                        ]),
-                        "repeat": .object([
-                            "type": .string("integer"),
-                            "description": .string("How many times to press it. Defaults to 1."),
-                        ]),
-                    ]),
-                    "required": .array([.string("app"), .string("key")]),
-                    "additionalProperties": .bool(false),
-                ])
+                inputSchema: schema(properties: [
+                    "app": appProperty(),
+                    "key": stringProperty("Key or key combination, e.g. \"super+s\"."),
+                    "repeat": integerProperty("How many times to press it. Defaults to 1."),
+                ], required: ["app", "key"])
             ),
             ToolDefinition(
                 name: "type_text",
@@ -353,39 +183,92 @@ public enum ToolSurface {
                 a search box, an address bar or a message box. That is one call instead of two, and \
                 the Return cannot overtake the typing.
                 """,
-                inputSchema: .object([
-                    "type": .string("object"),
-                    "properties": .object([
-                        "app": .object([
-                            "type": .string("string"),
-                            "description": .string("App name or bundle identifier."),
-                        ]),
-                        "text": .object([
-                            "type": .string("string"),
-                            "description": .string("Literal text to type."),
-                        ]),
-                        "element_index": .object([
-                            "type": .string("integer"),
-                            "description": .string(
-                                "Focus this element from the accessibility tree before typing."),
-                        ]),
-                        "clear": .object([
-                            "type": .string("boolean"),
-                            "description": .string(
-                                "Select the field's existing text first, so typing replaces it. "
-                                + "Ignored when element_index is absent."),
-                        ]),
-                        "submit": .object([
-                            "type": .string("boolean"),
-                            "description": .string(
-                                "Press Return after typing. Defaults to false."),
-                        ]),
-                    ]),
-                    "required": .array([.string("app"), .string("text")]),
-                    "additionalProperties": .bool(false),
-                ])
+                inputSchema: schema(properties: [
+                    "app": appProperty(),
+                    "text": stringProperty("Literal text to type."),
+                    "element_index": elementIndexProperty(
+                        "Focus this element from the accessibility tree before typing."),
+                    "clear": boolProperty(
+                        "Select the field's existing text first, so typing replaces it. "
+                            + "Ignored when element_index is absent."),
+                    "submit": boolProperty("Press Return after typing. Defaults to false."),
+                ], required: ["app", "text"])
             ),
         ]
+    }
+
+    // MARK: - Schema helpers
+
+    /// An object schema for one tool. Tools accept a closed set of arguments,
+    /// so `additionalProperties` is always false, and `required` is omitted
+    /// when nothing is required.
+    private static func schema(
+        properties: [String: JSONValue],
+        required: [String] = []
+    ) -> JSONValue {
+        var object: [String: JSONValue] = [
+            "type": .string("object"),
+            "properties": .object(properties),
+            "additionalProperties": .bool(false),
+        ]
+        if !required.isEmpty {
+            object["required"] = .array(required.map { .string($0) })
+        }
+        return .object(object)
+    }
+
+    private static func appProperty(
+        _ description: String = "App name or bundle identifier."
+    ) -> JSONValue {
+        stringProperty(description)
+    }
+
+    private static func elementIndexProperty(
+        _ description: String = "Element index from the accessibility tree."
+    ) -> JSONValue {
+        integerProperty(description)
+    }
+
+    private static func stringProperty(_ description: String) -> JSONValue {
+        .object([
+            "type": .string("string"),
+            "description": .string(description),
+        ])
+    }
+
+    private static func numberProperty(_ description: String) -> JSONValue {
+        .object([
+            "type": .string("number"),
+            "description": .string(description),
+        ])
+    }
+
+    private static func integerProperty(_ description: String) -> JSONValue {
+        .object([
+            "type": .string("integer"),
+            "description": .string(description),
+        ])
+    }
+
+    private static func boolProperty(_ description: String) -> JSONValue {
+        .object([
+            "type": .string("boolean"),
+            "description": .string(description),
+        ])
+    }
+
+    private static func enumProperty(
+        _ values: [String],
+        description: String? = nil
+    ) -> JSONValue {
+        var object: [String: JSONValue] = [
+            "type": .string("string"),
+            "enum": .array(values.map { .string($0) }),
+        ]
+        if let description {
+            object["description"] = .string(description)
+        }
+        return .object(object)
     }
 }
 

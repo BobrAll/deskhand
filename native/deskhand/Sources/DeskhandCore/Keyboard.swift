@@ -77,7 +77,7 @@ public enum Keyboard {
     public enum Destination: Sendable, Equatable {
         /// The system event stream. Whatever is frontmost receives it, which is
         /// why this requires activating the target window first.
-        case focusedApp
+        case frontmostApp
         /// The event queue of one process, via `CGEvent.postToPid`.
         ///
         /// The target receives the event whether or not it is frontmost, and
@@ -88,15 +88,18 @@ public enum Keyboard {
     }
 
     /// Posts a key press + release for the given sequence.
-    public static func press(_ sequence: String, to destination: Destination = .focusedApp) throws {
+    public static func press(_ sequence: String, to destination: Destination = .frontmostApp) throws {
         WindowServer.prepare()
         let key = try parse(sequence)
         if let unicode = key.unicode {
             typeString(unicode, flags: key.flags, to: destination)
             return
         }
-        guard let down = CGEvent(keyboardEventSource: source(), virtualKey: key.keyCode, keyDown: true),
-              let up = CGEvent(keyboardEventSource: source(), virtualKey: key.keyCode, keyDown: false)
+        let source = SyntheticEvent.eventSource()
+        guard let down = CGEvent(
+            keyboardEventSource: source, virtualKey: key.keyCode, keyDown: true),
+              let up = CGEvent(
+                keyboardEventSource: source, virtualKey: key.keyCode, keyDown: false)
         else { return }
         down.flags = key.flags
         up.flags = key.flags
@@ -110,11 +113,11 @@ public enum Keyboard {
     public static func typeString(
         _ text: String,
         flags: CGEventFlags = [],
-        to destination: Destination = .focusedApp
+        to destination: Destination = .frontmostApp
     ) {
         guard !text.isEmpty else { return }
         WindowServer.prepare()
-        let source = source()
+        let source = SyntheticEvent.eventSource()
         for scalar in text.unicodeScalars {
             // Surrogate pair for code points above the BMP.
             if scalar.value > 0xFFFF {
@@ -127,21 +130,12 @@ public enum Keyboard {
         }
     }
 
-    private static func source() -> CGEventSource? {
-        let source = CGEventSource(stateID: .combinedSessionState)
-        source?.setLocalEventsFilterDuringSuppressionState(
-            [.permitLocalMouseEvents, .permitLocalKeyboardEvents],
-            state: .eventSuppressionStateSuppressionInterval
-        )
-        return source
-    }
-
     private static func post(_ event: CGEvent, to destination: Destination) {
         // The host's "the user grabbed the keyboard" watcher must not fire on
         // the agent's own keystrokes.
         SyntheticEvent.mark(event)
         switch destination {
-        case .focusedApp: event.post(tap: .cghidEventTap)
+        case .frontmostApp: event.post(tap: .cghidEventTap)
         case .process(let pid): event.postToPid(pid)
         }
     }

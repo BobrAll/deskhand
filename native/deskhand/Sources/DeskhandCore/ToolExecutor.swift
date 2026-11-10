@@ -6,13 +6,13 @@ import CoreGraphics
 /// directly onto MCP content blocks.
 public enum ToolContent: Sendable {
     case text(String)
-    case imagePNG(Data)
+    case image(Data)
 
     public var mcpJSON: JSONValue {
         switch self {
         case .text(let text):
             return .object(["type": .string("text"), "text": .string(text)])
-        case .imagePNG(let data):
+        case .image(let data):
             return .object([
                 "type": .string("image"),
                 "data": .string(data.base64EncodedString()),
@@ -65,7 +65,7 @@ public struct ToolResult: Sendable {
 
     public var images: [Data] {
         content.compactMap { block -> Data? in
-            if case .imagePNG(let data) = block { return data }
+            if case .image(let data) = block { return data }
             return nil
         }
     }
@@ -144,7 +144,8 @@ public final class ToolExecutor: @unchecked Sendable {
         // as a failed step, so the model learns it was not allowed rather than
         // believing it acted.
         if let policy, MutatingTools.isMutating(name) {
-            let context = await describe(name: name, arguments: arguments, narration: narration)
+            let context = await policyContext(
+                name: name, arguments: arguments, narration: narration)
             switch policy.authorize(context) {
                 case .allow:
                     break
@@ -212,25 +213,28 @@ public final class ToolExecutor: @unchecked Sendable {
     private func finish(
         _ message: String,
         session: AppSession,
-        action: String,
+        actionLabel: String,
         verify: Bool,
         clickedAt point: CGPoint? = nil
     ) -> ToolResult {
         guard verify else {
             return ToolResult(
                 content: [.text(message)],
-                stateFingerprint: session.currentSnapshot.map { fingerprint(of: $0) })
+                stateFingerprint: session.snapshot.map { fingerprint(of: $0) })
         }
         let (diff, timings) = session.previewDiff()
 
         if diff.isEmpty {
             return ToolResult(
-                content: [.text(message), .text(noChangeExplanation(action, session: session, point: point))],
+                content: [
+                    .text(message),
+                    .text(noChangeExplanation(actionLabel, session: session, point: point)),
+                ],
                 timings: timings,
-                stateFingerprint: session.currentSnapshot.map { fingerprint(of: $0) })
+                stateFingerprint: session.snapshot.map { fingerprint(of: $0) })
         }
 
-        let diffText = "Changed after \(action) (\(diff.summary)):\n" + diff.text()
+        let diffText = "Changed after \(actionLabel) (\(diff.summary)):\n" + diff.text()
         // The screen changed, so the model's next move almost always needs the
         // new indices. The diff's walk is already in hand: adopting it and
         // sending the tree here saves the `get_app_state` round trip that
@@ -245,7 +249,7 @@ public final class ToolExecutor: @unchecked Sendable {
             return ToolResult(
                 content: [.text(message), .text(text)],
                 timings: timings,
-                stateFingerprint: session.currentSnapshot.map { fingerprint(of: $0) })
+                stateFingerprint: session.snapshot.map { fingerprint(of: $0) })
         }
         return ToolResult(
             content: [
@@ -295,8 +299,12 @@ public final class ToolExecutor: @unchecked Sendable {
     /// that control is an opaque container, the message says the content is
     /// there but not addressable — the one case where clicking again will
     /// never help.
-    private func noChangeExplanation(_ action: String, session: AppSession, point: CGPoint?) -> String {
-        var text = "No change in the accessibility tree after \(action)."
+    private func noChangeExplanation(
+        _ actionLabel: String,
+        session: AppSession,
+        point: CGPoint?
+    ) -> String {
+        var text = "No change in the accessibility tree after \(actionLabel)."
 
         if let point, let hit = session.smallestNode(containing: point) {
             text += " The point landed on " + describe(hit)
@@ -305,8 +313,8 @@ public final class ToolExecutor: @unchecked Sendable {
                     + "\(Int(frame.width))x\(Int(frame.height))"
             }
             text += "."
-            if hit.childrenHidden {
-                if let count = hit.hiddenItemCount {
+            if hit.childrenRefused {
+                if let count = hit.declaredItemCount {
                     text += " That node holds \(count) item\(count == 1 ? "" : "s") but does not"
                         + " expose them, so nothing inside it has an index."
                 } else {
@@ -416,20 +424,13 @@ public final class ToolExecutor: @unchecked Sendable {
     }
 
     /// Everything the policy needs to judge a call, resolved from the same state
-    /// the tool itself will use.
-    ///
-    /// Resolution is best effort on purpose: an index that does not resolve is
-    /// not a reason to skip the question, it is a reason to ask it with less
-    /// information. The app is looked up without launching it — a policy check
-    /// must not have the side effect of starting an application.
-    /// Everything the policy needs to judge a call, resolved from the same
-    /// state the tool itself is about to use.
+    /// the tool itself is about to use.
     ///
     /// Resolution is best effort on purpose: an index that does not resolve is
     /// not a reason to skip the question, it is a reason to ask it with less
     /// information. Nothing here launches an app — a policy check must not have
     /// the side effect of starting something.
-    private func describe(
+    private func policyContext(
         name: String,
         arguments: JSONValue,
         narration: String?
@@ -446,7 +447,7 @@ public final class ToolExecutor: @unchecked Sendable {
         // The tool is about to read this tree anyway when there is no snapshot,
         // and the difference it makes is between "click something" and
         // "click «Отправить»".
-        if session.currentSnapshot == nil { await session.refresh(includeScreenshot: false) }
+        if session.snapshot == nil { await session.refresh(includeScreenshot: false) }
         guard let node = try? session.node(at: index) else { return context }
         context.role = node.role
         context.title = node.title
@@ -494,7 +495,7 @@ public final class ToolExecutor: @unchecked Sendable {
             appName: session.app.name,
             bundleIdentifier: session.app.bundleIdentifier,
             pid: session.pid,
-            window: session.currentSnapshot?.windowFrame
+            window: session.snapshot?.windowFrame
         )
 
         if let index = arguments["element_index"]?.intValue,
@@ -510,13 +511,13 @@ public final class ToolExecutor: @unchecked Sendable {
             if action.point == nil,
                let x = arguments["x"]?.doubleValue,
                let y = arguments["y"]?.doubleValue,
-               let mapper = session.mapper {
+               let mapper = session.coordinateMapper {
                 action.point = mapper.screenPoint(fromImagePixel: CGPoint(x: x, y: y))
             }
         case "drag":
             if let x = arguments["from_x"]?.doubleValue,
                let y = arguments["from_y"]?.doubleValue,
-               let mapper = session.mapper {
+               let mapper = session.coordinateMapper {
                 action.point = mapper.screenPoint(fromImagePixel: CGPoint(x: x, y: y))
             }
         case "scroll", "press_key", "type_text":
@@ -556,18 +557,18 @@ public final class ToolExecutor: @unchecked Sendable {
             bringToFront(session)
         }
 
-        // The capture always runs at full quality, even when the caller does not
-        // want the image: it is what establishes the mapping between screenshot
-        // pixels and screen points. Capturing a degenerate image would leave the
-        // mapper with a nonsense scale and make later x/y clicks land nowhere.
+        // A screenshot is taken only when the caller asked for the image. When
+        // it is skipped, refresh keeps the coordinate space the model is
+        // already working in, so an x/y click still means what the last
+        // screenshot said it meant.
         let snapshot = await session.refresh(includeScreenshot: includeScreenshot)
 
         var blocks: [ToolContent] = []
         blocks.append(.text(stateHeader(snapshot)))
 
         if includeScreenshot {
-            if let capture = session.capture {
-                blocks.append(.imagePNG(capture.pngData))
+            if let capture = session.lastCapture {
+                blocks.append(.image(capture.imageData))
                 let frame = capture.windowFrame
                 blocks.append(.text(
                     """
@@ -592,10 +593,10 @@ public final class ToolExecutor: @unchecked Sendable {
         )
     }
 
-    /// Brings the app to the front before a synthetic input event: CGEvents go
-    /// to whatever is focused, so an unfocused window would swallow the input.
-    /// Brings the window forward. Only for paths that post events to the
-    /// system stream, which the window server delivers to the frontmost app.
+    /// Brings the app and its window forward.
+    ///
+    /// Only for paths that post events to the system stream: CGEvents go to
+    /// whatever is focused, so an unfocused window would swallow the input.
     /// Accessibility actions and per-process key events do not need this.
     private func bringToFront(_ session: AppSession) {
         AppCatalog.activate(pid: session.pid, raising: session.windowElement)
@@ -608,9 +609,9 @@ public final class ToolExecutor: @unchecked Sendable {
     /// here is expensive: the model sees a click that "changed nothing" and
     /// spends turns re-aiming at a window that was never going to receive the
     /// event.
-    private func bringToFrontChecked(_ session: AppSession, action: String) -> String? {
+    private func bringToFrontChecked(_ session: AppSession, actionLabel: String) -> String? {
         guard AppCatalog.activate(pid: session.pid, raising: session.windowElement) == nil else { return nil }
-        return " Warning: \(session.app.name) did not come to the front, so \(action) may have"
+        return " Warning: \(session.app.name) did not come to the front, so \(actionLabel) may have"
             + " landed in another window. Check the screen before repeating it."
     }
 
@@ -625,10 +626,7 @@ public final class ToolExecutor: @unchecked Sendable {
     /// event would otherwise be dropped.
     private func ensureKeyboardTarget(_ session: AppSession) {
         let app = AXElement.application(pid: session.pid)
-        if let focused = app.focusedElement() {
-            _ = focused
-            return
-        }
+        if app.focusedElement() != nil { return }
         if let window = app.focusedWindow() {
             // Focus the window itself first: some apps expose no focused
             // element until their key window has been told it is key.
@@ -650,7 +648,7 @@ public final class ToolExecutor: @unchecked Sendable {
     private func click(_ args: JSONValue, verify: Bool) async throws -> ToolResult {
         let appQuery = try requireApp(args)
         let session = try resolveSession(appQuery: appQuery)
-        if session.currentSnapshot == nil {
+        if session.snapshot == nil {
             await session.refresh()
         }
 
@@ -679,24 +677,22 @@ public final class ToolExecutor: @unchecked Sendable {
             // box instead.
             if isPlainLeftClick, node.role == kAXTextFieldRole || node.role == kAXComboBoxRole {
                 if ElementActions.focus(try session.element(at: index)) {
-                    session.noteAction()
                     return finish(
                         "Focused element \(index) (\(describe(node))), so typing now goes there.",
-                        session: session, action: "the click", verify: verify)
+                        session: session, actionLabel: "the click", verify: verify)
                 }
             }
             if isPlainLeftClick, node.actions.contains(kAXPressAction) {
                 if (try? ElementActions.press(session.element(at: index))) == true {
-                    session.noteAction()
                     return finish(
                         "Pressed element \(index) (\(describe(node))) via its accessibility action.",
-                        session: session, action: "the click", verify: verify)
+                        session: session, actionLabel: "the click", verify: verify)
                 }
                 // Fall through to a pixel click if the app refused the action.
             }
             point = try session.centre(of: index)
         } else if let x = optionalDouble(args, "x"), let y = optionalDouble(args, "y") {
-            guard let mapper = session.mapper else {
+            guard let mapper = session.coordinateMapper else {
                 throw ToolError.message(
                     "no screenshot coordinates available; call get_app_state with a screenshot first")
             }
@@ -705,10 +701,9 @@ public final class ToolExecutor: @unchecked Sendable {
             throw ToolError.message("click needs either element_index or both x and y")
         }
 
-        let warning = bringToFrontChecked(session, action: "the click")
+        let warning = bringToFrontChecked(session, actionLabel: "the click")
         Mouse.click(at: point, button: button, count: count, modifiers: modifiers)
         let clickedAt = optionalInt(args, "element_index") == nil ? point : nil
-        session.noteAction()
         var message = "Clicked \(button.rawValue) at screen \(Int(point.x)),\(Int(point.y)) x\(count)."
             + (warning ?? "")
         // Clicking a container is aiming at a region, not at an item: the
@@ -716,8 +711,8 @@ public final class ToolExecutor: @unchecked Sendable {
         // point is what reacted. Say so, otherwise a step that happened to
         // work looks like the index did something meaningful.
         if let index = optionalInt(args, "element_index"),
-           let clicked = try? session.node(at: index), clicked.childrenHidden {
-            if let count = clicked.hiddenItemCount {
+           let clicked = try? session.node(at: index), clicked.childrenRefused {
+            if let count = clicked.declaredItemCount {
                 message += " Element \(index) is a container holding \(count)"
                     + " item\(count == 1 ? "" : "s") it does not expose, so the click landed on"
                     + " whatever was at that point rather than on an indexed item."
@@ -734,7 +729,7 @@ public final class ToolExecutor: @unchecked Sendable {
         }
         return finish(
             message,
-            session: session, action: "the click", verify: verify, clickedAt: clickedAt)
+            session: session, actionLabel: "the click", verify: verify, clickedAt: clickedAt)
     }
 
     private func secondaryAction(_ args: JSONValue, verify: Bool) async throws -> ToolResult {
@@ -742,14 +737,13 @@ public final class ToolExecutor: @unchecked Sendable {
         let index = try requireInt(args, "element_index")
         let action = try requireString(args, "action")
         let session = try resolveSession(appQuery: appQuery)
-        if session.currentSnapshot == nil { await session.refresh() }
+        if session.snapshot == nil { await session.refresh() }
 
         let element = try session.element(at: index)
         try ElementActions.perform(element, action: action)
-        session.noteAction()
         return finish(
             "Performed \(action) on element \(index).",
-            session: session, action: "the action", verify: verify)
+            session: session, actionLabel: "the action", verify: verify)
     }
 
     private func setValue(_ args: JSONValue, verify: Bool) async throws -> ToolResult {
@@ -757,7 +751,7 @@ public final class ToolExecutor: @unchecked Sendable {
         let index = try requireInt(args, "element_index")
         let value = try requireString(args, "value")
         let session = try resolveSession(appQuery: appQuery)
-        if session.currentSnapshot == nil { await session.refresh() }
+        if session.snapshot == nil { await session.refresh() }
 
         let element = try session.element(at: index)
         let role = element.role
@@ -777,7 +771,6 @@ public final class ToolExecutor: @unchecked Sendable {
             message = "Typed \"\(value)\" into element \(index), which does not accept a value"
                 + " directly but accepts typing."
         }
-        session.noteAction()
         let submitted = (args["submit"]?.boolValue ?? false) && isTextField
         if submitted {
             ensureKeyboardTarget(session)
@@ -794,7 +787,7 @@ public final class ToolExecutor: @unchecked Sendable {
         }
         return finish(
             message,
-            session: session, action: "the edit", verify: verify)
+            session: session, actionLabel: "the edit", verify: verify)
     }
 
     private func selectText(_ args: JSONValue, verify: Bool) async throws -> ToolResult {
@@ -803,7 +796,7 @@ public final class ToolExecutor: @unchecked Sendable {
         let target = try requireString(args, "text")
         let mode = ElementActions.TextSelection(raw: args["mode"]?.stringValue ?? "text") ?? .text
         let session = try resolveSession(appQuery: appQuery)
-        if session.currentSnapshot == nil { await session.refresh() }
+        if session.snapshot == nil { await session.refresh() }
 
         let element = try session.element(at: index)
         try ElementActions.selectText(
@@ -813,10 +806,9 @@ public final class ToolExecutor: @unchecked Sendable {
             suffix: args["suffix"]?.stringValue,
             mode: mode
         )
-        session.noteAction()
         return finish(
             "\(mode == .text ? "Selected" : "Placed the caret at") \"\(target)\" in element \(index).",
-            session: session, action: "the selection", verify: verify)
+            session: session, actionLabel: "the selection", verify: verify)
     }
 
     private func scroll(_ args: JSONValue, verify: Bool) async throws -> ToolResult {
@@ -827,12 +819,12 @@ public final class ToolExecutor: @unchecked Sendable {
         }
         let pages = optionalDouble(args, "pages") ?? 1
         let session = try resolveSession(appQuery: appQuery)
-        if session.currentSnapshot == nil { await session.refresh() }
+        if session.snapshot == nil { await session.refresh() }
 
         let point: CGPoint
         if let index = optionalInt(args, "element_index") {
             point = try session.centre(of: index)
-        } else if let frame = session.currentSnapshot?.windowFrame {
+        } else if let frame = session.snapshot?.windowFrame {
             point = CGPoint(x: frame.midX, y: frame.midY)
         } else {
             point = Mouse.location()
@@ -840,10 +832,9 @@ public final class ToolExecutor: @unchecked Sendable {
 
         bringToFront(session)
         Mouse.scroll(at: point, direction: direction, pages: pages)
-        session.noteAction()
         return finish(
             "Scrolled \(direction.rawValue) \(pages) page(s) at \(Int(point.x)),\(Int(point.y)).",
-            session: session, action: "the scroll", verify: verify)
+            session: session, actionLabel: "the scroll", verify: verify)
     }
 
     private func drag(_ args: JSONValue, verify: Bool) async throws -> ToolResult {
@@ -853,8 +844,8 @@ public final class ToolExecutor: @unchecked Sendable {
         let toX = try requireDouble(args, "to_x")
         let toY = try requireDouble(args, "to_y")
         let session = try resolveSession(appQuery: appQuery)
-        if session.currentSnapshot == nil { await session.refresh() }
-        guard let mapper = session.mapper else {
+        if session.snapshot == nil { await session.refresh() }
+        guard let mapper = session.coordinateMapper else {
             throw ToolError.message("no screenshot coordinates available; call get_app_state first")
         }
 
@@ -863,10 +854,9 @@ public final class ToolExecutor: @unchecked Sendable {
 
         bringToFront(session)
         Mouse.drag(from: start, to: end)
-        session.noteAction()
         return finish(
             "Dragged from \(Int(start.x)),\(Int(start.y)) to \(Int(end.x)),\(Int(end.y)).",
-            session: session, action: "the drag", verify: verify)
+            session: session, actionLabel: "the drag", verify: verify)
     }
 
     private func pressKey(_ args: JSONValue, verify: Bool) async throws -> ToolResult {
@@ -881,10 +871,9 @@ public final class ToolExecutor: @unchecked Sendable {
         for _ in 0..<repeatCount {
             try Keyboard.press(key, to: .process(session.pid))
         }
-        session.noteAction()
         return finish(
             "Pressed \"\(key)\"" + (repeatCount > 1 ? " \(repeatCount) times." : "."),
-            session: session, action: "the key press", verify: verify)
+            session: session, actionLabel: "the key press", verify: verify)
     }
 
     private func typeText(_ args: JSONValue, verify: Bool) async throws -> ToolResult {
@@ -903,7 +892,7 @@ public final class ToolExecutor: @unchecked Sendable {
             // Only an indexed call reads the tree. Refreshing it for plain
             // typing would make the cheapest tool in the surface pay for a walk
             // it never looks at.
-            if session.currentSnapshot == nil { await session.refresh() }
+            if session.snapshot == nil { await session.refresh() }
             let node = try session.node(at: index)
             let element = try session.element(at: index)
             guard ElementActions.focus(element) else {
@@ -926,11 +915,12 @@ public final class ToolExecutor: @unchecked Sendable {
         if submitted {
             try Keyboard.press("Return", to: .process(session.pid))
         }
-        session.noteAction()
         return finish(
             "Typed \(text.count) character(s)\(target)"
                 + (submitted ? " and pressed Return." : "."),
-            session: session, action: submitted ? "typing and Return" : "typing", verify: verify)
+            session: session,
+            actionLabel: submitted ? "typing and Return" : "typing",
+            verify: verify)
     }
 
     private func parseModifiers(_ value: JSONValue?) -> CGEventFlags {

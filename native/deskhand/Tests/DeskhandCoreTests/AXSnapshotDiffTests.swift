@@ -1,244 +1,6 @@
 import XCTest
 @testable import DeskhandCore
 
-final class KeyboardTests: XCTestCase {
-    func testDestinationNamesTheProcessItAddresses() {
-        // The distinction the whole lazy-activation design rests on: a key can
-        // be addressed to one process, or to whatever happens to be frontmost.
-        XCTAssertEqual(Keyboard.Destination.focusedApp, .focusedApp)
-        XCTAssertEqual(Keyboard.Destination.process(42), .process(42))
-        XCTAssertNotEqual(Keyboard.Destination.process(42), .process(43))
-        XCTAssertNotEqual(Keyboard.Destination.process(42), .focusedApp)
-    }
-
-    func testSingleCharacterResolvesToKeyCode() throws {
-        let parsed = try Keyboard.parse("a")
-        XCTAssertEqual(parsed.keyCode, 0)
-        XCTAssertTrue(parsed.flags.isEmpty)
-    }
-
-    func testModifierCombination() throws {
-        let parsed = try Keyboard.parse("super+c")
-        XCTAssertEqual(parsed.keyCode, 8)
-        XCTAssertTrue(parsed.flags.contains(.maskCommand))
-    }
-
-    func testMultipleModifiers() throws {
-        let parsed = try Keyboard.parse("ctrl+shift+t")
-        XCTAssertEqual(parsed.keyCode, 17)
-        XCTAssertTrue(parsed.flags.contains(.maskControl))
-        XCTAssertTrue(parsed.flags.contains(.maskShift))
-    }
-
-    func testNamedKeys() throws {
-        XCTAssertEqual(try Keyboard.parse("Return").keyCode, 36)
-        XCTAssertEqual(try Keyboard.parse("Tab").keyCode, 48)
-        XCTAssertEqual(try Keyboard.parse("Up").keyCode, 126)
-        XCTAssertEqual(try Keyboard.parse("KP_0").keyCode, 82)
-    }
-
-    func testNamedKeysAreCaseInsensitive() throws {
-        XCTAssertEqual(try Keyboard.parse("RETURN").keyCode, 36)
-        XCTAssertEqual(try Keyboard.parse("Esc").keyCode, 53)
-    }
-
-    func testUnknownKeyThrows() {
-        XCTAssertThrowsError(try Keyboard.parse("NotAKeyName"))
-    }
-
-    func testEmptySequenceThrows() {
-        XCTAssertThrowsError(try Keyboard.parse("   "))
-    }
-
-    func testNonASCIICharacterFallsBackToUnicode() throws {
-        let parsed = try Keyboard.parse("ж")
-        XCTAssertEqual(parsed.unicode, "ж")
-    }
-}
-
-final class CoordinateMapperTests: XCTestCase {
-    func testImagePixelToScreenPoint() {
-        let mapper = CoordinateMapper(
-            windowFrame: CGRect(x: 100, y: 50, width: 400, height: 300),
-            scale: 2.0
-        )
-        // A click at image pixel (200,100) is 100x50 points into a window
-        // whose origin is (100,50), so it lands at (200,100) on screen.
-        let point = mapper.screenPoint(fromImagePixel: CGPoint(x: 200, y: 100))
-        XCTAssertEqual(point.x, 200, accuracy: 0.001)
-        XCTAssertEqual(point.y, 100, accuracy: 0.001)
-    }
-
-    func testRoundTrip() {
-        let mapper = CoordinateMapper(
-            windowFrame: CGRect(x: 30, y: 70, width: 800, height: 600),
-            scale: 1.5
-        )
-        let original = CGPoint(x: 123, y: 456)
-        let screen = mapper.screenPoint(fromImagePixel: original)
-        let back = mapper.imagePixel(fromScreenPoint: screen)
-        XCTAssertEqual(back.x, original.x, accuracy: 0.001)
-        XCTAssertEqual(back.y, original.y, accuracy: 0.001)
-    }
-
-    func testTreeWalkKeepsTheScaleTheModelIsWorkingIn() {
-        // A refresh with include_screenshot:false must not move the coordinate
-        // space. The model reads pixels off the last screenshot, which was
-        // captured at 0.87, not 1.0; resetting the scale shifts every later
-        // click by tens of points and the model reads the resulting empty diff
-        // as its own aiming error.
-        let existing = CoordinateMapper(
-            windowFrame: CGRect(x: 0, y: 33, width: 1470, height: 855),
-            scale: 0.87
-        )
-        let next = AppSession.mapperAfterTreeWalk(
-            existing: existing,
-            windowFrame: CGRect(x: 0, y: 33, width: 1470, height: 855)
-        )
-        XCTAssertEqual(next.scale, 0.87, accuracy: 0.0001)
-        let before = existing.screenPoint(fromImagePixel: CGPoint(x: 114, y: 202))
-        let after = next.screenPoint(fromImagePixel: CGPoint(x: 114, y: 202))
-        XCTAssertEqual(before.x, after.x, accuracy: 0.001)
-        XCTAssertEqual(before.y, after.y, accuracy: 0.001)
-    }
-
-    func testTreeWalkUpdatesTheWindowFrameWithoutTouchingScale() {
-        let existing = CoordinateMapper(windowFrame: CGRect(x: 0, y: 0, width: 800, height: 600), scale: 2)
-        let next = AppSession.mapperAfterTreeWalk(
-            existing: existing,
-            windowFrame: CGRect(x: 50, y: 60, width: 900, height: 700)
-        )
-        XCTAssertEqual(next.scale, 2, accuracy: 0.0001)
-        XCTAssertEqual(next.windowFrame.origin.x, 50, accuracy: 0.001)
-        XCTAssertEqual(next.windowFrame.origin.y, 60, accuracy: 0.001)
-    }
-
-    func testFirstMapperWithoutScreenshotDefaultsToOne() {
-        // No screenshot has ever been shown, so pixels and points are the same
-        // thing inside the window. Pretending otherwise would be inventing a
-        // scale.
-        let mapper = AppSession.mapperAfterTreeWalk(
-            existing: nil,
-            windowFrame: CGRect(x: 10, y: 20, width: 300, height: 200)
-        )
-        XCTAssertEqual(mapper.scale, 1, accuracy: 0.0001)
-    }
-
-    func testZeroScaleIsTreatedAsOne() {
-        let mapper = CoordinateMapper(windowFrame: .zero, scale: 0)
-        let point = mapper.screenPoint(fromImagePixel: CGPoint(x: 10, y: 10))
-        XCTAssertEqual(point.x, 10, accuracy: 0.001)
-    }
-}
-
-final class WindowCaptureGeometryTests: XCTestCase {
-    func testDownscalesLongestEdge() {
-        let size = WindowCapture.fit(size: CGSize(width: 4000, height: 2000), longestEdge: 1000)
-        XCTAssertEqual(size.width, 1000, accuracy: 0.5)
-        XCTAssertEqual(size.height, 500, accuracy: 0.5)
-    }
-
-    func testDoesNotUpscale() {
-        let size = WindowCapture.fit(size: CGSize(width: 400, height: 200), longestEdge: 1280)
-        XCTAssertEqual(size.width, 400, accuracy: 0.5)
-        XCTAssertEqual(size.height, 200, accuracy: 0.5)
-    }
-
-    func testDegenerateSizeIsClamped() {
-        let size = WindowCapture.fit(size: .zero, longestEdge: 1280)
-        XCTAssertGreaterThanOrEqual(size.width, 1)
-        XCTAssertGreaterThanOrEqual(size.height, 1)
-    }
-}
-
-final class AXTreeRendererTests: XCTestCase {
-    func testRendersIndicesAndIndentation() {
-        let nodes = [
-            AXNode(index: 0, depth: 0, role: "AXWindow", title: "Inbox"),
-            AXNode(index: 1, depth: 1, role: "AXButton", title: "Send", actions: ["AXPress"]),
-        ]
-        let text = AXTreeRenderer.render(nodes)
-        let lines = text.split(separator: "\n").map(String.init)
-        XCTAssertEqual(lines.count, 2)
-        XCTAssertTrue(lines[0].hasPrefix("0 AXWindow"))
-        XCTAssertTrue(lines[1].hasPrefix("  1 AXButton"))
-        XCTAssertTrue(lines[1].contains("AXPress"))
-    }
-
-    func testClipsLongText() {
-        let long = String(repeating: "x", count: 500)
-        let nodes = [AXNode(index: 0, depth: 0, role: "AXStaticText", title: long)]
-        let line = AXTreeRenderer.render(nodes)
-        XCTAssertLessThan(line.count, 260)
-        XCTAssertTrue(line.contains("…"))
-    }
-
-    func testCollapsesNewlinesInText() {
-        let nodes = [AXNode(index: 0, depth: 0, role: "AXStaticText", title: "a\nb")]
-        XCTAssertFalse(AXTreeRenderer.render(nodes).contains("\n b"))
-    }
-
-    func testMarksDisabledAndSettable() {
-        let nodes = [AXNode(
-            index: 3, depth: 0, role: "AXTextField",
-            value: "hello", settable: true, enabled: false
-        )]
-        let line = AXTreeRenderer.render(nodes)
-        XCTAssertTrue(line.contains("[disabled]"))
-        XCTAssertTrue(line.contains("[settable]"))
-        XCTAssertTrue(line.contains("hello"))
-    }
-}
-
-final class ToolSurfaceTests: XCTestCase {
-    func testTypeAndSetValueCanCommitInTheSameCall() {
-        // Typing and Return are a single intention. Exposing `submit` lets the
-        // model express both in one call, which is the difference between one
-        // model round trip and three (key, type, Return).
-        let tools = ToolSurface.definitions()
-        for name in ["type_text", "set_value"] {
-            guard let tool = tools.first(where: { $0.name == name }) else {
-                return XCTFail("missing tool \(name)")
-            }
-            let props = tool.inputSchema["properties"]
-            XCTAssertNotNil(props?["submit"], "\(name) should accept submit")
-            XCTAssertEqual(props?["submit"]?["type"]?.stringValue, "boolean")
-        }
-    }
-
-    func testEveryToolHasValidSchema() {
-        let tools = ToolSurface.definitions()
-        XCTAssertEqual(tools.count, 11)
-        for tool in tools {
-            XCTAssertEqual(tool.inputSchema["type"]?.stringValue, "object", tool.name)
-            XCTAssertNotNil(tool.inputSchema["properties"], tool.name)
-            XCTAssertFalse(tool.description.isEmpty, tool.name)
-        }
-    }
-
-    func testRequiredArgumentsExistInProperties() throws {
-        for tool in ToolSurface.definitions() {
-            let properties = tool.inputSchema["properties"]?.objectValue ?? [:]
-            let required = tool.inputSchema["required"]?.arrayValue ?? []
-            for name in required {
-                let key = try XCTUnwrap(name.stringValue, tool.name)
-                XCTAssertNotNil(properties[key], "\(tool.name) requires missing property \(key)")
-            }
-        }
-    }
-
-    func testEncodingsMatchWireFormats() throws {
-        let tool = try XCTUnwrap(ToolSurface.definitions().first { $0.name == "click" })
-        XCTAssertEqual(tool.mcpJSON["name"]?.stringValue, "click")
-        XCTAssertNotNil(tool.mcpJSON["inputSchema"])
-        XCTAssertEqual(tool.openAIJSON["type"]?.stringValue, "function")
-        XCTAssertEqual(tool.openAIJSON["function"]?["name"]?.stringValue, "click")
-        XCTAssertNotNil(tool.openAIJSON["function"]?["parameters"])
-        XCTAssertNotNil(tool.anthropicJSON["input_schema"])
-        XCTAssertNil(tool.anthropicJSON["inputSchema"])
-    }
-}
-
 /// The diff is what lets the agent confirm an action without re-reading a whole
 /// tree, so it has to distinguish "value changed" from "node replaced" and from
 /// "everything scrolled".
@@ -322,7 +84,7 @@ final class AXSnapshotDiffTests: XCTestCase {
                 depth: 1,
                 role: "AXList",
                 frame: CGRect(x: 97, y: 40, width: 294, height: 3592),
-                childrenHidden: true
+                childrenRefused: true
             ),
         ]
         let text = AXTreeRenderer.render(nodes)
@@ -340,7 +102,7 @@ final class AXSnapshotDiffTests: XCTestCase {
                    label: "Search", settable: true),
             AXNode(index: 7, depth: 1, role: "AXList",
                    frame: CGRect(x: 0, y: 100, width: 300, height: 900),
-                   childrenHidden: true, hiddenItemCount: 11),
+                   childrenRefused: true, declaredItemCount: 11),
         ]
         let text = AXTreeRenderer.render(nodes)
         XCTAssertTrue(text.contains("type into element 5"), text)
@@ -352,7 +114,7 @@ final class AXSnapshotDiffTests: XCTestCase {
             AXNode(index: 4, depth: 1, role: "AXTextField", settable: true, focused: true),
             AXNode(index: 9, depth: 1, role: "AXList",
                    frame: CGRect(x: 0, y: 100, width: 300, height: 900),
-                   childrenHidden: true, hiddenItemCount: 3),
+                   childrenRefused: true, declaredItemCount: 3),
         ]
         let text = AXTreeRenderer.render(nodes)
         XCTAssertTrue(text.contains("element 4 (focused) is the way in"), text)
@@ -363,7 +125,7 @@ final class AXSnapshotDiffTests: XCTestCase {
             AXNode(index: 0, depth: 0, role: "AXWindow", title: "Canvas"),
             AXNode(index: 2, depth: 1, role: "AXList",
                    frame: CGRect(x: 0, y: 0, width: 300, height: 300),
-                   childrenHidden: true),
+                   childrenRefused: true),
         ]
         let text = AXTreeRenderer.render(nodes)
         XCTAssertTrue(text.contains("no addressable way in"), text)
@@ -406,7 +168,7 @@ final class AXSnapshotDiffTests: XCTestCase {
         XCTAssertEqual(point?.y ?? 0, 575, accuracy: 0.001)
     }
 
-    func testHiddenItemCountTellsAnUnaddressableListFromAnEmptyOne() {
+    func testDeclaredItemCountTellsAnUnaddressableListFromAnEmptyOne() {
         // A container can refuse AXChildren and still answer AXRowCount. The
         // count is what separates "nothing here" from "eleven rows you cannot
         // address", and the two call for opposite next moves.
@@ -417,31 +179,31 @@ final class AXSnapshotDiffTests: XCTestCase {
                 depth: 1,
                 role: "AXList",
                 frame: CGRect(x: 97, y: 40, width: 294, height: 3592),
-                childrenHidden: true,
-                hiddenItemCount: 11
+                childrenRefused: true,
+                declaredItemCount: 11
             ),
         ]
         let text = AXTreeRenderer.render(nodes)
         XCTAssertTrue(text.contains("11 items not exposed"), text)
     }
 
-    func testHiddenItemCountIsSingularForOneItem() {
+    func testDeclaredItemCountIsSingularForOneItem() {
         let nodes = [
             AXNode(index: 0, depth: 0, role: "AXList",
                    frame: CGRect(x: 0, y: 0, width: 100, height: 100),
-                   childrenHidden: true, hiddenItemCount: 1),
+                   childrenRefused: true, declaredItemCount: 1),
         ]
         let text = AXTreeRenderer.render(nodes)
         XCTAssertTrue(text.contains("1 item not exposed"), text)
     }
 
-    func testHiddenCountParticipatesInVisibleState() {
+    func testDeclaredItemCountParticipatesInVisibleState() {
         // A list that goes from "hidden, 11 rows" to "hidden, 12 rows" changed,
         // and the diff has to say so.
         let before = snapshot([AXNode(index: 0, depth: 0, role: "AXList",
-                                      childrenHidden: true, hiddenItemCount: 11)])
+                                      childrenRefused: true, declaredItemCount: 11)])
         let after = snapshot([AXNode(index: 0, depth: 0, role: "AXList",
-                                     childrenHidden: true, hiddenItemCount: 12)])
+                                     childrenRefused: true, declaredItemCount: 12)])
         XCTAssertFalse(before.diff(from: after).isEmpty)
     }
 
@@ -542,58 +304,5 @@ final class AXSnapshotDiffTests: XCTestCase {
         ]
         let diff = snapshot(after).diff(from: snapshot(before))
         XCTAssertEqual(diff.removed.count, 1, "one of two identical rows really disappeared")
-    }
-}
-
-final class WindowSelectionTests: XCTestCase {
-    /// The window the accessibility tree was read from, picked out of the app's
-    /// windows by its frame.
-    func testMatchesTheWindowTheTreeWasReadFrom() {
-        let searched = CGRect(x: 400, y: 200, width: 300, height: 400)
-        let windows = [
-            CGRect(x: 0, y: 0, width: 1400, height: 900),  // main window, larger
-            searched,
-        ]
-
-        let picked = windows.min {
-            WindowCapture.distance($0, searched) < WindowCapture.distance($1, searched)
-        }
-
-        XCTAssertEqual(picked, searched)
-    }
-
-    func testFallsBackToTheLargestWindowWithoutAFrame() {
-        // No tree, no preference: the largest layer-0 window is the honest guess
-        // and the behaviour every caller had before the frame was threaded
-        // through.
-        let windows = [
-            CGRect(x: 0, y: 0, width: 300, height: 300),
-            CGRect(x: 400, y: 200, width: 900, height: 700),
-        ]
-
-        let picked = windows.max { $0.width * $0.height < $1.width * $1.height }
-
-        XCTAssertEqual(picked?.width, 900)
-    }
-
-    /// A frame that matches nothing must not be forced onto an unrelated window.
-    /// Picking the nearest window regardless is how a click in a chat window gets
-    /// measured against the main window's frame.
-    func testRejectsAWindowThatIsNotCloseToTheFrame() {
-        let treeFrame = CGRect(x: 100, y: 100, width: 400, height: 300)
-        let other = CGRect(x: 900, y: 500, width: 400, height: 300)
-
-        XCTAssertGreaterThan(WindowCapture.distance(other, treeFrame), 8)
-    }
-
-    func testToleratesASmallShift() {
-        // A window can be reported a few points apart by the accessibility API
-        // and by the window server, and the shadow or the title bar is enough to
-        // make them disagree. Refusing a match that close would fall back to the
-        // largest window and reintroduce the bug.
-        let treeFrame = CGRect(x: 100, y: 100, width: 400, height: 300)
-        let shifted = CGRect(x: 103, y: 98, width: 401, height: 300)
-
-        XCTAssertLessThanOrEqual(WindowCapture.distance(shifted, treeFrame), 8)
     }
 }

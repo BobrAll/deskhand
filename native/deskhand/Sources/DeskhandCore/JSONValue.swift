@@ -103,11 +103,6 @@ public enum JSONValue: Sendable, Equatable {
         return false
     }
 
-    public var isNumber: Bool {
-        if case .number = self { return true }
-        return false
-    }
-
     /// Renders back to compact JSON text.
     public func serialized() -> String {
         switch self {

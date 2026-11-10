@@ -184,7 +184,7 @@ public enum AXTreeWalker {
     /// Roles that are pure layout scaffolding. We still descend into them, but
     /// a group with no text, no identifier and no actions gets no line of its
     /// own: the model does not need to know a div exists.
-    static func isTransparentContainer(_ role: String) -> Bool {
+    static func isLayoutScaffolding(role: String) -> Bool {
         switch role {
         case "AXGroup", "AXLayoutArea", "AXUnknown", "AXGenericElement", "AXSplitter":
             return true
@@ -221,7 +221,7 @@ public enum AXTreeWalker {
             kAXScrollAreaRole, kAXGroupRole, "AXWebArea", "AXTree",
         ]
 
-        func isOpaqueContainer(role: String, frame: CGRect?) -> Bool {
+        func isContainerHidingChildren(role: String, frame: CGRect?) -> Bool {
             guard containerRoles.contains(role) else { return false }
             // A zero-sized container has nothing to hide.
             guard let frame else { return false }
@@ -256,7 +256,8 @@ public enum AXTreeWalker {
             let hasArea = (frame?.width ?? 0) > 0 && (frame?.height ?? 0) > 0
             let isInteractive = !actions.isEmpty || settable
 
-            let emit = !(isTransparentContainer(role) && !hasText && identifier == nil && !isInteractive)
+            let emit = !(isLayoutScaffolding(role: role)
+                && !hasText && identifier == nil && !isInteractive)
                 && (hasArea || hasText)
 
             var childDepth = depth
@@ -283,15 +284,16 @@ public enum AXTreeWalker {
             }
 
             let childResult = element.childrenResult()
-            if childResult.refused, emit, isOpaqueContainer(role: role, frame: frame) {
+            if childResult.childrenRefused, emit,
+               isContainerHidingChildren(role: role, frame: frame) {
                 // Record that the subtree is missing, not empty. Only patch the
                 // node this element just produced: when it was filtered out,
                 // `nodes.last` belongs to an ancestor.
-                nodes[nodes.count - 1].childrenHidden = true
+                nodes[nodes.count - 1].childrenRefused = true
                 // The container may still say how many items it holds, which
                 // is the difference between an empty region and an
                 // unaddressable one.
-                nodes[nodes.count - 1].hiddenItemCount = childResult.declaredCount
+                nodes[nodes.count - 1].declaredItemCount = childResult.declaredItemCount
             }
             let children = childResult.elements
             if children.count > options.maxChildrenPerNode {

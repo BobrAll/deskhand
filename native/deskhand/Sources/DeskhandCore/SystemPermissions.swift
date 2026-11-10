@@ -44,7 +44,7 @@ public enum SystemPermissions {
         return CGRequestScreenCaptureAccess()
     }
 
-    public static func openPrivacySettings() {
+    public static func openAccessibilityPrivacySettings() {
         let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")
         if let url {
             NSWorkspaceShim.open(url)

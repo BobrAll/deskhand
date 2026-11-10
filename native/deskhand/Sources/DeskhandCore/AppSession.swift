@@ -10,9 +10,9 @@ import CoreGraphics
 /// nothing: the model concludes its click missed and starts hunting.
 public struct DiffSettle: Sendable {
     /// Stop polling after this long, even if the tree never stops moving.
-    public var budget: Double
+    public var budgetMilliseconds: Double
     /// Gap between polls, in milliseconds.
-    public var interval: Double
+    public var intervalMilliseconds: Double
     /// If a walk usually costs more than this, do not poll at all.
     ///
     /// The wait only pays for itself when a walk is cheap. Polling on a
@@ -24,16 +24,21 @@ public struct DiffSettle: Sendable {
     /// not against the walk taken right after the action. Those are different
     /// numbers: an app that is mid-update answers slower, and judging by that
     /// would switch off the wait exactly when it is needed.
-    public var maxWalkCost: Double
+    public var maxWalkCostMilliseconds: Double
 
-    public init(budget: Double = 400, interval: Double = 30, maxWalkCost: Double = 250) {
-        self.budget = budget
-        self.interval = interval
-        self.maxWalkCost = maxWalkCost
+    public init(
+        budgetMilliseconds: Double = 400,
+        intervalMilliseconds: Double = 30,
+        maxWalkCostMilliseconds: Double = 250
+    ) {
+        self.budgetMilliseconds = budgetMilliseconds
+        self.intervalMilliseconds = intervalMilliseconds
+        self.maxWalkCostMilliseconds = maxWalkCostMilliseconds
     }
 
     /// No waiting: one walk, whatever it shows.
-    public static let immediate = DiffSettle(budget: 0, interval: 0, maxWalkCost: 0)
+    public static let immediate = DiffSettle(
+        budgetMilliseconds: 0, intervalMilliseconds: 0, maxWalkCostMilliseconds: 0)
 }
 
 /// An active session with one application.
@@ -46,9 +51,8 @@ public final class AppSession {
     public let app: AppHandle
     private(set) var snapshot: AXSnapshot?
     private(set) var elementTable: [Int: AXElement]
-    private(set) var capture: WindowCapture.Result?
-    private(set) var mapper: CoordinateMapper?
-    private(set) var lastActionAt: Date
+    private(set) var lastCapture: WindowCapture.Result?
+    private(set) var coordinateMapper: CoordinateMapper?
     /// Time spent inside the last refresh, split by phase, for the timings log.
     private(set) var lastTimings = ToolTimings()
     /// The tree the next diff is computed against. It advances after every
@@ -74,10 +78,7 @@ public final class AppSession {
     public init(app: AppHandle) {
         self.app = app
         self.elementTable = [:]
-        self.lastActionAt = Date()
     }
-
-    public var currentSnapshot: AXSnapshot? { snapshot }
 
     /// Rebuilds the accessibility tree and, unless disabled, captures a fresh
     /// screenshot.
@@ -116,7 +117,8 @@ public final class AppSession {
         // window may have moved. With no mapper yet, a scale of 1 is the honest
         // fallback: pixels equal points inside the window.
         if let frame = snap.windowFrame {
-            mapper = Self.mapperAfterTreeWalk(existing: mapper, windowFrame: frame)
+            coordinateMapper = Self.mapperAfterTreeWalk(
+                existing: coordinateMapper, windowFrame: frame)
         }
         // Resolved again rather than carried in the snapshot: the snapshot is
         // `Sendable` and describes a window, while an action needs a handle it
@@ -137,17 +139,17 @@ public final class AppSession {
                     preferredFrame: snap.windowFrame)
                 timings.capture = captureClock.milliseconds
                 timings.encode = result.encodeMilliseconds
-                timings.screenshotBytes = result.pngData.count
-                capture = result
-                mapper = CoordinateMapper(windowFrame: result.windowFrame, scale: result.scale)
+                timings.screenshotBytes = result.imageData.count
+                lastCapture = result
+                coordinateMapper = CoordinateMapper(
+                    windowFrame: result.windowFrame, scale: result.scale)
             } catch {
-                capture = nil
+                lastCapture = nil
             }
         } else {
-            capture = nil
+            lastCapture = nil
         }
 
-        lastActionAt = Date()
         timings.wall = clock.milliseconds
         lastTimings = timings
         return snap
@@ -182,7 +184,7 @@ public final class AppSession {
         // one (measured 258 ms on Telegram against a usual 40 ms), because the
         // app is mid-update. Judging by that number would disable the wait
         // exactly when it is needed.
-        let pollAffordable = lastTimings.tree <= settle.maxWalkCost
+        let pollAffordable = lastTimings.tree <= settle.maxWalkCostMilliseconds
 
         let clock = TimingClock()
         var treeMilliseconds = 0.0
@@ -213,8 +215,8 @@ public final class AppSession {
             previousSignature = signature
 
             if !pollAffordable { break }
-            if clock.milliseconds >= settle.budget { break }
-            Thread.sleep(forTimeInterval: settle.interval / 1000)
+            if clock.milliseconds >= settle.budgetMilliseconds { break }
+            Thread.sleep(forTimeInterval: settle.intervalMilliseconds / 1000)
         }
 
         diffBaseline = latest
@@ -238,7 +240,8 @@ public final class AppSession {
         elementTable = table
         diffBaselineTable = nil
         if let frame = latest.windowFrame {
-            mapper = Self.mapperAfterTreeWalk(existing: mapper, windowFrame: frame)
+            coordinateMapper = Self.mapperAfterTreeWalk(
+                existing: coordinateMapper, windowFrame: frame)
         }
         windowElement = AXTreeWalker.focusedWindow(of: AXElement.application(pid: app.pid))
         return latest
@@ -252,12 +255,6 @@ public final class AppSession {
     /// gets the control it actually hit instead of a bare "no change".
     public func smallestNode(containing point: CGPoint) -> AXNode? {
         snapshot?.smallestNode(containing: point)
-    }
-
-    /// Records that an action happened; used to decide whether a snapshot is
-    /// still fresh enough to act on without an explicit re-read.
-    public func noteAction() {
-        lastActionAt = Date()
     }
 
     public func element(at index: Int) throws -> AXElement {
@@ -276,13 +273,13 @@ public final class AppSession {
 
     /// The coordinate mapper to use after a tree walk that took no screenshot.
     ///
-    /// A capture knows its own scale and sets the mapper itself. A walk alone
-    /// does not, so it must keep the scale the model is already working in: the
-    /// pixels it reports come from the last screenshot it was shown, and
-    /// resetting to 1.0 would silently move every later click by a few tens of
-    /// points. The window frame is updated regardless, since the window may
-    /// have moved. With no mapper yet, 1.0 is the honest fallback — pixels then
-    /// equal points inside the window.
+    /// A capture knows its own scale and sets the coordinate mapper itself. A
+    /// walk alone does not, so it must keep the scale the model is already
+    /// working in: the pixels it reports come from the last screenshot it was
+    /// shown, and resetting to 1.0 would silently move every later click by a
+    /// few tens of points. The window frame is updated regardless, since the
+    /// window may have moved. With no mapper yet, 1.0 is the honest fallback —
+    /// pixels then equal points inside the window.
     static func mapperAfterTreeWalk(
         existing: CoordinateMapper?,
         windowFrame: CGRect
