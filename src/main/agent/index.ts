@@ -25,7 +25,6 @@
  * re-implemented here.
  */
 
-import { systemPreferences } from 'electron'
 import type {
   AgentActionRow,
   AgentAvailability,
@@ -35,6 +34,7 @@ import type {
   AgentToolRequest
 } from '@shared/types'
 import { helperBinary, watchForAbort, type AbortWatcher } from '../native/helper'
+import { accessibilityTrusted } from '../permissions'
 import { getSettings, patchSettings } from '../settings/store'
 import { AGENT_MIN_OUTPUT_TOKENS } from '@shared/defaults'
 import { classifyCall, describeCall, rememberKey } from './approval'
@@ -316,13 +316,7 @@ export function createAgentController(host: AgentHost) {
         reason: 'Нативный helper не собран — следить за Escape нечем.'
       }
     }
-    let trusted = false
-    try {
-      trusted = systemPreferences.isTrustedAccessibilityClient(false)
-    } catch {
-      trusted = false
-    }
-    if (!trusted) {
+    if (!accessibilityTrusted()) {
       return {
         enabled: true,
         ready: false,

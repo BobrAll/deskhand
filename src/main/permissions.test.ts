@@ -18,6 +18,8 @@ const env = vi.hoisted(() => ({
   throwAccessibility: false,
   throwScreen: false,
   throwMicrophone: false,
+  /** Simulate the user accepting the Accessibility prompt. */
+  grantOnPrompt: false,
   /** The helper fallback answer; `null` means "the helper said nothing". */
   helper: null as null | { accessibility: boolean; screenRecording: boolean },
   helperThrows: false,
@@ -38,6 +40,10 @@ vi.mock('electron', () => ({
     isTrustedAccessibilityClient: (prompt: boolean) => {
       env.calls.push(prompt ? 'accessibility:prompt' : 'accessibility:read')
       if (env.throwAccessibility) throw new Error('not available')
+      // Asking is what makes macOS show the grant dialog; a user who accepts it
+      // makes the very next read answer `true`, which is the sequence that test
+      // is about.
+      if (prompt && env.grantOnPrompt) env.accessibility = true
       return env.accessibility
     },
     getMediaAccessStatus: (kind: string) => {
@@ -80,6 +86,7 @@ beforeEach(() => {
   env.throwScreen = false
   env.throwMicrophone = false
   env.helper = null
+  env.grantOnPrompt = false
   env.helperThrows = false
   env.calls.length = 0
   env.asked = 0
@@ -114,8 +121,8 @@ describe('readPermissions: which source wins', () => {
     expect(state.microphone).toBe(false)
   })
 
-  it('falls back to the helper for Accessibility only', async () => {
-    env.accessibility = false
+  it('falls back to the helper only when Electron cannot answer', async () => {
+    env.throwAccessibility = true
     env.helper = { accessibility: true, screenRecording: true }
     const { readPermissions } = await loadPermissions()
 
@@ -124,6 +131,27 @@ describe('readPermissions: which source wins', () => {
       screenRecording: false,
       microphone: false
     })
+  })
+
+  it('does not let the helper overrule an app that says it is not trusted', async () => {
+    // The helper is a separate executable with its own TCC entry, so it can stay
+    // trusted after the app's grant is revoked. Believing it is how the settings
+    // window came to promise a grant while the agent refused to act.
+    env.accessibility = false
+    env.helper = { accessibility: true, screenRecording: true }
+    const { readPermissions, accessibilityTrusted } = await loadPermissions()
+
+    expect((await readPermissions()).accessibility).toBe(false)
+    expect(accessibilityTrusted()).toBe(false)
+  })
+
+  it('agrees with the gate the agent uses', async () => {
+    env.accessibility = true
+    env.helper = { accessibility: false, screenRecording: false }
+    const { readPermissions, accessibilityTrusted } = await loadPermissions()
+
+    expect((await readPermissions()).accessibility).toBe(true)
+    expect(accessibilityTrusted()).toBe(true)
   })
 
   it('keeps Accessibility false when the helper disagrees about nothing', async () => {
@@ -212,7 +240,8 @@ describe('requestPermissions: what it actually asks for', () => {
   })
 
   it('returns the state read after the prompts, not before them', async () => {
-    env.helper = { accessibility: true, screenRecording: true }
+    env.accessibility = false
+    env.grantOnPrompt = true
     const { requestPermissions } = await loadPermissions()
 
     expect((await requestPermissions()).accessibility).toBe(true)
