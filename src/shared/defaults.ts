@@ -9,10 +9,9 @@ import type {
 } from './types'
 
 export const DEFAULT_SYSTEM_PROMPT =
-  'Ты ассистент, встроенный в курсор пользователя. Тебе дан контекст из активного приложения. ' +
-  'Отвечай только результатом, без вступлений и пояснений, на том же языке, что и контекст, ' +
-  'если пользователь не попросил иначе. Если просят написать ответ на сообщение, пиши готовый ' +
-  'текст, который можно отправить как есть.'
+  'Ты ассистент в курсоре пользователя. Используй контекст активного приложения. ' +
+  'Давай только результат, без вступлений и пояснений, на языке контекста, если пользователь ' +
+  'не попросил иначе. Ответ на сообщение — готовый к отправке текст.'
 
 /** Password managers and banking apps must never be sent anywhere. */
 export const DEFAULT_EXCLUDED_APPS = [
@@ -288,7 +287,11 @@ export const DEFAULT_AGENT: AgentSettings = {
   // thing to *happen*, and "готово" without a look at the result is a claim the
   // assistant cannot back up. It costs a tree diff, not a second model round
   // trip, so it is cheap enough to be the default.
-  verifyResult: true
+  verifyResult: true,
+  // Show what is happening: the target window comes forward and a pointer
+  // travels to the element. This is presentation only — the same tools run when
+  // it is off — and it is the switch a background mode will turn off.
+  showActions: true
 }
 
 /**
@@ -317,6 +320,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     openai: '',
     anthropic: ''
   },
+  extraBody: { openrouter: '', openai: '', anthropic: '' },
   temperature: 0.3,
   // Sized for the writer's answer, which is a paragraph. The agent is given more
   // than this on purpose — see AGENT_MIN_OUTPUT_TOKENS — because an agent step
@@ -424,7 +428,8 @@ function sanitizeAgent(input: unknown): AgentSettings {
         ? Math.max(1, Math.round(raw.maxSteps))
         : DEFAULT_AGENT.maxSteps,
     abortOnMouseMove: flag(raw.abortOnMouseMove, DEFAULT_AGENT.abortOnMouseMove),
-    verifyResult: flag(raw.verifyResult, DEFAULT_AGENT.verifyResult)
+    verifyResult: flag(raw.verifyResult, DEFAULT_AGENT.verifyResult),
+    showActions: flag(raw.showActions, DEFAULT_AGENT.showActions)
   }
 }
 
@@ -445,6 +450,7 @@ export function normalizeSettings(input: unknown): AppSettings {
       openai: normalizeBaseUrl(baseUrls.openai),
       anthropic: normalizeBaseUrl(baseUrls.anthropic)
     },
+    extraBody: normalizeExtraBody(raw.extraBody),
     temperature: clamp(raw.temperature, 0, 2, DEFAULT_SETTINGS.temperature),
     maxTokens: Math.round(clamp(raw.maxTokens, 64, 8192, DEFAULT_SETTINGS.maxTokens)),
     systemPrompt:
@@ -484,6 +490,40 @@ function normalizeModelIds(input: unknown): Record<ProviderId, string> {
     openai: typeof models.openai === 'string' ? models.openai.trim() : '',
     anthropic: typeof models.anthropic === 'string' ? models.anthropic.trim() : ''
   }
+}
+
+/** Kept as typed: the field is edited live, and reformatting it would move the caret. */
+function normalizeExtraBody(input: unknown): Record<ProviderId, string> {
+  const values = (typeof input === 'object' && input !== null ? input : {}) as Record<string, unknown>
+  const pick = (value: unknown): string => (typeof value === 'string' ? value : '')
+  return {
+    openrouter: pick(values.openrouter),
+    openai: pick(values.openai),
+    anthropic: pick(values.anthropic)
+  }
+}
+
+/** Fields the app writes itself; an extra body may not replace them. */
+const RESERVED_BODY_FIELDS = new Set(['model', 'messages', 'stream', 'tools', 'system'])
+
+/**
+ * The user's extra request fields as an object, or `null` when the text is not
+ * a JSON object. Empty text is an empty object. Reserved fields are dropped, so
+ * a pasted example cannot replace the conversation or turn streaming off.
+ */
+export function parseExtraBody(text: string | undefined): Record<string, unknown> | null {
+  const trimmed = (text ?? '').trim()
+  if (!trimmed) return {}
+  let value: unknown
+  try {
+    value = JSON.parse(trimmed)
+  } catch {
+    return null
+  }
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return null
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>).filter(([key]) => !RESERVED_BODY_FIELDS.has(key))
+  )
 }
 
 /** Models that are known to reject image input; used for the vision warning. */

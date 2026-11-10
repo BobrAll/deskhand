@@ -23,6 +23,7 @@ import { searchWeb } from '../llm/webSearch'
 import { buildTurnRequest } from './request'
 import { applyHistorySettings } from './history'
 import { delay } from '../util'
+import { consumeTurnStream } from '../turnStream'
 import type { OverlayHost } from './host'
 
 const state = vi.hoisted(() => ({
@@ -59,6 +60,12 @@ vi.mock('../pointer', () => ({ hideAnnotations: vi.fn(), showAnnotations: vi.fn(
 vi.mock('../context/screenshot', () => ({ captureScreenshot: vi.fn() }))
 vi.mock('../agent/outline', () => ({ describeScreen: vi.fn() }))
 vi.mock('../agent/cursor', () => ({ beginAgentTurn: vi.fn(), endAgentTurn: vi.fn(), updateAgentCursor: vi.fn() }))
+// The ghost pointer is a separate display layer with its own window; the
+// overlay's job is only to tell it when a run starts and ends.
+vi.mock('../agent/presentation', () => ({
+  presentAgentAction: vi.fn(),
+  updateAgentPointer: vi.fn()
+}))
 vi.mock('../agent/sidecar', () => ({ agentBinary: () => '/tmp/deskhand-agent' }))
 vi.mock('../agent', () => ({
   createAgentController: () => ({
@@ -89,11 +96,11 @@ vi.mock('./request', () => ({
   }))
 }))
 vi.mock('../turnStream', () => ({
-  consumeTurnStream: async (options: { onText: (text: string) => void }) => {
+  consumeTurnStream: vi.fn(async (options: { onText: (text: string) => void }) => {
     if (state.fail) throw new Error('Request failed')
     if (state.stream) { options.onText(state.text); state.afterChunk() }
     return { text: state.text, webLookup: state.webLookup }
-  }
+  })
 }))
 
 beforeEach(() => {
@@ -292,21 +299,63 @@ describe('the agent turn on the card', () => {
 })
 
 describe('voice result visibility', () => {
-  it('keeps the transcript visible before sending', async () => {
+  it('starts routing a spoken turn without waiting for a transcript preview', async () => {
     const h = await harness()
-    let finishPreview!: () => void
-    vi.mocked(delay).mockReturnValueOnce(new Promise<void>((resolve) => {
-      finishPreview = resolve
-    }))
-    const sending = h.controller.send(h.request)
+    vi.mocked(delay).mockClear()
+    vi.mocked(getProvider).mockClear()
 
-    expect(delay).toHaveBeenLastCalledWith(2_000)
+    await h.controller.send(h.request)
+
+    // The two seconds used to be a pause before the model was called. The
+    // transcript is still on screen while the turn runs, so the work starts now.
+    expect(delay).not.toHaveBeenCalledWith(2_000)
+    expect(getProvider).toHaveBeenCalledTimes(1)
     expect(h.visible()).toBe(true)
-    expect(h.send).not.toHaveBeenCalledWith('overlay:stream', expect.anything())
-    finishPreview()
-    await sending
-
     expect(h.send).toHaveBeenCalledWith('overlay:stream', expect.objectContaining({ type: 'done' }))
+  })
+
+  it('keeps the transcript on screen while the turn is already running', async () => {
+    const h = await harness()
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => { release = resolve })
+    vi.mocked(consumeTurnStream).mockImplementationOnce(async (options) => {
+      await gate
+      options.onText('Ответ')
+      return { text: 'Ответ', webLookup: false }
+    })
+
+    vi.useFakeTimers()
+    try {
+      const sending = h.controller.send(h.request)
+      await vi.advanceTimersByTimeAsync(0)
+      // The model is already being called; the card is still showing the words.
+      expect(h.host.hide).not.toHaveBeenCalled()
+
+      await vi.advanceTimersByTimeAsync(2_000)
+      expect(h.host.hide).toHaveBeenCalledOnce()
+
+      release()
+      await sending
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('does not hide a card that already shows the answer', async () => {
+    const h = await harness()
+    vi.useFakeTimers()
+    try {
+      const sending = h.controller.send(h.request)
+      await vi.advanceTimersByTimeAsync(1_000)
+      await sending
+      await vi.advanceTimersByTimeAsync(2_000)
+
+      // The two-second timer is cleared when the turn ends, so it cannot hide
+      // the answer that just arrived.
+      expect(h.host.hide).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('reveals an actual text answer even if the window became hidden', async () => {
@@ -318,7 +367,7 @@ describe('voice result visibility', () => {
     expect(h.send).toHaveBeenCalledWith('overlay:stream', expect.objectContaining({ type: 'done', text: 'Ответ' }))
   })
 
-  it('prepares a protected screenshot during preview', async () => {
+  it('prepares a protected screenshot for a spoken turn', async () => {
     const h = await harness()
     const shot = {
       dataUrl: 'data:image/jpeg;base64,abc', width: 1440, height: 900, bytes: 3,
@@ -326,8 +375,6 @@ describe('voice result visibility', () => {
     }
     vi.mocked(captureScreenshot).mockClear().mockResolvedValueOnce(shot)
     vi.mocked(getProvider).mockClear()
-    let finishPreview!: () => void
-    vi.mocked(delay).mockReturnValueOnce(new Promise<void>((resolve) => { finishPreview = resolve }))
     const prepare = vi.fn<typeof buildTurnRequest>(async ({ ensureFreshScreenshot }) => {
       expect(await ensureFreshScreenshot()).toBe(shot)
       return {
@@ -335,17 +382,12 @@ describe('voice result visibility', () => {
         canDraw: true, abandoned: false
       }
     })
-
-    const sending = h.controller.send({ ...h.request, includeScreenshot: true })
-    await vi.waitFor(() => expect(captureScreenshot).toHaveBeenCalledOnce())
-    expect(h.host.window()?.setContentProtection).toHaveBeenCalledWith(true)
-    expect(h.visible()).toBe(true)
-    expect(getProvider).not.toHaveBeenCalled()
-
     vi.mocked(buildTurnRequest).mockImplementationOnce(prepare)
-    finishPreview()
-    await sending
+
+    await h.controller.send({ ...h.request, includeScreenshot: true })
+
     expect(captureScreenshot).toHaveBeenCalledOnce()
+    expect(h.host.window()?.setContentProtection).toHaveBeenCalledWith(true)
     expect(prepare).toHaveBeenCalledTimes(1)
     expect(getProvider).toHaveBeenCalledTimes(1)
   })

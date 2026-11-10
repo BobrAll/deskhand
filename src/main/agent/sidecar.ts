@@ -26,10 +26,23 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { app } from 'electron'
-import type { AgentToolRequest } from '@shared/types'
+import type { AgentGesture, AgentPresentation, AgentToolRequest, ScreenRect } from '@shared/types'
 import { trace } from './trace'
 
 const BINARY_NAME = 'deskhand-agent'
+
+/** The gesture vocabulary `present` may carry, matching the Swift enum. */
+const GESTURES = [
+  'click',
+  'secondary',
+  'type',
+  'value',
+  'select',
+  'key',
+  'scroll',
+  'drag',
+  'activate'
+] as const
 
 let cachedPath: string | null | undefined
 
@@ -57,16 +70,24 @@ export interface AgentProvider {
   apiKey: string
   maxTokens: number
   temperature: number
+  /** Extra request-body fields from the settings, merged as they are. */
+  extraBody?: Record<string, unknown>
   /** Gateway headers, e.g. OpenRouter's attribution pair. */
   headers?: Record<string, string>
 }
 
 export interface AgentRunOptions {
   task: string
+  traceRunId?: string
   provider: AgentProvider
   maxSteps: number
   /** Let the agent append an accessibility diff to the last call of a batch. */
   verifyActions: boolean
+  /**
+   * Ask the agent to describe each action before it runs, so the host can draw
+   * it. The action itself is unchanged: this only adds a picture to the pipe.
+   */
+  visualize: boolean
 }
 
 /**
@@ -121,9 +142,26 @@ export interface AgentRunReport {
 export type AgentSidecarEvent =
   | { kind: 'ready'; tools: number }
   | { kind: 'step'; step: number; total: number }
+  | { kind: 'modelTrace'; event: string; data: Record<string, unknown> }
   | { kind: 'stepTiming'; step: number; timing: AgentStepTiming }
+  /**
+   * The model's prose so far, while the turn is still running.
+   *
+   * `text` is the whole prefix, not a delta: the card replaces its caption
+   * instead of keeping a buffer, and a dropped line costs a word rather than
+   * the sentence.
+   */
+  | { kind: 'stream'; step: number; text: string }
   | { kind: 'narration'; step: number; text: string }
   | { kind: 'tool'; step: number; name: string; args: Record<string, unknown>; narration?: string }
+  /**
+   * One action, in screen terms, just before it runs.
+   *
+   * Separate from `tool` because `tool` carries the model's arguments and this
+   * carries the resolved target. The host draws this; it must not wait for the
+   * drawing before the next event arrives.
+   */
+  | { kind: 'present'; presentation: AgentPresentation }
   | {
       kind: 'result'
       step: number
@@ -161,6 +199,7 @@ interface Pending {
 }
 
 export interface Message {
+  trace_run_id?: string
   id?: number
   event?: string
   params?: Record<string, unknown>
@@ -179,6 +218,7 @@ export interface Message {
 export class AgentSidecar {
   private child: ChildProcessWithoutNullStreams | null = null
   private buffer = ''
+  private traceRunId: string | undefined
   private counter = 0
   private readonly pending = new Map<number, Pending>()
   private handlers: ((event: AgentSidecarEvent) => void)[] = []
@@ -297,16 +337,21 @@ export class AgentSidecar {
   /** Starts a task. Resolves when the run is accepted, not when it finishes. */
   async run(options: AgentRunOptions): Promise<void> {
     await this.start()
+    this.traceRunId = options.traceRunId
     await this.request('run', {
       task: options.task,
       provider: wireProvider(options.provider),
       options: {
         max_steps: options.maxSteps,
+        trace_run_id: options.traceRunId,
         verify_actions: options.verifyActions,
         // The app's trace already carries every event; the agent's own stderr is
         // the fallback for a run started outside the app.
         verbose: false,
-        timings: true
+        timings: true,
+        // Presentation only. With this false the same tools run and the same
+        // approvals are asked, but nothing is raised or drawn.
+        visualize: options.visualize
       }
     })
   }
@@ -371,6 +416,7 @@ export class AgentSidecar {
       else entry.resolve(message.result ?? {})
       return
     }
+    if (message.trace_run_id && message.trace_run_id !== this.traceRunId) return
     const event = translate(message)
     if (event) this.emit(event)
   }
@@ -404,6 +450,9 @@ function wireProvider(provider: AgentProvider): Record<string, unknown> {
     api_key: provider.apiKey,
     max_tokens: provider.maxTokens,
     temperature: provider.temperature,
+    ...(provider.extraBody && Object.keys(provider.extraBody).length > 0
+      ? { extra_body: provider.extraBody }
+      : {}),
     ...(provider.headers ? { headers: provider.headers } : {})
   }
 }
@@ -436,11 +485,40 @@ export function translate(message: Message): AgentSidecarEvent | null {
   const params = message.params ?? {}
   const number = (key: string): number => (typeof params[key] === 'number' ? params[key] as number : 0)
   const text = (key: string): string => (typeof params[key] === 'string' ? params[key] as string : '')
+  /**
+   * One screen rectangle, or `undefined` when the agent did not send a usable
+   * one. Kept as `undefined` rather than a zero rect: "no element to point at"
+   * and "an element at 0,0 with no size" are different pictures.
+   */
+  const rect = (value: unknown): ScreenRect | undefined => {
+    if (!value || typeof value !== 'object') return undefined
+    const raw = value as Record<string, unknown>
+    const x = raw.x
+    const y = raw.y
+    const width = raw.width
+    const height = raw.height
+    if (
+      typeof x !== 'number' || !Number.isFinite(x) ||
+      typeof y !== 'number' || !Number.isFinite(y) ||
+      typeof width !== 'number' || !Number.isFinite(width) ||
+      typeof height !== 'number' || !Number.isFinite(height)
+    ) {
+      return undefined
+    }
+    return { x, y, width, height }
+  }
   switch (message.event) {
     case 'ready':
       return { kind: 'ready', tools: number('tools') }
+    case 'model-request':
+    case 'model-response':
+    case 'model-completion':
+    case 'model-error':
+      return { kind: 'modelTrace', event: message.event, data: params }
     case 'step':
       return { kind: 'step', step: number('step'), total: number('total') }
+    case 'stream':
+      return { kind: 'stream', step: number('step'), text: text('text') }
     case 'narration':
       return { kind: 'narration', step: number('step'), text: text('text') }
     case 'tool':
@@ -509,6 +587,29 @@ export function translate(message: Message): AgentSidecarEvent | null {
           narration: text('narration') || undefined
         }
       }
+    case 'present': {
+      const gesture = text('gesture')
+      return {
+        kind: 'present',
+        presentation: {
+          tool: text('tool'),
+          // An unknown gesture falls back to a click rather than dropping the
+          // event: a new tool should still show a pointer, not disappear.
+          gesture: (GESTURES as readonly string[]).includes(gesture)
+            ? (gesture as AgentGesture)
+            : 'click',
+          app: text('app') || undefined,
+          bundleId: text('bundle_id') || undefined,
+          pid: typeof params.pid === 'number' ? params.pid : undefined,
+          point:
+            typeof params.x === 'number' && typeof params.y === 'number'
+              ? { x: params.x, y: params.y }
+              : undefined,
+          target: rect(params.target),
+          window: rect(params.window)
+        }
+      }
+    }
     case 'warning':
       return { kind: 'warning', reason: text('reason') }
     case 'stopped':

@@ -95,6 +95,8 @@ export const CH = {
     event: 'agent:event',
     /** main -> agent display layer: what the plan is doing and where to place the caption. */
     cursor: 'agent:cursor',
+    /** main -> agent display layer: where the virtual pointer is going. */
+    presentation: 'agent:presentation',
     /** overlay -> main: stop whatever is happening right now (Escape, «Стоп»). */
     stop: 'agent:stop',
     /**

@@ -33,8 +33,34 @@ final class ScriptedProvider: ChatProvider {
     }
 }
 
-final class AgentLoopTests: XCTestCase {
-    func testATruncatedReplyIsNotMistakenForAFinishedRun() async throws {
+/// An executor that answers from a script, so the loop's own decisions can be
+/// exercised without a window or an accessibility tree.
+final class ScriptedExecutor: ToolRunning {
+    private var script: [ToolResult]
+    private let repeating: ToolResult?
+    private(set) var calls: [String] = []
+
+    /// Answers every call with the same result — a run that never moves.
+    init(repeating result: ToolResult) {
+        self.script = []
+        self.repeating = result
+    }
+
+    /// Answers each call with the next result, in order.
+    init(steps: [ToolResult]) {
+        self.script = steps
+        self.repeating = nil
+    }
+
+    func call(name: String, arguments: JSONValue, verify: Bool, narration: String?) async -> ToolResult {
+        calls.append(name)
+        if let repeating { return repeating }
+        guard !script.isEmpty else { return .text("script exhausted") }
+        return script.removeFirst()
+    }
+}
+
+final class AgentLoopTests: XCTestCase {    func testATruncatedReplyIsNotMistakenForAFinishedRun() async throws {
         // The provider cut the answer off at `max_tokens`. The tool call it was
         // writing never finished, so the reply arrives with no calls and no text
         // — the exact shape of "the model said it is done". Taking that at face
@@ -213,6 +239,76 @@ final class AgentLoopTests: XCTestCase {
         XCTAssertTrue(answer.contains("Stopped after 3 steps"))
     }
 
+    func testStopsWhenTheRunKeepsReturningToTheSameScreen() async throws {
+        // The real failure: a run of 30 steps where no two consecutive calls
+        // were identical — `super+l`, read, click, read — so the identical-call
+        // guard never fired, and the step budget was the only bound. Every step
+        // here lands on the same screen.
+        let executor = ScriptedExecutor(repeating: .init(
+            content: [.text("ok")], stateFingerprint: "Chrome|Filters|42"))
+        let provider = ScriptedProvider(steps: (0..<40).map { step in
+            .init(text: "", toolCalls: [
+                ToolCall(id: UUID().uuidString, name: "press_key",
+                         arguments: .object(["key": .string("key-\(step)")]))
+            ])
+        })
+        let loop = AgentLoop(
+            provider: provider,
+            executor: executor,
+            options: .init(maxSteps: 40, verbose: false)
+        )
+        let answer = try await loop.run(task: "get stuck")
+        XCTAssertFalse(loop.finished, "a run that went in circles did not finish")
+        XCTAssertTrue(answer.contains("without a new screen"), answer)
+        XCTAssertLessThan(executor.calls.count, 20, "the loop must stop long before the budget")
+    }
+
+    func testAWarningComesBeforeTheStop() async throws {
+        let executor = ScriptedExecutor(repeating: .init(
+            content: [.text("ok")], stateFingerprint: "same"))
+        let provider = ScriptedProvider(steps: (0..<40).map { step in
+            .init(text: "", toolCalls: [
+                ToolCall(id: UUID().uuidString, name: "press_key",
+                         arguments: .object(["key": .string("key-\(step)")]))
+            ])
+        })
+        let loop = AgentLoop(
+            provider: provider,
+            executor: executor,
+            options: .init(maxSteps: 40, verbose: false)
+        )
+        _ = try await loop.run(task: "get stuck")
+
+        // The model is told what it is doing wrong while it still has steps left,
+        // so a task that was one correction from finishing is not cut short.
+        let sawWarning = provider.calls.contains { call in
+            call.0.contains { $0.role == .user && $0.text.contains("the same screen") }
+        }
+        XCTAssertTrue(sawWarning, "the model must be told it is going in circles")
+    }
+
+    func testANewScreenResetsTheStallCounter() async throws {
+        let executor = ScriptedExecutor(steps: (0..<30).map { step in
+            ToolResult(content: [.text("ok")], stateFingerprint: "screen-\(step / 5)")
+        })
+        let provider = ScriptedProvider(steps: (0..<30).map { step in
+            .init(text: "", toolCalls: [
+                ToolCall(id: UUID().uuidString, name: "press_key",
+                         arguments: .object(["key": .string("key-\(step)")]))
+            ])
+        })
+        let loop = AgentLoop(
+            provider: provider,
+            executor: executor,
+            options: .init(maxSteps: 12, verbose: false)
+        )
+        let answer = try await loop.run(task: "make progress")
+        // A run that moves to a new screen every few steps is not stuck, so the
+        // only bound that applies is the step budget.
+        XCTAssertTrue(answer.contains("Stopped after 12 steps"), answer)
+        XCTAssertEqual(executor.calls.count, 12)
+    }
+
     func testScreenshotsAreTrimmedToKeepContextBounded() {
         let provider = ScriptedProvider(steps: [])
         let loop = AgentLoop(
@@ -303,12 +399,49 @@ final class AgentLoopTests: XCTestCase {
         XCTAssertEqual(trees.count, 2, "both messages survive")
 
         let oldest = trees[0]
-        XCTAssertFalse(oldest.text.contains("AXButton"), "the stale tree body is gone")
+        XCTAssertFalse(oldest.text.contains("AXButton"), "the old tree body is gone")
         XCTAssertTrue(oldest.text.contains("Telegram — window"), "the cheap header is kept")
-        XCTAssertTrue(oldest.text.contains("stale"))
+        XCTAssertTrue(oldest.text.contains("omitted to keep the prompt small"))
+        // Numbers stay with their control across walks, so a trimmed tree does
+        // not invalidate anything the model already knows.
+        XCTAssertTrue(oldest.text.contains("still mean the same controls"))
 
         let newest = trees[1]
         XCTAssertTrue(newest.text.contains("AXButton \"Send\""), "the newest tree is intact")
+    }
+
+    func testOnlyTheNewestDiffIsKeptInFull() {
+        // A diff describes a transition. Once a later action has changed the
+        // screen again, its lines describe something that is not there any more
+        // — and on a long run they were a quarter of the whole prompt.
+        let loop = AgentLoop(
+            provider: ScriptedProvider(steps: []),
+            executor: ToolExecutor(),
+            options: .init(verbose: false)
+        )
+        let messages: [ChatMessage] = [
+            ChatMessage(role: .tool, text: """
+                Chrome — window "Filters"
+                Pressed element 1 (AXButton "Create").
+                Changed after the click (1 added):
+                + 7 AXButton "Confirm"
+                """, toolCallID: "a"),
+            ChatMessage(role: .tool, text: """
+                Chrome — window "Filters"
+                Pressed element 7 (AXButton "Confirm").
+                Changed after the click (1 added):
+                + 9 AXTextField "Label"
+                """, toolCallID: "b"),
+        ]
+        let trimmed = loop.trim(messages)
+
+        XCTAssertTrue(trimmed[0].text.contains("superseded by a later action"))
+        XCTAssertFalse(trimmed[0].text.contains("AXButton \"Confirm\""),
+                       "the superseded diff body is gone")
+        XCTAssertTrue(trimmed[0].text.contains("Pressed element 1"),
+                      "what the action was stays")
+        XCTAssertTrue(trimmed[1].text.contains("+ 9 AXTextField \"Label\""),
+                      "the newest diff is intact")
     }
 
     func testTextOnlyMessagesArePreservedWhenImagesAreDropped() {
@@ -379,5 +512,86 @@ final class AgentCancellationTests: XCTestCase {
         } catch {
             XCTFail("Unexpected error: \(error)")
         }
+    }
+}
+
+/// A provider that writes its answer in pieces, the way a streaming wire does.
+private final class StreamingScriptedProvider: StreamingChatProvider {
+    struct Step {
+        var chunks: [String]
+        var toolCalls: [ToolCall]
+    }
+
+    let config = ProviderConfig(apiKey: "test")
+    private var steps: [Step]
+
+    init(steps: [Step]) {
+        self.steps = steps
+    }
+
+    func complete(
+        messages: [ChatMessage],
+        tools: [ToolDefinition],
+        systemPrompt: String
+    ) async throws -> Completion {
+        try await complete(messages: messages, tools: tools, systemPrompt: systemPrompt, onText: { _ in })
+    }
+
+    func complete(
+        messages: [ChatMessage],
+        tools: [ToolDefinition],
+        systemPrompt: String,
+        onText: (String) -> Void
+    ) async throws -> Completion {
+        guard !steps.isEmpty else {
+            return Completion(text: "script exhausted", toolCalls: [], stopReason: "stop")
+        }
+        let step = steps.removeFirst()
+        for chunk in step.chunks where !chunk.isEmpty {
+            onText(chunk)
+        }
+        return Completion(text: step.chunks.joined(), toolCalls: step.toolCalls, stopReason: nil)
+    }
+}
+
+/// Records what the card would have drawn.
+private final class RecordingObserver: AgentObserver, @unchecked Sendable {
+    var streams: [Int: [String]] = [:]
+    var captions: [Int: String] = [:]
+
+    func stepStreamed(_ step: Int, text: String) {
+        streams[step, default: []].append(text)
+    }
+
+    func stepAnswered(_ step: Int, narration: String, calls: [ToolCall]) {
+        captions[step] = narration
+    }
+}
+
+final class AgentStreamingTests: XCTestCase {
+    func testStreamsTheCaptionWhileTheStepIsStillRunning() async throws {
+        let provider = StreamingScriptedProvider(steps: [
+            .init(chunks: ["Открываю", " Telegram"], toolCalls: [
+                ToolCall(id: "c1", name: "list_apps", arguments: .object(["include_installed": .bool(false)]))
+            ]),
+            .init(chunks: ["Готово"], toolCalls: []),
+        ])
+        let observer = RecordingObserver()
+        let loop = AgentLoop(
+            provider: provider,
+            executor: ToolExecutor(),
+            options: .init(verbose: false)
+        )
+        loop.observer = observer
+
+        let answer = try await loop.run(task: "open it")
+
+        XCTAssertEqual(answer, "Готово")
+        // The first delta goes out immediately, and the throttle's last gap is
+        // closed after the provider returns: the card ends on the full caption.
+        XCTAssertEqual(observer.streams[1]?.first, "Открываю")
+        XCTAssertEqual(observer.streams[1]?.last, "Открываю Telegram")
+        XCTAssertEqual(observer.captions[1], "Открываю Telegram")
+        XCTAssertEqual(observer.streams[2]?.last, "Готово")
     }
 }

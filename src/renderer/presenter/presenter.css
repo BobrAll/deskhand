@@ -1,0 +1,144 @@
+/*
+ * The agent's ghost pointer: a soft mark over arbitrary content, like the
+ * cursor layer, but quieter. It is on screen for the whole run and must read as
+ * "the agent is here" rather than as a control.
+ */
+
+html,
+body,
+#root {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  background: transparent;
+  overflow: hidden;
+  /* A picture, not a control. The main process enforces this too. */
+  pointer-events: none;
+  user-select: none;
+  cursor: default;
+  -webkit-app-region: no-drag;
+}
+
+:root {
+  /* The same blue as the cursor layer and the overlay accent, used sparingly. */
+  --ghost-accent: #7f95ff;
+  --ghost-ink: 255 255 255;
+}
+
+/*
+ * The mark itself.
+ *
+ * Soft on purpose: a drop shadow, no outline, a small size. On a light window it
+ * stays legible through the shadow; on a dark one through the fill. It travels
+ * with a transition rather than a scripted animation — the main process sends a
+ * target and forgets it, and the compositor does the interpolation.
+ */
+.virtual-pointer {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 20px;
+  height: 20px;
+  opacity: 0.62;
+  transform: translate(-100px, -100px);
+  transition:
+    transform 280ms cubic-bezier(0.22, 0.61, 0.36, 1),
+    opacity 300ms ease-out;
+  filter:
+    drop-shadow(0 0 5px rgb(127 149 255 / 0.55))
+    drop-shadow(0 1px 2px rgb(0 0 0 / 0.4));
+  will-change: transform, opacity;
+}
+
+#root[data-visible='false'] .virtual-pointer {
+  opacity: 0;
+}
+
+/* Waiting for the next action: present, but barely. */
+#root[data-visible='true'][data-idle='true'] .virtual-pointer {
+  opacity: 0.34;
+  animation: ghost-breathe 3.4s ease-in-out infinite;
+}
+
+.virtual-pointer svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.virtual-pointer .arrow {
+  fill: rgb(var(--ghost-ink) / 0.9);
+  stroke: none;
+}
+
+.virtual-pointer[data-press='true'] svg {
+  animation: ghost-press 260ms ease-out;
+}
+
+@keyframes ghost-press {
+  0% { transform: scale(1); }
+  35% { transform: scale(0.88); }
+  100% { transform: scale(1); }
+}
+
+/* A slow breath, so a long model round trip does not look like a freeze. */
+@keyframes ghost-breathe {
+  50% { opacity: 0.5; }
+}
+
+/*
+ * A hairline around the element being acted on. It is deliberately faint: the
+ * point of the picture is "here", not a second frame the user has to read.
+ */
+.target-ring {
+  position: absolute;
+  opacity: 0;
+  border: 1px solid rgb(127 149 255 / 0.55);
+  border-radius: 10px;
+  background: rgb(127 149 255 / 0.05);
+  transition: opacity 220ms ease-out;
+  pointer-events: none;
+}
+
+.target-ring[data-on='true'] {
+  opacity: 1;
+}
+
+.ripple {
+  position: absolute;
+  width: 22px;
+  height: 22px;
+  margin: -11px 0 0 -11px;
+  border: 1px solid rgb(127 149 255 / 0.75);
+  border-radius: 50%;
+  animation: ghost-ripple 520ms ease-out forwards;
+  pointer-events: none;
+}
+
+@keyframes ghost-ripple {
+  from {
+    transform: scale(0.3);
+    opacity: 0.65;
+  }
+  to {
+    transform: scale(2.4);
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .virtual-pointer {
+    transition: opacity 300ms ease-out;
+  }
+
+  #root[data-visible='true'][data-idle='true'] .virtual-pointer,
+  .virtual-pointer[data-press='true'] svg,
+  .ripple {
+    animation: none;
+  }
+
+  .ripple {
+    display: none;
+  }
+}

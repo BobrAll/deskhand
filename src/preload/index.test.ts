@@ -115,6 +115,7 @@ describe('preload: the exposed bridge', () => {
     expect(Object.keys(api).sort()).toEqual([
       'agent',
       'agentCursor',
+      'agentPresenter',
       'onboarding',
       'overlay',
       'permissions',

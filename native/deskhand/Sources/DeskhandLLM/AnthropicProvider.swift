@@ -4,7 +4,7 @@ import DeskhandCore
 /// Anthropic messages wire format, including the `anthropic-version` header and
 /// the block-based content array. `baseURL` is configurable so this also works
 /// against Anthropic-compatible proxies.
-public struct AnthropicProvider: ChatProvider {
+public struct AnthropicProvider: StreamingChatProvider {
     public let config: ProviderConfig
     private let session: URLSession
 
@@ -18,19 +18,112 @@ public struct AnthropicProvider: ChatProvider {
         self.session = URLSession(configuration: configuration)
     }
 
+    /// Test seam: lets a URLProtocol answer the SSE request without a network.
+    init(config: ProviderConfig, session: URLSession) {
+        self.config = config
+        self.session = session
+    }
+
     public func complete(
         messages: [ChatMessage],
         tools: [ToolDefinition],
         systemPrompt: String
     ) async throws -> Completion {
+        try requireKey()
+        let request = makeRequest(payload: makePayload(
+            messages: messages, tools: tools, systemPrompt: systemPrompt, stream: false
+        ))
+        let exchange = ModelTrace.start(request)
+
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await session.data(for: request)
+        } catch {
+            exchange?.failed(error)
+            throw LLMError.transport(error.localizedDescription)
+        }
+
+        guard let http = response as? HTTPURLResponse else {
+            throw LLMError.transport("no HTTP response")
+        }
+        exchange?.response(data, status: http.statusCode)
+        guard (200..<300).contains(http.statusCode) else {
+            throw LLMError.http(
+                status: http.statusCode,
+                body: String(data: data, encoding: .utf8) ?? "<binary>"
+            )
+        }
+
+        return try decode(data)
+    }
+
+    public func complete(
+        messages: [ChatMessage],
+        tools: [ToolDefinition],
+        systemPrompt: String,
+        onText: (String) -> Void
+    ) async throws -> Completion {
+        try requireKey()
+        let request = makeRequest(payload: makePayload(
+            messages: messages, tools: tools, systemPrompt: systemPrompt, stream: true
+        ))
+        let exchange = ModelTrace.start(request)
+
+        let bytes: URLSession.AsyncBytes
+        let response: URLResponse
+        do {
+            (bytes, response) = try await session.bytes(for: request)
+        } catch {
+            exchange?.failed(error)
+            throw LLMError.transport(error.localizedDescription)
+        }
+
+        guard let http = response as? HTTPURLResponse else {
+            throw LLMError.transport("no HTTP response")
+        }
+        guard (200..<300).contains(http.statusCode) else {
+            let body = await collect(bytes, limit: 4096)
+            exchange?.response(body, status: http.statusCode)
+            // Same fallback as the OpenAI wire: a proxy that refuses `stream`
+            // can still answer in one piece, and nothing has been shown yet.
+            if [400, 404, 422].contains(http.statusCode) {
+                return try await complete(messages: messages, tools: tools, systemPrompt: systemPrompt)
+            }
+            throw LLMError.http(
+                status: http.statusCode,
+                body: String(data: body, encoding: .utf8) ?? "<binary>"
+            )
+        }
+
+        if let contentType = http.value(forHTTPHeaderField: "Content-Type"),
+           contentType.lowercased().contains("application/json") {
+            let body = await collect(bytes, limit: 16 * 1024 * 1024)
+            exchange?.response(body, status: http.statusCode)
+            return try decode(body)
+        }
+
+        return try await decodeStream(bytes, exchange: exchange, status: http.statusCode, onText: onText)
+    }
+
+    private func requireKey() throws {
         if config.apiKey == nil && !config.omitAuthHeader {
             throw LLMError.missingAPIKey("Set ANTHROPIC_API_KEY or add api_key to ~/.deskhand/config.toml")
         }
+    }
 
+    private func makePayload(
+        messages: [ChatMessage],
+        tools: [ToolDefinition],
+        systemPrompt: String,
+        stream: Bool
+    ) -> [String: JSONValue] {
         var payload: [String: JSONValue] = [
             "model": .string(config.model),
             "max_tokens": .number(Double(config.maxTokens)),
             "messages": .array(encodeMessages(messages)),
+            "thinking": .object(["type": .string("disabled")]),
+            "stream": .bool(stream),
         ]
         if !systemPrompt.isEmpty {
             payload["system"] = .string(systemPrompt)
@@ -41,7 +134,11 @@ public struct AnthropicProvider: ChatProvider {
         if !tools.isEmpty {
             payload["tools"] = .array(tools.map(\.anthropicJSON))
         }
+        payload.merge(config.extraBody) { _, user in user }
+        return payload
+    }
 
+    private func makeRequest(payload: [String: JSONValue]) -> URLRequest {
         var request = URLRequest(url: config.endpointURL())
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -54,26 +151,131 @@ public struct AnthropicProvider: ChatProvider {
             request.setValue(value, forHTTPHeaderField: name)
         }
         request.httpBody = JSONValue.object(payload).serializedData()
+        return request
+    }
 
-        let data: Data
-        let response: URLResponse
-        do {
-            (data, response) = try await session.data(for: request)
-        } catch {
-            throw LLMError.transport(error.localizedDescription)
+    private struct ToolCallBuilder {
+        var id = ""
+        var name = ""
+        var arguments = ""
+    }
+
+    /// Reads Anthropic's block-based `text/event-stream`.
+    ///
+    /// Tool input arrives as `input_json_delta.partial_json` fragments inside a
+    /// `tool_use` block, so the block index is the identity: text and tool calls
+    /// can interleave, and the arguments are parsed only when the block ends.
+    private func decodeStream(
+        _ bytes: URLSession.AsyncBytes,
+        exchange: ModelTrace.Exchange?,
+        status: Int,
+        onText: (String) -> Void
+    ) async throws -> Completion {
+        var text = ""
+        var builders: [Int: ToolCallBuilder] = [:]
+        var stopReason: String?
+        var inputTokens: Int?
+        var outputTokens: Int?
+        var sawStop = false
+
+        var lines: [JSONValue] = []
+        defer { exchange?.stream(lines, status: status) }
+        for try await line in bytes.lines {
+            if exchange != nil { lines.append(.string(line)) }
+            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard trimmed.hasPrefix("data:") else { continue }
+            let raw = trimmed.dropFirst(5).trimmingCharacters(in: .whitespaces)
+            if raw == "[DONE]" { break }
+            guard let value = try? JSONValue.parse(raw) else { continue }
+
+            switch value["type"]?.stringValue {
+            case "error":
+                let message = value["error"]?["message"]?.stringValue ?? "stream error"
+                throw LLMError.provider(message)
+
+            case "message_start":
+                let usage = value["message"]?["usage"]
+                inputTokens = usage?["input_tokens"]?.intValue
+                outputTokens = usage?["output_tokens"]?.intValue
+
+            case "content_block_start":
+                let index = value["index"]?.intValue ?? 0
+                let block = value["content_block"]
+                guard block?["type"]?.stringValue == "tool_use" else { continue }
+                var builder = builders[index] ?? ToolCallBuilder()
+                builder.id = block?["id"]?.stringValue ?? ""
+                builder.name = block?["name"]?.stringValue ?? ""
+                builders[index] = builder
+
+            case "content_block_delta":
+                let index = value["index"]?.intValue ?? 0
+                let delta = value["delta"]
+                switch delta?["type"]?.stringValue {
+                case "text_delta":
+                    if let chunk = delta?["text"]?.stringValue, !chunk.isEmpty {
+                        text += chunk
+                        onText(chunk)
+                    }
+                case "input_json_delta":
+                    if let partial = delta?["partial_json"]?.stringValue, !partial.isEmpty {
+                        var builder = builders[index] ?? ToolCallBuilder()
+                        builder.arguments += partial
+                        builders[index] = builder
+                    }
+                default:
+                    continue
+                }
+
+            case "message_delta":
+                if let reason = value["delta"]?["stop_reason"]?.stringValue {
+                    stopReason = reason
+                }
+                if let output = value["usage"]?["output_tokens"]?.intValue {
+                    outputTokens = output
+                }
+
+            case "message_stop":
+                sawStop = true
+
+            default:
+                continue
+            }
         }
 
-        guard let http = response as? HTTPURLResponse else {
-            throw LLMError.transport("no HTTP response")
+        if !sawStop && stopReason == nil && text.isEmpty && builders.isEmpty {
+            throw LLMError.transport("the response stream ended before the model answered")
         }
-        guard (200..<300).contains(http.statusCode) else {
-            throw LLMError.http(
-                status: http.statusCode,
-                body: String(data: data, encoding: .utf8) ?? "<binary>"
+
+        let calls = builders.keys.sorted().map { index -> ToolCall in
+            let builder = builders[index]!
+            let arguments = (try? JSONValue.parse(builder.arguments)) ?? .object([:])
+            return ToolCall(
+                id: builder.id.isEmpty ? UUID().uuidString : builder.id,
+                name: builder.name,
+                arguments: arguments
             )
         }
+        if stopReason == "tool_use" && calls.isEmpty {
+            throw LLMError.decoding("the stream announced a tool use but none arrived")
+        }
 
-        return try decode(data)
+        let usage = (inputTokens == nil && outputTokens == nil)
+            ? nil
+            : Usage(inputTokens: inputTokens ?? 0, outputTokens: outputTokens ?? 0)
+        return Completion(text: text, toolCalls: calls, stopReason: stopReason, usage: usage)
+    }
+
+    private func collect(_ bytes: URLSession.AsyncBytes, limit: Int) async -> Data {
+        var data = Data()
+        do {
+            for try await byte in bytes {
+                data.append(byte)
+                if data.count >= limit { break }
+            }
+        } catch {
+            // Only the error message needs the body.
+        }
+        return data
     }
 
     /// Anthropic requires tool results to be `user` messages containing
@@ -112,7 +314,7 @@ public struct AnthropicProvider: ChatProvider {
                         "type": .string("image"),
                         "source": .object([
                             "type": .string("base64"),
-                            "media_type": .string("image/png"),
+                            "media_type": .string(WindowCapture.mimeType(of: image)),
                             "data": .string(image.base64EncodedString()),
                         ]),
                     ]))

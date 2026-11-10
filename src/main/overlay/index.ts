@@ -10,7 +10,7 @@ import { randomUUID } from 'node:crypto'
 import { app, BrowserWindow } from 'electron'
 import { allowsWebLookup, looksLikeAction } from '@shared/intent'
 import { CH } from '@shared/ipc'
-import { modelSupportsVision, providerInfo, resolveBaseUrl } from '@shared/defaults'
+import { modelSupportsVision, parseExtraBody, providerInfo, resolveBaseUrl } from '@shared/defaults'
 import type {
   ActiveAppInfo,
   AgentAvailability,
@@ -28,6 +28,7 @@ import type {
 } from '@shared/types'
 import { createAgentController } from '../agent'
 import { beginAgentTurn, endAgentTurn, updateAgentCursor } from '../agent/cursor'
+import { presentAgentAction, updateAgentPointer } from '../agent/presentation'
 import type { AgentProvider } from '../agent/sidecar'
 import { describeScreen } from '../agent/outline'
 import { collectContext } from '../context/collect'
@@ -100,7 +101,11 @@ interface Session {
  */
 const INITIAL_HEIGHT = 31
 
-/** Time to read an automatically sent transcript in the card. */
+/**
+ * How long a spoken transcript stays on screen while its request is already
+ * running. The old code waited this long before calling the model; now it is
+ * only a floor for the card, not a pause in the work.
+ */
 const VOICE_PREVIEW_MS = 2_000
 
 /** How often the open overlay re-captures the screen behind it. */
@@ -144,10 +149,17 @@ export function createOverlayController(host: OverlayHost) {
    * session (or into no session at all), so `deliver` waits for this to settle.
    */
   let opening: Promise<void> | null = null
-  let voicePreview: AbortController | null = null
+  /**
+   * The spoken turn still in flight.
+   *
+   * A new press supersedes it immediately: while a voice answer is streaming or
+   * an agent is clicking, the user pressing the key again means they are already
+   * saying the next thing, and the old turn must not keep acting underneath them.
+   */
+  let voiceTurn: AbortController | null = null
 
   function setVoice(active: boolean): void {
-    if (active) voicePreview?.abort()
+    if (active) voiceTurn?.abort()
     host.setVoice(active)
   }
 
@@ -161,7 +173,8 @@ export function createOverlayController(host: OverlayHost) {
    */
   const agent = createAgentController({
     setPassthrough: (active) => host.setPassthrough(active),
-    emit: (event: AgentEvent) => publishAgent(event)
+    emit: (event: AgentEvent) => publishAgent(event),
+    present: (action) => presentAgentAction(action)
   })
 
   /** Keeps the card and the display layer in sync with the agent's state. */
@@ -169,6 +182,9 @@ export function createOverlayController(host: OverlayHost) {
     trace('agent.phase', { phase: event.phase, step: event.step, total: event.total, completed: event.completed === true, calls: event.actions?.length ?? 0 })
     emit(CH.agent.event, event)
     updateAgentCursor(event)
+    // The ghost pointer follows the run, not the step: it is present from
+    // `arming` to the terminal phase and waits between actions.
+    updateAgentPointer(event)
   }
 
   /**
@@ -769,8 +785,8 @@ export function createOverlayController(host: OverlayHost) {
     }
   }
 
-  function resize(height: number, width?: number): void {
-    host.resize(height, width)
+  function resize(height: number, width?: number, pin?: boolean): void {
+    host.resize(height, width, pin)
   }
 
   /**
@@ -844,6 +860,7 @@ export function createOverlayController(host: OverlayHost) {
         temperature: settings.temperature,
         maxTokens,
         baseUrl: resolveBaseUrl(settings.provider, settings.baseUrls[settings.provider]),
+        extraBody: parseExtraBody(settings.extraBody[settings.provider]) ?? undefined,
         signal
       },
       isAlive: () => !signal.aborted && Boolean(session),
@@ -913,11 +930,14 @@ export function createOverlayController(host: OverlayHost) {
 
     const abort = new AbortController()
     session.abort = abort
+    // A spoken turn belongs to the microphone from the moment it is sent: the
+    // next press must be able to stop it without waiting for the answer.
+    if (request.voice) voiceTurn = abort
     session.requestId = request.requestId
     session.answer = ''
     const visionSupported = modelSupportsVision(settings.provider, model)
     const availability = agent.availability()
-    // Claim before screenshot/AX/model work, including cancellation during preview.
+    // Claim before screenshot/AX/model work, including cancellation mid-turn.
     const glowTurn = beginAgentTurn(!refine && availability.ready && looksLikeAction(request.prompt)
       ? 'Задача принята · готовлю действия…' : undefined)
     const turnSession = session
@@ -925,28 +945,20 @@ export function createOverlayController(host: OverlayHost) {
     let outcome = 'abandoned'
     let reason = 'session-changed'
     let deadline: ReturnType<typeof setTimeout> | undefined
+    /**
+     * Hides the card after a spoken transcript has had its reading time, if the
+     * answer has not arrived by then. It is a timer, not an `await`, precisely so
+     * the model round trip starts now.
+     */
+    let previewHide: ReturnType<typeof setTimeout> | undefined
+    const previewUntil = request.voice && host.window()?.isVisible()
+      ? Date.now() + VOICE_PREVIEW_MS
+      : 0
     try {
-      if (request.voice) {
-        // Keep the transcript visible before routing the request.
-        // Escape and a new recording can cancel this wait.
-        if (host.window()?.isVisible()) {
-          voicePreview = abort
-          const preview = delay(VOICE_PREVIEW_MS)
-          if (!refine && request.includeScreenshot && visionSupported) {
-            // Start the protected capture late enough that send can reuse the
-            // frame. The regular capture path still checks its age at send time.
-            void delay(VOICE_PREVIEW_MS - MAX_SHOT_AGE_MS).then(async () => {
-              if (voicePreview !== abort || abort.signal.aborted || session !== turnSession ||
-                isExcluded(turnSession.target, getSettings().excludedApps)) return
-              await captureFor(turnSession)
-            }).catch(() => undefined)
-          }
-          await preview
-          if (voicePreview === abort) voicePreview = null
-          if (abort.signal.aborted || session !== turnSession) return
-        }
-      }
-
+      // A spoken request is routed immediately. The transcript stays in the
+      // composer while the turn is busy (the renderer keeps it until the first
+      // answer chunk), so reading it and starting the work happen in parallel
+      // instead of the card sitting still for two seconds first.
       deadline = setTimeout(() => abort.abort('deadline'), TURN_DEADLINE_MS)
       const bundleId = turnSession.target?.bundleId || null
       const currentSettings = getSettings()
@@ -980,7 +992,21 @@ export function createOverlayController(host: OverlayHost) {
        */
       const agentState = agent.availability()
       const useAgent = !refine && agentState.ready && looksLikeAction(request.prompt)
-      if (request.voice && !useAgent) host.hide()
+      if (request.voice && !useAgent) {
+        // The request is already under way. Give the reader the transcript for
+        // its two seconds and only then get the card out of the way; if the
+        // answer arrives sooner, the `finally` clears this timer and the answer
+        // takes the card instead of being hidden by it.
+        const wait = previewUntil - Date.now()
+        if (wait > 0) {
+          previewHide = setTimeout(() => {
+            previewHide = undefined
+            if (session === turnSession && !abort.signal.aborted) host.hide()
+          }, wait)
+        } else {
+          host.hide()
+        }
+      }
 
       // The drawings belong to the answer currently on screen: a new question
       // replaces that answer, so old arrows must not stay behind as if they
@@ -1000,10 +1026,21 @@ export function createOverlayController(host: OverlayHost) {
         // is not sent to any model.
         void ensureFreshScreenshot(turnSession).catch(() => null)
 
+        // The agent is given the same conversation the writer would get. «Сделай»
+        // is not a task on its own: it means "the thing that was just discussed",
+        // and that sentence lives in the turns above it.
+        const agentHistory = useHistory
+          ? history.map(({ question, answer }) => ({ question, answer }))
+          : []
+        if (agentHistory.length === 0 && previousCommand) {
+          agentHistory.push({ question: previousCommand, answer: '' })
+        }
+
         const run = await timed('agent.run', () => agent.run({
           prompt: request.prompt,
           appName: turnSession.target?.name ?? null,
           windowTitle: turnSession.target?.windowTitle ?? null,
+          history: agentHistory,
           provider: agentProvider(settings, apiKey)
         }))
         if (abort.signal.aborted || session !== turnSession) return
@@ -1133,6 +1170,10 @@ export function createOverlayController(host: OverlayHost) {
       fail(error instanceof Error ? error.message : 'Неизвестная ошибка запроса.', true)
     } finally {
       clearTimeout(deadline)
+      if (previewHide) {
+        clearTimeout(previewHide)
+        previewHide = undefined
+      }
       if (abort.signal.aborted) {
         outcome = abort.signal.reason === 'deadline' ? 'timeout' : 'cancelled'
         reason = outcome === 'timeout' ? 'deadline' : abort.signal.reason === STOP_AGENT ? 'agent-stop' : 'turn-abort'
@@ -1149,6 +1190,7 @@ export function createOverlayController(host: OverlayHost) {
       trace('turn.outcome', { outcome, reason })
       trace('turn.finished', { aborted: abort.signal.aborted, rounds: turnSession.rounds })
       if (turnSession.abort === abort) turnSession.abort = null
+      if (voiceTurn === abort) voiceTurn = null
       endAgentTurn(glowTurn)
     }
   }
@@ -1169,6 +1211,7 @@ export function createOverlayController(host: OverlayHost) {
       apiKey,
       maxTokens: settings.maxTokens,
       temperature: settings.temperature,
+      extraBody: parseExtraBody(settings.extraBody[settings.provider]) ?? undefined,
       // OpenRouter asks for attribution headers on every request, and the agent
       // builds its own HTTP client — it has no idea which gateway this is. The
       // writer's provider carries them; the agent's has to be told.

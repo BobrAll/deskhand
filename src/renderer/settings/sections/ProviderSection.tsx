@@ -17,7 +17,7 @@
  */
 
 import type { AppSettings, KeyStatus, ProviderId } from '@shared/types'
-import { DEFAULT_SYSTEM_PROMPT, PROVIDERS, defaultSearchModel, normalizeBaseUrl, providerInfo } from '@shared/defaults'
+import { DEFAULT_SYSTEM_PROMPT, PROVIDERS, defaultSearchModel, normalizeBaseUrl, parseExtraBody, providerInfo } from '@shared/defaults'
 import { MAX_TOKENS_MAX, MAX_TOKENS_MIN } from '../applyGate'
 import { Disclosure, Group, Row, Toggle } from '../Row'
 
@@ -53,6 +53,9 @@ export function ProviderSection({
   // default, so a typo cannot quietly send traffic to the official host.
   const baseUrlError = invalidBaseUrls.includes(draft.provider)
     ? 'Некорректный адрес: нужен http(s)-адрес вида https://host/v1.'
+    : null
+  const extraBodyError = parseExtraBody(draft.extraBody[draft.provider]) === null
+    ? 'Нужен JSON-объект, например {"reasoning_effort": "none"}. Пока он не исправлен, параметры не отправляются.'
     : null
 
   return (
@@ -194,6 +197,29 @@ export function ProviderSection({
             </button>
           </div>
           {baseUrlError && <div className="row-hint err">{baseUrlError}</div>}
+        </Row>
+
+        <Row
+          stacked
+          title={`Доп. параметры запроса · ${info?.label ?? ''}`}
+          hint={
+            'JSON-объект, который добавляется в тело каждого запроса к модели. ' +
+            'Например, {"reasoning_effort": "none"} или {"thinking": {"type": "disabled"}} — ' +
+            'смотря что понимает ваш сервис.'
+          }
+        >
+          <textarea
+            className="extra-body"
+            rows={1}
+            value={draft.extraBody[draft.provider]}
+            aria-label="Дополнительные параметры запроса"
+            placeholder='{"reasoning_effort": "none"}'
+            spellCheck={false}
+            onChange={(event) =>
+              patch({ extraBody: { ...draft.extraBody, [draft.provider]: event.target.value } })
+            }
+          />
+          {extraBodyError && <div className="row-hint err">{extraBodyError}</div>}
         </Row>
       </Group>
 

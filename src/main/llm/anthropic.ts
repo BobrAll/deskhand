@@ -78,6 +78,8 @@ export class AnthropicProvider implements LlmProvider {
       model: options.model,
       max_tokens: options.maxTokens,
       temperature: options.temperature,
+      thinking: { type: 'disabled' as const },
+      ...options.extraBody,
       ...(system ? { system } : {}),
       messages: turns,
       stream: true

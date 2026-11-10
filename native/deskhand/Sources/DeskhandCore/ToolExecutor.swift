@@ -16,7 +16,7 @@ public enum ToolContent: Sendable {
             return .object([
                 "type": .string("image"),
                 "data": .string(data.base64EncodedString()),
-                "mimeType": .string("image/png"),
+                "mimeType": .string(WindowCapture.mimeType(of: data)),
             ])
         }
     }
@@ -27,11 +27,24 @@ public struct ToolResult: Sendable {
     public var isError: Bool
     /// Where this call spent its time, for `--timings`. Not sent to the model.
     public var timings: ToolTimings
+    /// A cheap fingerprint of the screen this call left behind.
+    ///
+    /// Two results with the same fingerprint describe the same window in the
+    /// same state. The agent loop uses that to tell "the task moved on" from
+    /// "the model is going in circles": a run that keeps returning to a state it
+    /// has already been in is not making progress, however busy it looks.
+    public var stateFingerprint: String?
 
-    public init(content: [ToolContent], isError: Bool = false, timings: ToolTimings = ToolTimings()) {
+    public init(
+        content: [ToolContent],
+        isError: Bool = false,
+        timings: ToolTimings = ToolTimings(),
+        stateFingerprint: String? = nil
+    ) {
         self.content = content
         self.isError = isError
         self.timings = timings
+        self.stateFingerprint = stateFingerprint
     }
 
     public static func text(_ text: String, timings: ToolTimings = ToolTimings()) -> ToolResult {
@@ -71,6 +84,13 @@ public final class ToolExecutor: @unchecked Sendable {
     /// run; nil means "no policy installed", which is what the tests and the
     /// command-line tool use.
     public var policy: ToolPolicy?
+
+    /// Told about an action just before it runs, when the host is drawing one.
+    ///
+    /// Nil for a run with nobody watching. The command-line tool and the
+    /// background mode leave it unset, and the tools themselves do not know or
+    /// care whether a presenter exists.
+    public var presenter: ActionPresenter?
 
     public init() {}
 
@@ -137,6 +157,16 @@ public final class ToolExecutor: @unchecked Sendable {
             }
         }
 
+        // After the policy allowed the call and before the tool runs. The
+        // presentation is best effort: it resolves the session the tool is about
+        // to use but never launches an app, refreshes a tree or captures a
+        // screen, so the only cost is a few dictionary lookups. The presenter
+        // returns immediately by contract; anything it draws happens elsewhere.
+        if MutatingTools.isMutating(name), let presenter,
+           let action = presentation(for: name, arguments: arguments) {
+            presenter.present(action)
+        }
+
         var result: ToolResult
         do {
             switch name {
@@ -186,24 +216,74 @@ public final class ToolExecutor: @unchecked Sendable {
         verify: Bool,
         clickedAt point: CGPoint? = nil
     ) -> ToolResult {
-        guard verify else { return .text(message) }
+        guard verify else {
+            return ToolResult(
+                content: [.text(message)],
+                stateFingerprint: session.currentSnapshot.map { fingerprint(of: $0) })
+        }
         let (diff, timings) = session.previewDiff()
 
-        var content: [ToolContent] = [.text(message)]
         if diff.isEmpty {
-            content.append(.text(noChangeExplanation(action, session: session, point: point)))
-        } else {
-            var text = "Changed after \(action) (\(diff.summary)):\n" + diff.text()
+            return ToolResult(
+                content: [.text(message), .text(noChangeExplanation(action, session: session, point: point))],
+                timings: timings,
+                stateFingerprint: session.currentSnapshot.map { fingerprint(of: $0) })
+        }
+
+        let diffText = "Changed after \(action) (\(diff.summary)):\n" + diff.text()
+        // The screen changed, so the model's next move almost always needs the
+        // new indices. The diff's walk is already in hand: adopting it and
+        // sending the tree here saves the `get_app_state` round trip that
+        // would otherwise follow nearly every action. Only the last call of a
+        // batch is verified, so no later call still holds the old indices.
+        guard let snapshot = session.adoptPreview() else {
+            var text = diffText
             if !diff.added.isEmpty {
-                // The diff is index-free on purpose: it was computed against a
-                // tree the model was not given. Existing indices still work,
-                // new nodes need a full state read.
                 text += "\nIndices from the last tree still work for elements that existed. "
                     + "Call get_app_state to address a node that just appeared."
             }
-            content.append(.text(text))
+            return ToolResult(
+                content: [.text(message), .text(text)],
+                timings: timings,
+                stateFingerprint: session.currentSnapshot.map { fingerprint(of: $0) })
         }
-        return ToolResult(content: content, timings: timings)
+        return ToolResult(
+            content: [
+                // The header goes first: the loop keys stale-tree trimming on the
+                // first bracketed bundle identifier in the result.
+                .text(stateHeader(snapshot)),
+                .text(message),
+                .text(diffText + "\nThe tree below is fresh. Element numbers are stable for the"
+                    + " whole run, so the ones you already used still mean the same controls."
+                    + " Call get_app_state only for a screenshot."),
+                .text(treeBlock(snapshot)),
+            ],
+            timings: timings,
+            stateFingerprint: fingerprint(of: snapshot))
+    }
+
+    /// The identity of "this screen, in this state", as the loop sees it.
+    ///
+    /// Window title plus the tree's resting signature: two actions that leave
+    /// the app in the same place produce the same string, which is what makes
+    /// "back here again" detectable without comparing whole trees.
+    private func fingerprint(of snapshot: AXSnapshot) -> String {
+        "\(snapshot.appName)|\(snapshot.windowTitle ?? "")|\(snapshot.restSignature)"
+    }
+
+    private func stateHeader(_ snapshot: AXSnapshot) -> String {
+        var header = "\(snapshot.appName)"
+        if let bundle = snapshot.bundleIdentifier { header += " [\(bundle)]" }
+        if let title = snapshot.windowTitle { header += " — window \"\(title)\"" }
+        return header
+    }
+
+    private func treeBlock(_ snapshot: AXSnapshot) -> String {
+        var treeText = snapshot.nodes.isEmpty ? "Accessibility tree is empty." : snapshot.text
+        if snapshot.truncated {
+            treeText += "\n… tree truncated at \(snapshot.nodes.count) nodes."
+        }
+        return "Accessibility tree (\(snapshot.nodes.count) nodes):\n" + treeText
     }
 
     /// Explains an action that changed nothing.
@@ -392,6 +472,70 @@ public final class ToolExecutor: @unchecked Sendable {
         return session(for: running)
     }
 
+    /// Turns one call into the picture a host can draw, without side effects.
+    ///
+    /// Everything here is read from state the tool already has: the session, its
+    /// snapshot and its coordinate mapper. It never refreshes the tree, captures
+    /// a screenshot or activates an app — those are the expensive parts, and a
+    /// visualisation that paid for them would be a visualisation that made the
+    /// agent slower. A missing snapshot costs the picture its point, not the
+    /// action its speed.
+    ///
+    /// Returns nil only when the call names no app at all. A call that names an
+    /// app but has no geometry still returns a presentation: the host can raise
+    /// the window and say "here", which is useful on its own.
+    private func presentation(for name: String, arguments: JSONValue) -> ActionPresentation? {
+        guard let query = arguments["app"]?.stringValue, !query.isEmpty,
+              let session = knownSession(for: query) else { return nil }
+
+        var action = ActionPresentation(
+            tool: name,
+            gesture: ActionPresentation.gesture(forTool: name),
+            appName: session.app.name,
+            bundleIdentifier: session.app.bundleIdentifier,
+            pid: session.pid,
+            window: session.currentSnapshot?.windowFrame
+        )
+
+        if let index = arguments["element_index"]?.intValue,
+           let node = try? session.node(at: index) {
+            action.target = node.frame
+            action.point = try? session.centre(of: index)
+        }
+
+        switch name {
+        case "click":
+            // A coordinate click has no element index, so the screenshot mapper
+            // is the only thing that can turn its pixels into screen points.
+            if action.point == nil,
+               let x = arguments["x"]?.doubleValue,
+               let y = arguments["y"]?.doubleValue,
+               let mapper = session.mapper {
+                action.point = mapper.screenPoint(fromImagePixel: CGPoint(x: x, y: y))
+            }
+        case "drag":
+            if let x = arguments["from_x"]?.doubleValue,
+               let y = arguments["from_y"]?.doubleValue,
+               let mapper = session.mapper {
+                action.point = mapper.screenPoint(fromImagePixel: CGPoint(x: x, y: y))
+            }
+        case "scroll", "press_key", "type_text":
+            // No element named: the gesture belongs to the window as a whole,
+            // so the middle of it is the honest place to point.
+            if action.point == nil, let frame = action.window {
+                action.point = CGPoint(x: frame.midX, y: frame.midY)
+            }
+        case "activate_app":
+            if let frame = action.window {
+                action.point = CGPoint(x: frame.midX, y: frame.midY)
+            }
+        default:
+            break
+        }
+
+        return action
+    }
+
     private func getAppState(_ args: JSONValue) async throws -> ToolResult {
         let appQuery = try requireApp(args)
         let includeScreenshot = args["include_screenshot"]?.boolValue ?? true
@@ -419,10 +563,7 @@ public final class ToolExecutor: @unchecked Sendable {
         let snapshot = await session.refresh(includeScreenshot: includeScreenshot)
 
         var blocks: [ToolContent] = []
-        var header = "\(snapshot.appName)"
-        if let bundle = snapshot.bundleIdentifier { header += " [\(bundle)]" }
-        if let title = snapshot.windowTitle { header += " — window \"\(title)\"" }
-        blocks.append(.text(header))
+        blocks.append(.text(stateHeader(snapshot)))
 
         if includeScreenshot {
             if let capture = session.capture {
@@ -441,16 +582,14 @@ public final class ToolExecutor: @unchecked Sendable {
         }
 
         if includeTree {
-            var treeText = snapshot.nodes.isEmpty
-                ? "Accessibility tree is empty."
-                : snapshot.text
-            if snapshot.truncated {
-                treeText += "\n… tree truncated at \(snapshot.nodes.count) nodes."
-            }
-            blocks.append(.text("Accessibility tree (\(snapshot.nodes.count) nodes):\n" + treeText))
+            blocks.append(.text(treeBlock(snapshot)))
         }
 
-        return ToolResult(content: blocks, timings: session.lastTimings)
+        return ToolResult(
+            content: blocks,
+            timings: session.lastTimings,
+            stateFingerprint: fingerprint(of: snapshot)
+        )
     }
 
     /// Brings the app to the front before a synthetic input event: CGEvents go

@@ -2,7 +2,7 @@
 
 exports[`CH: the channel set is a wire protocol > keeps the size of every namespace 1`] = `
 {
-  "agent": 7,
+  "agent": 8,
   "onboarding": 2,
   "overlay": 15,
   "permissions": 4,
@@ -154,6 +154,10 @@ exports[`CH: the channel set is a wire protocol > matches the snapshot 1`] = `
   [
     "agent.cursor",
     "agent:cursor",
+  ],
+  [
+    "agent.presentation",
+    "agent:presentation",
   ],
   [
     "agent.stop",

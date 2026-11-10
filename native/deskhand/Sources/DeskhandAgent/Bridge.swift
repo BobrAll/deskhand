@@ -1,4 +1,6 @@
 import Foundation
+import AppKit
+import ApplicationServices
 import DeskhandCore
 import DeskhandLLM
 import DeskhandAgentKit
@@ -18,6 +20,8 @@ import DeskhandAgentKit
 /// question in the app's own card is the only thing between the model and the
 /// click.
 final class Bridge: @unchecked Sendable {
+    @TaskLocal private static var traceRunID: String?
+
     private let writer = LineWriter()
     private let lock = NSLock()
 
@@ -161,6 +165,12 @@ final class Bridge: @unchecked Sendable {
         let loop = AgentLoop(provider: provider, executor: executor, options: options)
         loop.observer = BridgeObserver(bridge: self)
         executor.policy = BridgePolicy(bridge: self, cancel: handle.cancel)
+        // A run with nobody watching is the same run without a presenter. The
+        // app asks for one explicitly, so the background mode that comes later
+        // is the absence of this flag rather than a different code path.
+        if params["options"]?["visualize"]?.boolValue ?? false {
+            executor.presenter = BridgePresenter(bridge: self)
+        }
 
         respond(id: id, result: .object(["started": .bool(true)]))
 
@@ -168,45 +178,61 @@ final class Bridge: @unchecked Sendable {
         // pumping: `NSRunningApplication.activate` and ScreenCaptureKit both
         // deliver their replies to it, and parking the main thread turns every
         // activation into a one-second timeout.
+        let traceRunID = params["options"]?["trace_run_id"]?.stringValue
+        let record: (@Sendable (String, [String: JSONValue]) -> Void)?
+        if traceRunID != nil {
+            record = { [weak self] event, fields in
+                self?.emit(["event": .string(event), "params": .object(fields)])
+            }
+        } else {
+            record = nil
+        }
         Task.detached { [weak self] in
-            var answer: String?
-            var failure: String?
-            do {
-                answer = try await loop.run(
-                    task: task,
-                    cancel: handle.cancel,
-                    finalResponseInstruction: """
-                        When the requested action succeeded as requested and there is nothing else the user \
-                        needs to know, reply with exactly [[ACTION_DONE]]. If the user asked for information, \
-                        the outcome is uncertain or partial, or there is a caveat or follow-up the user needs, \
-                        give that information briefly in the user's language. Do not repeat the completed steps.
-                        """
-                )
-            } catch is CancellationError {
-                answer = nil
-            } catch {
-                failure = "\(error)"
+            await Self.$traceRunID.withValue(traceRunID) {
+                await ModelTrace.$record.withValue(record) {
+                    await self?.executeRun(loop: loop, executor: executor, handle: handle, task: task)
+                }
             }
-            executor.shutdown()
-            self?.finishRun(handle)
-            guard let self else { return }
-            if let answer {
-                // `complete` is the verdict, not an inference from the sentence.
-                // The loop returns a closing line on every path, so a host that
-                // only had the text could not tell "the model finished" from
-                // "the budget ran out" — and the app drew a checkmark over the
-                // second one.
-                self.emit(["event": .string("done"), "params": .object([
-                    "answer": .string(answer),
-                    "complete": .bool(loop.finished),
-                ])])
-            } else if let failure {
-                self.emit(["event": .string("error"), "params": .object([
-                    "message": .string(failure),
-                ])])
-            } else {
-                self.emit(["event": .string("cancelled"), "params": .object([:])])
-            }
+        }
+    }
+
+    private func executeRun(loop: AgentLoop, executor: ToolExecutor, handle: RunHandle, task: String) async {
+        var answer: String?
+        var failure: String?
+        do {
+            answer = try await loop.run(
+                task: task,
+                cancel: handle.cancel,
+                finalResponseInstruction: """
+                    When the requested action succeeded as requested and there is nothing else the user \
+                    needs to know, reply with exactly [[ACTION_DONE]]. If the user asked for information, \
+                    the outcome is uncertain or partial, or there is a caveat or follow-up the user needs, \
+                    give that information briefly in the user's language. Do not repeat the completed steps.
+                    """
+            )
+        } catch is CancellationError {
+            answer = nil
+        } catch {
+            failure = "\(error)"
+        }
+        executor.shutdown()
+        finishRun(handle)
+        if let answer {
+            // `complete` is the verdict, not an inference from the sentence.
+            // The loop returns a closing line on every path, so a host that
+            // only had the text could not tell "the model finished" from
+            // "the budget ran out" — and the app drew a checkmark over the
+            // second one.
+            self.emit(["event": .string("done"), "params": .object([
+                "answer": .string(answer),
+                "complete": .bool(loop.finished),
+            ])])
+        } else if let failure {
+            self.emit(["event": .string("error"), "params": .object([
+                "message": .string(failure),
+            ])])
+        } else {
+            self.emit(["event": .string("cancelled"), "params": .object([:])])
         }
     }
 
@@ -311,7 +337,9 @@ final class Bridge: @unchecked Sendable {
     // MARK: - Output
 
     func emit(_ payload: [String: JSONValue]) {
-        writer.write(JSONValue.object(payload).serialized())
+        var event = payload
+        if let traceRunID = Self.traceRunID { event["trace_run_id"] = .string(traceRunID) }
+        writer.write(JSONValue.object(event).serialized())
     }
 
     private func respond(id: JSONValue?, result: JSONValue) {
@@ -347,6 +375,11 @@ final class Bridge: @unchecked Sendable {
         if let tokens = value["max_tokens"]?.intValue { config.maxTokens = tokens }
         if let temperature = value["temperature"]?.doubleValue { config.temperature = temperature }
         if let omit = value["omit_auth"]?.boolValue { config.omitAuthHeader = omit }
+        if let extra = value["extra_body"]?.objectValue {
+            // The conversation and the stream flag belong to the agent.
+            let reserved: Set<String> = ["model", "messages", "stream", "tools", "system"]
+            config.extraBody = extra.filter { !reserved.contains($0.key) }
+        }
         if let headers = value["headers"]?.objectValue {
             for (name, header) in headers {
                 if let text = header.stringValue { config.extraHeaders[name] = text }
@@ -381,6 +414,10 @@ private final class LineWriter: @unchecked Sendable {
 /// Turns loop progress into events for the app.
 private final class BridgeObserver: AgentObserver, @unchecked Sendable {
     private let bridge: Bridge
+    /// Steps whose prose already reached the card as a stream. The final
+    /// `stepAnswered` must not send the same caption again: the card would
+    /// replace a growing line with a shorter, identical one for a frame.
+    private var streamedSteps = Set<Int>()
 
     init(bridge: Bridge) {
         self.bridge = bridge
@@ -393,8 +430,17 @@ private final class BridgeObserver: AgentObserver, @unchecked Sendable {
         ])])
     }
 
+    func stepStreamed(_ step: Int, text: String) {
+        guard !text.isEmpty else { return }
+        streamedSteps.insert(step)
+        bridge.emit(["event": .string("stream"), "params": .object([
+            "step": .number(Double(step)),
+            "text": .string(text),
+        ])])
+    }
+
     func stepAnswered(_ step: Int, narration: String, calls: [ToolCall]) {
-        guard !calls.isEmpty, !narration.isEmpty else { return }
+        guard !calls.isEmpty, !narration.isEmpty, !streamedSteps.contains(step) else { return }
         bridge.emit(["event": .string("narration"), "params": .object([
             "step": .number(Double(step)),
             "text": .string(narration),
@@ -468,6 +514,76 @@ private final class BridgeObserver: AgentObserver, @unchecked Sendable {
         ]
         if !report.table.isEmpty { params["table"] = .string(report.table) }
         bridge.emit(["event": .string("run-report"), "params": .object(params)])
+    }
+}
+
+/// Draws an action for the app and, when the target is not already in front,
+/// brings its window forward.
+///
+/// This is the whole visible half of the agent, and it is deliberately thin:
+/// it reports what the executor is about to do and raises a window. It never
+/// decides what the action is, never waits for the drawing to finish, and never
+/// changes the call's arguments or timing. The event is written on the caller's
+/// thread (a pipe write, not a round trip); the window work is queued, so a
+/// slow or unresponsive app cannot delay the action it is about to receive.
+private final class BridgePresenter: ActionPresenter, @unchecked Sendable {
+    private let bridge: Bridge
+    private let queue = DispatchQueue(label: "deskhand.present", qos: .utility)
+
+    init(bridge: Bridge) {
+        self.bridge = bridge
+    }
+
+    func present(_ action: ActionPresentation) {
+        var params: [String: JSONValue] = [
+            "tool": .string(action.tool),
+            "gesture": .string(action.gesture.rawValue),
+        ]
+        if let app = action.appName { params["app"] = .string(app) }
+        if let bundle = action.bundleIdentifier { params["bundle_id"] = .string(bundle) }
+        if let pid = action.pid { params["pid"] = .number(Double(pid)) }
+        if let point = action.point {
+            params["x"] = .number(Double(point.x))
+            params["y"] = .number(Double(point.y))
+        }
+        if let target = action.target { params["target"] = Self.rect(target) }
+        if let window = action.window { params["window"] = Self.rect(window) }
+        bridge.emit(["event": .string("present"), "params": .object(params)])
+
+        queue.async {
+            Self.raise(action)
+        }
+    }
+
+    /// Brings the window into view, without waiting for it.
+    ///
+    /// The activation is requested on the main thread because that is where the
+    /// window server answers, and it is not awaited: the agent's next action is
+    /// allowed to run against the background window exactly as before. Only the
+    /// window a person is supposed to watch is moved; the action itself still
+    /// works whether or not this lands.
+    private static func raise(_ action: ActionPresentation) {
+        guard let pid = action.pid, pid > 0 else { return }
+        DispatchQueue.main.async {
+            guard let app = NSRunningApplication(processIdentifier: pid) else { return }
+            if !app.isActive {
+                app.activate(options: [.activateAllWindows])
+            }
+            guard let window = AXElement.application(pid: pid).focusedWindow() else { return }
+            // A minimised window is not "shown" by activation alone; clear the
+            // flag before raising so the user actually sees the target.
+            _ = window.setValue(false, for: kAXMinimizedAttribute)
+            _ = window.perform(kAXRaiseAction)
+        }
+    }
+
+    private static func rect(_ value: CGRect) -> JSONValue {
+        .object([
+            "x": .number(Double(value.origin.x)),
+            "y": .number(Double(value.origin.y)),
+            "width": .number(Double(value.size.width)),
+            "height": .number(Double(value.size.height)),
+        ])
     }
 }
 

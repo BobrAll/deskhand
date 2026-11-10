@@ -34,6 +34,12 @@ Consequences worth knowing before changing either side:
   the user. Moving that decision into Swift would make it unchangeable without a
   rebuild, and moving it into a model call would make every click cost a round
   trip.
+- `ActionPresenter` is the *visual* half of the same seam. It is installed only
+  when the host asked for it (`options.visualize`), receives geometry after the
+  approval and before the tool runs, and must return immediately — the action
+  never waits for a window to be raised or a pointer to travel. A background run
+  is the same run with no presenter, not a second code path, so nothing in the
+  tools may assume a picture exists.
 - The protocol is a contract between two languages. `src/main/agent/sidecar.test.ts`
   replays a transcript recorded from the real binary; if a field is renamed on
   one side, that test is what notices.

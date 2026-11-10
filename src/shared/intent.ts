@@ -32,6 +32,18 @@ const ACTION_AT_START =
   /^(пожалуйста[,\s]+|давай[,\s]+)?(нажм|жми|откр|запуст|включ|выключ|переключ|закр|сохран|впиш|введ|набер|выбер|постав|перемест|перетащ|прокрут|обнов|удали|скача|отправ|подтверд|созда|добав|перейд|загруз|сделай)/i
 
 /**
+ * «Сделай» asks for the thing to be done, wherever it stands.
+ *
+ * It names no action of its own, so it is the word that most often carries a
+ * conditional request: «можно ли …? если да — сделай». The opener is about
+ * whether something is possible; the imperative is about the outcome, and
+ * answering the first while ignoring the second is exactly the failure this
+ * catches. Only the imperative matches: «можно ли так сделать» asks about the
+ * possibility and asks for nothing.
+ */
+const EXPLICIT_REQUEST = /(^|[^а-яё])(сделай|сделайте)(?![а-яё])/i
+
+/**
  * Questions. «Где кнопка экспорта», «что выбрать», «почему не работает» are
  * requests for an explanation, and answering them by clicking would be worse
  * than answering them with an arrow.
@@ -49,6 +61,7 @@ export function looksLikeAction(text: string): boolean {
   const value = text.trim()
   if (!value) return false
   if (ACTION_AT_START.test(value)) return true
+  if (EXPLICIT_REQUEST.test(value)) return true
   if (QUESTION_AT_START.test(value)) return false
   if (QUESTION.test(value)) return false
   return ACTION.test(value)

@@ -7,6 +7,7 @@
 import { join } from 'node:path'
 import { app, BrowserWindow, screen } from 'electron'
 import {
+  BUBBLE_MAX_WIDTH,
   BUBBLE_MIN_WIDTH,
   BUBBLE_NARROW_WIDTH,
   BUBBLE_VOICE_WIDTH,
@@ -198,14 +199,19 @@ function positionOverlay(win: BrowserWindow, height: number, width: number): voi
  * Re-applies the remembered anchor to a new size, or places the bubble for the
  * first time when there is no anchor yet.
  */
-function resizeAtAnchor(win: BrowserWindow, height: number, width: number): void {
+function resizeAtAnchor(win: BrowserWindow, height: number, width: number, pin = false): void {
   if (!anchor) {
     positionOverlay(win, height, width)
     return
   }
-  anchor = resizeAnchor(anchor, resizeBounds ?? win.getBounds(), height, width, workAreaAt)
+  anchor = resizeAnchor(anchor, resizeBounds ?? win.getBounds(), height, width, workAreaAt, pin)
   resizeBounds = boundsFor(anchor, height, width)
-  win.setBounds(resizeBounds, !voice && overlayVisible)
+  // Native animation is right for a card that grows as text arrives — one small
+  // step, eased. It is wrong for a drag: macOS animates every `setBounds` over
+  // its own duration, so a hundred frames a second each get their own easing and
+  // the window lags behind the hand in a soft rubber band. A dragged edge has to
+  // land exactly where the pointer is, this frame.
+  win.setBounds(resizeBounds, !pin && !voice && overlayVisible)
 }
 
 /**
@@ -339,14 +345,17 @@ export const overlayHost: OverlayHost = {
     presentOverlay(height, width, false)
   },
 
-  resize(height: number, width = BUBBLE_WIDTH): void {
+  resize(height: number, width = BUBBLE_WIDTH, pin = false): void {
     const win = overlayWindow
     if (!win || win.isDestroyed()) return
     const safeHeight = Math.round(clamp(height, OVERLAY_MIN_HEIGHT, OVERLAY_MAX_HEIGHT))
-    const safeWidth = Math.round(clamp(width, BUBBLE_MIN_WIDTH, BUBBLE_WIDTH))
+    // The user's own width may exceed what content is allowed to ask for: a
+    // dragged card is a person's decision, and clamping it back to the content
+    // cap would make the drag spring back under the hand.
+    const safeWidth = Math.round(clamp(width, BUBBLE_MIN_WIDTH, BUBBLE_MAX_WIDTH))
     const bounds = resizeBounds ?? win.getBounds()
-    if (bounds.height === safeHeight && bounds.width === safeWidth) return
-    resizeAtAnchor(win, safeHeight, safeWidth)
+    if (bounds.height === safeHeight && bounds.width === safeWidth && !pin) return
+    resizeAtAnchor(win, safeHeight, safeWidth, pin)
   },
 
   /**

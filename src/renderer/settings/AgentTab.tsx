@@ -132,6 +132,18 @@ export function AgentTab({ agent, onChange, onEnabledChange }: AgentTabProps) {
       </Group>
 
       <Group
+        title="На экране"
+        footnote="Только показ: действия идут через те же API macOS, скорость не меняется."
+      >
+        <ToggleRow
+          title="Показывать действия"
+          hint="Нужное окно выходит вперёд, и по экрану ходит курсор агента. Выключите, если он не должен забирать экран."
+          checked={agent.showActions}
+          onChange={(showActions) => onChange({ showActions })}
+        />
+      </Group>
+
+      <Group
         title="Границы"
         footnote="Escape останавливает задачу в любой момент, независимо от этих настроек."
       >

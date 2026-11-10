@@ -10,6 +10,7 @@ import type {
   AgentAvailability,
   AgentCursorFrame,
   AgentEvent,
+  AgentPointerFrame,
   AnnotationsEvent,
   AppSettings,
   ContextFlags,
@@ -49,7 +50,8 @@ const api: SmartCursorApi = {
     clearPointer: () => ipcRenderer.send(CH.overlay.clearPointer),
     setTyping: (typing: boolean) => ipcRenderer.send(CH.overlay.typing, typing),
     close: () => ipcRenderer.send(CH.overlay.close),
-    resize: (height: number, width?: number) => ipcRenderer.send(CH.overlay.resize, height, width)
+    resize: (height: number, width?: number, pin?: boolean) =>
+      ipcRenderer.send(CH.overlay.resize, height, width, pin)
   },
   pointer: {
     onDraw: (handler) => subscribe<PointerPayload>(CH.pointer.draw, handler)
@@ -66,6 +68,9 @@ const api: SmartCursorApi = {
   },
   agentCursor: {
     onState: (handler) => subscribe<AgentCursorFrame>(CH.agent.cursor, handler)
+  },
+  agentPresenter: {
+    onState: (handler) => subscribe<AgentPointerFrame>(CH.agent.presentation, handler)
   },
   settings: {
     load: () => ipcRenderer.invoke(CH.settings.load),

@@ -190,6 +190,58 @@ describe('translate: the fields the card depends on', () => {
       .toEqual({ kind: 'stopped', reason: 'loop detected: 3 identical calls' })
   })
 
+  it('reads the picture of an action, with its target and window', () => {
+    expect(translate({
+      event: 'present',
+      params: {
+        tool: 'click',
+        gesture: 'click',
+        app: 'Safari',
+        bundle_id: 'com.apple.Safari',
+        pid: 42,
+        x: 120.5,
+        y: 300,
+        target: { x: 100, y: 290, width: 40, height: 20 },
+        window: { x: 10, y: 20, width: 800, height: 600 }
+      }
+    })).toEqual({
+      kind: 'present',
+      presentation: {
+        tool: 'click',
+        gesture: 'click',
+        app: 'Safari',
+        bundleId: 'com.apple.Safari',
+        pid: 42,
+        point: { x: 120.5, y: 300 },
+        target: { x: 100, y: 290, width: 40, height: 20 },
+        window: { x: 10, y: 20, width: 800, height: 600 }
+      }
+    })
+  })
+
+  it('keeps a presentation with no geometry, and never invents a point', () => {
+    // A key press into an app that was never read has no element frame. The
+    // window still comes forward; the pointer must not be aimed at 0,0.
+    const event = translate({
+      event: 'present',
+      params: { tool: 'press_key', gesture: 'key', app: 'Notes' }
+    })
+    expect(event).toMatchObject({
+      kind: 'present',
+      presentation: { tool: 'press_key', gesture: 'key', app: 'Notes' }
+    })
+    if (event?.kind !== 'present') return
+    expect(event.presentation.point).toBeUndefined()
+    expect(event.presentation.target).toBeUndefined()
+  })
+
+  it('shows an unknown gesture as a click instead of dropping the picture', () => {
+    expect(translate({
+      event: 'present',
+      params: { tool: 'new_tool', gesture: 'teleport' }
+    })).toMatchObject({ kind: 'present', presentation: { gesture: 'click' } })
+  })
+
   it('reads a cancellation and an error', () => {
     expect(translate({ event: 'cancelled' })).toEqual({ kind: 'cancelled' })
     expect(translate({ event: 'error', params: { message: 'нет доступа', code: 'permission' } }))
@@ -239,6 +291,15 @@ describe('translate: the fields the card depends on', () => {
     })
 
     expect(event).toMatchObject({ timing: { wallMs: 0.4 } })
+  })
+
+  it('reads the prose while the step is still running', () => {
+    // The same caption as `narration`, but it arrives before the model stops
+    // writing. The card can show it while the round trip is still in flight.
+    expect(translate({
+      event: 'stream',
+      params: { step: 1, text: 'Открываю Telegram' }
+    })).toEqual({ kind: 'stream', step: 1, text: 'Открываю Telegram' })
   })
 
   it('reads a step with no narration, which is still a step the user waited for', () => {

@@ -222,6 +222,33 @@ describe('bubble: resizing at the anchor', () => {
     expect(next.x).toBe(1440 - 360 - MIN)
   })
 
+  it('keeps the left edge while the user drags the right one', () => {
+    // The edge under the pointer has to follow the pointer, so the card grows
+    // away from its own left edge instead of away from the anchor.
+    const next = resizeAnchor(base, inPlace, 31, 480, () => SCREEN, true)
+
+    expect(next.x).toBe(710)
+    expect(next.pinned).toBe(true)
+  })
+
+  it('keeps the left edge for the resizes that follow the drag', () => {
+    const dragged = resizeAnchor(base, inPlace, 31, 480, () => SCREEN, true)
+    const bounds = boundsFor(dragged, 31, 480)
+    // A content-driven resize with no `pin`: the answer reflowed, the person did
+    // not touch the edge. The card must stay where the drag left it.
+    const after = resizeAnchor(dragged, bounds, 200, 480, () => SCREEN)
+
+    expect(after.x).toBe(710)
+  })
+
+  it('pulls a pinned card back only when it would leave the display', () => {
+    const pinned = { ...base, pinned: true }
+    const atEdge: BubbleRect = { x: 1380, y: 410, width: 480, height: 31 }
+    const next = resizeAnchor(pinned, atEdge, 31, 560, () => SCREEN)
+
+    expect(next.x).toBe(1440 - 560 - MIN)
+  })
+
   it('re-reads the work area of the display the pointer is on', () => {
     const seen: Array<{ x: number; y: number }> = []
     resizeAnchor(base, inPlace, 200, 360, (point) => {

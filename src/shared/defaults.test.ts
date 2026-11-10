@@ -7,8 +7,32 @@ import {
   DEFAULT_SYSTEM_PROMPT,
   DEFAULT_VOICE,
   normalizeSettings,
+  parseExtraBody,
   resolveSearchModel
 } from './defaults'
+
+describe('parseExtraBody', () => {
+  it('treats empty text as no extra fields', () => {
+    expect(parseExtraBody('')).toEqual({})
+    expect(parseExtraBody('   ')).toEqual({})
+    expect(parseExtraBody(undefined)).toEqual({})
+  })
+
+  it('returns the object the user typed', () => {
+    expect(parseExtraBody('{"thinking": {"type": "disabled"}}')).toEqual({ thinking: { type: 'disabled' } })
+  })
+
+  it('rejects text that is not a JSON object', () => {
+    for (const text of ['{oops', '[1]', '"none"', '42', 'null']) {
+      expect(parseExtraBody(text), text).toBeNull()
+    }
+  })
+
+  it('drops fields that would replace the conversation or the stream', () => {
+    expect(parseExtraBody('{"stream": false, "messages": [], "model": "x", "top_p": 0.5}'))
+      .toEqual({ top_p: 0.5 })
+  })
+})
 
 // `models` is the one block that does not fall back to the shipped defaults: an
 // empty bag normalizes to empty model names (see the note in PROGRESS).
@@ -330,12 +354,13 @@ describe('normalizeSettings: agent', () => {
 
   it('keeps the flags and falls back on non-booleans', () => {
     const result = normalizeSettings({
-      agent: { enabled: true, abortOnMouseMove: 'yes', verifyResult: false }
+      agent: { enabled: true, abortOnMouseMove: 'yes', verifyResult: false, showActions: false }
     })
 
     expect(result.agent.enabled).toBe(true)
     expect(result.agent.abortOnMouseMove).toBe(DEFAULT_AGENT.abortOnMouseMove)
     expect(result.agent.verifyResult).toBe(false)
+    expect(result.agent.showActions).toBe(false)
   })
 
   it('drops a settings file written by the old plan runner', () => {
@@ -350,7 +375,7 @@ describe('normalizeSettings: agent', () => {
     })
 
     expect(Object.keys(result.agent).sort()).toEqual([
-      'abortOnMouseMove', 'enabled', 'maxSteps', 'rememberedApprovals', 'verifyResult'
+      'abortOnMouseMove', 'enabled', 'maxSteps', 'rememberedApprovals', 'showActions', 'verifyResult'
     ])
     expect(result.agent.enabled).toBe(true)
   })

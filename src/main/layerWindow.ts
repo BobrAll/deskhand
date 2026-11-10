@@ -1,9 +1,10 @@
 /**
- * Creates one of the two "layer" windows: the drawing layer (`pointer.ts`) and
- * the agent's cursor highlight (`agent/cursor.ts`).
+ * Creates one of the "layer" windows: the drawing layer (`pointer.ts`), the
+ * agent's cursor highlight (`agent/cursor.ts`) and the agent's virtual pointer
+ * (`agent/presentation.ts`).
  *
- * Both windows are pictures pinned over the screen, not windows the user
- * interacts with, and both spell out the same three properties — which are
+ * All three windows are pictures pinned over the screen, not windows the user
+ * interacts with, and all three spell out the same three properties — which are
  * exactly the properties that are easy to lose in a refactor:
  *
  * 1. It must never take focus: `focusable: false` (plus `showInactive()` in the
@@ -30,11 +31,11 @@ import { denyExternalLinks } from './denyExternalLinks'
 import { loadPage } from './pageLoad'
 
 export interface LayerWindowOptions {
-  /** Renderer entry to load: `'pointer'` or `'cursor'`. */
+  /** Renderer entry to load: `'pointer'`, `'cursor'` or `'presenter'`. */
   page: string
   /**
-   * Whether the layer accepts the first click. `pointer.ts` passes `true`,
-   * `agent/cursor.ts` passes `false`; the values are not unified.
+   * Whether the layer accepts the first click. `pointer.ts` passes `true`;
+   * the agent's two layers pass `false`. The values are not unified.
    */
   acceptFirstMouse: boolean
   /** Case-insensitive `^https?:\/\/` in the window-open handler. */
@@ -43,7 +44,7 @@ export interface LayerWindowOptions {
   onClosed?: () => void
 }
 
-/** The window options and chrome shared by both layers. */
+/** The window options and chrome shared by every layer. */
 export function createLayerWindow(options: LayerWindowOptions): BrowserWindow {
   const win = new BrowserWindow({
     x: 0,

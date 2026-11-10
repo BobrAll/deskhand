@@ -44,3 +44,19 @@ export const BUBBLE_VOICE_WIDTH = 80
  * widens to this only when content actually needs the room.
  */
 export const BUBBLE_WIDTH = 360
+
+/**
+ * How wide the card may become when the *user* asks for it.
+ *
+ * Content never reaches for this number: a reply that sizes itself is capped at
+ * `BUBBLE_WIDTH`, because a card that opens as wide as its longest line is a
+ * panel parked over the document. A person who drags the edge has made a
+ * different kind of decision — they are reading a table, and 360 points is four
+ * columns of nothing.
+ *
+ * 720 is where a card stops being a card and becomes a window: past it the
+ * cursor bubble is wider than most editor panes. It is a ceiling on purpose and
+ * not the whole story — `manualCeiling` takes the smaller of this and the
+ * display, so on a small screen the display wins.
+ */
+export const BUBBLE_MAX_WIDTH = 720

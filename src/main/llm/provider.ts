@@ -20,6 +20,8 @@ export interface StreamOptions {
   maxTokens: number
   /** API root without a trailing slash, e.g. `https://api.openai.com/v1`. */
   baseUrl: string
+  /** User-supplied fields merged into the request body; see `AppSettings.extraBody`. */
+  extraBody?: Record<string, unknown>
   signal: AbortSignal
 }
 

@@ -14,6 +14,7 @@ import { registerIpc } from './ipc'
 import { createTray, destroyTray, refreshTray } from './tray'
 import { destroyPointer } from './pointer'
 import { destroyAgentCursor } from './agent/cursor'
+import { destroyAgentPresentation } from './agent/presentation'
 import { flushTrace } from './agent/trace'
 import { openOnboardingWindow, openSettingsWindow, overlayHost, showActiveWindow } from './windows'
 import { getSettings, patchSettings } from './settings/store'
@@ -101,6 +102,24 @@ function setRecording(active: boolean): void {
 function quit(): void {
   app.quit()
 }
+
+/**
+ * Signals that ask the process to stop.
+ *
+ * Electron on macOS quits on SIGINT but ignores SIGTERM, and `electron-vite`
+ * restarts the main process with `child.kill()`, which is SIGTERM. Without these
+ * handlers the copy from before a rebuild survives, keeps the single-instance
+ * lock, and the copy that was just started exits the moment it asks for the
+ * lock. The dev server goes down with it, so every later `npm run dev` looks
+ * like a crash right after "start electron app...".
+ */
+function handleSignal(signal: NodeJS.Signals): void {
+  console.warn(`[app] received ${signal}; shutting down`)
+  quit()
+}
+
+process.on('SIGTERM', handleSignal)
+process.on('SIGINT', handleSignal)
 
 function bootstrap(): void {
   Menu.setApplicationMenu(
@@ -204,6 +223,10 @@ function bootstrap(): void {
 
 /** One instance only: a second launch just re-opens the overlay. */
 if (!app.requestSingleInstanceLock()) {
+  // The lock is what makes the second launch harmless, but it also means a copy
+  // left over from an earlier run turns every new launch into an immediate exit
+  // with no visible reason. Say which copy is in the way instead of vanishing.
+  console.warn('[app] another copy is already running; this launch will exit')
   app.quit()
 } else {
   app.on('second-instance', () => {
@@ -236,19 +259,38 @@ if (!app.requestSingleInstanceLock()) {
     // Tray app: never quit just because a window closed.
   })
 
-  app.on('will-quit', () => {
+  let quitStarted = false
+  let quitReady = false
+  // Cleanup is best-effort and must never outlive its usefulness: a run that
+  // never settles would otherwise hold the process, the single-instance lock
+  // included, until someone kills it by hand.
+  const QUIT_DEADLINE_MS = 5_000
+  app.on('will-quit', (event) => {
+    if (quitReady) return
+    event.preventDefault()
+    if (quitStarted) return
+    quitStarted = true
+    const deadline = new Promise<void>((resolve) => setTimeout(resolve, QUIT_DEADLINE_MS))
+    void Promise.race([finishQuit(), deadline]).finally(() => {
+      quitReady = true
+      app.quit()
+    })
+  })
+
+  async function finishQuit(): Promise<void> {
     unregisterHotkey()
     // The tap is a child process blocked in a run loop; without this it outlives
     // the app and keeps swallowing the shortcut.
     voice.stop()
     // The agent is a child process that blocks in a run loop; without this it
     // outlives the app and keeps a pipe open.
-    overlay.disposeAgent()
+    await overlay.disposeAgent()
     // The trace queues its appends; a quit on the last event of a run would
     // otherwise drop the line that says how the run ended.
-    void flushTrace()
+    await flushTrace()
     destroyTray()
     destroyPointer()
     destroyAgentCursor()
-  })
+    destroyAgentPresentation()
+  }
 }

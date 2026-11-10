@@ -7,7 +7,7 @@ import DeskhandCore
 /// Together, Fireworks, DeepSeek, Mistral, xAI, Ollama, LM Studio, vLLM,
 /// llama.cpp's server, and most corporate gateways all speak it. Anything that
 /// deviates gets handled through `extraHeaders` and `omitAuthHeader`.
-public struct OpenAICompatibleProvider: ChatProvider {
+public struct OpenAICompatibleProvider: StreamingChatProvider {
     public let config: ProviderConfig
     private let session: URLSession
 
@@ -19,21 +19,124 @@ public struct OpenAICompatibleProvider: ChatProvider {
         self.session = URLSession(configuration: configuration)
     }
 
+    /// Test seam: lets a URLProtocol answer the SSE request without a network.
+    init(config: ProviderConfig, session: URLSession) {
+        self.config = config
+        self.session = session
+    }
+
     public func complete(
         messages: [ChatMessage],
         tools: [ToolDefinition],
         systemPrompt: String
     ) async throws -> Completion {
+        try requireKey()
+        let request = makeRequest(payload: makePayload(
+            messages: messages, tools: tools, systemPrompt: systemPrompt, stream: false
+        ))
+        let exchange = ModelTrace.start(request)
+
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await session.data(for: request)
+        } catch {
+            exchange?.failed(error)
+            throw LLMError.transport(error.localizedDescription)
+        }
+
+        guard let http = response as? HTTPURLResponse else {
+            throw LLMError.transport("no HTTP response")
+        }
+        exchange?.response(data, status: http.statusCode)
+        guard (200..<300).contains(http.statusCode) else {
+            throw LLMError.http(
+                status: http.statusCode,
+                body: String(data: data, encoding: .utf8) ?? "<binary>"
+            )
+        }
+
+        return try decode(data)
+    }
+
+    public func complete(
+        messages: [ChatMessage],
+        tools: [ToolDefinition],
+        systemPrompt: String,
+        onText: (String) -> Void
+    ) async throws -> Completion {
+        try requireKey()
+        let request = makeRequest(payload: makePayload(
+            messages: messages, tools: tools, systemPrompt: systemPrompt, stream: true
+        ))
+        let exchange = ModelTrace.start(request)
+
+        let bytes: URLSession.AsyncBytes
+        let response: URLResponse
+        do {
+            (bytes, response) = try await session.bytes(for: request)
+        } catch {
+            exchange?.failed(error)
+            throw LLMError.transport(error.localizedDescription)
+        }
+
+        guard let http = response as? HTTPURLResponse else {
+            throw LLMError.transport("no HTTP response")
+        }
+        guard (200..<300).contains(http.statusCode) else {
+            let body = await collect(bytes, limit: 4096)
+            exchange?.response(body, status: http.statusCode)
+            // A gateway that does not implement SSE is still a working
+            // chat-completions endpoint. Nothing has been shown yet, so falling
+            // back to the one-shot shape is invisible to the user and keeps
+            // local servers and older proxies usable.
+            if [400, 404, 422].contains(http.statusCode) {
+                return try await complete(messages: messages, tools: tools, systemPrompt: systemPrompt)
+            }
+            throw LLMError.http(
+                status: http.statusCode,
+                body: String(data: body, encoding: .utf8) ?? "<binary>"
+            )
+        }
+
+        // Some gateways accept `stream: true` and answer with one ordinary JSON
+        // completion anyway. Trust the content type rather than spending the
+        // body on an SSE parser that will find no `data:` lines in it.
+        if let contentType = http.value(forHTTPHeaderField: "Content-Type"),
+           contentType.lowercased().contains("application/json") {
+            let body = await collect(bytes, limit: 16 * 1024 * 1024)
+            exchange?.response(body, status: http.statusCode)
+            return try decode(body)
+        }
+
+        return try await decodeStream(bytes, exchange: exchange, status: http.statusCode, onText: onText)
+    }
+
+    private func requireKey() throws {
         if config.apiKey == nil && !config.omitAuthHeader {
             throw LLMError.missingAPIKey("Set DESKHAND_API_KEY or add api_key to ~/.deskhand/config.toml")
         }
+    }
 
+    func makePayload(
+        messages: [ChatMessage],
+        tools: [ToolDefinition],
+        systemPrompt: String,
+        stream: Bool
+    ) -> [String: JSONValue] {
         var payload: [String: JSONValue] = [
             "model": .string(config.model),
             "messages": .array(encodeMessages(messages, systemPrompt: systemPrompt)),
             "max_tokens": .number(Double(config.maxTokens)),
-            "stream": .bool(false),
+            "stream": .bool(stream),
         ]
+        if config.baseURL.host == "openrouter.ai" {
+            payload["reasoning"] = .object(["enabled": .bool(false)])
+        } else if config.model.components(separatedBy: "/").last?.range(
+            of: #"^gpt-(?:5\.[1-9]|[6-9])"#, options: .regularExpression
+        ) != nil {
+            payload["reasoning_effort"] = .string("none")
+        }
         if let temperature = config.temperature {
             payload["temperature"] = .number(temperature)
         }
@@ -41,7 +144,11 @@ public struct OpenAICompatibleProvider: ChatProvider {
             payload["tools"] = .array(tools.map(\.openAIJSON))
             payload["tool_choice"] = .string("auto")
         }
+        payload.merge(config.extraBody) { _, user in user }
+        return payload
+    }
 
+    private func makeRequest(payload: [String: JSONValue]) -> URLRequest {
         var request = URLRequest(url: config.endpointURL())
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -53,26 +160,112 @@ public struct OpenAICompatibleProvider: ChatProvider {
             request.setValue(value, forHTTPHeaderField: name)
         }
         request.httpBody = JSONValue.object(payload).serializedData()
+        return request
+    }
 
-        let data: Data
-        let response: URLResponse
-        do {
-            (data, response) = try await session.data(for: request)
-        } catch {
-            throw LLMError.transport(error.localizedDescription)
+    private struct ToolCallBuilder {
+        var id = ""
+        var name = ""
+        var arguments = ""
+    }
+
+    /// Reads the `text/event-stream` body.
+    ///
+    /// Tool calls arrive in fragments — an id in one chunk, a name in another,
+    /// and the arguments as a string that only parses once the last piece lands —
+    /// so they are collected by stream index and parsed at the end.
+    private func decodeStream(
+        _ bytes: URLSession.AsyncBytes,
+        exchange: ModelTrace.Exchange?,
+        status: Int,
+        onText: (String) -> Void
+    ) async throws -> Completion {
+        var text = ""
+        var builders: [Int: ToolCallBuilder] = [:]
+        var stopReason: String?
+        var usage: Usage?
+        var sawDone = false
+
+        var lines: [JSONValue] = []
+        defer { exchange?.stream(lines, status: status) }
+        for try await line in bytes.lines {
+            if exchange != nil { lines.append(.string(line)) }
+            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard trimmed.hasPrefix("data:") else { continue }
+            let raw = trimmed.dropFirst(5).trimmingCharacters(in: .whitespaces)
+            if raw == "[DONE]" {
+                sawDone = true
+                break
+            }
+            guard let value = try? JSONValue.parse(raw) else { continue }
+            if let message = value["error"]?["message"]?.stringValue {
+                throw LLMError.provider(message)
+            }
+            if let usageValue = value["usage"] {
+                usage = Usage(
+                    inputTokens: usageValue["prompt_tokens"]?.intValue ?? 0,
+                    outputTokens: usageValue["completion_tokens"]?.intValue ?? 0
+                )
+            }
+            guard let choice = value["choices"]?.arrayValue?.first else { continue }
+            if let reason = choice["finish_reason"]?.stringValue {
+                stopReason = reason
+            }
+            let delta = choice["delta"]
+            if let content = delta?["content"]?.stringValue, !content.isEmpty {
+                text += content
+                onText(content)
+            }
+            if let rawCalls = delta?["tool_calls"]?.arrayValue {
+                for rawCall in rawCalls {
+                    let index = rawCall["index"]?.intValue ?? 0
+                    var builder = builders[index] ?? ToolCallBuilder()
+                    if let id = rawCall["id"]?.stringValue, !id.isEmpty {
+                        builder.id = id
+                    }
+                    if let name = rawCall["function"]?["name"]?.stringValue, !name.isEmpty {
+                        builder.name += name
+                    }
+                    if let arguments = rawCall["function"]?["arguments"]?.stringValue {
+                        builder.arguments += arguments
+                    }
+                    builders[index] = builder
+                }
+            }
         }
 
-        guard let http = response as? HTTPURLResponse else {
-            throw LLMError.transport("no HTTP response")
+        if stopReason == nil && !sawDone && text.isEmpty && builders.isEmpty {
+            throw LLMError.transport("the response stream ended before the model answered")
         }
-        guard (200..<300).contains(http.statusCode) else {
-            throw LLMError.http(
-                status: http.statusCode,
-                body: String(data: data, encoding: .utf8) ?? "<binary>"
+
+        let calls = builders.keys.sorted().map { index -> ToolCall in
+            let builder = builders[index]!
+            let arguments = (try? JSONValue.parse(builder.arguments)) ?? .object([:])
+            return ToolCall(
+                id: builder.id.isEmpty ? UUID().uuidString : builder.id,
+                name: builder.name,
+                arguments: arguments
             )
         }
+        if stopReason == "tool_calls" && calls.isEmpty {
+            throw LLMError.decoding("the stream announced tool calls but none arrived")
+        }
 
-        return try decode(data)
+        return Completion(text: text, toolCalls: calls, stopReason: stopReason, usage: usage)
+    }
+
+    private func collect(_ bytes: URLSession.AsyncBytes, limit: Int) async -> Data {
+        var data = Data()
+        do {
+            for try await byte in bytes {
+                data.append(byte)
+                if data.count >= limit { break }
+            }
+        } catch {
+            // The body is only used for the error message; a broken read must not
+            // replace the HTTP error with a transport one.
+        }
+        return data
     }
 
     func encodeMessages(_ messages: [ChatMessage], systemPrompt: String) -> [JSONValue] {
@@ -110,7 +303,7 @@ public struct OpenAICompatibleProvider: ChatProvider {
                         parts.append(.object([
                             "type": .string("image_url"),
                             "image_url": .object([
-                                "url": .string("data:image/png;base64," + image.base64EncodedString()),
+                                "url": .string("data:\(WindowCapture.mimeType(of: image));base64," + image.base64EncodedString()),
                             ]),
                         ]))
                     }

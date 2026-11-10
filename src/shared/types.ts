@@ -111,6 +111,16 @@ export interface AgentSettings {
    * success. Off, the agent takes its own word for it.
    */
   verifyResult: boolean
+  /**
+   * Show each action on screen: the target window comes forward and a pointer
+   * travels to the element before it is pressed.
+   *
+   * Purely a presentation flag. The action runs through the same accessibility
+   * and event APIs either way; with this off the agent is the same agent, only
+   * unseen — which is what a future background mode will use. It is not a
+   * per-app or per-tool switch, so nothing has to be taught about a new app.
+   */
+  showActions: boolean
 }
 
 /**
@@ -278,6 +288,71 @@ export interface AgentCursorFrame {
   total: number
 }
 
+/**
+ * What kind of gesture an action will look like.
+ *
+ * Mirrors the Swift `ActionPresentation.Gesture`. The layer uses it to choose
+ * an animation, never to decide whether the action is allowed: the host has
+ * already approved the call by the time this arrives.
+ */
+export type AgentGesture =
+  | 'click'
+  | 'secondary'
+  | 'type'
+  | 'value'
+  | 'select'
+  | 'key'
+  | 'scroll'
+  | 'drag'
+  | 'activate'
+
+/**
+ * One action, in screen terms, as the agent reports it just before acting.
+ *
+ * This is a picture, not an instruction: coordinates are global screen points,
+ * and every field except `tool` and `gesture` is optional because a valid
+ * action can have no element to point at. The agent never waits for the layer
+ * to draw this, which is what keeps the visualisation from costing time.
+ */
+export interface AgentPresentation {
+  tool: string
+  gesture: AgentGesture
+  app?: string
+  bundleId?: string
+  pid?: number
+  /** Where the action is aimed, in global screen points. */
+  point?: { x: number; y: number }
+  /** The element's frame in global screen points. */
+  target?: ScreenRect
+  /** The window the action belongs to, in global screen points. */
+  window?: ScreenRect
+}
+
+/** One frame of the virtual pointer the agent's layer draws. */
+export interface AgentPointerFrame {
+  /** `false` plays the fade-out; the window is hidden right after it. */
+  visible: boolean
+  /** Where the pointer is going, inside the layer. */
+  point: { x: number; y: number }
+  /**
+   * Where to start, when the layer was hidden or moved to another display.
+   * Absent on a normal step: the pointer then travels from where it already is.
+   */
+  from?: { x: number; y: number }
+  /**
+   * True while the pointer only waits for the next action.
+   *
+   * The mark is on screen for the whole run, so most frames describe a pause
+   * rather than a gesture. An idle frame must not ripple or press: nothing is
+   * happening yet, and an animation would say otherwise.
+   */
+  idle?: boolean
+  /** The gesture being shown. Absent while the pointer is idle. */
+  gesture?: AgentGesture
+  /** The element being acted on, inside the layer. */
+  target?: ScreenRect
+}
+
 /** Lifecycle of one push-to-talk turn, mirrored into the overlay. */
 export type VoicePhase = 'idle' | 'listening' | 'transcribing'
 
@@ -325,7 +400,6 @@ export interface DownloadProgress {
   error?: string
 }
 
-
 /**
  * Whether the assistant can speak a line that was not recorded in advance.
  *
@@ -347,6 +421,7 @@ export interface TtsStatus {
   recordedVoice: string
 }
 
+
 export interface TranscribeResult {
   ok: boolean
   text: string
@@ -366,6 +441,12 @@ export interface AppSettings {
    * Empty string means "use the provider default" — see `ProviderInfo.defaultBaseUrl`.
    */
   baseUrls: Record<ProviderId, string>
+  /**
+   * Per-provider JSON object merged into every model request body, as typed.
+   * Lets a user pass what their gateway understands (e.g. a switch that turns
+   * reasoning off) without the app knowing about that gateway. Empty = nothing.
+   */
+  extraBody: Record<ProviderId, string>
   temperature: number
   maxTokens: number
   systemPrompt: string

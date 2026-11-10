@@ -6,6 +6,7 @@ import type {
   AgentAvailability,
   AgentCursorFrame,
   AgentEvent,
+  AgentPointerFrame,
   AnnotationsEvent,
   AppSettings,
   ContextFlags,
@@ -99,8 +100,12 @@ export interface SmartCursorApi {
      * Reports the laid-out card. The width is optional because the folded bubble
      * is narrower than the one that shows an answer; omitting it keeps the full
      * width.
+     *
+     * `pin` keeps the card's left edge and lets the far edge move, which is what
+     * dragging the right edge means: the edge under the pointer has to follow the
+     * pointer, and the anchor would otherwise decide which side grows.
      */
-    resize(height: number, width?: number): void
+    resize(height: number, width?: number, pin?: boolean): void
   }
   /** Used only by the transparent drawing layer. */
   pointer: {
@@ -112,6 +117,15 @@ export interface SmartCursorApi {
    */
   agentCursor: {
     onState(handler: (frame: AgentCursorFrame) => void): Unsubscribe
+  }
+  /**
+   * The virtual pointer that shows where the agent is about to act.
+   *
+   * Same contract as the drawing layer: it receives geometry and paints it. It
+   * cannot press anything, and the action itself has already been decided.
+   */
+  agentPresenter: {
+    onState(handler: (frame: AgentPointerFrame) => void): Unsubscribe
   }
   settings: {
     load(): Promise<SettingsBundle>
