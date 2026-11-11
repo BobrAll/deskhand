@@ -188,16 +188,9 @@ describe('resolveSearchModel: the search model falls back to the chat model', ()
 })
 
 describe('sanitizeVoiceModel: a choice that exists', () => {
-  it('keeps an explicit empty value as "nothing chosen"', () => {
-    // `''` is how the app says "no model selected" after the last one was
-    // deleted. Filling it with the default is what made a fresh install claim a
-    // model that was never downloaded.
-    expect(normalizeSettings({ voice: { model: '' } }).voice.model).toBe('')
-  })
-
-  it('falls back to the shipped model when the key is absent', () => {
-    expect(normalizeSettings({ voice: {} }).voice.model).toBe('small-q5_1')
-    expect(normalizeSettings({}).voice.model).toBe('small-q5_1')
+  it('defaults to GigaAM in fresh settings and upgrades old empty selections', () => {
+    expect(normalizeSettings({}).voice.model).toBe('gigaam-v3-e2e-rnnt')
+    expect(normalizeSettings({ voice: { model: '' } }).voice.model).toBe('gigaam-v3-e2e-rnnt')
   })
 
   it('keeps an imported model outside the catalog', () => {
@@ -206,6 +199,6 @@ describe('sanitizeVoiceModel: a choice that exists', () => {
   })
 
   it('rejects a name that is neither a catalog id nor a model file', () => {
-    expect(normalizeSettings({ voice: { model: 'large-v4' } }).voice.model).toBe('small-q5_1')
+    expect(normalizeSettings({ voice: { model: 'large-v4' } }).voice.model).toBe('gigaam-v3-e2e-rnnt')
   })
 })

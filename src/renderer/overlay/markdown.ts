@@ -50,7 +50,7 @@ const BULLET = /^\s{0,3}[-*+]\s+(.*)$/
 const ORDERED = /^\s{0,3}(\d{1,9})[.)]\s+(.*)$/
 const RULE = /^\s{0,3}([-*_])(?:\s*\1){2,}\s*$/
 const LINK = /^\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)/
-const URL = /^https?:\/\/[^\s<>()\]]+/
+const BARE_URL = /^https?:\/\/[^\s<>()\]]+/
 const LETTER_OR_DIGIT = /[\p{L}\p{N}]/u
 /** One cell of a delimiter row: dashes, optionally anchored by a colon. */
 const DELIM_CELL = /^:?-+:?$/
@@ -346,7 +346,7 @@ export function parseInline(text: string, streaming = false): Inline[] {
     }
 
     if (rest.startsWith('http://') || rest.startsWith('https://')) {
-      const match = URL.exec(rest)
+      const match = BARE_URL.exec(rest)
       // Trailing punctuation belongs to the sentence, not to the address. The
       // trimmed tail is left for the next iteration, so it stays a text node.
       const href = match ? trimUrl(match[0]) : ''

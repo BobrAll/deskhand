@@ -8,6 +8,7 @@ import type { PermissionState, ProviderId } from '@shared/types'
 import { PROVIDERS, normalizeBaseUrl, providerInfo } from '@shared/defaults'
 import type { SettingsBundle } from '@shared/api'
 import { prettyAccelerator } from '@shared/accelerator'
+import { WindowBrand } from '../styles/WindowBrand'
 
 type Step = 0 | 1 | 2
 
@@ -105,14 +106,19 @@ export function App() {
 
   return (
     <div className="wizard">
-      <div className="steps">
-        {STEPS.map((label, index) => (
-          <div key={label} className={`step ${index === step ? 'active' : ''} ${index < step ? 'done' : ''}`}>
-            <span className="num">{index < step ? '✓' : index + 1}</span>
-            {label}
-          </div>
-        ))}
-      </div>
+      <aside className="wizard-rail">
+        <WindowBrand subtitle="Первый запуск" />
+        <ol className="steps" aria-label="Этапы настройки">
+          {STEPS.map((label, index) => (
+            <li key={label} className="step" aria-current={index === step ? 'step' : undefined}>
+              <span className="num" data-done={index < step} aria-hidden="true">
+                {index < step ? '✓' : index + 1}
+              </span>
+              {label}
+            </li>
+          ))}
+        </ol>
+      </aside>
 
       {step === 0 && (
         <section className="panel">
@@ -122,45 +128,47 @@ export function App() {
             разрешений он работать не сможет.
           </p>
 
-          <div className="perm">
-            <div>
-              <div className="perm-title">
-                Универсальный доступ {permissions.accessibility ? <span className="ok">✓</span> : null}
+          <div className="permission-list">
+            <div className="perm">
+              <div>
+                <div className="perm-title">
+                  Универсальный доступ {permissions.accessibility ? <span className="ok">✓</span> : null}
+                </div>
+                <div className="hint">Выделение текста и автоматическая вставка (⌘C / ⌘V).</div>
               </div>
-              <div className="hint">Выделение текста и автоматическая вставка (⌘C / ⌘V).</div>
+              {!permissions.accessibility && (
+                <button className="primary" onClick={() => void requestPermissions()}>
+                  Открыть запрос
+                </button>
+              )}
             </div>
-            {!permissions.accessibility && (
-              <button className="primary" onClick={() => void requestPermissions()}>
-                Открыть запрос
-              </button>
-            )}
-          </div>
 
-          <div className="perm">
-            <div>
-              <div className="perm-title">
-                Запись экрана {permissions.screenRecording ? <span className="ok">✓</span> : null}
+            <div className="perm">
+              <div>
+                <div className="perm-title">
+                  Запись экрана {permissions.screenRecording ? <span className="ok">✓</span> : null}
+                </div>
+                <div className="hint">Скриншот активного окна, когда текст не выделен.</div>
               </div>
-              <div className="hint">Скриншот активного окна, когда текст не выделен.</div>
+              {!permissions.screenRecording && (
+                <button onClick={() => void requestPermissions()}>Запросить доступ</button>
+              )}
             </div>
-            {!permissions.screenRecording && (
-              <button onClick={() => void requestPermissions()}>Запросить доступ</button>
-            )}
-          </div>
 
-          <div className="perm">
-            <div>
-              <div className="perm-title">
-                Микрофон {permissions.microphone ? <span className="ok">✓</span> : null}
+            <div className="perm">
+              <div>
+                <div className="perm-title">
+                  Микрофон {permissions.microphone ? <span className="ok">✓</span> : null}
+                </div>
+                <div className="hint">
+                  Голосовой ввод: удерживай хоткей или три пальца на трекпаде и говори.
+                  Необязательно — без него всё работает с клавиатуры.
+                </div>
               </div>
-              <div className="hint">
-                Голосовой ввод: удерживай хоткей или три пальца на трекпаде и говори.
-                Необязательно — без него всё работает с клавиатуры.
-              </div>
+              {!permissions.microphone && (
+                <button onClick={() => void requestMicrophone()}>Разрешить</button>
+              )}
             </div>
-            {!permissions.microphone && (
-              <button onClick={() => void requestMicrophone()}>Разрешить</button>
-            )}
           </div>
 
           <div className="hint">
@@ -192,7 +200,8 @@ export function App() {
             {PROVIDERS.map((item) => (
               <button
                 key={item.id}
-                className={`provider ${provider === item.id ? 'active' : ''}`}
+                className="provider"
+                aria-pressed={provider === item.id}
                 onClick={() => {
                   setProvider(item.id)
                   setBaseUrl(bundle?.settings.baseUrls?.[item.id] ?? '')

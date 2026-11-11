@@ -1,5 +1,6 @@
 import { Writable } from 'node:stream'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { DEFAULT_VOICE } from '@shared/defaults'
 
 /**
  * `recognizer.ts` touches the file system, the network, `child_process` and the
@@ -127,6 +128,8 @@ async function load(): Promise<RecognizerModule> {
 }
 
 const WAV = Buffer.from('RIFF....WAVE')
+const GIGAAM = 'gigaam-v3-e2e-rnnt'
+const GIGAAM_FILE = 'gigaam-v3-e2e-rnnt-Q4_K_M.gguf'
 
 beforeEach(async () => {
   state.existing = new Set()
@@ -187,11 +190,22 @@ describe('installedModels', () => {
   })
 })
 
-describe('resolveWhisperModel', () => {
+describe('resolveVoiceModel', () => {
+  it('keeps the existing GigaAM download usable if the bundle lacks the model', async () => {
+    state.settings.voice = { ...DEFAULT_VOICE }
+    const modelPath = `/userdata/models/${GIGAAM_FILE}`
+    state.existing = new Set(['/app/resources/transcribe-cli', modelPath])
+    state.dirs['/userdata/models'] = [GIGAAM_FILE]
+
+    expect(await recognizer.voiceStatus()).toMatchObject({
+      ready: true, activeModel: GIGAAM, installed: [GIGAAM], modelPath
+    })
+  })
+
   it('uses the configured model from the app directory', async () => {
     state.existing = new Set(['/userdata/models/ggml-small-q5_1.bin'])
 
-    expect(await recognizer.resolveWhisperModel()).toEqual({
+    expect(await recognizer.resolveVoiceModel()).toEqual({
       path: '/userdata/models/ggml-small-q5_1.bin',
       auto: false,
       id: 'small-q5_1'
@@ -201,7 +215,7 @@ describe('resolveWhisperModel', () => {
   it('falls back to the same model elsewhere on disk and flags it as auto', async () => {
     state.existing = new Set(['/opt/homebrew/share/whisper.cpp/models/ggml-small-q5_1.bin'])
 
-    expect(await recognizer.resolveWhisperModel()).toEqual({
+    expect(await recognizer.resolveVoiceModel()).toEqual({
       path: '/opt/homebrew/share/whisper.cpp/models/ggml-small-q5_1.bin',
       auto: true,
       id: 'small-q5_1'
@@ -213,7 +227,7 @@ describe('resolveWhisperModel', () => {
     state.sizes['/userdata/models/ggml-tiny.bin'] = 100
     state.sizes['/userdata/models/ggml-large-v3-turbo-q5_0.bin'] = 900
 
-    expect(await recognizer.resolveWhisperModel()).toEqual({
+    expect(await recognizer.resolveVoiceModel()).toEqual({
       path: '/userdata/models/ggml-large-v3-turbo-q5_0.bin',
       auto: true,
       id: 'large-v3-turbo-q5_0'
@@ -236,11 +250,11 @@ describe('resolveWhisperModel', () => {
     state.dirs['/userdata/models'] = ['ggml-x.bin.part', 'other.bin', 'ggml-ok.bin']
     state.sizes['/userdata/models/ggml-ok.bin'] = 10
 
-    expect((await recognizer.resolveWhisperModel()).path).toBe('/userdata/models/ggml-ok.bin')
+    expect((await recognizer.resolveVoiceModel()).path).toBe('/userdata/models/ggml-ok.bin')
   })
 
   it('returns null when nothing is on disk', async () => {
-    expect(await recognizer.resolveWhisperModel()).toEqual({ path: null, auto: true, id: null })
+    expect(await recognizer.resolveVoiceModel()).toEqual({ path: null, auto: true, id: null })
   })
 })
 
@@ -309,14 +323,17 @@ describe('transcribe', () => {
     state.existing = new Set(['/app/resources/whisper-cli', '/userdata/models/ggml-small-q5_1.bin'])
   }
 
-  it('runs the selected GigaAM model in Russian and reads only its transcript file', async () => {
-    state.settings.voice = { model: 'gigaam-v3-e2e-rnnt', language: 'en', enabled: true }
+  it('runs bundled GigaAM by default without a user model or network', async () => {
+    state.settings.voice = { ...DEFAULT_VOICE, language: 'en' }
     const binary = '/app/resources/transcribe-cli'
-    const model = '/userdata/models/gigaam-v3-e2e-rnnt-Q4_K_M.gguf'
+    const model = `/app/resources/speech/${GIGAAM_FILE}`
     state.existing = new Set([binary, model])
     state.whisper.stdout = 'run: ok\ntext: Открой настройки.'
     state.transcript = 'Открой настройки.'
 
+    expect(await recognizer.voiceStatus()).toMatchObject({
+      ready: true, activeModel: GIGAAM, installed: [GIGAAM], modelPath: model
+    })
     expect(await recognizer.transcribe({ wav: WAV })).toMatchObject({
       ok: true,
       text: state.transcript
@@ -325,6 +342,20 @@ describe('transcribe', () => {
       binary,
       args: ['-m', model, '-l', 'ru', '--timestamps', 'none', '-o', expect.any(String), expect.any(String)]
     }])
+    expect(fetch).not.toHaveBeenCalled()
+  })
+
+  it('uses the bundled engine when an old Whisper selection is missing', async () => {
+    const binary = '/app/resources/transcribe-cli'
+    const model = `/app/resources/speech/${GIGAAM_FILE}`
+    state.existing = new Set([binary, model, '/app/resources/whisper-cli'])
+    state.transcript = 'Открой настройки.'
+
+    expect(await recognizer.voiceStatus()).toMatchObject({
+      ready: true, activeModel: GIGAAM, binaryPath: binary
+    })
+    expect(await recognizer.transcribe({ wav: WAV })).toMatchObject({ ok: true })
+    expect(state.spawned[0]).toMatchObject({ binary, args: ['-m', model, '-l', 'ru', ...Array(5).fill(expect.any(String))] })
   })
 
   it('requires the selected GigaAM weights even when Whisper weights are installed', async () => {
@@ -332,7 +363,9 @@ describe('transcribe', () => {
     state.existing.add('/app/resources/transcribe-cli')
     state.dirs['/userdata/models'] = ['ggml-small-q5_1.bin']
     state.sizes['/userdata/models/ggml-small-q5_1.bin'] = 181
-    expect(await recognizer.voiceStatus()).toMatchObject({ ready: false, modelPath: null })
+    expect(await recognizer.voiceStatus()).toMatchObject({
+      ready: false, modelPath: null, detail: expect.stringContaining('В приложении нет модели GigaAM')
+    })
   })
 
   it('fails cleanly when whisper-cli is missing', async () => {
@@ -605,13 +638,20 @@ describe('downloadModel', () => {
 
 describe('deleteModel', () => {
   it('removes catalog and imported files from the app models directory', async () => {
-    await recognizer.deleteModel('gigaam-v3-e2e-rnnt')
+    await recognizer.deleteModel('tiny')
     await recognizer.deleteModel('ggml-custom.bin')
 
     expect(state.removed).toEqual([
-      '/userdata/models/gigaam-v3-e2e-rnnt-Q4_K_M.gguf',
+      '/userdata/models/ggml-tiny.bin',
       '/userdata/models/ggml-custom.bin'
     ])
+  })
+
+  it('does not allow downloading or deleting the bundled model', async () => {
+    await expect(recognizer.downloadModel(GIGAAM, () => undefined)).rejects.toThrow('входит в приложение')
+    await expect(recognizer.deleteModel(GIGAAM)).rejects.toThrow('нельзя удалить')
+    expect(fetch).not.toHaveBeenCalled()
+    expect(state.removed).toEqual([])
   })
 
   it('rejects paths and unrelated filenames', async () => {

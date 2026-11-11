@@ -84,7 +84,7 @@ describe('draggedWidth', () => {
 
   it('stops at the display and at the floor', () => {
     expect(draggedWidth(360, 900, SCREEN)).toBe(CARD_MAX_WIDTH)
-    expect(draggedWidth(360, -900, SCREEN)).toBe(44)
+    expect(draggedWidth(360, -900, SCREEN)).toBe(80)
   })
 
   it('rounds, because a window is sized in whole points', () => {

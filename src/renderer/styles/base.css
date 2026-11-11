@@ -13,42 +13,42 @@
   --font: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', Arial, sans-serif;
   --mono: ui-monospace, 'SF Mono', Menlo, monospace;
 
-  --bg: rgba(28, 29, 34, 0.94);
-  --bg-solid: #16171b;
+  --bg: rgba(30, 30, 32, 0.94);
+  --bg-solid: #171718;
   --surface: rgba(255, 255, 255, 0.06);
   --surface-strong: rgba(255, 255, 255, 0.11);
   --border: rgba(255, 255, 255, 0.12);
   --border-strong: rgba(255, 255, 255, 0.2);
-  --text: #f2f3f5;
-  --text-dim: rgba(242, 243, 245, 0.66);
-  --text-faint: rgba(242, 243, 245, 0.45);
+  --text: #f3f3f4;
+  --text-dim: rgba(243, 243, 244, 0.66);
+  --text-faint: rgba(243, 243, 244, 0.45);
   --accent: #7b95ff;
   --accent-strong: #6480ff;
   --accent-soft: rgba(123, 149, 255, 0.18);
   --danger: #ff6f6f;
   --warning: #f3c26b;
   --success: #6bd6a1;
-  --shadow: 0 24px 60px rgba(0, 0, 0, 0.48);
+  --shadow: 0 24px 60px rgba(0, 0, 0, 0.5);
   --radius: 14px;
   --radius-sm: 9px;
 
   /* Glass surface for the cursor card (see `overlay.css`). */
-  --glass-tint: rgba(24, 26, 32, 0.60);
-  --glass-sheen: rgba(255, 255, 255, 0.14);
-  --glass-edge: rgba(255, 255, 255, 0.13);
+  --glass-tint: rgba(34, 34, 37, 0.60);
+  --glass-sheen: rgba(255, 255, 255, 0.16);
+  --glass-edge: rgba(255, 255, 255, 0.14);
 }
 
 @media (prefers-color-scheme: light) {
   :root {
-    --bg: rgba(252, 252, 253, 0.97);
-    --bg-solid: #fbfbfd;
+    --bg: rgba(248, 248, 249, 0.97);
+    --bg-solid: #f7f7f8;
     --surface: rgba(0, 0, 0, 0.045);
     --surface-strong: rgba(0, 0, 0, 0.085);
     --border: rgba(0, 0, 0, 0.11);
     --border-strong: rgba(0, 0, 0, 0.2);
-    --text: #16171b;
-    --text-dim: rgba(22, 23, 27, 0.68);
-    --text-faint: rgba(22, 23, 27, 0.45);
+    --text: #18181a;
+    --text-dim: rgba(24, 24, 26, 0.68);
+    --text-faint: rgba(24, 24, 26, 0.45);
     --accent: #4a68f0;
     --accent-strong: #3a55d6;
     --accent-soft: rgba(74, 104, 240, 0.14);
@@ -57,7 +57,7 @@
     --success: #159c62;
     --shadow: 0 24px 60px rgba(20, 24, 40, 0.2);
 
-    --glass-tint: rgba(250, 250, 253, 0.68);
+    --glass-tint: rgba(200, 202, 206, 0.62);
     --glass-sheen: rgba(255, 255, 255, 0.9);
     --glass-edge: rgba(0, 0, 0, 0.09);
   }
@@ -203,4 +203,60 @@ select option {
 
 .ok {
   color: var(--success);
+}
+/* Shared surfaces for the standalone windows. */
+body.window {
+  --window-rail: light-dark(#ebedf4, #1b1d24);
+  --window-panel: light-dark(#fff, #23252d);
+  --window-divider: light-dark(rgb(25 35 64 / 0.10), rgb(236 240 255 / 0.10));
+  --window-depth: 0 2px 8px light-dark(rgb(31 43 81 / 0.055), rgb(0 0 0 / 0.16));
+  --window-gutter: 32px;
+  background: light-dark(#f5f6fa, #18191f);
+  overflow: hidden;
+}
+
+.window-brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text);
+}
+
+.window-brand img {
+  flex: none;
+}
+
+.window-brand-name {
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.window-brand-subtitle {
+  margin-top: 2px;
+  color: var(--text-dim);
+  font-size: 11px;
+}
+
+body.window button.primary {
+  background: light-dark(#3d55d5, #95a7ff);
+  color: light-dark(#fff, #111529);
+}
+
+body.window button.primary:hover:not(:disabled) {
+  background: light-dark(#344bc2, #b0bdff);
+}
+
+:where(button, summary, a):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  body.window *,
+  body.window *::before,
+  body.window *::after {
+    transition-duration: 0s !important;
+    animation-duration: 0s !important;
+  }
 }

@@ -8,10 +8,9 @@ interface WindowDouble {
   showInactive: ReturnType<typeof vi.fn>
   show: ReturnType<typeof vi.fn>
   focus: ReturnType<typeof vi.fn>
-  setVibrancy: ReturnType<typeof vi.fn>
 }
 const state = vi.hoisted(() => ({
-  hidden: false, windows: [] as WindowDouble[], unhide: vi.fn(), focus: vi.fn()
+  hidden: false, windows: [] as WindowDouble[], unhide: vi.fn(), focus: vi.fn(), blur: vi.fn()
 }))
 vi.mock('electron', async () => {
   const { EventEmitter } = await import('node:events')
@@ -25,8 +24,6 @@ vi.mock('electron', async () => {
     show = vi.fn(() => { this.visible = true })
     showInactive = vi.fn(() => { this.visible = true })
     focus = vi.fn()
-    setVibrancy = vi.fn()
-    setHasShadow = vi.fn()
     setAlwaysOnTop = vi.fn()
     constructor() { super(); state.windows.push(this) }
     isDestroyed(): boolean { return false }
@@ -48,6 +45,7 @@ vi.mock('electron', async () => {
     }
   }
 })
+vi.mock('./windowBlur', () => ({ setWindowBlur: state.blur }))
 vi.mock('../pageLoad', () => ({ loadPage: vi.fn() }))
 
 beforeEach(() => {
@@ -56,6 +54,7 @@ beforeEach(() => {
   state.windows = []
   state.unhide.mockClear()
   state.focus.mockClear()
+  state.blur.mockClear()
 })
 
 async function readyHost() {
@@ -91,11 +90,11 @@ describe('voice indicator visibility', () => {
     host.setVoice(true)
     host.showInactive(31, 80)
     win.showInactive.mockClear()
-    win.setVibrancy.mockClear()
+    state.blur.mockClear()
     host.setVoice(true)
     host.showInactive(31, 80)
     expect(win.showInactive).toHaveBeenCalledOnce()
-    expect(win.setVibrancy).not.toHaveBeenCalled()
+    expect(state.blur).not.toHaveBeenCalled()
   })
 
   it('unhides the application without taking keyboard focus', async () => {
@@ -129,5 +128,20 @@ describe('voice indicator visibility', () => {
     win.emit('ready-to-show')
     expect(win.showInactive).toHaveBeenCalledOnce()
     expect(win.bounds.width).toBe(80)
+    expect(state.blur).toHaveBeenLastCalledWith(win, 0)
+  })
+})
+
+describe('window backdrop blur', () => {
+  it('clears the blur for annotations and restores it when they are removed', async () => {
+    const { host, win } = await readyHost()
+    expect(state.blur).toHaveBeenLastCalledWith(win, expect.any(Number))
+    expect(state.blur.mock.lastCall?.[1]).toBeGreaterThan(0)
+
+    host.setDrawing(true)
+    expect(state.blur).toHaveBeenLastCalledWith(win, 0)
+
+    host.setDrawing(false)
+    expect(state.blur.mock.lastCall?.[1]).toBeGreaterThan(0)
   })
 })

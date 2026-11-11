@@ -166,36 +166,27 @@ export const WHISPER_MODELS: WhisperModelMeta[] = [
 
 export interface VoiceModelMeta extends WhisperModelMeta {
   engine: 'whisper' | 'transcribe'
-  url: string
+  url?: string
   language?: string
-  /**
-   * The one the app points at when it has to choose for the user.
-   *
-   * It is a badge, not a filter: every model stays selectable, and the list is
-   * ordered by size rather than by preference.
-   */
-  recommended?: boolean
 }
 
-const gigaamFile = 'gigaam-v3-e2e-rnnt-Q4_K_M.gguf'
+export const BUNDLED_VOICE_MODEL = {
+  id: 'gigaam-v3-e2e-rnnt',
+  label: 'GigaAM v3',
+  file: 'gigaam-v3-e2e-rnnt-Q4_K_M.gguf',
+  mb: 184,
+  note: 'Русская речь с пунктуацией и нормализацией чисел.',
+  engine: 'transcribe',
+  language: 'ru'
+} satisfies VoiceModelMeta
 
 export const VOICE_MODELS: VoiceModelMeta[] = [
+  BUNDLED_VOICE_MODEL,
   ...WHISPER_MODELS.map((model): VoiceModelMeta => ({
     ...model,
     engine: 'whisper',
     url: `${WHISPER_MODEL_BASE_URL}/${model.file}`
-  })),
-  {
-    id: 'gigaam-v3-e2e-rnnt',
-    label: 'GigaAM v3 E2E-RNNT · Q4_K_M',
-    file: gigaamFile,
-    mb: 184,
-    note: 'Русская речь с пунктуацией и нормализацией чисел.',
-    engine: 'transcribe',
-    language: 'ru',
-    recommended: true,
-    url: `https://huggingface.co/handy-computer/gigaam-v3-e2e-rnnt-gguf/resolve/main/${gigaamFile}`
-  }
+  }))
 ]
 
 export function voiceModel(id: string): VoiceModelMeta | undefined {
@@ -219,7 +210,7 @@ export const DEFAULT_VOICE: VoiceSettings = {
   // Separate from the main hotkey: the push-to-talk combination is swallowed by
   // the keyboard tap, so it must never be the same as the "type instead" one.
   hotkey: 'Alt+Shift+Space',
-  model: 'small-q5_1',
+  model: BUNDLED_VOICE_MODEL.id,
   // `ru` rather than `auto`: detection on a three-word command is the most
   // common source of "он меня не понял" for a Russian-speaking user.
   language: 'ru',
@@ -375,22 +366,13 @@ function sanitizeStringList(input: unknown, fallback: string[]): string[] {
   return Array.from(new Set(list))
 }
 
-/**
- * The chosen model: a catalog id, the file name of an imported model, or `''`.
- *
- * `''` is a real value — "nothing chosen yet" — and not a gap to fill with a
- * default. Filling it in made a fresh install claim a model it had never
- * downloaded: the settings window showed it as selected while the file was
- * absent, and the only way to notice was a failed press. A *missing* key still
- * gets the default, which is how existing installs keep their model.
- */
+/** A catalog id or an imported file name; old empty selections use the default. */
 function sanitizeVoiceModel(value: unknown): string {
   if (value === undefined || value === null) return DEFAULT_VOICE.model
   const id = String(value).trim()
-  if (id === '') return ''
   if (voiceModel(id)) return id
   // An imported model outside the catalog is still a valid choice: the file is
-  // what matters, and `resolveWhisperModel` reports it by name.
+  // what matters, and the recognizer reports it by name.
   if (isVoiceModelFile(id)) return id
   return DEFAULT_VOICE.model
 }

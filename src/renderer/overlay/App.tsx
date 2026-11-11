@@ -504,11 +504,7 @@ export function App() {
     }
   }, [applyState, onStream])
 
-  /**
-   * The native blur follows the same rule as the panel's own density: the main
-   * process drops the window's vibrancy while shapes are up, so putting the card
-   * back to full opacity on the first keystroke has to put the glass back too.
-   */
+  // Restore blur while typing, even if annotations are still visible.
   useEffect(() => {
     window.deskhand.overlay.setTyping(typing)
   }, [typing])

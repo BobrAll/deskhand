@@ -17,12 +17,12 @@ export type ResponseMode = 'insert' | 'analyze'
 /** What a finished transcript does: ask the model, or type it into the app. */
 export type VoiceAction = 'command' | 'dictate'
 
-/** Hold-to-talk input: a local whisper model turns speech into text. */
+/** Hold-to-talk input: a local model turns speech into text. */
 export interface VoiceSettings {
   enabled: boolean
   /** Accelerator held down to talk, e.g. "Alt+Shift+Space". */
   hotkey: string
-  /** Id from `VOICE_MODELS`; the file itself lives in the models directory. */
+  /** Catalog ID or imported Whisper model filename. */
   model: string
   /** Whisper language code, or `auto` to let the model detect it. */
   language: string
@@ -438,11 +438,11 @@ export interface VoiceStatus {
    * install claim a model it did not have.
    */
   activeModel: string | null
-  /** `whisper-cli` binary that will actually be used. */
+  /** Recognizer binary that will actually be used. */
   binaryPath: string | null
   /** Where models are downloaded to. */
   modelsDir: string
-  /** Catalog IDs and imported model filenames stored in the app’s models directory. */
+  /** Available bundled and downloaded catalog IDs, plus imported model filenames. */
   installed: string[]
   /** Set when the keyboard listener could not be started. */
   listenerError: string | null

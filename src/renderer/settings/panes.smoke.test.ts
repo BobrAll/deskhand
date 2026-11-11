@@ -105,13 +105,11 @@ describe('the settings panes', () => {
     expect(privacy()).toContain('Исключённые приложения')
   })
 
-  it('does not call a model selected before it is on disk', () => {
-    // The status has not arrived yet in this render, so nothing is known to be
-    // installed. The settings point at a model (the default one), and that must
-    // not be shown as a selection: a fresh install has none.
+  it('waits for the readiness check before reporting whether recognition works', () => {
     const html = voice()
-    expect(html).toContain('Модель не выбрана')
-    expect(html).not.toContain('Выбрана «')
+    expect(html).toContain('Проверяем…')
+    expect(html).not.toContain('Не готово')
+    expect(html).not.toContain('Всё на месте')
   })
 
   it('tells the three states of the agent switch apart', () => {
@@ -142,11 +140,13 @@ describe('the settings panes', () => {
     expect(extraBody).toBeGreaterThan(baseUrl)
   })
 
-  it('marks the recommended recognition model without hiding the others', () => {
+  it('shows the bundled recognizer and keeps Whisper and import in a closed disclosure', () => {
     const html = voice()
-    expect(html).toContain('рекомендовано')
-    // One badge, on one model: the list is ordered by size, not by preference.
-    expect(html.match(/рекомендовано/g)).toHaveLength(1)
+    const alternatives = html.match(/<details class="disclosure"><summary>Другие модели распознавания<\/summary>.*?<\/details>/)?.[0]
+    expect(alternatives).toContain('Модели Whisper')
+    expect(alternatives).toContain('Импортировать модель Whisper')
+    expect(alternatives).not.toContain('GigaAM')
+    expect(html).toContain('GigaAM v3 · встроенная модель для русского языка.')
   })
 
   it('offers the bundled Ruslan voice and the remote engine', () => {

@@ -19,7 +19,7 @@ import { cpus, homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pipeline } from 'node:stream/promises'
 import { app } from 'electron'
-import { isVoiceModelFile, VOICE_MODELS, voiceModel, WHISPER_MODELS } from '@shared/defaults'
+import { BUNDLED_VOICE_MODEL, isVoiceModelFile, voiceModel, WHISPER_MODELS } from '@shared/defaults'
 import { resourceCandidates } from '../paths'
 import type { DownloadProgress, TranscribeResult, VoiceStatus } from '@shared/types'
 import { getSettings } from '../settings/store'
@@ -48,6 +48,7 @@ const FIRST_LINE_CHARS = 300
 const PROGRESS_INTERVAL_MS = 120
 /** A download that goes this long without a byte is treated as dead. */
 const DOWNLOAD_IDLE_TIMEOUT_MS = 30_000
+const MISSING_BUNDLED_MODEL = 'В приложении нет модели GigaAM. Переустанови Deskhand.'
 
 function binaryName(engine: 'whisper' | 'transcribe'): string {
   return engine === 'transcribe' ? 'transcribe-cli' : 'whisper-cli'
@@ -84,7 +85,8 @@ export async function installedModels(): Promise<string[]> {
     /* the directory appears on the first download */
   }
   const present = new Set(entries)
-  const catalog = VOICE_MODELS.filter((model) => present.delete(model.file)).map((model) => model.id)
+  const catalog = WHISPER_MODELS.filter((model) => present.delete(model.file)).map((model) => model.id)
+  if (gigaamModelPath()) catalog.unshift(BUNDLED_VOICE_MODEL.id)
   return [...catalog, ...Array.from(present).filter(isVoiceModelFile).sort()]
 }
 
@@ -107,26 +109,36 @@ export interface ResolvedModel {
 /** The catalog id for a model file, or the file name when it is not in the catalog. */
 function modelIdFor(path: string): string {
   const file = path.split('/').pop() ?? path
-  return VOICE_MODELS.find((model) => model.file === file)?.id ?? file
+  return WHISPER_MODELS.find((model) => model.file === file)?.id ?? file
+}
+
+function gigaamModelPath(): string | null {
+  const legacyDownload = join(modelsDir(), BUNDLED_VOICE_MODEL.file)
+  return [...resourceCandidates(join('speech', BUNDLED_VOICE_MODEL.file)), legacyDownload]
+    .find(existsSync) ?? null
 }
 
 /**
- * The model that will actually be used: the configured one when its file is
- * around, otherwise the largest `ggml-*.bin` found anywhere — a bigger whisper is
- * a strictly better transcript for the same short command.
+ * Use the configured model when available. An unavailable Whisper selection
+ * falls back to GigaAM, then to another Whisper model if GigaAM is unavailable.
  */
-export async function resolveWhisperModel(id = getSettings().voice.model): Promise<ResolvedModel> {
+export async function resolveVoiceModel(id = getSettings().voice.model): Promise<ResolvedModel> {
+  const gigaam = gigaamModelPath()
+  if (id === BUNDLED_VOICE_MODEL.id) {
+    return { path: gigaam, auto: false, id: gigaam ? id : null }
+  }
+
   const configured = voiceModel(id)
   const file = configured?.file ?? (isVoiceModelFile(id) ? id : null)
   if (file) {
     const inAppDir = join(modelsDir(), file)
     if (existsSync(inAppDir)) return { path: inAppDir, auto: false, id: modelIdFor(inAppDir) }
-    if (configured?.engine === 'transcribe') return { path: null, auto: false, id: null }
     for (const dir of MODEL_SEARCH_DIRS) {
       const candidate = join(dir, file)
       if (existsSync(candidate)) return { path: candidate, auto: true, id: modelIdFor(candidate) }
     }
   }
+  if (gigaam) return { path: gigaam, auto: true, id: BUNDLED_VOICE_MODEL.id }
 
   const found: Array<{ path: string; size: number }> = []
   for (const dir of [modelsDir(), ...MODEL_SEARCH_DIRS]) {
@@ -154,21 +166,23 @@ export async function resolveWhisperModel(id = getSettings().voice.model): Promi
 export async function voiceStatus(): Promise<VoiceStatus> {
   const voice = getSettings().voice
   const configured = voiceModel(voice.model)
-  const engine = configured?.engine ?? 'whisper'
+  const model = await resolveVoiceModel(voice.model)
+  const engine = voiceModel(model.id ?? voice.model)?.engine ?? 'whisper'
   const binary = resolveBinary(engine)
-  const model = await resolveWhisperModel(voice.model)
   let detail: string | null = null
   if (!binary) {
     detail =
       engine === 'transcribe'
-        ? 'Не найден transcribe-cli — выполни npm run build:transcribe.'
+        ? 'В приложении нет движка GigaAM. Переустанови Deskhand.'
         : 'Не найден whisper-cli — пересобери приложение (npm run build:whisper).'
   } else if (!model.path) {
     // Say which model is missing when the settings point at one: "выбери её"
     // is useless advice if the user already chose it and only the file is gone.
-    detail = configured
-      ? `Модель «${configured.label}» не скачана — скачай её в настройках.`
-      : 'Не скачана модель распознавания — выбери её в настройках.'
+    detail = configured?.id === BUNDLED_VOICE_MODEL.id
+      ? MISSING_BUNDLED_MODEL
+      : configured
+        ? `Модель «${configured.label}» не скачана — скачай её в настройках.`
+        : 'Не скачана модель распознавания — выбери её в настройках.'
   }
   return {
     ready: Boolean(binary && model.path),
@@ -221,14 +235,17 @@ export interface TranscribeOptions {
 export async function transcribe(options: TranscribeOptions): Promise<TranscribeResult> {
   const startedAt = Date.now()
   const voice = getSettings().voice
-  const configured = voiceModel(voice.model)
-  const engine = configured?.engine ?? 'whisper'
+  const model = await resolveVoiceModel(voice.model)
+  const selected = voiceModel(model.id ?? voice.model)
+  const engine = selected?.engine ?? 'whisper'
   const binary = resolveBinary(engine)
   if (!binary) return { ok: false, text: '', ms: 0, message: `Не найден ${binaryName(engine)}.` }
 
-  const model = await resolveWhisperModel(voice.model)
   if (!model.path) {
-    return { ok: false, text: '', ms: 0, message: 'Не скачана модель распознавания.' }
+    const message = selected?.id === BUNDLED_VOICE_MODEL.id
+      ? MISSING_BUNDLED_MODEL
+      : 'Не скачана модель распознавания.'
+    return { ok: false, text: '', ms: 0, message }
   }
 
   const dir = join(tmpdir(), `deskhand-voice-${randomUUID()}`)
@@ -236,7 +253,7 @@ export async function transcribe(options: TranscribeOptions): Promise<Transcribe
   const wavPath = join(dir, 'input.wav')
   try {
     await writeFile(wavPath, options.wav)
-    const language = configured?.language ?? (voice.language || 'ru')
+    const language = selected?.language ?? (voice.language || 'ru')
     const threads = String(Math.max(MIN_THREADS, Math.min(MAX_THREADS, Math.floor(cpus().length / 2))))
     const transcriptPath = join(dir, 'transcript.txt')
     const args =
@@ -330,7 +347,7 @@ export function isDownloading(id: string): boolean {
  * Downloads one catalog model into `modelsDir()`.
  *
  * Written to a `.part` file and renamed only when complete, so an interrupted
- * download can never be picked up by `resolveWhisperModel()` as a usable model.
+ * download can never be picked up by `resolveVoiceModel()` as a usable model.
  */
 export function downloadModel(
   id: string,
@@ -341,6 +358,8 @@ export function downloadModel(
 
   const meta = voiceModel(id)
   if (!meta) return Promise.reject(new Error('unknown-model'))
+  const url = meta.url
+  if (!url) return Promise.reject(new Error('Эта модель уже входит в приложение.'))
 
   const target = join(modelsDir(), meta.file)
   const part = `${target}.part`
@@ -355,7 +374,7 @@ export function downloadModel(
     let total = meta.mb * 1024 * 1024
 
     try {
-      const response = await fetch(meta.url, { signal: controller.signal })
+      const response = await fetch(url, { signal: controller.signal })
       if (!response.ok || !response.body) throw new Error(`HTTP ${response.status}`)
 
       const contentLength = Number(response.headers.get('content-length') ?? 0)
@@ -418,6 +437,7 @@ export function downloadModel(
 
 /** Removes only model files stored in the app's models directory. */
 export async function deleteModel(id: string): Promise<void> {
+  if (id === BUNDLED_VOICE_MODEL.id) throw new Error('Встроенную модель нельзя удалить.')
   const model = voiceModel(id) ?? WHISPER_MODELS.find((model) => model.file === id)
   if (model && isDownloading(model.id)) throw new Error('Дождись окончания загрузки модели.')
   const file = model?.file ?? id

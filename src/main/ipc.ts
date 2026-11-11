@@ -9,7 +9,7 @@
 import { execFile } from 'node:child_process'
 import { dialog, ipcMain } from 'electron'
 import { CH } from '@shared/ipc'
-import { PROVIDERS } from '@shared/defaults'
+import { BUNDLED_VOICE_MODEL, PROVIDERS } from '@shared/defaults'
 import type {
   AppSettings,
   ContextFlags,
@@ -50,7 +50,6 @@ import {
   deleteModel,
   downloadModel,
   importModel,
-  resolveWhisperModel,
   voiceStatus
 } from './voice/recognizer'
 
@@ -315,13 +314,7 @@ export function registerIpc(deps: IpcDeps): void {
     const id = String(model ?? '')
     const wasSelected = getSettings().voice.model === id
     await deleteModel(id)
-    if (wasSelected) {
-      // The selection cannot outlive the file. Ask what will actually run now —
-      // another downloaded model, a copy that is still somewhere on disk, or
-      // nothing — and point the settings at that. Leaving the id behind is how
-      // the settings window kept showing a model that had been deleted.
-      selectModel((await resolveWhisperModel()).id ?? '')
-    }
+    if (wasSelected) selectModel(BUNDLED_VOICE_MODEL.id)
     return deps.voice.status()
   })
 

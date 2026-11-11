@@ -24,6 +24,7 @@ import { clamp } from '../util'
 import { denyExternalLinks } from '../denyExternalLinks'
 import { loadPage } from '../pageLoad'
 import { openAppWindows } from './settings'
+import { setWindowBlur } from './windowBlur'
 
 export {
   openSettingsWindow,
@@ -44,6 +45,8 @@ export {
  */
 const OVERLAY_MIN_HEIGHT = 31
 const OVERLAY_MAX_HEIGHT = 520
+
+const CARD_BLUR_RADIUS = 40
 
 const preload = join(__dirname, '../preload/index.js')
 
@@ -71,28 +74,10 @@ let voiceActive = false
  */
 let passthroughActive = false
 
-/**
- * One place decides what the *window* contributes to the picture.
- *
- * A voice turn is the strict case: the page draws a few pixels of bars and
- * nothing else, so the window must add nothing at all. Both bits of native chrome
- * are therefore removed while `voiceActive` is on:
- *
- * - vibrancy — a blurred rectangle behind what is meant to be bare bars;
- * - the native window shadow — AppKit draws it around the window's *rectangle*,
- *   not around what the page painted, so an empty 80×31 window still casts a soft
- *   rounded-rectangle shadow over the document behind it. On a white page that
- *   grey halo is exactly what reads as "a card I never asked for".
- *
- * The drawing state only needs the blur gone (the card is still there, thin, and
- * its shadow helps it read as a pane of glass). Guarded by the flags because both
- * calls rebuild native views, and doing that on every redraw flickers.
- */
 function applyWindowChrome(): void {
   const win = overlayWindow
   if (!win || win.isDestroyed()) return
-  win.setVibrancy(drawingActive || voiceActive ? null : 'under-window')
-  win.setHasShadow(!voiceActive)
+  setWindowBlur(win, drawingActive || voiceActive ? 0 : CARD_BLUR_RADIUS)
 }
 
 function createOverlayWindow(): BrowserWindow {
@@ -109,23 +94,9 @@ function createOverlayWindow(): BrowserWindow {
     maximizable: false,
     fullscreenable: false,
     acceptFirstMouse: true,
-    roundedCorners: true,
-    // The window is exactly the card (the renderer keeps no transparent margin),
-    // so both the shadow and the blur below describe the rounded card and not
-    // a rectangle around it. An earlier version had an 8px transparent margin
-    // for a CSS shadow, and macOS drew its shadow around that whole rectangle —
-    // which is what read as a second, translucent pane under the card.
-    //
-    // These two follow the flags rather than a hardcoded "card": a window can be
-    // *created* by the first voice press (when the feature was just switched on
-    // and the prewarm has not run), and a fresh window with glass and a shadow
-    // would put a panel behind the bars for the whole turn.
-    hasShadow: !voiceActive,
-    // Real frosting: `backdrop-filter` in a transparent window only has the
-    // page's own (empty) backdrop to sample, so the glass would just show the
-    // app behind it unblurred. The vibrancy view blurs the desktop instead.
-    vibrancy: drawingActive || voiceActive ? undefined : 'under-window',
-    visualEffectState: 'active',
+    // The renderer draws the inset silhouette and its shadow.
+    roundedCorners: false,
+    hasShadow: false,
     webPreferences: {
       preload,
       sandbox: false,
@@ -176,6 +147,7 @@ function createOverlayWindow(): BrowserWindow {
   // here, so the press is never dropped — only deferred by the paint.
   win.once('ready-to-show', () => {
     overlayReady = true
+    applyWindowChrome()
     const pending = pendingShow
     pendingShow = null
     if (pending) performShow(pending.height, pending.width, pending.activate)
@@ -380,31 +352,14 @@ export const overlayHost: OverlayHost = {
     resizeAtAnchor(win, safeHeight, safeWidth, pin)
   },
 
-  /**
-   * Swaps the card between frosted glass and plain tinted glass.
-   *
-   * While the assistant is drawing, the card is deliberately thin (the renderer
-   * drops to 40% opacity) so that the screen it is pointing at shows through. The
-   * vibrancy view would undo that: it blurs the desktop behind the window, so the
-   * "see-through" state would show a smeared copy of the annotated region instead
-   * of the region itself. Removing it while shapes are up is what makes the
-   * transparency actually reveal the target.
-   *
-   * Guarded by `drawingActive` because `setVibrancy` rebuilds a native view:
-   * calling it on every redraw would flicker the card.
-   */
+  /** Clears blur while a drawing needs to reveal detail behind the card. */
   setDrawing(active: boolean): void {
     if (drawingActive === active) return
     drawingActive = active
     applyWindowChrome()
   },
 
-  /**
-   * The strictest state: the card has no surface at all, the bars are the entire
-   * thing. Both the native blur *and* the window shadow have to go, or the bars
-   * sit on a soft grey rectangle over the user's document — see
-   * `applyWindowChrome`. The bar animation itself is unchanged.
-   */
+  /** Clears blur while the renderer shows voice bars. */
   setVoice(active: boolean): void {
     if (voiceActive !== active) {
       voiceActive = active

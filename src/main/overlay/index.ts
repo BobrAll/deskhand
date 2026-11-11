@@ -803,7 +803,7 @@ export function createOverlayController(host: OverlayHost) {
   /** Reports the current drawing state so the card can offer a "убрать" action. */
   function emitAnnotations(): void {
     const count = session?.annotations.length ?? 0
-    // The card's own density and the window's vibrancy both follow this number;
+    // The card's own density and the window's blur both follow this number;
     // routing them through here keeps the two from ever disagreeing.
     syncDrawing()
     sendToWindow(CH.overlay.annotations, { count })

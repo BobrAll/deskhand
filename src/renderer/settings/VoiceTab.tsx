@@ -3,8 +3,7 @@
  *
  * Everything here is about one promise: hold a key, speak, get an answer without
  * the audio leaving the machine. That makes the section mostly a readiness panel —
- * which whisper model is on disk, how big it is, whether the keyboard tap could
- * start — because those are the only things that can actually be wrong.
+ * which model is active and whether the keyboard tap could start.
  *
  * The pane is the tab's own state and handlers; the cards that only read it are
  * three components below: `ModelList` (which models are on disk), `TtsSection`
@@ -15,10 +14,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { DownloadProgress, TtsSettings, TtsStatus, VoiceSettings, VoiceStatus } from '@shared/types'
 import {
   WHISPER_LANGUAGES,
-  VOICE_MODELS,
+  BUNDLED_VOICE_MODEL,
+  WHISPER_MODELS,
   voiceModel
 } from '@shared/defaults'
-import { Group, Row, ToggleRow } from './Row'
+import { Disclosure, Group, Row, ToggleRow } from './Row'
 import { InstallList } from './InstallList'
 
 interface VoiceTabProps {
@@ -31,8 +31,6 @@ interface VoiceTabProps {
 }
 
 interface ModelListProps {
-  /** The model the settings point at. */
-  model: string
   /**
    * The model that will actually transcribe, from the main process.
    *
@@ -52,41 +50,22 @@ interface ModelListProps {
 }
 
 /** Which recognition models are on disk, and the ways to get more of them. */
-function ModelList({ model, activeModel, installed, applying, progress, deleting, downloadError, ...handlers }: ModelListProps) {
-  const configured = voiceModel(model)
-  const active = voiceModel(activeModel ?? '')
-  /**
-   * What the footer says about the selection.
-   *
-   * Three cases, and they are different things: a model that is on disk and in
-   * use; a chosen model that is missing while another one covers for it; and
-   * nothing at all. Saying "выбрана" in the second case is what made a fresh
-   * install claim a model it did not have.
-   */
-  const hint = activeModel === null
-    ? 'Модель не выбрана — скачай одну из списка.'
-    : !active
-      ? `Используется файл «${activeModel}».`
-      : configured && configured.id !== activeModel
-        ? `«${configured.label}» не скачана — используется «${active.label}».`
-        : `Выбрана «${active.label}».`
-
+function ModelList({ activeModel, installed, applying, progress, deleting, downloadError, ...handlers }: ModelListProps) {
   return (
     <InstallList
-      title="Модель распознавания"
-      entries={VOICE_MODELS.map((entry) => ({
+      title="Модели Whisper"
+      entries={WHISPER_MODELS.map((entry) => ({
         id: entry.id,
         label: entry.label,
-        meta: `${entry.mb} МБ · ${entry.note}`,
-        recommended: entry.recommended
+        meta: `${entry.mb} МБ · ${entry.note}`
       }))}
       active={activeModel}
       installed={installed}
       progress={progress}
       deleting={deleting}
       error={downloadError}
-      hint={applying ? 'Применяем модель…' : hint}
-      importLabel="Указать файл ggml-*.bin"
+      hint={applying ? 'Применяем модель…' : 'Whisper поддерживает другие языки.'}
+      importLabel="Импортировать модель Whisper"
       extras={Array.from(installed).filter((id) => !voiceModel(id))}
       {...handlers}
     />
@@ -339,7 +318,7 @@ function ReadinessSection({
   return (
     <Group title="Состояние">
       <Row
-        title={ready ? 'Готово' : 'Не готово'}
+        title={status === null ? 'Проверяем…' : ready ? 'Готово' : 'Не готово'}
         hint={
           model !== savedModel
             ? 'Применяем модель…'
@@ -361,11 +340,6 @@ function ReadinessSection({
       {testError && (
         <Row stacked>
           <div className="row-hint err">{testError}</div>
-        </Row>
-      )}
-      {status?.modelPath && (
-        <Row stacked>
-          <div className="mono">{status.modelPath}</div>
         </Row>
       )}
     </Group>
@@ -433,7 +407,7 @@ export function VoiceTab({ voice, tts, savedModel, savedTts, onVoiceChange, onTt
   const adoptSelection = useCallback(
     (next: VoiceStatus | null) => {
       if (!next) return
-      const model = next.activeModel ?? ''
+      const model = next.activeModel ?? BUNDLED_VOICE_MODEL.id
       if (model !== voice.model) onVoiceChange({ model })
     },
     [onVoiceChange, voice.model]
@@ -476,8 +450,7 @@ export function VoiceTab({ voice, tts, savedModel, savedTts, onVoiceChange, onTt
     try {
       const next = await window.deskhand.voice.deleteModel(id)
       setStatus(next)
-      // The selection cannot outlive the file: main moves it to whatever is
-      // still on disk, or to nothing, and the draft follows.
+      // Main restores the bundled model if the selected model was deleted.
       adoptSelection(next)
     } catch {
       setDownloadError('Не удалось удалить модель. Попробуй снова.')
@@ -502,6 +475,7 @@ export function VoiceTab({ voice, tts, savedModel, savedTts, onVoiceChange, onTt
   // Reflect a click on an installed model while its settings are being saved.
   const selectedModel = installed.has(voice.model) ? voice.model : status?.activeModel ?? null
   const selected = voiceModel(selectedModel ?? '')
+  const modelName = selected?.label ?? selectedModel
 
   /** Stores the synthesis key; the value never comes back from the main process. */
   const saveTtsKey = useCallback(async () => {
@@ -606,29 +580,25 @@ export function VoiceTab({ voice, tts, savedModel, savedTts, onVoiceChange, onTt
         )}
 
         <Row
-          title="Язык речи"
+          title="Модель распознавания"
           hint={
-            selected?.language
-              ? 'У выбранной модели фиксированный язык.'
-              : 'Для коротких команд язык надёжнее автоопределения.'
+            voice.model !== savedModel
+              ? 'Применяем модель…'
+              : selectedModel === BUNDLED_VOICE_MODEL.id || !status
+                ? `${BUNDLED_VOICE_MODEL.label} · встроенная модель для русского языка.`
+                : modelName ? `Используется «${modelName}».` : (status.detail ?? 'Модель недоступна.')
           }
         >
-          <select
-            value={selected?.language ?? voice.language}
-            disabled={Boolean(selected?.language)}
-            aria-label="Язык речи"
-            onChange={(event) => onVoiceChange({ language: event.target.value })}
-          >
-            {WHISPER_LANGUAGES.map((language) => (
-              <option key={language.id} value={language.id}>
-                {language.label}
-              </option>
-            ))}
-          </select>
+          {voice.model !== BUNDLED_VOICE_MODEL.id && installed.has(BUNDLED_VOICE_MODEL.id) && (
+            <button disabled={progress !== null || deleting !== null} onClick={() => onVoiceChange({ model: BUNDLED_VOICE_MODEL.id })}>
+              Выбрать GigaAM
+            </button>
+          )}
         </Row>
+      </Group>
 
+      <Disclosure title="Другие модели распознавания">
         <ModelList
-          model={voice.model}
           activeModel={selectedModel}
           installed={installed}
           applying={voice.model !== savedModel}
@@ -640,7 +610,20 @@ export function VoiceTab({ voice, tts, savedModel, savedTts, onVoiceChange, onTt
           onImport={() => void importModel()}
           onRemove={(id, label) => void remove(id, label)}
         />
-      </Group>
+        {selectedModel && selectedModel !== BUNDLED_VOICE_MODEL.id && (
+          <Row title="Язык речи" hint="Для коротких команд язык надёжнее автоопределения.">
+            <select
+              value={voice.language}
+              aria-label="Язык речи"
+              onChange={(event) => onVoiceChange({ language: event.target.value })}
+            >
+              {WHISPER_LANGUAGES.map((language) => (
+                <option key={language.id} value={language.id}>{language.label}</option>
+              ))}
+            </select>
+          </Row>
+        )}
+      </Disclosure>
 
       <TtsSection
         voice={voice}

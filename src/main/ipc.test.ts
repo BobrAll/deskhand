@@ -93,7 +93,7 @@ vi.mock('electron-store', () => {
 vi.mock('./settings/store', async () => {
   const { DEFAULT_SETTINGS } = await import('@shared/defaults')
   return {
-    getSettings: () => DEFAULT_SETTINGS,
+    getSettings: vi.fn(() => DEFAULT_SETTINGS),
     patchSettings: vi.fn((patch: Partial<typeof DEFAULT_SETTINGS>) => ({
       ...DEFAULT_SETTINGS,
       ...patch
@@ -122,7 +122,6 @@ vi.mock('./voice/recognizer', () => ({
   downloadModel: vi.fn(async () => undefined),
   importModel: vi.fn(async () => 'tiny'),
   deleteModel: vi.fn(async () => undefined),
-  resolveWhisperModel: vi.fn(async () => ({ path: null, auto: true, id: null })),
   voiceStatus: async () => ({ ready: true, model: 'tiny', detail: null })
 }))
 
@@ -130,7 +129,7 @@ vi.mock('./llm/testKey', () => ({ testApiKey: async () => ({ ok: true }) }))
 
 import { registerIpc, type IpcDeps } from './ipc'
 import { getSettings, patchSettings } from './settings/store'
-import { deleteModel, downloadModel, importModel, resolveWhisperModel } from './voice/recognizer'
+import { deleteModel, downloadModel, importModel } from './voice/recognizer'
 
 /** Every method of `IpcDeps`, each a spy: the wiring is what is under test. */
 function fakeDeps(): IpcDeps {
@@ -432,37 +431,24 @@ describe('registerIpc: choosing a recognition model', () => {
     })
   })
 
-  it('moves the selection off a model it just deleted', async () => {
+  it('restores GigaAM when the selected alternative is deleted', async () => {
     const deps = fakeDeps()
     electron.reset()
     registerIpc(deps)
     vi.mocked(deleteModel).mockClear()
-    vi.mocked(resolveWhisperModel).mockResolvedValueOnce({ path: '/x/ggml-tiny.bin', auto: true, id: 'tiny' })
     vi.mocked(patchSettings).mockClear()
-    // The defaults point at small-q5_1, which is the model being removed.
-    expect(getSettings().voice.model).toBe('small-q5_1')
-
-    const remove = electron.handles.get(CH.voice.deleteModel)!
-    await remove({}, 'small-q5_1')
-
-    expect(patchSettings).toHaveBeenCalledWith({
-      voice: expect.objectContaining({ model: 'tiny' })
+    const settings = getSettings()
+    vi.mocked(getSettings).mockReturnValueOnce({
+      ...settings,
+      voice: { ...settings.voice, model: 'small-q5_1' }
     })
-  })
-
-  it('clears the selection when the deleted model was the last one', async () => {
-    const deps = fakeDeps()
-    electron.reset()
-    registerIpc(deps)
-    vi.mocked(resolveWhisperModel).mockResolvedValueOnce({ path: null, auto: true, id: null })
-    vi.mocked(patchSettings).mockClear()
 
     const remove = electron.handles.get(CH.voice.deleteModel)!
     await remove({}, 'small-q5_1')
 
-    // `''` is "nothing chosen", and it is what the pane shows as such.
+    expect(deleteModel).toHaveBeenCalledWith('small-q5_1')
     expect(patchSettings).toHaveBeenCalledWith({
-      voice: expect.objectContaining({ model: '' })
+      voice: expect.objectContaining({ model: 'gigaam-v3-e2e-rnnt' })
     })
   })
 

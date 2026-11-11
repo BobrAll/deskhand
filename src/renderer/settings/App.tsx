@@ -15,6 +15,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { AppSettings, KeyStatus, PermissionState, ProviderId } from '@shared/types'
 import { PROVIDERS } from '@shared/defaults'
 import type { AppPickResult, RunningAppInfo, SettingsBundle } from '@shared/api'
+import { WindowBrand } from '../styles/WindowBrand'
 import { HotkeyField } from './HotkeyField'
 import {
   hasUnsaved,
@@ -469,21 +470,20 @@ export function App() {
   return (
     <div className="shell">
       <aside className="sidebar">
-        <div className="brand">
-          <div className="brand-name">Deskhand</div>
-          <div className="brand-sub">Настройки</div>
-        </div>
-        {TABS.map((item) => (
-          <button
-            key={item.id}
-            className={`nav ${tab === item.id ? 'active' : ''}`}
-            aria-current={tab === item.id ? 'page' : undefined}
-            onClick={() => setTab(item.id)}
-          >
-            <NavIcon tab={item.id} />
-            {item.label}
-          </button>
-        ))}
+        <WindowBrand subtitle="Настройки" />
+        <nav className="sidebar-nav" aria-label="Разделы настроек">
+          {TABS.map((item) => (
+            <button
+              key={item.id}
+              className={`nav ${tab === item.id ? 'active' : ''}`}
+              aria-current={tab === item.id ? 'page' : undefined}
+              onClick={() => setTab(item.id)}
+            >
+              <NavIcon tab={item.id} />
+              {item.label}
+            </button>
+          ))}
+        </nav>
         <div className="sidebar-foot">
           <div className="side-key">
             <div className="sidebar-label">Карточка</div>
@@ -521,8 +521,13 @@ export function App() {
 
       <main className="content">
         <header className="pane-head">
-          <h1>{PANE[tab].title}</h1>
-          <p className="pane-sub">{PANE[tab].subtitle}</p>
+          <div className="pane-heading">
+            <span className="pane-icon"><NavIcon tab={tab} /></span>
+            <div>
+              <h1>{PANE[tab].title}</h1>
+              <p className="pane-sub">{PANE[tab].subtitle}</p>
+            </div>
+          </div>
         </header>
 
         <div className="settings-scroll" ref={scrollRef}>

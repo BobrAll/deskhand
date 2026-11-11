@@ -30,6 +30,7 @@ build/tmp/
 /index.js
 *.tsbuildinfo
 electron.vite.config.ts.timestamp-*
+electron.vite.config.[0-9]*.mjs
 
 # ---------- Packaging / releases ----------
 release/
@@ -45,9 +46,12 @@ dist_electron/
 # ---------- Compiled native binaries ----------
 # Собираются из исходников: src/main/native/helper.m, scripts/build-helper.mjs
 resources/deskhand-helper
+resources/deskhand-window-blur.node
 resources/whisper-cli
 resources/transcribe-cli
 resources/transcribe-licenses/
+resources/speech/*.gguf
+resources/speech/*.part
 resources/piper/
 resources/.piper-build-*/
 resources/cu-service

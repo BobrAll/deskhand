@@ -7,9 +7,9 @@
   "license": "MIT",
   "private": true,
   "scripts": {
-    "dev": "node scripts/build-piper.mjs && electron-vite dev",
+    "dev": "node scripts/build-window-blur.mjs && node scripts/build-piper.mjs && node scripts/prepare-speech.mjs && electron-vite dev",
     "dev:fresh": "node scripts/dev-fresh.mjs",
-    "build": "node scripts/build-piper.mjs && electron-vite build",
+    "build": "node scripts/build-window-blur.mjs && node scripts/build-piper.mjs && node scripts/prepare-speech.mjs && electron-vite build",
     "preview": "electron-vite preview",
     "typecheck": "npm run typecheck:node && npm run typecheck:web",
     "typecheck:node": "tsc --noEmit -p tsconfig.node.json",
@@ -43,6 +43,23 @@
     ],
     "extraResources": [
       {
+        "from": "LICENSE",
+        "to": "LICENSE"
+      },
+      {
+        "from": "THIRD_PARTY_NOTICES.md",
+        "to": "THIRD_PARTY_NOTICES.md"
+      },
+      {
+        "from": "resources/whisper-licenses",
+        "to": "whisper-licenses"
+      },
+      {
+        "from": "resources",
+        "to": ".",
+        "filter": ["deskhand-window-blur.node"]
+      },
+      {
         "from": "resources/deskhand-helper",
         "to": "deskhand-helper"
       },
@@ -57,7 +74,7 @@
       {
         "from": "resources",
         "to": ".",
-        "filter": ["transcribe-cli", "transcribe-licenses/**"]
+        "filter": ["transcribe-cli", "transcribe-licenses/**", "speech/gigaam-v3-e2e-rnnt-Q4_K_M.gguf", "speech/GigaAM-LICENSE.txt"]
       },
       {
         "from": "resources/piper",
@@ -79,7 +96,7 @@
       "identity": null,
       "hardenedRuntime": false,
       "gatekeeperAssess": false,
-      "x64ArchFiles": "Contents/Resources/{deskhand-helper,whisper-cli,transcribe-cli,deskhand-agent,piper/engine/*}",
+      "x64ArchFiles": "Contents/Resources/{deskhand-helper,deskhand-window-blur.node,whisper-cli,transcribe-cli,deskhand-agent,piper/engine/*}",
       "target": [
         {
           "target": "zip",

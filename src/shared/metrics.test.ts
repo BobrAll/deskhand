@@ -27,13 +27,8 @@ describe('metrics: the card widths', () => {
     expect(CARD_WIDTH).toBe(360)
   })
 
-  it('keeps the floor at 44, below the voice width', () => {
-    expect(CARD_MIN_WIDTH).toBe(44)
-    expect(CARD_MIN_WIDTH).toBeLessThan(CARD_VOICE_WIDTH)
-  })
-
-  it('orders the widths: floor < voice < narrow < full', () => {
-    expect(CARD_MIN_WIDTH).toBeLessThan(CARD_VOICE_WIDTH)
+  it('uses the transparency floor for both the narrowest card and the voice bars', () => {
+    expect(CARD_MIN_WIDTH).toBe(CARD_VOICE_WIDTH)
     expect(CARD_VOICE_WIDTH).toBeLessThan(CARD_NARROW_WIDTH)
     expect(CARD_NARROW_WIDTH).toBeLessThan(CARD_WIDTH)
   })

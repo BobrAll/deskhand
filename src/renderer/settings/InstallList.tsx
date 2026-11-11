@@ -29,7 +29,6 @@ export interface InstallEntry {
   label: string
   /** Size and description, as one line under the name. */
   meta: string
-  recommended?: boolean
 }
 
 interface InstallListProps {
@@ -95,10 +94,7 @@ export function InstallList({
           const share = progress && progress.total > 0 ? progress.received / progress.total : 0
           const name = (
             <>
-              <span className="model-name">
-                {entry.label}
-                {entry.recommended && <span className="badge">рекомендовано</span>}
-              </span>
+              <span className="model-name">{entry.label}</span>
               <span className="model-meta">{entry.meta}</span>
             </>
           )

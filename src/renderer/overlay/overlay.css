@@ -16,81 +16,68 @@ body,
   overflow: hidden;
 }
 
-/* The card is nearly opaque on purpose: at 60% the text was competing with
-   whatever happened to be behind it, and a control surface has to read the same
-   over a white document and a dark editor. The vibrancy blur is still underneath,
-   but it is now a hint of depth instead of the thing that makes the panel legible. */
+/* Keep the tint as a single layer so its alpha controls the whole surface. */
 :root {
-  --panel: rgba(21, 23, 29, 0.86);
-  --panel-edge: rgba(255, 255, 255, 0.10);
-  /*
-   * The same surface while the assistant is drawing on the screen (`data-drawing`
-   * on `.card`). At 40% the panel is unmistakably a pane of tinted glass: what
-   * the arrow is pointing at stays readable through it, which is the whole point
-   * — an opaque card parked on the target would hide the thing it explains.
-   */
-  --panel-drawing: rgba(21, 23, 29, 0.40);
+  --panel: rgba(22, 22, 25, 0.72);
+  --panel-edge: rgba(255, 255, 255, 0.08);
+  --panel-drawing: rgba(30, 30, 33, 0.38);
 }
 
 @media (prefers-color-scheme: light) {
   :root {
-    --panel: rgba(249, 249, 251, 0.88);
+    --panel: rgba(252, 253, 255, 0.66);
     --panel-edge: rgba(0, 0, 0, 0.10);
-    --panel-drawing: rgba(249, 249, 251, 0.42);
+    --panel-drawing: rgba(200, 202, 206, 0.40);
   }
 }
 
 .card {
-  /* No margin: the window is exactly this card. That is what keeps the native
-     shadow and the vibrancy blur on the rounded shape instead of a rectangle
-     around it (see the comment in `windows.ts`). The radius matches the window's
-     own corner radius so the blur never peeks out at the four corners. */
   margin: 0;
   /* The resize edge is positioned against the card, not against the window. */
   position: relative;
   padding: 6px 8px;
-  background-color: var(--panel);
-  background-image:
-    radial-gradient(ellipse 78% 42px at 14% 0, light-dark(rgb(255 255 255 / 0.85), rgb(255 255 255 / 0.13)), transparent),
-    radial-gradient(ellipse 72% 42px at 100% 100%, light-dark(rgb(116 145 199 / 0.09), rgb(126 153 215 / 0.08)), transparent),
-    linear-gradient(180deg, light-dark(rgb(255 255 255 / 0.42), rgb(255 255 255 / 0.055)), transparent 40px);
-  background-clip: padding-box;
-  border: 1px solid var(--panel-edge);
-  border-radius: 9px;
-  box-shadow:
-    inset 0 0 0 1px light-dark(rgb(255 255 255 / 0.55), rgb(255 255 255 / 0.055)),
-    inset 0 1px 1px var(--glass-sheen),
-    inset 0 -1px 2px light-dark(rgb(35 52 80 / 0.12), rgb(0 0 0 / 0.35));
+  isolation: isolate;
+  border: 1px solid transparent;
   display: flex;
   flex-direction: column;
   gap: 3px;
   animation: appear 100ms ease-out;
-  /* The two densities cross-fade instead of snapping: drawings arrive while the
-     answer is still streaming, and a hard flip would read as a glitch rather
-     than as the card stepping out of the way. */
-  transition:
-    background-color 180ms ease-out,
-    border-color 180ms ease-out,
-    box-shadow 180ms ease-out;
+}
+
+/* Leave room for the silhouette inside Electron's clipped viewport. */
+.card::before {
+  content: '';
+  position: absolute;
+  inset: 0 3px;
+  z-index: -1;
+  pointer-events: none;
+  border: 1px solid var(--panel-edge);
+  border-radius: 10px;
+  background-color: var(--panel);
+  background-image: linear-gradient(
+    to bottom,
+    light-dark(rgb(255 255 255 / 0.16), rgb(255 255 255 / 0.08)),
+    transparent 26px
+  );
+  box-shadow: 0 0 2px rgb(0 0 0 / 0.16);
+  transition: background-color 180ms ease-out, border-color 180ms ease-out;
 }
 
 /**
  * While the assistant is painting on the screen the card becomes a much thinner
  * sheet of glass. The arrow exists to point at something *behind* the card, and
- * an opaque panel parked on that very spot is what hides it. At 40% the desktop
- * shows through, so the target stays visible; the main process also drops the
- * window's vibrancy for the same stretch (`setDrawing` in `windows.ts`), because
- * a native blur would smear exactly what the arrow is pointing at.
+ * an opaque panel parked on that very spot is what hides it. Under 40% the desktop
+ * shows through, so the target stays visible.
  */
-.card[data-drawing] {
-  background-color: var(--panel-drawing);
+.card[data-drawing]::before {
   background-image: none;
+  box-shadow: none;
+  background-color: var(--panel-drawing);
   border-color: color-mix(in srgb, var(--panel-edge) 55%, transparent);
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.10);
 }
 
 /* A faint accent edge marks a request in progress. */
-.card[data-busy] {
+.card[data-busy]::before {
   border-color: color-mix(in srgb, var(--accent) 45%, var(--panel-edge));
 }
 
@@ -264,8 +251,8 @@ button.stop:hover:not(:disabled) > span {
 .drawer {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  animation: unfold 120ms ease-out;
+  gap: 7px;
+  animation: unfold 140ms ease-out;
 }
 
 @keyframes unfold {
@@ -284,9 +271,9 @@ button.stop:hover:not(:disabled) > span {
 .meta {
   display: flex;
   align-items: center;
-  gap: 3px;
-  min-height: 16px;
-  font-size: 10.5px;
+  gap: 4px;
+  min-height: 18px;
+  font-size: 11px;
   /* Small type over a light card needs more than `--text-faint`: the strip is
      clickable, so it has to stay legible, not just quiet. */
   color: color-mix(in srgb, var(--text) 62%, transparent);
@@ -320,7 +307,6 @@ button.tag:hover:not(:disabled) {
 
 button.tag[data-on='true'] {
   background: var(--accent-soft);
-  border-color: color-mix(in srgb, var(--accent) 38%, transparent);
   color: var(--text);
 }
 
@@ -519,11 +505,11 @@ button.tag.clear {
 /* ------------------------------------------------------------------ the answer */
 
 .answer {
-  font-size: 12.5px;
-  line-height: 1.5;
+  font-size: 13px;
+  line-height: 1.58;
   white-space: pre-wrap;
   word-break: break-word;
-  padding: 5px 0 1px;
+  padding: 8px 2px 2px 0;
   border-top: 1px solid var(--border);
   max-height: 268px;
   overflow-y: auto;
@@ -548,7 +534,7 @@ button.tag.clear {
 }
 
 .answer > * + * {
-  margin-top: 4px;
+  margin-top: 7px;
 }
 
 .answer strong {
@@ -861,7 +847,8 @@ button.link.primary:hover:not(:disabled) {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .card {
+  .card,
+  .drawer {
     animation: none;
   }
   .voice {
@@ -879,10 +866,10 @@ button.link.primary:hover:not(:disabled) {
    field used to be. */
 .card[data-voice] {
   padding: 0;
-  background-color: transparent;
-  background-image: none;
-  border-color: transparent;
-  box-shadow: none;
+}
+
+.card[data-voice]::before {
+  content: none;
 }
 
 .card[data-voice] .voice {
@@ -890,7 +877,7 @@ button.link.primary:hover:not(:disabled) {
      clipped by the resize. */
   height: 31px;
   /* Left-aligned, not centred: the window is wider than the bars for a native
-     reason (see OVERLAY_VOICE_WIDTH), so centring would push them a third of the
+     reason (see CARD_VOICE_WIDTH), so centring would push them a third of the
      way across the window and away from the pointer. */
   justify-content: flex-start;
   padding-left: 8px;

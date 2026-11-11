@@ -147,10 +147,10 @@ describe('palette: per-window colours', () => {
   it('gives the overlay a panel that follows the appearance', () => {
     const dark = resolveWindow('overlay', 'dark')
     const light = resolveWindow('overlay', 'light')
-    expect(dark['--panel']).toBe('rgba(21, 23, 29, 0.86)')
-    expect(light['--panel']).toBe('rgba(249, 249, 251, 0.88)')
-    expect(dark['--panel-drawing']).toBe('rgba(21, 23, 29, 0.40)')
-    expect(light['--panel-drawing']).toBe('rgba(249, 249, 251, 0.42)')
+    expect(dark['--panel']).toBe('rgba(22, 22, 25, 0.72)')
+    expect(light['--panel']).toBe('rgba(252, 253, 255, 0.66)')
+    expect(dark['--panel-drawing']).toBe('rgba(30, 30, 33, 0.38)')
+    expect(light['--panel-drawing']).toBe('rgba(200, 202, 206, 0.40)')
   })
 
   it('keeps the screen glow colours fixed across appearances', () => {

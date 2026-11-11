@@ -4,83 +4,92 @@ body,
   height: 100%;
 }
 
-body.window {
-  background: radial-gradient(120% 120% at 12% 0%, rgba(123, 149, 255, 0.16), transparent 55%),
-    var(--bg-solid);
+.wizard {
+  display: grid;
+  grid-template-columns: 190px minmax(0, 1fr);
+  height: 100%;
 }
 
-.wizard {
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-  padding: 44px 34px 22px;
-  gap: 20px;
-  overflow-y: auto;
+.wizard-rail {
+  padding: 48px 16px 24px;
+  background: var(--window-rail);
+  border-right: 1px solid var(--window-divider);
+  -webkit-app-region: drag;
 }
 
 .steps {
-  display: flex;
-  gap: 18px;
-  -webkit-app-region: drag;
+  display: grid;
+  gap: 5px;
+  margin: 26px 0 0;
+  padding: 0;
+  list-style: none;
 }
 
 .step {
   display: flex;
   align-items: center;
-  gap: 7px;
-  font-size: 12px;
-  color: var(--text-faint);
-  letter-spacing: 0.02em;
+  gap: 9px;
+  padding: 8px;
+  border-radius: var(--radius-sm);
+  font-size: 12.5px;
+  color: var(--text-dim);
 }
 
 .step .num {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 19px;
-  height: 19px;
-  border-radius: 50%;
-  border: 1px solid var(--border-strong);
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 22px;
+  height: 22px;
+  border-radius: 7px;
+  background: var(--surface-strong);
   font-size: 11px;
+  font-variant-numeric: tabular-nums;
 }
 
-.step.active {
+.step[aria-current='step'] {
+  background: var(--accent-soft);
   color: var(--text);
   font-weight: 600;
 }
 
-.step.active .num {
-  background: var(--accent);
-  border-color: transparent;
-  color: #fff;
-}
-
-.step.done .num {
-  background: var(--accent-soft);
-  border-color: transparent;
+.step[aria-current='step'] .num,
+.step .num[data-done='true'] {
+  background: var(--window-panel);
   color: var(--accent);
 }
 
 .panel {
   display: flex;
   flex-direction: column;
+  min-height: 0;
   gap: 14px;
-  flex: 1;
+  padding: 41px var(--window-gutter) 22px;
+  overflow-y: auto;
 }
 
 h1 {
   margin: 0;
-  font-size: 25px;
-  letter-spacing: -0.02em;
-  font-weight: 700;
+  font-size: 28px;
+  letter-spacing: -0.035em;
+  font-weight: 680;
+  line-height: 1.15;
 }
 
 .lead {
-  margin: 0;
+  margin: -5px 0 6px;
   font-size: 13.5px;
   line-height: 1.55;
   color: var(--text-dim);
   max-width: 56ch;
+}
+
+.permission-list,
+.tips {
+  border: 1px solid var(--window-divider);
+  border-radius: var(--radius);
+  background: var(--window-panel);
+  box-shadow: var(--window-depth);
 }
 
 .perm {
@@ -88,15 +97,27 @@ h1 {
   align-items: center;
   justify-content: space-between;
   gap: 14px;
-  padding: 12px 14px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
+  padding: 13px 15px;
+}
+
+.perm + .perm {
+  border-top: 1px solid var(--window-divider);
+}
+
+.perm button {
+  flex: none;
 }
 
 .perm-title {
-  font-size: 13.5px;
+  margin-bottom: 3px;
+  font-size: 13px;
   font-weight: 600;
+}
+
+.perm .hint,
+.panel > .hint {
+  color: var(--text-dim);
+  line-height: 1.45;
 }
 
 .providers {
@@ -110,13 +131,14 @@ h1 {
   align-items: center;
   justify-content: center;
   gap: 6px;
-  padding: 11px;
-  font-size: 13.5px;
+  min-height: 40px;
+  padding: 8px;
+  font-size: 13px;
 }
 
-.provider.active {
+.provider[aria-pressed='true'] {
   background: var(--accent-soft);
-  border-color: rgba(123, 149, 255, 0.4);
+  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
   font-weight: 600;
 }
 
@@ -145,7 +167,6 @@ h1 {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  margin-top: 10px;
 }
 
 .status {
@@ -162,7 +183,7 @@ h1 {
 
 .tips {
   margin: 0;
-  padding-left: 18px;
+  padding: 14px 16px 14px 32px;
   display: flex;
   flex-direction: column;
   gap: 7px;
@@ -187,7 +208,8 @@ kbd {
   align-items: center;
   gap: 8px;
   margin-top: auto;
-  padding-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--window-divider);
 }
 
 .spacer {
@@ -196,4 +218,5 @@ kbd {
 
 a {
   color: var(--accent);
+  overflow-wrap: anywhere;
 }
