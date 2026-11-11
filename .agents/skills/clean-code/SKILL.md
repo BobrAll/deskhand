@@ -1,9 +1,9 @@
 ---
-name: ub-mode-lite
-description: Apply the standing engineering rules before every code change in this repository, including bug fixes, features, tests, and refactoring.
+name: clean-code
+description: Apply the standing engineering rules before every code change in this repository, including bug fixes, features, tests, and refactoring. Always active.
 ---
 
-# UB Mode Lite
+# Clean Code
 
 A compact set of engineering principles inspired by Uncle Bob, Clean Code, and pragmatic software craftsmanship.
 

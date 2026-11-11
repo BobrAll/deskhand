@@ -1,7 +1,6 @@
 ---
 name: refactoring
-description: Improve existing code structure while preserving behavior. Use only when the user explicitly requests a refactor or invokes this skill.
-disable-model-invocation: true
+description: Improve existing code structure while preserving behavior. Use when the user asks to refactor, restructure, clean up, or reorganize existing code, or invokes this skill by name.
 ---
 
 # Refactoring
