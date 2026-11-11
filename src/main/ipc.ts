@@ -356,8 +356,8 @@ export function registerIpc(deps: IpcDeps): void {
   // Synthesis lives in the main process because that is where the key is: the
   // overlay asks for a line and gets a clip back, never a credential. The key
   // itself is written once and never read back through any channel.
-  ipcMain.handle(CH.tts.speak, (_event, text: unknown) =>
-    synthesize(typeof text === 'string' ? text : '')
+  ipcMain.handle(CH.tts.speak, (_event, text: unknown, localOnly: unknown) =>
+    synthesize(typeof text === 'string' ? text : '', localOnly === true)
   )
   ipcMain.handle(CH.tts.status, () => ttsStatus())
   ipcMain.handle(CH.tts.setKey, (_event, key: unknown) => {

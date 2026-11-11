@@ -246,7 +246,7 @@ export interface DeskhandApi {
    * repeated line is never paid for twice.
    */
   tts: {
-    speak(text: string): Promise<TtsResult>
+    speak(text: string, localOnly?: boolean): Promise<TtsResult>
     status(): Promise<TtsStatus>
     /** Stores the key encrypted; an empty string removes it. */
     setKey(key: string): Promise<TtsStatus>

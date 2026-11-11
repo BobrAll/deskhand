@@ -115,16 +115,16 @@ function modelIdFor(path: string): string {
  * around, otherwise the largest `ggml-*.bin` found anywhere — a bigger whisper is
  * a strictly better transcript for the same short command.
  */
-export async function resolveWhisperModel(
-  configured = voiceModel(getSettings().voice.model)
-): Promise<ResolvedModel> {
-  if (configured) {
-    const inAppDir = join(modelsDir(), configured.file)
-    if (existsSync(inAppDir)) return { path: inAppDir, auto: false, id: configured.id }
-    if (configured.engine === 'transcribe') return { path: null, auto: false, id: null }
+export async function resolveWhisperModel(id = getSettings().voice.model): Promise<ResolvedModel> {
+  const configured = voiceModel(id)
+  const file = configured?.file ?? (isVoiceModelFile(id) ? id : null)
+  if (file) {
+    const inAppDir = join(modelsDir(), file)
+    if (existsSync(inAppDir)) return { path: inAppDir, auto: false, id: modelIdFor(inAppDir) }
+    if (configured?.engine === 'transcribe') return { path: null, auto: false, id: null }
     for (const dir of MODEL_SEARCH_DIRS) {
-      const candidate = join(dir, configured.file)
-      if (existsSync(candidate)) return { path: candidate, auto: true, id: configured.id }
+      const candidate = join(dir, file)
+      if (existsSync(candidate)) return { path: candidate, auto: true, id: modelIdFor(candidate) }
     }
   }
 
@@ -156,7 +156,7 @@ export async function voiceStatus(): Promise<VoiceStatus> {
   const configured = voiceModel(voice.model)
   const engine = configured?.engine ?? 'whisper'
   const binary = resolveBinary(engine)
-  const model = await resolveWhisperModel(configured)
+  const model = await resolveWhisperModel(voice.model)
   let detail: string | null = null
   if (!binary) {
     detail =
@@ -226,7 +226,7 @@ export async function transcribe(options: TranscribeOptions): Promise<Transcribe
   const binary = resolveBinary(engine)
   if (!binary) return { ok: false, text: '', ms: 0, message: `Не найден ${binaryName(engine)}.` }
 
-  const model = await resolveWhisperModel(configured)
+  const model = await resolveWhisperModel(voice.model)
   if (!model.path) {
     return { ok: false, text: '', ms: 0, message: 'Не скачана модель распознавания.' }
   }

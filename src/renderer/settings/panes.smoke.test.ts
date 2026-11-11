@@ -55,6 +55,7 @@ function voice(): string {
       voice: DEFAULT_SETTINGS.voice,
       tts: DEFAULT_SETTINGS.tts,
       savedModel: DEFAULT_SETTINGS.voice.model,
+      savedTts: DEFAULT_SETTINGS.tts,
       onVoiceChange: noop,
       onTtsChange: noop
     })
@@ -146,6 +147,25 @@ describe('the settings panes', () => {
     expect(html).toContain('рекомендовано')
     // One badge, on one model: the list is ordered by size, not by preference.
     expect(html.match(/рекомендовано/g)).toHaveLength(1)
+  })
+
+  it('offers the bundled Ruslan voice and the remote engine', () => {
+    const html = renderToStaticMarkup(
+      createElement(VoiceTab, {
+        voice: DEFAULT_SETTINGS.voice,
+        tts: { ...DEFAULT_SETTINGS.tts, engine: 'piper' },
+        savedModel: DEFAULT_SETTINGS.voice.model,
+        savedTts: { ...DEFAULT_SETTINGS.tts, engine: 'piper' },
+        onVoiceChange: noop,
+        onTtsChange: noop
+      })
+    )
+    expect(html).toContain('Piper · Руслан')
+    expect(html).toContain('Руслан уже в приложении')
+    expect(html).not.toContain('Голос Piper')
+    expect(html).not.toContain('Указать файл .onnx')
+    // The remote-only fields belong to the other engine and are not shown here.
+    expect(html).not.toContain('Адрес сервиса')
   })
 
   it('survives an empty exclusion list instead of rendering nothing', () => {

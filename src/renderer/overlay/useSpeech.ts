@@ -3,6 +3,7 @@ import { WAIT_STATUS_MS, waitingPhrases } from './waiting'
 import { looksLikeAction } from '@shared/intent'
 import type { AnswerVoice, VoiceSettings } from '@shared/types'
 import type { SpeechCue } from '@shared/speechBank'
+import { TTS_MAX_CHARS } from '@shared/tts'
 import { speechLine, speaksCue } from './speechCues'
 import {
   ANSWER_FALLBACK,
@@ -21,8 +22,8 @@ import { phraseAudio } from './speechAudio'
  * A line that is not recorded — normally the answer — is synthesised by the main
  * process and cached there, but only when the user has configured a voice and
  * chosen it for answers; otherwise it is spoken by the macOS voice, or not at
- * all when answers are set to stay silent. The manual "Прослушать" button is the
- * macOS voice in every case: it is a one-off the user asked for.
+ * all when answers are set to stay silent. Manual playback uses the configured
+ * synthesizer with the macOS voice as fallback.
  *
  * Ordering is a promise chain rather than a counter: clips become ready at
  * different times (one now from disk, one after a round trip), and the second
@@ -36,24 +37,64 @@ const VOICE_RETRIES = 10
 
 /** The system voice is fed the answer in chunks of at most this many characters. */
 const SPEECH_CHUNK_CHARS = 220
-const SPEECH_CHUNKS = new RegExp(
-  `.{1,${SPEECH_CHUNK_CHARS}}(?:\\s|$)|\\S{1,${SPEECH_CHUNK_CHARS}}`,
-  'g'
-)
 /** Faster than the macOS default, which reads slower than a person scans the card. */
 const SPEECH_RATE = 1.3
+
+function* speechChunks(text: string, limit: number): Generator<string> {
+  let remaining = text
+  while (remaining.length > limit) {
+    let end = remaining.lastIndexOf(' ', limit)
+    if (end < 1) {
+      end = limit
+      const next = remaining.charCodeAt(end)
+      if (next >= 0xdc00 && next <= 0xdfff) end--
+    }
+    yield remaining.slice(0, end)
+    remaining = remaining.slice(end).trimStart()
+  }
+  if (remaining) yield remaining
+}
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
 /** A synthesised line, or null when the live engine is unavailable. */
-async function synthesize(text: string): Promise<string | null> {
+async function synthesize(text: string, localOnly = false): Promise<string | null> {
   const api = window.deskhand?.tts
   if (!api) return null
   try {
-    const result = await api.speak(text)
-    return result.ok && result.audio ? `data:audio/mpeg;base64,${result.audio}` : null
+    const result = await (localOnly ? api.speak(text, true) : api.speak(text))
+    return result.ok && result.audio
+      ? `data:${result.mime || 'audio/mpeg'};base64,${result.audio}`
+      : null
+  } catch {
+    return null
+  }
+}
+
+/** The voice preferences a turn reads once, and what they mean for playback. */
+interface VoiceSettingsRead {
+  voice: VoiceSettings
+  /** The configured engine is the local one and has everything it needs. */
+  local: boolean
+}
+
+/**
+ * Reads the voice settings and the engine state behind them.
+ *
+ * One round trip per turn, not per line: `say` and `prepare` ask the same
+ * question many times while a single answer is read.
+ */
+async function readVoice(): Promise<VoiceSettingsRead | null> {
+  try {
+    const { settings } = await window.deskhand.settings.load()
+    const api = window.deskhand.tts
+    const status = typeof api?.status === 'function' ? await api.status().catch(() => null) : null
+    return {
+      voice: settings.voice,
+      local: status?.configured === true && status.engine === 'piper'
+    }
   } catch {
     return null
   }
@@ -69,6 +110,7 @@ export function useSpeech() {
   const audio = useRef<HTMLAudioElement | null>(null)
   /** Resolves the promise a paused clip is holding open. */
   const releaseAudio = useRef<(() => void) | null>(null)
+  const releaseSystem = useRef<(() => void) | null>(null)
   const playing = useRef(0)
   const waitingTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const waitingVoice = useRef(false)
@@ -89,7 +131,7 @@ export function useSpeech() {
    * run; asking the main process for the settings each time would be a round
    * trip per spoken word.
    */
-  const voiceSettings = useRef<Promise<VoiceSettings | null> | null>(null)
+  const voiceSettings = useRef<Promise<VoiceSettingsRead | null> | null>(null)
   /**
    * Whether new lines may go to the live engine.
    *
@@ -98,6 +140,15 @@ export function useSpeech() {
    * paid one by accident.
    */
   const liveAllowed = useRef(false)
+  /**
+   * Whether the configured engine is the local one, and ready.
+   *
+   * A local voice is free and offline, so it may read the recorded bank's lines
+   * too — that is what makes «Руслан» the voice of the whole assistant instead of
+   * only of long answers. The remote engine does not get that: a recorded line
+   * is a line nobody pays for.
+   */
+  const localVoice = useRef(false)
 
   /** Cuts off everything that is playing and invalidates queued work. */
   const silence = useCallback(() => {
@@ -110,6 +161,7 @@ export function useSpeech() {
       element.pause()
       element.removeAttribute('src')
     }
+    releaseSystem.current?.()
     window.speechSynthesis?.cancel()
     playing.current = 0
     setSpeaking(false)
@@ -128,6 +180,9 @@ export function useSpeech() {
     clearWaiting()
     generation.current++
     turn.current = null
+    voiceSettings.current = null
+    liveAllowed.current = false
+    localVoice.current = false
     silence()
   }, [clearWaiting, silence])
 
@@ -139,13 +194,15 @@ export function useSpeech() {
    * It is not an error the user should see: the system voice still works.
    */
   const playAudio = useCallback((url: string): Promise<boolean> => {
-    if (typeof Audio === 'undefined') return Promise.resolve(false)
+    if (!url || typeof Audio === 'undefined') return Promise.resolve(false)
     return new Promise<boolean>((resolve) => {
       const element = new Audio(url)
       audio.current = element
       const settle = (played: boolean): void => {
-        if (audio.current === element) audio.current = null
-        releaseAudio.current = null
+        if (audio.current === element) {
+          audio.current = null
+          releaseAudio.current = null
+        }
         element.onended = null
         element.onerror = null
         resolve(played)
@@ -157,7 +214,7 @@ export function useSpeech() {
     })
   }, [])
 
-  /** The macOS voice: the fallback, and the manual "Прослушать" button. */
+  /** Feed macOS one utterance at a time and wait for it to finish. */
   const playSystem = useCallback(async (clean: string, token: number): Promise<void> => {
     const synth = window.speechSynthesis
     const language = /[а-яё]/i.test(clean) ? 'ru' : 'en'
@@ -175,73 +232,82 @@ export function useSpeech() {
       return
     }
 
-    const chunks = clean.match(SPEECH_CHUNKS) ?? [clean]
-    await new Promise<void>((resolve) => {
-      let left = chunks.length
-      for (const chunk of chunks) {
+    for (const chunk of speechChunks(clean, SPEECH_CHUNK_CHARS)) {
+      if (token !== generation.current) return
+      await new Promise<void>((resolve) => {
         const utterance = new SpeechSynthesisUtterance(chunk)
         utterance.voice = voice
         utterance.lang = voice.lang
         utterance.rate = SPEECH_RATE
-        utterance.onend = () => {
-          if (token !== generation.current) return resolve()
-          left -= 1
-          if (left <= 0) resolve()
-        }
-        utterance.onerror = () => {
-          if (token === generation.current) setError('Не удалось озвучить ответ. Текст доступен в карточке.')
+        const settle = (): void => {
+          utterance.onend = null
+          utterance.onerror = null
+          releaseSystem.current = null
           resolve()
         }
+        releaseSystem.current = settle
+        utterance.onend = settle
+        utterance.onerror = () => {
+          if (token === generation.current) setError('Не удалось озвучить ответ. Текст доступен в карточке.')
+          settle()
+        }
         synth.speak(utterance)
-      }
-    })
+      })
+    }
   }, [])
 
-  /**
-   * Resolves to an audio URL for one line, as early as possible.
-   *
-   * Order is by cost, cheapest first: the recorded bank is a file already on
-   * disk, the engine answers from its own disk cache when the same sentence was
-   * spoken before, and only a genuinely new sentence costs a request. Returning
-   * an empty string means "nothing playable", and the caller falls back to the
-   * system voice.
-   */
-  const prepare = useCallback(async (clean: string, token: number): Promise<string> => {
+  /** Piper can voice cues locally. Remote synthesis uses the recording when available. */
+  const prepareCue = useCallback(async (clean: string): Promise<string> => {
     const recorded = phraseAudio(clean)
+    if (localVoice.current) {
+      // The chosen local voice reads this line, and the recording stays as the
+      // fallback for an engine that fails mid-answer.
+      return (await synthesize(clean, true)) ?? recorded ?? ''
+    }
     if (recorded) return recorded
-    if (!liveAllowed.current || token !== generation.current) return ''
-    return (await synthesize(clean)) ?? ''
+    return liveAllowed.current ? (await synthesize(clean)) ?? '' : ''
   }, [])
 
-  /**
-   * Starts a line as early as it can be started.
-   *
-   * Synthesis is the slow half — a few seconds at the engine — while playback of
-   * the previous sentence is the clock the listener hears. Preparing on enqueue
-   * and playing on the queue overlaps the two: sentence two is already audio by
-   * the time sentence one finishes, so the queue never waits for the network in
-   * the middle of a reply. Lines from the recorded bank resolve instantly, which
-   * is why acknowledgements and terminal messages cost nothing at all.
-   */
-  const enqueue = useCallback((text: string) => {
+  /** Prepare the first clip while earlier lines play. Request later clips as playback advances. */
+  const enqueue = useCallback((text: string, kind: 'cue' | 'answer' | 'manual' = 'cue') => {
     setError(null)
     const clean = speechText(text)
     if (!clean) return
     const token = generation.current
-    const prepared = prepare(clean, token)
+    const live = kind === 'manual' || (kind === 'answer' && liveAllowed.current)
+    const chunks = live ? speechChunks(clean, TTS_MAX_CHARS) : [clean].values()
+    const prepare = async (chunk: string): Promise<string> => {
+      if (kind === 'cue') return prepareCue(chunk)
+      return live ? (await synthesize(chunk)) ?? '' : ''
+    }
+    const first = chunks.next()
+    if (first.done) return
+    const prepared = prepare(first.value)
     chain.current = chain.current.then(async () => {
       if (token !== generation.current) return
       playing.current += 1
       setSpeaking(true)
       try {
-        const played = await playAudio(await prepared)
-        if (!played && token === generation.current) await playSystem(clean, token)
+        let source = prepared
+        for (let chunk = first.value; ; ) {
+          const url = await source
+          if (token !== generation.current) return
+          const played = await playAudio(url)
+          if (!played && token === generation.current) await playSystem(chunk, token)
+          if (token !== generation.current) return
+          const next = chunks.next()
+          if (next.done) break
+          chunk = next.value
+          source = prepare(chunk)
+        }
       } finally {
-        playing.current = Math.max(0, playing.current - 1)
-        if (playing.current === 0) setSpeaking(false)
+        if (token === generation.current) {
+          playing.current = Math.max(0, playing.current - 1)
+          if (playing.current === 0) setSpeaking(false)
+        }
       }
     }).catch(() => undefined)
-  }, [prepare, playAudio, playSystem])
+  }, [prepareCue, playAudio, playSystem])
 
   /**
    * Says one line for a state, if that state is one worth saying.
@@ -253,12 +319,12 @@ export function useSpeech() {
    */
   const say = useCallback(
     (cue: SpeechCue, context: { spoken?: boolean; action?: boolean } = {}) => {
-      voiceSettings.current ??= window.deskhand.settings
-        .load()
-        .then(({ settings }) => settings.voice)
-        .catch(() => null)
-      void voiceSettings.current.then((voice) => {
-        if (!voice) return
+      const token = generation.current
+      voiceSettings.current ??= readVoice()
+      void voiceSettings.current.then((read) => {
+        if (!read || token !== generation.current) return
+        localVoice.current = read.local
+        const voice = read.voice
         const allowed = speaksCue(cue, {
           spoken: context.spoken === true,
           action: context.action === true,
@@ -275,24 +341,10 @@ export function useSpeech() {
     [enqueue]
   )
 
-  /** Manual playback: the user asked for this one line, and the system voice is immediate. */
   const speak = useCallback((text: string) => {
     stop()
-    const clean = speechText(text)
-    if (!clean) return
-    const token = generation.current
-    chain.current = chain.current.then(async () => {
-      if (token !== generation.current) return
-      playing.current += 1
-      setSpeaking(true)
-      try {
-        await playSystem(clean, token)
-      } finally {
-        playing.current = Math.max(0, playing.current - 1)
-        if (playing.current === 0) setSpeaking(false)
-      }
-    }).catch(() => undefined)
-  }, [stop, playSystem])
+    enqueue(text, 'manual')
+  }, [stop, enqueue])
 
   const begin = useCallback((id: string, prompt: string, spoken: boolean) => {
     stop()
@@ -300,29 +352,39 @@ export function useSpeech() {
     if (!spoken) return
     // Read the preference while the model is thinking, not after its answer.
     const action = looksLikeAction(prompt)
-    const preferences = window.deskhand.settings.load().then(({ settings }) => settings.voice)
+    const preferences = readVoice()
     // `say` reads the same settings; caching this read saves a round trip per
     // cue, and a turn is exactly when they can have changed.
-    voiceSettings.current = preferences.catch(() => null)
+    voiceSettings.current = preferences
     // `off` means the answer is read on the card, not heard. A recorded line is
     // still spoken for an action, because that is feedback about the machine,
     // not a repeat of text the user can already see. An absent value is treated
     // as off: speech is opt-in, never a guess.
     const speaksAnswer = (mode: AnswerVoice | undefined): boolean =>
       mode === 'system' || mode === 'neural'
-    const acknowledgement = preferences.then(settings => action
-      ? settings.agentFeedback !== false : speaksAnswer(settings.answerVoice)).catch(() => false)
+    const acknowledgement = preferences.then(read => read !== null && (action
+      ? read.voice.agentFeedback !== false
+      : speaksAnswer(read.voice.answerVoice))).catch(() => false)
     const enabled = preferences
-      .then(settings => requestedReading(prompt) || speaksAnswer(settings.answerVoice))
+      .then(read => read !== null &&
+        (requestedReading(prompt) || speaksAnswer(read.voice.answerVoice)))
       .catch(() => false)
     const current = { id, prompt, enabled, buffer: '', spoken: '' }
     turn.current = current
-    // `liveAllowed` is read when a line is queued, so it has to be settled before
-    // the first one. It is not awaited: a line that arrives sooner is a recorded
-    // one, and those never need the engine.
+    // `liveAllowed` and `localVoice` are read when a line is queued, so they have
+    // to be settled before the first one. Not awaited: a line that arrives
+    // sooner is a recorded one, and those never need the engine.
     void preferences
-      .then((settings) => { liveAllowed.current = settings.answerVoice === 'neural' })
-      .catch(() => { liveAllowed.current = false })
+      .then((read) => {
+        if (voiceSettings.current !== preferences) return
+        liveAllowed.current = read?.voice.answerVoice === 'neural' ||
+          (read?.voice.answerVoice === 'off' && requestedReading(prompt))
+        localVoice.current = read?.local === true
+      })
+      .catch(() => {
+        liveAllowed.current = false
+        localVoice.current = false
+      })
     // Acknowledgements are separate from reading the final answer aloud.
     const acknowledge = async (): Promise<void> => {
       waitingTimer.current = null
@@ -354,7 +416,7 @@ export function useSpeech() {
     current.spoken = ready
     if (fresh) {
       clearWaiting()
-      enqueue(fresh)
+      enqueue(fresh, 'answer')
     }
   }, [enqueue, clearWaiting])
 
@@ -381,7 +443,7 @@ export function useSpeech() {
     // Final text normally extends the streamed prefix. Never repeat that prefix.
     if (spoken.startsWith(current.spoken)) {
       const rest = spoken.slice(current.spoken.length).trim()
-      if (rest) enqueue(rest)
+      if (rest) enqueue(rest, 'answer')
       else if (!spoken && !failed && text.trim()) {
         // The answer exists and was deliberately not read. Two cases share this
         // branch and they are not the same sentence: a text task is reviewed on
@@ -395,7 +457,9 @@ export function useSpeech() {
       }
     } else if (failed) {
       stop()
-      enqueue(spoken)
+      enqueue(spoken, 'answer')
+    } else if (spoken) {
+      enqueue(spoken, 'answer')
     }
   }, [enqueue, stop, clearWaiting])
 

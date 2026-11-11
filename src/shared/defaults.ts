@@ -240,13 +240,14 @@ export const DEFAULT_VOICE: VoiceSettings = {
 /**
  * Live synthesis: off, and empty.
  *
- * Empty is not a placeholder for a default voice — there is none. A voice, an
- * endpoint and a key are the user's decision, and shipping a guess would spend
- * their credit on a service they never chose. The shipped recordings are what
- * makes the assistant audible without any of this.
+ * The remote engine's fields stay empty: an endpoint, a voice and a key are the
+ * user's decision, and shipping a guess would spend their credit on a service
+ * they never chose. The shipped recordings are what makes the assistant audible
+ * without any of this.
  */
 export const DEFAULT_TTS: TtsSettings = {
   enabled: false,
+  engine: 'remote',
   baseUrl: '',
   model: '',
   voice: '',
@@ -455,6 +456,7 @@ function sanitizeTts(input: unknown): TtsSettings {
   const text = (value: unknown): string => (typeof value === 'string' ? value.trim() : '')
   return {
     enabled: raw.enabled === true,
+    engine: raw.engine === 'piper' ? 'piper' : 'remote',
     // A base URL is normalised the same way provider URLs are, so a pasted
     // `.../v1/audio/speech` becomes the root instead of a doubled path.
     baseUrl: normalizeBaseUrl(raw.baseUrl),

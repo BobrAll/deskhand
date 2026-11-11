@@ -50,25 +50,37 @@ export interface VoiceSettings {
 export type AnswerVoice = 'off' | 'system' | 'neural'
 
 /**
+ * Where a line that was not recorded in advance is synthesised.
+ *
+ * `remote` is the OpenAI-compatible endpoint the user configures with a key.
+ * `piper` is a local neural voice: the engine and the `.onnx` model stay on the
+ * machine, so it works offline and costs nothing per answer.
+ */
+export type TtsEngine = 'remote' | 'piper'
+
+/**
  * Live speech synthesis for lines that were not recorded in advance.
  *
  * The app ships with its short lines already rendered, so this is not needed for
  * the assistant to have a voice at all. It exists for two cases: reading an
  * answer aloud in the same voice, and re-recording a line in a different voice.
  *
- * Every field is the user's: the endpoint, the model, the voice and the delivery
- * instruction. Nothing here is baked into the build, and the key is not part of
- * this object at all — it lives encrypted in `secrets` and never reaches a
- * renderer.
+ * Every field is the user's: the engine, the endpoint or local voice, and the
+ * delivery instruction. Nothing here is baked into the build, and the key is not
+ * part of this object at all — it lives encrypted in `secrets` and never reaches
+ * a renderer.
  */
 export interface TtsSettings {
   /** Off means "use the shipped recordings only". */
   enabled: boolean
-  /** API root without a trailing slash, e.g. `https://host/v1`. */
+  engine: TtsEngine
+  /** `remote` only: API root without a trailing slash, e.g. `https://host/v1`. */
   baseUrl: string
+  /** `remote` only: model id at that endpoint. */
   model: string
+  /** `remote` only: voice name as the service spells it. */
   voice: string
-  /** Free-form delivery instruction, sent as `instructions`. */
+  /** `remote` only: free-form delivery instruction, sent as `instructions`. */
   style: string
 }
 
@@ -456,7 +468,9 @@ export interface TtsStatus {
   configured: boolean
   /** Why not, when `configured` is false. */
   reason: string | null
-  /** The voice that will speak live lines, as configured. */
+  /** Which engine will speak. */
+  engine: TtsEngine
+  /** The remote voice that will speak live lines, as configured. */
   voice: string
   model: string
   /** Whether an API key is stored for this endpoint. */

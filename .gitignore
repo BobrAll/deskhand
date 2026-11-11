@@ -48,6 +48,8 @@ resources/deskhand-helper
 resources/whisper-cli
 resources/transcribe-cli
 resources/transcribe-licenses/
+resources/piper/
+resources/.piper-build-*/
 resources/cu-service
 resources/deskhand-agent
 resources/*.dylib

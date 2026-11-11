@@ -7,6 +7,7 @@ vi.mock('react', () => ({
   useEffect: (effect: () => unknown) => effect()
 }))
 import { useSpeech } from './useSpeech'
+import { TTS_MAX_CHARS } from '@shared/tts'
 
 let listeners: Record<string, () => void>
 let speak: ReturnType<typeof vi.fn>
@@ -116,6 +117,48 @@ describe('automatic speech lifecycle', () => {
 
 afterEach(() => { vi.clearAllTimers(); vi.useRealTimers(); vi.unstubAllGlobals() })
 
+describe('manual playback', () => {
+  it('uses the configured synthesizer and plays every fragment of a long answer in order', async () => {
+    const synth = vi.fn(async (_text: string) => ({
+      ok: true as const, audio: 'AAA', cached: false, mime: 'audio/wav'
+    }))
+    window.deskhand.tts.speak = synth
+    const clips: Array<{ onended: (() => void) | null }> = []
+    vi.stubGlobal('Audio', class {
+      onended: (() => void) | null = null
+      constructor(public url: string) { clips.push(this) }
+      async play(): Promise<void> {}
+    })
+
+    const answer = 'Первый абзац. '.repeat(60) + 'Второй абзац. '.repeat(60) + 'Последнее предложение.'
+    useSpeech().speak(answer)
+    await flush()
+    expect(clips).toHaveLength(1)
+    expect(synth).toHaveBeenCalledOnce()
+    for (let i = 0; i < 3; i++) {
+      clips[i].onended?.()
+      await flush()
+    }
+    expect(clips).toHaveLength(3)
+    const fragments = synth.mock.calls.map(([text]) => text)
+    expect(fragments.every(text => text.length <= TTS_MAX_CHARS)).toBe(true)
+    expect(fragments.join(' ')).toBe(answer)
+    expect(speak).not.toHaveBeenCalled()
+  })
+
+  it('waits for each system utterance before starting the next one', async () => {
+    speak.mockImplementation(() => undefined)
+    const answer = 'Длинный ответ. '.repeat(20) + 'Конец.'
+    useSpeech().speak(answer)
+    await flush()
+    expect(speak).toHaveBeenCalledOnce()
+    speak.mock.calls[0][0].onend()
+    await flush()
+    expect(speak).toHaveBeenCalledTimes(2)
+    expect(speak.mock.calls.map(([utterance]) => utterance.text).join(' ')).toBe(answer)
+  })
+})
+
 describe('waiting acknowledgement', () => {
   it('speaks once after a delay and interrupts it for the answer', async () => {
     const speech = useSpeech()
@@ -181,6 +224,52 @@ describe('waiting acknowledgement', () => {
     resolve({ settings: { voice: { answerVoice: 'system' } } })
     await flush()
     expect(speak).not.toHaveBeenCalled()
+  })
+})
+
+describe('the local engine', () => {
+  const tts = (): { speak: typeof window.deskhand.tts.speak; status: typeof window.deskhand.tts.status } =>
+    window.deskhand.tts
+
+  /** A configured Piper engine: free and offline, so it reads the bank's lines too. */
+  function localEngine(): ReturnType<typeof vi.fn> {
+    const synth = vi.fn(async () => ({ ok: true as const, audio: 'AAA', cached: false, mime: 'audio/wav' }))
+    tts().speak = synth
+    tts().status = vi.fn(async () => ({ configured: true, engine: 'piper' } as Awaited<ReturnType<typeof window.deskhand.tts.status>>))
+    return synth
+  }
+
+  it('speaks a recorded cue in the chosen voice instead of the bank', async () => {
+    const synth = localEngine()
+    const speech = useSpeech()
+    speech.begin('one', 'Открой новую вкладку', true)
+    await vi.advanceTimersByTimeAsync(1500)
+    await flush()
+    // «Сейчас посмотрю.» is in the bank; the local voice replaces it, because it
+    // is the voice the user picked and it costs nothing to synthesise.
+    expect(synth).toHaveBeenCalledWith('Сейчас посмотрю.', true)
+  })
+
+  it('falls back to the recorded line when the engine refuses', async () => {
+    tts().speak = vi.fn(async () => ({ ok: false as const, message: 'нет' }))
+    tts().status = vi.fn(async () => ({ configured: true, engine: 'piper' } as Awaited<ReturnType<typeof window.deskhand.tts.status>>))
+    const speech = useSpeech()
+    speech.begin('one', 'Открой новую вкладку', true)
+    await vi.advanceTimersByTimeAsync(1500)
+    await flush()
+    expect(speak.mock.calls[0][0].text).toBe('Сейчас посмотрю.')
+  })
+
+  it('keeps the recorded bank when the engine is remote', async () => {
+    const synth = vi.fn(async () => ({ ok: true as const, audio: 'AAA', cached: false, mime: 'audio/mpeg' }))
+    tts().speak = synth
+    tts().status = vi.fn(async () => ({ configured: true, engine: 'remote' } as Awaited<ReturnType<typeof window.deskhand.tts.status>>))
+    const speech = useSpeech()
+    speech.begin('one', 'Открой новую вкладку', true)
+    await vi.advanceTimersByTimeAsync(1500)
+    await flush()
+    expect(synth).not.toHaveBeenCalled()
+    expect(speak.mock.calls[0][0].text).toBe('Сейчас посмотрю.')
   })
 })
 
@@ -267,9 +356,7 @@ describe('say: an answer that cannot be read', () => {
   it('speaks a rotating "answer is ready" line instead of the text', async () => {
     const speech = useSpeech()
     speech.begin('one', 'Объясни это', true)
-    // One sentence longer than the spoken limit: there is no readable part, so
-    // the bank line stands in for the answer.
-    await speech.finish('one', 'слово '.repeat(80))
+    await speech.finish('one', '```js\nconsole.log(1)\n```')
     await flush()
     expect(speak).toHaveBeenCalledOnce()
     expect(speak.mock.calls[0][0].text).toMatch(/^Ответ готов\.$/)

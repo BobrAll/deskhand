@@ -8,9 +8,8 @@
  *
  * Three decisions are worth knowing:
  *
- * - **Nothing about the voice is in the build.** The endpoint, model, voice and
- *   delivery instruction are the user's settings; the key is encrypted in
- *   `secrets` and read only here, in the main process. A renderer never sees it.
+ * - The bundled Piper engine speaks with Ruslan. The remote engine uses the
+ *   endpoint, model and voice from settings. Its key is read only in main.
  * - **Every clip is cached on disk** by the full configuration plus the text, so
  *   a sentence is paid for once, and a change of voice is a new cache, not a
  *   stale file in the wrong voice.
@@ -27,6 +26,7 @@ import type { AppSettings, TtsSettings, TtsStatus } from '@shared/types'
 import { RECORDED, TTS_MAX_CHARS, type TtsResult } from '@shared/tts'
 import { getTtsKey } from '../settings/secrets'
 import { getSettings } from '../settings/store'
+import { piperBinary, piperModel, synthesizePiper } from './piper'
 
 /** Long enough for a slow gateway, short enough not to outlive the answer. */
 const TTS_TIMEOUT_MS = 20_000
@@ -41,7 +41,7 @@ const inFlight = new Map<string, Promise<TtsResult>>()
  * from the settings alone. Remembering the last refusal lets the pane say what
  * actually happened instead of promising a voice the account does not have.
  */
-let lastFailure: string | null = null
+let lastFailure: { config: string; message: string } | null = null
 
 function cacheDir(): string {
   return join(app.getPath('userData'), 'tts-cache')
@@ -57,10 +57,28 @@ const CACHE_KEY_SEPARATOR = '\u0000'
  * to another never plays the previous voice's file. The key is deliberately not
  * part of it — rotating a key does not change the voice.
  */
-function cacheKey(settings: TtsSettings, text: string): string {
+async function cacheKey(settings: TtsSettings, text: string, voicePath: string | null): Promise<string | null> {
+  let identity: Array<string | number> = [settings.baseUrl, settings.model, settings.voice, settings.style]
+  if (voicePath) {
+    try {
+      const files = await Promise.all([stat(voicePath), stat(`${voicePath}.json`)])
+      identity = ['piper', voicePath, ...files.flatMap((file) => [file.ino, file.size, file.mtimeMs])]
+    } catch {
+      return null
+    }
+  }
   return createHash('sha256')
-    .update([settings.baseUrl, settings.model, settings.voice, settings.style, text].join(CACHE_KEY_SEPARATOR))
+    .update([...identity, text].join(CACHE_KEY_SEPARATOR))
     .digest('hex')
+}
+
+/** The remote engine answers in MP3; Piper writes a WAV. */
+function cacheExtension(settings: TtsSettings): 'mp3' | 'wav' {
+  return settings.engine === 'piper' ? 'wav' : 'mp3'
+}
+
+function mimeFor(extension: 'mp3' | 'wav'): string {
+  return extension === 'wav' ? 'audio/wav' : 'audio/mpeg'
 }
 
 /**
@@ -72,6 +90,11 @@ function cacheKey(settings: TtsSettings, text: string): string {
 export function ttsBlockReason(settings: AppSettings = getSettings()): string | null {
   const tts = settings.tts
   if (!tts.enabled) return 'Синтез выключен.'
+  if (tts.engine === 'piper') {
+    if (!piperBinary()) return 'В сборке нет движка Piper.'
+    if (!piperModel()) return 'В сборке нет голоса «Руслан».'
+    return null
+  }
   if (!tts.baseUrl) return 'Не указан адрес сервиса.'
   if (!tts.model) return 'Не указана модель.'
   if (!tts.voice) return 'Не указан голос.'
@@ -80,19 +103,19 @@ export function ttsBlockReason(settings: AppSettings = getSettings()): string | 
 }
 
 /** Reads a cached clip, if one exists for exactly this configuration and text. */
-async function readCache(key: string): Promise<string | null> {
+async function readCache(key: string, extension: 'mp3' | 'wav'): Promise<TtsResult | null> {
   try {
-    const file = await readFile(join(cacheDir(), `${key}.mp3`))
-    return file.toString('base64')
+    const file = await readFile(join(cacheDir(), `${key}.${extension}`))
+    return { ok: true, audio: file.toString('base64'), cached: true, mime: mimeFor(extension) }
   } catch {
     return null
   }
 }
 
-async function writeCache(key: string, audio: Buffer): Promise<void> {
+async function writeCache(key: string, extension: 'mp3' | 'wav', audio: Buffer): Promise<void> {
   try {
     await mkdir(cacheDir(), { recursive: true })
-    await writeFile(join(cacheDir(), `${key}.mp3`), audio)
+    await writeFile(join(cacheDir(), `${key}.${extension}`), audio)
   } catch (error) {
     // A full disk must not lose the audio we already have in memory.
     console.warn('[tts] unable to cache a clip:', error)
@@ -111,7 +134,7 @@ const CACHE_LIMIT = 400
 async function pruneCache(): Promise<void> {
   try {
     const dir = cacheDir()
-    const names = (await readdir(dir)).filter((name) => name.endsWith('.mp3'))
+    const names = (await readdir(dir)).filter((name) => name.endsWith('.mp3') || name.endsWith('.wav'))
     if (names.length <= CACHE_LIMIT) return
     const dated = await Promise.all(names.map(async (name) => {
       const info = await stat(join(dir, name)).catch(() => null)
@@ -156,40 +179,56 @@ async function requestSynthesis(text: string, settings: TtsSettings): Promise<Tt
     const detail = await response.text().catch(() => '')
     return { ok: false, message: `Синтез ${response.status}${detail ? `: ${detail.slice(0, 120)}` : ''}` }
   }
-  const audio = Buffer.from(await response.arrayBuffer())
+  const body = await response.arrayBuffer().catch(() => null)
+  if (!body) return { ok: false, message: 'Не удалось загрузить звук. Попробуй снова.' }
+  const audio = Buffer.from(body)
   if (audio.length === 0) return { ok: false, message: 'Пустой ответ синтеза.' }
-  return { ok: true, audio: audio.toString('base64'), cached: false }
+  return { ok: true, audio: audio.toString('base64'), cached: false, mime: 'audio/mpeg' }
 }
 
 /**
  * Speaks one line, from the cache when possible.
  *
- * The text is trimmed and bounded here rather than at the call site: the caller
- * is a renderer that has already cleaned the Markdown, and the engine's own
- * limit is a hard failure, not a truncation.
+ * The renderer splits long answers into clips before requesting synthesis.
  */
-export async function synthesize(text: string): Promise<TtsResult> {
-  const line = text.trim().slice(0, TTS_MAX_CHARS)
+export async function synthesize(text: string, localOnly = false): Promise<TtsResult> {
+  const line = text.trim()
   if (!line) return { ok: false, message: 'Нечего произносить.' }
+  if (line.length > TTS_MAX_CHARS) return { ok: false, message: 'Фрагмент слишком длинный для синтеза.' }
 
   const settings = getSettings()
+  if (localOnly && settings.tts.engine !== 'piper') {
+    return { ok: false, message: 'Локальный синтез Piper выключен.' }
+  }
   const blocked = ttsBlockReason(settings)
   if (blocked) return { ok: false, message: blocked }
 
-  const key = cacheKey(settings.tts, line)
-  const cached = await readCache(key)
-  if (cached) return { ok: true, audio: cached, cached: true }
+  const voicePath = settings.tts.engine === 'piper' ? piperModel() : null
+  if (settings.tts.engine === 'piper' && !voicePath) {
+    return { ok: false, message: 'В сборке нет голоса «Руслан».' }
+  }
+  const key = await cacheKey(settings.tts, line, voicePath)
+  if (!key) return { ok: false, message: 'Файлы голоса Piper недоступны.' }
+  const extension = cacheExtension(settings.tts)
+  const running = inFlight.get(key)
+  if (running) return running
 
+  const cached = await readCache(key, extension)
   const pending = inFlight.get(key)
   if (pending) return pending
+  if (cached) return cached
 
-  const job = requestSynthesis(line, settings.tts)
+  const job = (voicePath
+    ? synthesizePiper(line, voicePath)
+    : requestSynthesis(line, settings.tts))
     .then(async (result): Promise<TtsResult> => {
       if (result.ok) {
-        await writeCache(key, Buffer.from(result.audio, 'base64'))
+        await writeCache(key, extension, Buffer.from(result.audio, 'base64'))
         void pruneCache()
+      } else {
+        console.warn('[tts] synthesis failed:', settings.tts.engine)
       }
-      lastFailure = result.ok ? null : result.message
+      lastFailure = result.ok ? null : { config: JSON.stringify(settings.tts), message: result.message }
       return result
     })
     .finally(() => inFlight.delete(key))
@@ -212,7 +251,8 @@ export function ttsStatus(): TtsStatus {
     configured: blocked === null,
     // A configuration can be complete and still fail at the service; saying so
     // here is what keeps the pane from promising a voice that was refused.
-    reason: blocked ?? lastFailure,
+    reason: blocked ?? (lastFailure?.config === JSON.stringify(settings.tts) ? lastFailure.message : null),
+    engine: settings.tts.engine,
     voice: settings.tts.voice,
     model: settings.tts.model,
     keyConfigured: Boolean(getTtsKey()),

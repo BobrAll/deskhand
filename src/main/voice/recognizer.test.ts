@@ -220,6 +220,18 @@ describe('resolveWhisperModel', () => {
     })
   })
 
+  it('uses the selected imported model even when a larger model is available', async () => {
+    const path = '/userdata/models/ggml-custom.bin'
+    const larger = '/userdata/models/ggml-large-v3-turbo-q5_0.bin'
+    state.existing = new Set([path, larger])
+    state.dirs['/userdata/models'] = ['ggml-custom.bin', 'ggml-large-v3-turbo-q5_0.bin']
+    state.sizes[path] = 100
+    state.sizes[larger] = 900
+    state.settings.voice.model = 'ggml-custom.bin'
+
+    expect(await recognizer.voiceStatus()).toMatchObject({ activeModel: 'ggml-custom.bin', modelPath: path })
+  })
+
   it('ignores files that are not `ggml-*.bin`', async () => {
     state.dirs['/userdata/models'] = ['ggml-x.bin.part', 'other.bin', 'ggml-ok.bin']
     state.sizes['/userdata/models/ggml-ok.bin'] = 10

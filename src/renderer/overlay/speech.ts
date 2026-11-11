@@ -8,7 +8,7 @@ import { SPEECH_BANK } from '@shared/speechBank'
 /** Plain text for speech; never read executable instructions or markup aloud. */
 export function speechText(text: string): string {
   return text
-    .replace(/```[\s\S]*?```/g, '')
+    .replace(/```[\s\S]*?(?:```|$)/g, '')
     .replace(/^\s*@\w+.*$/gm, '')
     .replace(/!\[[^\]]*\]\([^)]*\)/g, '')
     .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
@@ -31,9 +31,9 @@ export function speechText(text: string): string {
  */
 export const ANSWER_FALLBACK = SPEECH_BANK.answerReady[0].text
 
-/** Automatic speech stops at this many sentences or characters, whichever comes first. */
-const MAX_SPOKEN_SENTENCES = 3
-const MAX_SPOKEN_CHARS = 420
+/** Keep spoken failure messages short. */
+const MAX_FAILURE_SENTENCES = 3
+const MAX_FAILURE_CHARS = 420
 
 /**
  * How often an acknowledgement may be spoken during one wait.
@@ -54,10 +54,11 @@ export function automaticSpeech(prompt: string, answer: string, failed = false):
   // Text creation and editing are reviewed visually. Media should start quietly.
   if (!failed && /напиши|перепиши|исправь|переведи|сократи|ответь на|напечатай|вставь|впиши|набери/i.test(prompt)) return ''
   if (!failed && /(?:включи|запусти|воспроизведи|открой).*(?:видео|музык|песн|ролик|подкаст)/i.test(prompt)) return ''
+  if (!failed) return clean || (answer.trim() ? ANSWER_FALLBACK : '')
   const sentences = clean.match(/[^.!?]+(?:[.!?]+|$)/g) ?? []
   let result = ''
-  for (const sentence of sentences.slice(0, MAX_SPOKEN_SENTENCES)) {
-    if ((result + sentence).length > MAX_SPOKEN_CHARS) break
+  for (const sentence of sentences.slice(0, MAX_FAILURE_SENTENCES)) {
+    if ((result + sentence).length > MAX_FAILURE_CHARS) break
     result += sentence
   }
   // Don't cut a sentence into a misleading half-statement.

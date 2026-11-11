@@ -18,10 +18,11 @@ export const RECORDED = {
   style: 'дружный'
 } as const
 
-/** Longest line worth synthesising; anything more is a document, not a reply. */
+/** Maximum input length for one synthesis request. */
 export const TTS_MAX_CHARS = 600
 
 export type TtsResult =
-  | { ok: true; audio: string; cached: boolean }
+  /** `mime` is what the clip actually is; the remote engine returns MP3, Piper WAV. */
+  | { ok: true; audio: string; cached: boolean; mime: string }
   /** `ok: false` is not an error the user must read: the caller falls back. */
   | { ok: false; message: string }

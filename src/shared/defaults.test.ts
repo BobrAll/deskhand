@@ -443,6 +443,7 @@ describe('normalizeSettings: live synthesis', () => {
 
     expect(tts).toEqual({
       enabled: true,
+      engine: 'remote',
       // The endpoint is normalised like a provider URL: a pasted path collapses
       // to the root instead of producing `.../audio/speech/audio/speech`.
       baseUrl: 'https://speech.example/v1',
@@ -459,5 +460,15 @@ describe('normalizeSettings: live synthesis', () => {
 
     expect(settings.tts).not.toHaveProperty('key')
     expect(JSON.stringify(settings)).not.toContain('sk-x')
+  })
+
+  it('keeps the local engine and drops the old voice setting', () => {
+    const local = normalizeSettings({
+      tts: { engine: 'piper', piperVoice: ' ru-denis-medium ' }
+    }).tts
+    expect(local.engine).toBe('piper')
+    expect(local).not.toHaveProperty('piperVoice')
+
+    expect(normalizeSettings({ tts: { engine: 'other' } }).tts.engine).toBe('remote')
   })
 })

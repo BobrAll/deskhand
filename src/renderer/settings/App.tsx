@@ -545,8 +545,13 @@ export function App() {
               voice={draft.voice}
               tts={draft.tts}
               savedModel={bundle.settings.voice.model}
-              onVoiceChange={(changes) => patch({ voice: { ...draft.voice, ...changes } })}
-              onTtsChange={(changes) => patch({ tts: { ...draft.tts, ...changes } })}
+              savedTts={bundle.settings.tts}
+              onVoiceChange={(changes) => setDraft((current) => current
+                ? { ...current, voice: { ...current.voice, ...changes } }
+                : current)}
+              onTtsChange={(changes) => setDraft((current) => current
+                ? { ...current, tts: { ...current.tts, ...changes } }
+                : current)}
             />
           )}
 
