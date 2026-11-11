@@ -89,6 +89,8 @@ const api: DeskhandApi = {
     deleteKey: (provider: ProviderId) => ipcRenderer.invoke(CH.settings.deleteKey, provider),
     testKey: (provider: ProviderId, key: string, baseUrl?: string) =>
       ipcRenderer.invoke(CH.settings.testKey, provider, key, baseUrl),
+    listModels: (provider: ProviderId, baseUrl?: string) =>
+      ipcRenderer.invoke(CH.settings.listModels, provider, baseUrl),
     runningApps: () => ipcRenderer.invoke(CH.settings.runningApps),
     pickApp: () => ipcRenderer.invoke(CH.settings.pickApp),
     open: () => ipcRenderer.send(CH.settings.open),

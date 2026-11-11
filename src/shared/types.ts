@@ -785,6 +785,10 @@ export interface PasteResult {
   message?: string
 }
 
+export type ModelListResult =
+  | { ok: true; models: string[] }
+  | { ok: false; message: string }
+
 export interface TestKeyResult {
   ok: boolean
   message: string

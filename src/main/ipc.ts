@@ -22,7 +22,7 @@ import type { ActionResult, AppPickResult, SettingsBundle } from '@shared/api'
 import type { OverlayController } from './overlay'
 import { applyHistorySettings } from './overlay/history'
 import type { VoiceController } from './voice'
-import { testApiKey } from './llm/testKey'
+import { listProviderModels, testApiKey } from './llm/testKey'
 import { helperRunningApps, type RunningApp } from './native/helper'
 import {
   openPermissionPane,
@@ -35,6 +35,7 @@ import {
   deleteApiKey,
   deleteTtsKey,
   encryptionAvailable,
+  getApiKey,
   keyStatuses,
   setApiKey,
   setTtsKey
@@ -230,6 +231,12 @@ export function registerIpc(deps: IpcDeps): void {
   ipcMain.handle(CH.settings.testKey, (_event, provider: unknown, key: string, baseUrl?: string) => {
     if (!isProvider(provider)) return { ok: false, message: 'Неизвестный провайдер.' }
     return testApiKey(provider, String(key ?? ''), typeof baseUrl === 'string' ? baseUrl : undefined)
+  })
+
+  ipcMain.handle(CH.settings.listModels, (_event, provider: unknown, baseUrl?: unknown) => {
+    if (!isProvider(provider)) return { ok: false, message: 'Неизвестный провайдер.' }
+    const override = typeof baseUrl === 'string' ? baseUrl : getSettings().baseUrls[provider]
+    return listProviderModels(provider, getApiKey(provider) ?? '', override)
   })
 
   ipcMain.handle(CH.settings.runningApps, async (): Promise<RunningApp[]> => helperRunningApps())

@@ -32,9 +32,8 @@ function provider(): string {
       invalidBaseUrls: [],
       keyInput: '',
       onKeyInput: noop,
-      testing: false,
-      onSaveKey: noop,
-      onRemoveKey: noop
+      onSaveKey: async () => true,
+      onRemoveKey: async () => {}
     })
   )
 }
@@ -140,6 +139,8 @@ describe('the settings panes', () => {
     const extraBody = html.indexOf('Доп. параметры запроса')
     expect(key).toBeGreaterThan(-1)
     expect(baseUrl).toBeGreaterThan(key)
+    expect(html).toContain('<details class="disclosure"><summary>Base URL</summary>')
+    expect(html).not.toContain('https://platform.openai.com/api-keys')
     expect(extraBody).toBeGreaterThan(baseUrl)
   })
 

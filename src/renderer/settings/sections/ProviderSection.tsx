@@ -1,24 +1,5 @@
-/**
- * The «Модель» tab: who answers, what it is given, and how it is reached.
- *
- * «Подключение» answers the four questions every setup answers, in the order they
- * come up: which service, which model, the key, and the address requests go to.
- * The address sits next to the key because a key pointed at the wrong host is
- * worth nothing — a proxy, a gateway and a local endpoint are the same decision.
- * Sampling and the system prompt are folded into «Дополнительно» — they are the
- * two things almost nobody changes, and leaving them open pushed the key field
- * below the fold on a laptop screen.
- *
- * The screenshot controls are here rather than on a tab of their own because
- * they answer the same question as the model picker: what does the model get to
- * look at.
- *
- * The key field's own state stays in the window, not here: switching tabs
- * unmounts this section, and a half-typed key must not be thrown away by a
- * glance at «Голос».
- */
-
-import type { AppSettings, KeyStatus, ProviderId } from '@shared/types'
+import { useEffect, useId, useRef, useState } from 'react'
+import type { AppSettings, KeyStatus, ModelListResult, ProviderId } from '@shared/types'
 import { DEFAULT_SYSTEM_PROMPT, PROVIDERS, SETTINGS_BOUNDS, normalizeBaseUrl, parseExtraBody, providerInfo, searchModelFallback } from '@shared/defaults'
 import { Disclosure, Group, Row, Toggle } from '../Row'
 
@@ -30,10 +11,15 @@ interface ProviderSectionProps {
   invalidBaseUrls: ProviderId[]
   keyInput: string
   onKeyInput(value: string): void
-  testing: boolean
-  onSaveKey(): void
-  onRemoveKey(): void
+  onSaveKey(): Promise<boolean>
+  onRemoveKey(): Promise<void>
 }
+
+const MODEL_VIEWS = [
+  { id: 'connection', label: 'Подключение' },
+  { id: 'models', label: 'Выбор модели' },
+  { id: 'screenshot', label: 'Скриншот' }
+] as const
 
 export function ProviderSection({
   draft,
@@ -42,10 +28,24 @@ export function ProviderSection({
   invalidBaseUrls,
   keyInput,
   onKeyInput,
-  testing,
   onSaveKey,
   onRemoveKey
 }: ProviderSectionProps) {
+  const navId = useId()
+  const [view, setView] = useState<(typeof MODEL_VIEWS)[number]['id']>('connection')
+  const [busy, setBusy] = useState(false)
+  const [catalog, setCatalog] = useState<ModelListResult | null>(null)
+  const modelListRef = useRef<HTMLSelectElement>(null)
+  const modelIdRef = useRef<HTMLInputElement>(null)
+  useEffect(() => {
+    if (view === 'models' && catalog) {
+      (catalog.ok ? modelListRef.current : modelIdRef.current)?.focus()
+    }
+  }, [view, catalog])
+
+  const provider = draft.provider
+  const baseUrl = draft.baseUrls[provider]
+  const model = draft.models[provider]
   const info = providerInfo(draft.provider)
   const keyStatus = providerKeys[draft.provider]
   const searchModel = draft.searchModels[draft.provider]
@@ -59,260 +59,341 @@ export function ProviderSection({
     ? 'Нужен JSON-объект, например {"reasoning_effort": "none"}. Пока он не исправлен, параметры не отправляются.'
     : null
 
+  const chooseModel = (value: string) => patch({ models: { ...draft.models, [provider]: value } })
+
+  async function saveOrLoad(load: boolean) {
+    setBusy(true)
+    try {
+      if (!keyStatus?.configured && !await onSaveKey()) return
+      if (!load) return
+      setCatalog(null)
+      const result = await window.deskhand.settings.listModels(provider, baseUrl)
+      setCatalog(result)
+      setView((current) => current === 'connection' ? 'models' : current)
+    } catch {
+      setCatalog({ ok: false, message: 'Не удалось загрузить список моделей.' })
+      setView((current) => current === 'connection' ? 'models' : current)
+    } finally {
+      setBusy(false)
+    }
+  }
+
   return (
     <div className="pane">
-      <Group title="Подключение">
-        <Row stacked title="Сервис">
-          <div className="segmented">
-            {PROVIDERS.map((provider) => (
-              <button
-                key={provider.id}
-                className={draft.provider === provider.id ? 'active' : ''}
-                onClick={() => patch({ provider: provider.id })}
-              >
-                {provider.label}
-                {providerKeys[provider.id]?.configured && <span className="badge">ключ</span>}
-              </button>
-            ))}
-          </div>
-        </Row>
+      <nav className="segmented model-subnav" aria-label="Настройки модели">
+        {MODEL_VIEWS.map(({ id, label }) => (
+          <button
+            key={id}
+            type="button"
+            className={view === id ? 'active' : ''}
+            aria-pressed={view === id}
+            aria-controls={`${navId}-${id}`}
+            onClick={() => setView(id)}
+          >
+            {label}
+          </button>
+        ))}
+      </nav>
 
-        <Row
-          stacked
-          title="Модель"
-          hint={
-            info
-              ? `ID модели ${info.label}. Без неё запрос не отправится.`
-              : 'ID модели провайдера.'
-          }
-        >
-          <input
-            value={draft.models[draft.provider]}
-            onChange={(event) =>
-              patch({ models: { ...draft.models, [draft.provider]: event.target.value } })
-            }
-            spellCheck={false}
-          />
-        </Row>
-
-        <Row
-          stacked
-          title={`Ключ API ${info?.label ?? ''}`.trim()}
-          hint={
-            keyStatus?.configured
-              ? 'Ключ лежит в Keychain и никогда не показывается целиком.'
-              : undefined
-          }
-        >
-          {keyStatus?.configured ? (
-            <div className="row-actions">
-              <span className="permission-state ok">● Ключ сохранён</span>
-              <button className="ghost" onClick={onRemoveKey}>
-                Удалить
-              </button>
+      <div className="model-view" id={`${navId}-connection`} hidden={view !== 'connection'}>
+        <Group>
+          <Row stacked title="Сервис">
+            <div className="segmented">
+              {PROVIDERS.map((provider) => (
+                <button
+                  key={provider.id}
+                  className={draft.provider === provider.id ? 'active' : ''}
+                  disabled={busy}
+                  onClick={() => {
+                    if (provider.id === draft.provider) return
+                    setCatalog(null)
+                    onKeyInput('')
+                    patch({ provider: provider.id })
+                  }}
+                >
+                  {provider.label}
+                  {providerKeys[provider.id]?.configured && <span className="badge">ключ</span>}
+                </button>
+              ))}
             </div>
-          ) : (
+          </Row>
+
+          <Row
+            stacked
+            title={`Ключ API ${info?.label ?? ''}`.trim()}
+            hint={
+              keyStatus?.configured
+                ? 'Ключ лежит в Keychain и никогда не показывается целиком.'
+                : undefined
+            }
+          >
+            {keyStatus?.configured ? (
+              <div className="row-actions">
+                <span className="permission-state ok">● Ключ сохранён</span>
+                <button
+                  className="ghost"
+                  disabled={busy}
+                  onClick={async () => {
+                    setBusy(true)
+                    setCatalog(null)
+                    try {
+                      await onRemoveKey()
+                    } finally {
+                      setBusy(false)
+                    }
+                  }}
+                >
+                  Удалить
+                </button>
+              </div>
+            ) : (
+              <div className="row-actions">
+                <input
+                  type="password"
+                  aria-label="Ключ API"
+                  disabled={busy}
+                  value={keyInput}
+                  onChange={(event) => onKeyInput(event.target.value)}
+                  placeholder="sk-…"
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter' && keyInput.trim() && !busy) void saveOrLoad(!baseUrlError)
+                  }}
+                />
+                <button
+                  disabled={busy || !keyInput.trim()}
+                  onClick={() => void saveOrLoad(false)}
+                >
+                  Сохранить ключ
+                </button>
+              </div>
+            )}
+          </Row>
+
+          <Disclosure title="Base URL">
+            <div className="row-hint">
+              {baseUrl && !baseUrlError
+                ? `Запросы идут на ${normalizeBaseUrl(baseUrl)}.`
+                : 'Необязательно. Пустое поле использует адрес сервиса по умолчанию.'}
+            </div>
             <div className="row-actions">
               <input
-                type="password"
-                value={keyInput}
-                onChange={(event) => onKeyInput(event.target.value)}
-                placeholder="sk-…"
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter') onSaveKey()
+                aria-label="Base URL"
+                disabled={busy}
+                value={baseUrl}
+                onChange={(event) => {
+                  setCatalog(null)
+                  patch({ baseUrls: { ...draft.baseUrls, [provider]: event.target.value } })
                 }}
+                placeholder={info?.defaultBaseUrl}
+                spellCheck={false}
               />
               <button
-                className="primary"
-                disabled={testing || !keyInput.trim()}
-                onClick={onSaveKey}
+                className="ghost"
+                disabled={busy || !baseUrl}
+                onClick={() => {
+                  setCatalog(null)
+                  patch({ baseUrls: { ...draft.baseUrls, [provider]: '' } })
+                }}
               >
-                {testing ? 'Проверка…' : 'Проверить и сохранить'}
+                Сбросить
               </button>
             </div>
+          </Disclosure>
+          {baseUrlError && (
+            <Row hint={<span className="row-hint err" role="status">{baseUrlError}</span>} />
           )}
-          {info && (
-            <div className="row-hint">
-              Получить:{' '}
-              <a href={info.keyUrl} target="_blank" rel="noreferrer">
-                {info.keyUrl}
-              </a>
-            </div>
-          )}
-        </Row>
+          <Row>
+            <button
+              className="primary"
+              disabled={busy || Boolean(baseUrlError) || (!keyStatus?.configured && !keyInput.trim())}
+              onClick={() => void saveOrLoad(true)}
+            >
+              {busy ? 'Подожди…' : keyStatus?.configured ? 'Загрузить модели' : 'Сохранить ключ и загрузить модели'}
+            </button>
+          </Row>
+        </Group>
+      </div>
 
-        <Row
-          stacked
-          title={`Base URL · ${info?.label ?? ''}`}
-          hint={
-            draft.baseUrls[draft.provider]
-              ? `Запросы идут на ${normalizeBaseUrl(draft.baseUrls[draft.provider])}.`
-              : `Корень API без /chat/completions. По умолчанию: ${info?.defaultBaseUrl}.`
-          }
-        >
-          <div className="row-actions">
+      <div className="model-view" id={`${navId}-models`} hidden={view !== 'models'}>
+        <Group title="Выбор модели">
+          {catalog?.ok ? (
+            <Row stacked title="Модели сервиса">
+              <select
+                ref={modelListRef}
+                aria-label="Модели сервиса"
+                value={catalog.models.includes(model) ? model : ''}
+                onChange={(event) => {
+                  if (event.target.value) chooseModel(event.target.value)
+                }}
+              >
+                <option value="" disabled>Выбери из списка</option>
+                {catalog.models.map((id) => <option key={id} value={id}>{id}</option>)}
+              </select>
+            </Row>
+          ) : (
+            <Row stacked hint={
+              catalog
+                ? <span role="status">{catalog.message} Введи ID модели вручную или повтори загрузку.</span>
+                : 'Загрузи список в «Подключении» или введи ID модели.'
+            }>
+              <button onClick={() => setView('connection')}>Открыть подключение</button>
+            </Row>
+          )}
+          <Row stacked title="ID модели вручную">
             <input
-              value={draft.baseUrls[draft.provider]}
-              onChange={(event) =>
-                patch({ baseUrls: { ...draft.baseUrls, [draft.provider]: event.target.value } })
-              }
-              placeholder={info?.defaultBaseUrl}
+              ref={modelIdRef}
+              aria-label="ID модели вручную"
+              value={model}
+              onChange={(event) => chooseModel(event.target.value)}
               spellCheck={false}
             />
-            <button
-              className="ghost"
-              disabled={!draft.baseUrls[draft.provider]}
-              onClick={() => patch({ baseUrls: { ...draft.baseUrls, [draft.provider]: '' } })}
-            >
-              Сбросить
-            </button>
-          </div>
-          {baseUrlError && <div className="row-hint err">{baseUrlError}</div>}
-        </Row>
-      </Group>
+          </Row>
+        </Group>
 
-      <Group title="Поиск в интернете">
-        <Row
-          stacked
-          title="Модель веб-поиска"
-          hint={`Пустое поле — ${fallbackSearchModel}.`}
-        >
-          <div className="row-actions">
-            <input
-              id="search-model"
-              value={searchModel}
-              onChange={(event) =>
-                patch({ searchModels: { ...draft.searchModels, [draft.provider]: event.target.value } })
+        <Disclosure title="Дополнительно">
+          <Group title="Поиск в интернете">
+            <Row
+              stacked
+              title="Модель веб-поиска"
+              hint={`Пустое поле — ${fallbackSearchModel}.`}
+            >
+              <div className="row-actions">
+                <input
+                  id="search-model"
+                  value={searchModel}
+                  onChange={(event) =>
+                    patch({ searchModels: { ...draft.searchModels, [draft.provider]: event.target.value } })
+                  }
+                  placeholder={fallbackSearchModel}
+                  spellCheck={false}
+                />
+                <button
+                  className="ghost"
+                  disabled={!searchModel}
+                  onClick={() => patch({ searchModels: { ...draft.searchModels, [draft.provider]: '' } })}
+                >
+                  Сбросить
+                </button>
+              </div>
+            </Row>
+          </Group>
+
+          <Group title="Запрос">
+            <Row
+              stacked
+              title={`Доп. параметры запроса · ${info?.label ?? ''}`}
+              hint={
+                'JSON-объект, который добавляется в тело каждого запроса к модели. ' +
+                'Например, {"reasoning_effort": "none"} или {"thinking": {"type": "disabled"}} — ' +
+                'смотря что понимает твой сервис.'
               }
-              placeholder={fallbackSearchModel}
-              spellCheck={false}
-            />
-            <button
-              className="ghost"
-              disabled={!searchModel}
-              onClick={() => patch({ searchModels: { ...draft.searchModels, [draft.provider]: '' } })}
             >
-              Сбросить
-            </button>
-          </div>
-        </Row>
-      </Group>
-
-      <Group title="Запрос">
-        <Row
-          stacked
-          title={`Доп. параметры запроса · ${info?.label ?? ''}`}
-          hint={
-            'JSON-объект, который добавляется в тело каждого запроса к модели. ' +
-            'Например, {"reasoning_effort": "none"} или {"thinking": {"type": "disabled"}} — ' +
-            'смотря что понимает твой сервис.'
-          }
-        >
-          <textarea
-            className="extra-body"
-            rows={1}
-            value={draft.extraBody[draft.provider]}
-            aria-label="Дополнительные параметры запроса"
-            placeholder='{"reasoning_effort": "none"}'
-            spellCheck={false}
-            onChange={(event) =>
-              patch({ extraBody: { ...draft.extraBody, [draft.provider]: event.target.value } })
-            }
-          />
-          {extraBodyError && <div className="row-hint err">{extraBodyError}</div>}
-        </Row>
-      </Group>
-
-      <Group title="Скриншот">
-        <Row
-          title="Снимать экран, когда нет выделения"
-          hint="Ассистент сам решит, что обвести и куда показать стрелкой."
-        >
-          <Toggle
-            checked={draft.captureScreenshotByDefault}
-            label="Снимать экран, когда нет выделения"
-            onChange={(captureScreenshotByDefault) => patch({ captureScreenshotByDefault })}
-          />
-        </Row>
-
-        <Row stacked title="Размер и качество" hint="Меньше — быстрее ответ и дешевле.">
+              <textarea
+                className="extra-body"
+                rows={1}
+                value={draft.extraBody[draft.provider]}
+                aria-label="Дополнительные параметры запроса"
+                placeholder='{"reasoning_effort": "none"}'
+                spellCheck={false}
+                onChange={(event) =>
+                  patch({ extraBody: { ...draft.extraBody, [draft.provider]: event.target.value } })
+                }
+              />
+              {extraBodyError && <div className="row-hint err">{extraBodyError}</div>}
+            </Row>
+          </Group>
           <div className="row-grid">
             <div>
-              <div className="row-hint">Длинная сторона · {draft.screenshotMaxSide}px</div>
+              <div className="row-hint">Температура · {draft.temperature.toFixed(1)}</div>
               <input
                 type="range"
-                min={SETTINGS_BOUNDS.screenshotMaxSide.min}
-                max={SETTINGS_BOUNDS.screenshotMaxSide.max}
-                step={80}
-                value={draft.screenshotMaxSide}
-                aria-label="Длинная сторона скриншота"
-                onChange={(event) => patch({ screenshotMaxSide: Number(event.target.value) })}
+                min={SETTINGS_BOUNDS.temperature.min}
+                max={SETTINGS_BOUNDS.temperature.max}
+                step={0.1}
+                value={draft.temperature}
+                aria-label="Температура"
+                onChange={(event) => patch({ temperature: Number(event.target.value) })}
               />
             </div>
             <div>
-              <div className="row-hint">Качество JPEG · {draft.screenshotQuality}</div>
+              <div className="row-hint">Максимум токенов</div>
               <input
-                type="range"
-                min={SETTINGS_BOUNDS.screenshotQuality.min}
-                max={SETTINGS_BOUNDS.screenshotQuality.max}
-                step={5}
-                value={draft.screenshotQuality}
-                aria-label="Качество JPEG"
-                onChange={(event) => patch({ screenshotQuality: Number(event.target.value) })}
+                type="number"
+                min={SETTINGS_BOUNDS.maxTokens.min}
+                max={SETTINGS_BOUNDS.maxTokens.max}
+                step={SETTINGS_BOUNDS.maxTokens.min}
+                value={draft.maxTokens}
+                aria-label="Максимум токенов"
+                onChange={(event) => patch({ maxTokens: Number(event.target.value) })}
               />
             </div>
           </div>
-        </Row>
-      </Group>
 
-      <Disclosure title="Дополнительно">
-        <div className="row-grid">
           <div>
-            <div className="row-hint">Температура · {draft.temperature.toFixed(1)}</div>
-            <input
-              type="range"
-              min={SETTINGS_BOUNDS.temperature.min}
-              max={SETTINGS_BOUNDS.temperature.max}
-              step={0.1}
-              value={draft.temperature}
-              aria-label="Температура"
-              onChange={(event) => patch({ temperature: Number(event.target.value) })}
+            <div className="row-hint">Системный промпт</div>
+            <textarea
+              rows={4}
+              value={draft.systemPrompt}
+              aria-label="Системный промпт"
+              onChange={(event) => patch({ systemPrompt: event.target.value })}
             />
+            <div className="row-actions">
+              <span className="row-hint">Пустой промпт не применяется.</span>
+              <button
+                className="ghost"
+                disabled={draft.systemPrompt === DEFAULT_SYSTEM_PROMPT}
+                onClick={() => patch({ systemPrompt: DEFAULT_SYSTEM_PROMPT })}
+              >
+                Вернуть стандартный
+              </button>
+            </div>
           </div>
-          <div>
-            <div className="row-hint">Максимум токенов</div>
-            <input
-              type="number"
-              min={SETTINGS_BOUNDS.maxTokens.min}
-              max={SETTINGS_BOUNDS.maxTokens.max}
-              step={SETTINGS_BOUNDS.maxTokens.min}
-              value={draft.maxTokens}
-              aria-label="Максимум токенов"
-              onChange={(event) => patch({ maxTokens: Number(event.target.value) })}
-            />
-          </div>
-        </div>
+        </Disclosure>
+      </div>
 
-        <div>
-          <div className="row-hint">Системный промпт</div>
-          <textarea
-            rows={4}
-            value={draft.systemPrompt}
-            aria-label="Системный промпт"
-            onChange={(event) => patch({ systemPrompt: event.target.value })}
-          />
-          <div className="row-actions">
-            <span className="row-hint">Пустой промпт не применяется.</span>
-            <button
-              className="ghost"
-              disabled={draft.systemPrompt === DEFAULT_SYSTEM_PROMPT}
-              onClick={() => patch({ systemPrompt: DEFAULT_SYSTEM_PROMPT })}
-            >
-              Вернуть стандартный
-            </button>
-          </div>
-        </div>
-      </Disclosure>
+      <div className="model-view" id={`${navId}-screenshot`} hidden={view !== 'screenshot'}>
+        <Group title="Скриншот">
+          <Row
+            title="Снимать экран, когда нет выделения"
+            hint="Ассистент сам решит, что обвести и куда показать стрелкой."
+          >
+            <Toggle
+              checked={draft.captureScreenshotByDefault}
+              label="Снимать экран, когда нет выделения"
+              onChange={(captureScreenshotByDefault) => patch({ captureScreenshotByDefault })}
+            />
+          </Row>
+
+          <Row stacked title="Размер и качество" hint="Меньше — быстрее ответ и дешевле.">
+            <div className="row-grid">
+              <div>
+                <div className="row-hint">Длинная сторона · {draft.screenshotMaxSide}px</div>
+                <input
+                  type="range"
+                  min={SETTINGS_BOUNDS.screenshotMaxSide.min}
+                  max={SETTINGS_BOUNDS.screenshotMaxSide.max}
+                  step={80}
+                  value={draft.screenshotMaxSide}
+                  aria-label="Длинная сторона скриншота"
+                  onChange={(event) => patch({ screenshotMaxSide: Number(event.target.value) })}
+                />
+              </div>
+              <div>
+                <div className="row-hint">Качество JPEG · {draft.screenshotQuality}</div>
+                <input
+                  type="range"
+                  min={SETTINGS_BOUNDS.screenshotQuality.min}
+                  max={SETTINGS_BOUNDS.screenshotQuality.max}
+                  step={5}
+                  value={draft.screenshotQuality}
+                  aria-label="Качество JPEG"
+                  onChange={(event) => patch({ screenshotQuality: Number(event.target.value) })}
+                />
+              </div>
+            </div>
+          </Row>
+        </Group>
+      </div>
     </div>
   )
 }

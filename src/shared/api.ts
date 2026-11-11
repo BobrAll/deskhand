@@ -20,6 +20,7 @@ import type {
   ProviderId,
   SendRequest,
   StreamEvent,
+  ModelListResult,
   TestKeyResult,
   TranscribeResult,
   TtsStatus,
@@ -139,6 +140,7 @@ export interface DeskhandApi {
     deleteKey(provider: ProviderId): Promise<SettingsBundle>
     /** `baseUrl` lets the form verify an override before it is saved. */
     testKey(provider: ProviderId, key: string, baseUrl?: string): Promise<TestKeyResult>
+    listModels(provider: ProviderId, baseUrl?: string): Promise<ModelListResult>
     runningApps(): Promise<RunningAppInfo[]>
     pickApp(): Promise<AppPickResult | null>
     open(): void

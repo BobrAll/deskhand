@@ -49,6 +49,7 @@ export const CH = {
     setKey: 'settings:set-key',
     deleteKey: 'settings:delete-key',
     testKey: 'settings:test-key',
+    listModels: 'settings:list-models',
     runningApps: 'settings:running-apps',
     pickApp: 'settings:pick-app',
     open: 'settings:open',

@@ -959,3 +959,22 @@ a {
 .agent-ready[data-tone='ready'] .agent-ready-dot {
   background: var(--success);
 }
+
+.model-subnav {
+  align-self: flex-start;
+  max-width: 100%;
+  flex-wrap: wrap;
+}
+
+.model-view:not([hidden]) {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.model-view .group-body > .disclosure {
+  border: 0;
+  border-block: 1px solid var(--border);
+  border-radius: 0;
+  box-shadow: none;
+}

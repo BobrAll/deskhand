@@ -7,7 +7,7 @@ exports[`CH: the channel set is a wire protocol > keeps the size of every namesp
   "onboarding": 2,
   "overlay": 15,
   "permissions": 4,
-  "settings": 11,
+  "settings": 12,
   "tts": 5,
   "voice": 14,
 }
@@ -98,6 +98,10 @@ exports[`CH: the channel set is a wire protocol > matches the snapshot 1`] = `
   [
     "settings.testKey",
     "settings:test-key",
+  ],
+  [
+    "settings.listModels",
+    "settings:list-models",
   ],
   [
     "settings.runningApps",
