@@ -6,6 +6,7 @@ import { traceModelUsage } from '../agent/trace'
 import { disabledReasoning } from './reasoning'
 import { ProviderError, type ChatMessage, type ContentPart, type LlmProvider, type StreamChunk, type StreamEnd, type StreamOptions } from './provider'
 import {
+  apiEndpoint,
   apiRoot,
   readSse,
   toProviderError,
@@ -81,7 +82,7 @@ export class OpenAIProvider implements LlmProvider {
 
     let response: Response
     try {
-      response = await fetch(`${apiRoot(options, this.baseUrl)}/chat/completions`, {
+      response = await fetch(apiEndpoint(apiRoot(options, this.baseUrl), 'chat/completions').href, {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${apiKey}`,

@@ -113,6 +113,8 @@ describe('normalizeBaseUrl: a user-supplied base URL', () => {
     expect(normalizeBaseUrl('https://a.example/v1/chat/completions')).toBe('https://a.example/v1')
     expect(normalizeBaseUrl('https://a.example/v1/messages')).toBe('https://a.example/v1')
     expect(normalizeBaseUrl('https://a.example/v1/models')).toBe('https://a.example/v1')
+    expect(normalizeBaseUrl('https://a.example/v1/models/?tenant=deskhand#docs'))
+      .toBe('https://a.example/v1?tenant=deskhand#docs')
     expect(normalizeBaseUrl('https://a.example/v1/key')).toBe('https://a.example/v1')
     expect(normalizeBaseUrl('https://a.example/v1/CHAT/COMPLETIONS')).toBe('https://a.example/v1')
   })

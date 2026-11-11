@@ -18,6 +18,7 @@
  *   is a courtesy; it must never block the card.
  */
 
+import { apiEndpoint } from '../llm/http'
 import { app } from 'electron'
 import { createHash } from 'node:crypto'
 import { mkdir, readFile, readdir, stat, unlink, writeFile } from 'node:fs/promises'
@@ -155,7 +156,7 @@ async function requestSynthesis(text: string, settings: TtsSettings): Promise<Tt
 
   let response: Response
   try {
-    response = await fetch(`${settings.baseUrl}/audio/speech`, {
+    response = await fetch(apiEndpoint(settings.baseUrl, 'audio/speech').href, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${key}`,

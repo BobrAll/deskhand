@@ -51,6 +51,7 @@ final class ProviderConfigTests: XCTestCase {
             ("https://api.openai.com/v1/", "https://api.openai.com/v1/chat/completions"),
             ("https://api.openai.com/v1/chat/completions", "https://api.openai.com/v1/chat/completions"),
             ("http://localhost:11434/v1", "http://localhost:11434/v1/chat/completions"),
+            ("https://proxy.example/v1/?tenant=deskhand#docs", "https://proxy.example/v1/chat/completions?tenant=deskhand"),
         ]
         for (input, expected) in cases {
             let config = ProviderConfig(baseURL: URL(string: input)!)

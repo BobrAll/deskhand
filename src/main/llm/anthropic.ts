@@ -13,7 +13,7 @@ import {
   type StreamChunk, type StreamEnd,
   type StreamOptions
 } from './provider'
-import { apiRoot, readSse, toProviderError, toTransportError } from './http'
+import { apiEndpoint, apiRoot, readSse, toProviderError, toTransportError } from './http'
 
 type AnthropicBlock =
   | { type: 'text'; text: string }
@@ -82,7 +82,7 @@ export class AnthropicProvider implements LlmProvider {
 
     let response: Response
     try {
-      response = await fetch(`${apiRoot(options, this.baseUrl)}/messages`, {
+      response = await fetch(apiEndpoint(apiRoot(options, this.baseUrl), 'messages').href, {
         method: 'POST',
         headers: {
           'x-api-key': apiKey,

@@ -7,6 +7,7 @@
 
 import type { ModelListResult, ProviderId, TestKeyResult } from '@shared/types'
 import { normalizeBaseUrl, providerInfo, resolveBaseUrl } from '@shared/defaults'
+import { apiEndpoint } from './http'
 import { describeProviderStatus } from './statusText'
 
 /** The probe must not hold the settings pane open longer than a person will wait. */
@@ -57,7 +58,7 @@ export async function testApiKey(
 
   try {
     const path = provider === 'openrouter' ? 'key' : 'models'
-    const response = await fetchWithTimeout(`${root}/${path}`, {
+    const response = await fetchWithTimeout(apiEndpoint(root, path).href, {
       headers: apiHeaders(provider, apiKey)
     })
 
@@ -85,8 +86,7 @@ export async function listProviderModels(
     return { ok: false, message: 'Проверь Base URL.' }
   }
 
-  const endpoint = new URL(resolveBaseUrl(provider, baseUrl))
-  endpoint.pathname += '/models'
+  const endpoint = apiEndpoint(resolveBaseUrl(provider, baseUrl), 'models')
   const signal = AbortSignal.timeout(TIMEOUT_MS)
   const models = new Set<string>()
   const cursors = new Set<string>()

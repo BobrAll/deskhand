@@ -7,7 +7,14 @@ import { describeProviderStatus } from './statusText'
 
 /** Request base URL: the per-request override wins over the built-in default. */
 export function apiRoot(options: StreamOptions, fallback: string): string {
-  return (options.baseUrl || fallback).replace(/\/+$/, '')
+  return options.baseUrl || fallback
+}
+
+export function apiEndpoint(baseUrl: string, path: string): URL {
+  const endpoint = new URL(baseUrl)
+  endpoint.pathname = endpoint.pathname.replace(/\/+$/, '') + '/' + path
+  endpoint.hash = ''
+  return endpoint
 }
 
 export interface SseEvent {

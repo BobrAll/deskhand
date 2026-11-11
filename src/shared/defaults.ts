@@ -75,9 +75,12 @@ export function normalizeBaseUrl(input: unknown): string {
   if (typeof input !== 'string') return ''
   let value = input.trim()
   if (!value) return ''
-  value = value.replace(/\/+$/, '')
+  const suffixStart = value.search(/[?#]/)
+  const suffix = suffixStart === -1 ? '' : value.slice(suffixStart)
+  const root = suffixStart === -1 ? value : value.slice(0, suffixStart)
   // Users often paste the full endpoint instead of the API root.
-  value = value.replace(/\/(chat\/completions|messages|responses|audio\/speech|models|key)$/i, '')
+  value = root.replace(/\/+$/, '')
+    .replace(/\/(chat\/completions|messages|responses|audio\/speech|models|key)$/i, '') + suffix
   if (!/^https?:\/\/[^\s/]+/i.test(value)) return ''
   try {
     // Throws on things like "https://" with no host.

@@ -1,3 +1,4 @@
+import { apiEndpoint } from './http'
 import {
   isPlusVibeApi, providerInfo, resolveBaseUrl, resolveSearchModel
 } from '@shared/defaults'
@@ -94,7 +95,7 @@ export async function searchWeb(
   const signal = AbortSignal.any([turnSignal, timeout])
   let result: SearchResponse
   try {
-    const response = await fetch(`${baseUrl}/${endpoint}`, {
+    const response = await fetch(apiEndpoint(baseUrl, endpoint).href, {
       method: 'POST',
       headers: { ...headers, 'content-type': 'application/json' },
       body: JSON.stringify(body),

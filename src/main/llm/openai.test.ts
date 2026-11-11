@@ -87,6 +87,15 @@ describe('[OI]Provider: the request', () => {
     expect((fetchMock.mock.calls[0] as [string])[0]).toBe('https://proxy.example/v1/chat/completions')
   })
 
+  it('preserves the Base URL query when building the chat endpoint', async () => {
+    vi.stubGlobal('fetch', fetchMock)
+    respond(sse(dataEvent({ choices: [] })))
+
+    await drain(provider().stream(messages, '', options({ baseUrl: 'https://proxy.example/v1/?tenant=deskhand#docs' })))
+
+    expect(fetchMock.mock.calls[0][0]).toBe('https://proxy.example/v1/chat/completions?tenant=deskhand')
+  })
+
   it('falls back to the built-in base URL when the request has none', async () => {
     vi.stubGlobal('fetch', fetchMock)
     respond(sse(dataEvent({ choices: [] })))

@@ -67,17 +67,13 @@ public struct ProviderConfig: Sendable, Equatable {
     /// Resolves the final endpoint, tolerating both `https://host/v1` and
     /// `https://host/v1/chat/completions` styles of input.
     public var endpointURL: URL {
-        var base = baseURL.absoluteString
-        while base.hasSuffix("/") { base.removeLast() }
-
-        switch wire {
-        case .openAICompatible:
-            if base.hasSuffix("/chat/completions") { return URL(string: base)! }
-            return URL(string: base + "/chat/completions")!
-        case .anthropic:
-            if base.hasSuffix("/messages") { return URL(string: base)! }
-            return URL(string: base + "/messages")!
-        }
+        var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: true)!
+        var path = components.percentEncodedPath
+        while path.hasSuffix("/") { path.removeLast() }
+        let suffix = wire == .openAICompatible ? "/chat/completions" : "/messages"
+        components.percentEncodedPath = path.hasSuffix(suffix) ? path : path + suffix
+        components.fragment = nil
+        return components.url!
     }
 }
 
