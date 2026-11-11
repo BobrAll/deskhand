@@ -21,6 +21,15 @@ export const RECORDED = {
 /** Maximum input length for one synthesis request. */
 export const TTS_MAX_CHARS = 600
 
+/**
+ * What the settings pane plays when the user asks to hear the voice.
+ *
+ * A fixed line, not user text: it has to be short enough to judge a voice by and
+ * stable enough to be cached. The neural engine and the macOS voice read the
+ * same sentence, so the two choices can be compared on equal terms.
+ */
+export const PREVIEW_LINE = 'Так, посмотрим. Сейчас разберусь и всё сделаю.'
+
 export type TtsResult =
   /** `mime` is what the clip actually is; the remote engine returns MP3, Piper WAV. */
   | { ok: true; audio: string; cached: boolean; mime: string }

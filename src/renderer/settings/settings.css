@@ -138,17 +138,6 @@ body,
   color: var(--text-dim);
 }
 
-/* A hotkey for a mode that is switched off still works as a setting; the word is
-   there so the dim key cap is not read as broken. */
-.sidebar-off {
-  font-size: 10px;
-  font-weight: 400;
-  letter-spacing: 0.02em;
-  text-transform: none;
-  color: var(--text-faint);
-  opacity: 0.8;
-}
-
 .side-toggle {
   display: flex;
   align-items: center;
@@ -539,7 +528,7 @@ input[type='range']::-webkit-slider-thumb {
   overflow: hidden;
 }
 
-.disclosure > summary {
+.disclosure > :is(summary, .disclosure-trigger) {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -554,8 +543,9 @@ input[type='range']::-webkit-slider-thumb {
   display: none;
 }
 
-.disclosure > summary::after {
+.disclosure > :is(summary, .disclosure-trigger)::after {
   content: '';
+  flex: none;
   width: 7px;
   height: 7px;
   margin-right: 2px;
@@ -565,7 +555,8 @@ input[type='range']::-webkit-slider-thumb {
   transition: transform 140ms ease;
 }
 
-.disclosure[open] > summary::after {
+.disclosure[open] > summary::after,
+.disclosure-trigger[aria-expanded='true']::after {
   transform: rotate(-135deg);
 }
 
@@ -632,6 +623,126 @@ input[type='range']::-webkit-slider-thumb {
   border-color: color-mix(in srgb, var(--danger) 34%, transparent);
   background: color-mix(in srgb, var(--danger) 10%, transparent);
   color: var(--danger);
+}
+
+/* ---- sound and voice ---------------------------------------------------- */
+
+.settings-scroll:has(> .voice-pane) {
+  scrollbar-gutter: stable both-edges;
+}
+
+.voice-pane {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 14px;
+  transition: grid-template-columns 360ms linear(0, 0.48 23%, 0.87 45%, 1.04 68%, 1);
+}
+
+.voice-pane:has(.animated-disclosure[data-open='true']) {
+  align-items: start;
+}
+
+.voice-pane > .group {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.voice-pane > .group > .group-body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+}
+
+.voice-pane > .group > .group-title {
+  margin: 0 0 9px 4px;
+  font-size: 17px;
+  color: var(--text);
+}
+
+.voice-pane .row {
+  gap: 8px;
+  padding: 12px;
+}
+
+.voice-pane .hotkey-field,
+.voice-pane .segmented {
+  flex-wrap: wrap;
+}
+
+.voice-pane .row-body > button {
+  align-self: flex-start;
+}
+
+.voice-pane .animated-disclosure {
+  margin-top: auto;
+  border: 0;
+  border-top: 1px solid var(--border);
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.animated-disclosure > .disclosure-trigger {
+  width: 100%;
+  gap: 10px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  text-align: start;
+}
+
+.animated-disclosure > .disclosure-trigger:focus-visible {
+  outline-offset: -2px;
+}
+
+.animated-disclosure > .disclosure-content {
+  interpolate-size: allow-keywords;
+  block-size: 0;
+  overflow: clip;
+  opacity: 0;
+  transition: block-size 320ms cubic-bezier(0.22, 0.75, 0.25, 1), opacity 180ms ease-out;
+}
+
+.animated-disclosure[data-open='true'] > .disclosure-content {
+  block-size: auto;
+  opacity: 1;
+}
+
+.voice-pane .disclosure-body {
+  padding: 9px;
+}
+
+.voice-pane .model-row {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.voice-pane .model-actions {
+  flex-wrap: wrap;
+}
+
+@media (min-width: 761px) {
+  .voice-pane:has(> .group:first-child .animated-disclosure[data-open='true']):not(:has(> .group:last-child .animated-disclosure[data-open='true'])) {
+    grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+  }
+
+  .voice-pane:has(> .group:last-child .animated-disclosure[data-open='true']):not(:has(> .group:first-child .animated-disclosure[data-open='true'])) {
+    grid-template-columns: minmax(0, 2fr) minmax(0, 3fr);
+  }
+}
+
+@media (max-width: 760px) {
+  .voice-pane {
+    grid-template-columns: minmax(0, 1fr);
+    transition: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .voice-pane,
+  .animated-disclosure > .disclosure-content,
+  .animated-disclosure > .disclosure-trigger::after {
+    transition: none;
+  }
 }
 
 /* ---- voice: model list -------------------------------------------------- */

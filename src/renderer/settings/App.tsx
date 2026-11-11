@@ -34,7 +34,7 @@ type Tab = 'provider' | 'voice' | 'agent' | 'privacy'
 
 const TABS: Array<{ id: Tab; label: string }> = [
   { id: 'provider', label: 'Модель' },
-  { id: 'voice', label: 'Голос' },
+  { id: 'voice', label: 'Звук и голос' },
   { id: 'agent', label: 'Агент' },
   { id: 'privacy', label: 'Приватность' }
 ]
@@ -46,8 +46,8 @@ const PANE: Record<Tab, { title: string; subtitle: string }> = {
     subtitle: 'Кто отвечает на вопрос и что именно он получает на вход.'
   },
   voice: {
-    title: 'Голос',
-    subtitle: 'Речь распознаётся на этом Mac и никуда не отправляется.'
+    title: 'Звук и голос',
+    subtitle: 'Настрой голосовой ввод и выбери, что Deskhand произносит вслух.'
   },
   agent: {
     title: 'Агент',
@@ -166,7 +166,7 @@ export function App() {
    * The scrolling pane, so switching tabs starts at the top.
    *
    * All four panes share one scroll container, so without this a glance at the
-   * long «Голос» pane leaves «Агент» scrolled to its second card — the new pane
+   * long «Звук и голос» pane leaves «Агент» scrolled to its second card — the new pane
    * opens in the middle of itself, which reads as a missing heading.
    */
   const scrollRef = useRef<HTMLDivElement | null>(null)
@@ -497,17 +497,6 @@ export function App() {
             {hotkeyMessage && <div className="hint err">{hotkeyMessage}</div>}
           </div>
 
-          <div className="side-key">
-            <div className="sidebar-label">
-              Голос
-              {!draft.voice.enabled && <span className="sidebar-off">выключен</span>}
-            </div>
-            <HotkeyField
-              value={draft.voice.hotkey}
-              onChange={(hotkey) => patch({ voice: { ...draft.voice, hotkey } })}
-            />
-          </div>
-
           <div className="side-toggle">
             <span>Запускать при входе</span>
             <Toggle
@@ -548,8 +537,10 @@ export function App() {
           {tab === 'voice' && (
             <VoiceTab
               voice={draft.voice}
+              microphoneGranted={bundle.permissions.microphone}
+              onOpenMicrophoneSettings={() => setTab('privacy')}
               tts={draft.tts}
-              savedModel={bundle.settings.voice.model}
+              savedVoice={bundle.settings.voice}
               savedTts={bundle.settings.tts}
               onVoiceChange={(changes) => setDraft((current) => current
                 ? { ...current, voice: { ...current.voice, ...changes } }

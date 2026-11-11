@@ -16,7 +16,7 @@
  * "topорно" happens.
  */
 
-import type { ReactNode } from 'react'
+import { useId, useState, type ReactNode } from 'react'
 
 interface GroupProps {
   title?: string
@@ -136,5 +136,31 @@ export function Disclosure({ title, children }: DisclosureProps) {
       <summary>{title}</summary>
       <div className="disclosure-body">{children}</div>
     </details>
+  )
+}
+
+export function AnimatedDisclosure({ title, children }: DisclosureProps) {
+  const [open, setOpen] = useState(false)
+  const contentId = useId()
+
+  return (
+    <div className="disclosure animated-disclosure" data-open={open}>
+      <button
+        type="button"
+        className="disclosure-trigger"
+        aria-controls={contentId}
+        aria-expanded={open}
+        onClick={() => setOpen((value) => !value)}
+      >
+        {title}
+      </button>
+      <div
+        className="disclosure-content"
+        id={contentId}
+        ref={(node) => { if (node) node.inert = !open }}
+      >
+        <div className="disclosure-body">{children}</div>
+      </div>
+    </div>
   )
 }

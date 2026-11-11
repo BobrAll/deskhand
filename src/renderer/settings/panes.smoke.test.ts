@@ -54,8 +54,10 @@ function voice(): string {
     createElement(VoiceTab, {
       voice: DEFAULT_SETTINGS.voice,
       tts: DEFAULT_SETTINGS.tts,
-      savedModel: DEFAULT_SETTINGS.voice.model,
+      savedVoice: DEFAULT_SETTINGS.voice,
       savedTts: DEFAULT_SETTINGS.tts,
+      microphoneGranted: true,
+      onOpenMicrophoneSettings: noop,
       onVoiceChange: noop,
       onTtsChange: noop
     })
@@ -79,7 +81,7 @@ function privacy(excludedApps: string[] = []): string {
 describe('the settings panes', () => {
   it('are built from cards and rows, not loose fields', () => {
     for (const html of [provider(), agent(), voice(), privacy()]) {
-      expect(html).toContain('class="pane"')
+      expect(html).toMatch(/class="pane(?: |")/)
       expect(html).toContain('class="group-body"')
       expect(html).toContain('class="row"')
     }
@@ -101,7 +103,8 @@ describe('the settings panes', () => {
     expect(provider()).toContain('Подключение')
     expect(provider()).toContain('Скриншот')
     expect(agent()).toContain('Границы')
-    expect(voice()).toContain('Распознавание')
+    expect(voice()).toContain('Говорить с Deskhand')
+    expect(voice()).toContain('Слышать Deskhand')
     expect(privacy()).toContain('Исключённые приложения')
   })
 
@@ -146,7 +149,40 @@ describe('the settings panes', () => {
     expect(alternatives).toContain('Модели Whisper')
     expect(alternatives).toContain('Импортировать модель Whisper')
     expect(alternatives).not.toContain('GigaAM')
+    expect(html).toMatch(/class="disclosure animated-disclosure" data-open="false"><button[^>]*aria-expanded="false">Дополнительные настройки ввода/)
     expect(html).toContain('GigaAM v3 · встроенная модель для русского языка.')
+  })
+
+  it('previews the voice that answers will actually use', () => {
+    const render = (answerVoice: 'off' | 'system' | 'neural'): string =>
+      renderToStaticMarkup(
+        createElement(VoiceTab, {
+          voice: { ...DEFAULT_SETTINGS.voice, answerVoice },
+          tts: DEFAULT_SETTINGS.tts,
+          savedVoice: { ...DEFAULT_SETTINGS.voice, answerVoice },
+          savedTts: DEFAULT_SETTINGS.tts,
+          microphoneGranted: true,
+          onOpenMicrophoneSettings: noop,
+          onVoiceChange: noop,
+          onTtsChange: noop
+        })
+      )
+
+    const system = render('system')
+    expect(system).toContain('Пример голоса')
+    expect(system).toContain('голосом macOS')
+    // The macOS preview needs no synthesizer, so it works while the neural
+    // engine is off — and it says what it will play.
+    expect(system).toContain('<button>Послушать пример</button>')
+
+    // A neural preview waits for the engine status and its configuration.
+    expect(render('neural')).toContain('<button disabled="">Послушать пример</button>')
+
+    // With answers silent there is no voice to demonstrate, so the preview is
+    // unavailable instead of quietly playing a voice the user did not pick.
+    const off = render('off')
+    expect(off).toContain('Ответы не читаются')
+    expect(off).toContain('<button disabled="">Послушать пример</button>')
   })
 
   it('offers the bundled Ruslan voice and the remote engine', () => {
@@ -154,8 +190,10 @@ describe('the settings panes', () => {
       createElement(VoiceTab, {
         voice: DEFAULT_SETTINGS.voice,
         tts: { ...DEFAULT_SETTINGS.tts, engine: 'piper' },
-        savedModel: DEFAULT_SETTINGS.voice.model,
+        savedVoice: DEFAULT_SETTINGS.voice,
         savedTts: { ...DEFAULT_SETTINGS.tts, engine: 'piper' },
+        microphoneGranted: true,
+        onOpenMicrophoneSettings: noop,
         onVoiceChange: noop,
         onTtsChange: noop
       })

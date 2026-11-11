@@ -10,6 +10,7 @@ import { execFile } from 'node:child_process'
 import { dialog, ipcMain } from 'electron'
 import { CH } from '@shared/ipc'
 import { BUNDLED_VOICE_MODEL, PROVIDERS } from '@shared/defaults'
+import { PREVIEW_LINE } from '@shared/tts'
 import type {
   AppSettings,
   ContextFlags,
@@ -58,14 +59,7 @@ const PROVIDER_IDS: ProviderId[] = PROVIDERS.map((provider) => provider.id)
 /** `defaults read` is a local call; a slow one means the app has no readable plist. */
 const BUNDLE_ID_TIMEOUT_MS = 4000
 
-/**
- * What the settings pane plays when the user asks to hear the voice.
- *
- * A fixed line, not user text: it has to be short enough to judge a voice by and
- * stable enough to be cached, and the pane has no business sending arbitrary
- * text to a service on a button press.
- */
-const PREVIEW_LINE = 'Так, посмотрим. Сейчас разберусь и всё сделаю.'
+
 
 function isProvider(value: unknown): value is ProviderId {
   return typeof value === 'string' && (PROVIDER_IDS as string[]).includes(value)
