@@ -79,7 +79,13 @@ public final class ToolExecutor: @unchecked Sendable {
     /// care whether a presenter exists.
     public var presenter: ActionPresenter?
 
-    public init() {}
+    /// Bundle ids the user excluded from the agent: password managers, banking
+    /// apps, anything whose screen and contents must stay out of the model.
+    public let excludedBundleIds: Set<String>
+
+    public init(excludedBundleIds: Set<String> = []) {
+        self.excludedBundleIds = excludedBundleIds
+    }
 
     public func session(for pid: pid_t) -> AppSession? {
         lock.lock()
@@ -409,8 +415,28 @@ public final class ToolExecutor: @unchecked Sendable {
     /// whatever is frontmost. See `bringToFront(_:)`.
     private func resolveSession(appQuery: String) throws -> AppSession {
         let handle = try AppCatalog.resolve(appQuery)
+        try refuseIfExcluded(handle)
         let running = try AppCatalog.ensureRunning(handle)
+        try refuseIfExcluded(running)
         return session(for: running)
+    }
+
+    /// Stops an excluded app before it is launched, read or acted on.
+    ///
+    /// The gate sits here rather than in each tool so every path that resolves
+    /// an app is covered — a tree walk, a screenshot, a click, a keystroke and
+    /// `activate_app` alike. The check before `ensureRunning` matters on its own:
+    /// resolving a query that matched an installed-but-closed app must not be
+    /// the thing that starts a password manager.
+    private func refuseIfExcluded(_ handle: AppHandle) throws {
+        guard let bundle = handle.bundleIdentifier,
+              excludedBundleIds.contains(bundle) else { return }
+        throw ToolError.message(
+            """
+            \(handle.name) is on the user's exclusion list: its screen, accessibility tree and \
+            contents must not be read, and no input may be sent to it. Work with the app the \
+            user asked about instead.
+            """)
     }
 
     /// Everything the policy needs to judge a call, resolved from the same state

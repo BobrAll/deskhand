@@ -161,7 +161,9 @@ final class Bridge: @unchecked Sendable {
         }
 
         let options = loopOptions(from: params["options"])
-        let executor = ToolExecutor()
+        let excluded = Set((params["options"]?["excluded_apps"]?.arrayValue ?? [])
+            .compactMap(\.stringValue))
+        let executor = ToolExecutor(excludedBundleIds: excluded)
         let provider = ProviderFactory.make(config: config)
         let loop = AgentLoop(provider: provider, executor: executor, options: options)
         loop.observer = BridgeObserver(bridge: self)

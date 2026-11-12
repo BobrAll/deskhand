@@ -96,6 +96,8 @@ export interface AgentRunOptions {
    * it. The action itself is unchanged: this only adds a picture to the pipe.
    */
   visualize: boolean
+  /** Bundle ids the agent must never read or act on. */
+  excludedApps: string[]
 }
 
 /**
@@ -359,7 +361,10 @@ export class AgentSidecar {
         timings: true,
         // Presentation only. With this false the same tools run and the same
         // approvals are asked, but nothing is raised or drawn.
-        visualize: runOptions.visualize
+        visualize: runOptions.visualize,
+        // An absent field on the Swift side means no exclusions, so an older
+        // binary keeps working.
+        excluded_apps: runOptions.excludedApps
       }
     })
   }

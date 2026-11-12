@@ -417,6 +417,23 @@ describe('a run that works', () => {
     })
   })
 
+  it('passes the exclusions the caller configured', async () => {
+    const h = harness()
+    const running = h.controller.run({
+      prompt: 'Нажми «Купить»',
+      appName: 'Safari',
+      windowTitle: 'Магазин',
+      provider: PROVIDER,
+      excludedApps: ['com.apple.finder']
+    })
+
+    await vi.waitFor(() => expect(state.runs).toHaveLength(1))
+    state.emit({ kind: 'done', complete: true, answer: '' })
+    await running
+
+    expect(state.runs[0]).toMatchObject({ excludedApps: ['com.apple.finder'] })
+  })
+
   it('gives the agent the turns a follow-up refers to', async () => {
     const h = harness()
     const running = h.run('сделай', [

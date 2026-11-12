@@ -109,6 +109,52 @@ final class ToolExecutorTests: XCTestCase {
                 || result.plainText.contains("no running or installed app")
         )
     }
+
+    func testExcludedAppIsRefusedBeforeItCanRun() async throws {
+        // Finder is the intended target, but a test runner without a GUI cannot
+        // resolve it; any installed app proves the same gate.
+        let target = try resolvableApp()
+        let bundle = try XCTUnwrap(target.bundleIdentifier)
+        let executor = ToolExecutor(excludedBundleIds: [bundle])
+        // `activate_app` resolves the app before any permission check, so this
+        // path reaches the exclusion gate on a machine without Accessibility.
+        let result = await executor.call(
+            name: "activate_app",
+            arguments: .object(["app": .string(bundle)])
+        )
+        XCTAssertTrue(result.isError, "an excluded app must not be activated")
+        XCTAssertTrue(
+            result.plainText.contains("exclusion list"),
+            "expected the exclusion message, got: \(result.plainText)"
+        )
+        XCTAssertTrue(result.plainText.contains(target.name))
+        XCTAssertTrue(
+            executor.allSessions().isEmpty,
+            "an excluded app must not get a session or be launched"
+        )
+    }
+
+    func testAllowedAppIsNotAffectedByOthersExclusions() async throws {
+        let target = try resolvableApp()
+        let bundle = try XCTUnwrap(target.bundleIdentifier)
+        let executor = ToolExecutor(excludedBundleIds: ["com.example.not-\(bundle)"])
+        let result = await executor.call(
+            name: "activate_app",
+            arguments: .object(["app": .string(bundle)])
+        )
+        XCTAssertFalse(
+            result.plainText.contains("exclusion list"),
+            "a different app's exclusion must not match \(target.name), got: \(result.plainText)"
+        )
+    }
+
+    private func resolvableApp() throws -> AppHandle {
+        if let finder = try? AppCatalog.resolve("Finder") { return finder }
+        if let calculator = try? AppCatalog.resolve("Calculator") { return calculator }
+        guard let fallback = AppCatalog.installedApps().first(where: { $0.bundleIdentifier != nil })
+        else { throw XCTSkip("no resolvable app on this machine") }
+        return fallback
+    }
 }
 
 final class AppCatalogTests: XCTestCase {

@@ -1183,7 +1183,8 @@ export function createOverlayController(host: OverlayHost) {
       appName: turnSession.target?.name ?? null,
       windowTitle: turnSession.target?.windowTitle ?? null,
       history: agentHistory,
-      provider: agentProvider(settings, apiKey)
+      provider: agentProvider(settings, apiKey),
+      excludedApps: settings.excludedApps
     }))
     if (abort.signal.aborted || session !== turnSession) return null
 
