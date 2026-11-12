@@ -61,6 +61,42 @@ final class ToolExecutorTests: XCTestCase {
         )
     }
 
+    func testClickRejectsOutOfRangeCoordinate() async {
+        let executor = ToolExecutor()
+        let result = await executor.call(
+            name: "click",
+            arguments: .object([
+                "app": .string("Finder"),
+                "x": .number(1e300),
+                "y": .number(10),
+            ])
+        )
+        XCTAssertTrue(result.isError, "a huge pixel must not reach the coordinate mapper")
+        XCTAssertTrue(
+            result.plainText.contains("x must be a screenshot pixel between 0 and 1280"),
+            "got: \(result.plainText)"
+        )
+    }
+
+    func testDragRejectsOutOfRangeCoordinate() async {
+        let executor = ToolExecutor()
+        let result = await executor.call(
+            name: "drag",
+            arguments: .object([
+                "app": .string("Finder"),
+                "from_x": .number(1e300),
+                "from_y": .number(10),
+                "to_x": .number(20),
+                "to_y": .number(30),
+            ])
+        )
+        XCTAssertTrue(result.isError, "a huge pixel must not reach the coordinate mapper")
+        XCTAssertTrue(
+            result.plainText.contains("from_x must be a screenshot pixel between 0 and 1280"),
+            "got: \(result.plainText)"
+        )
+    }
+
     func testStaleIndexIsRejected() async throws {
         let executor = ToolExecutor()
         let result = await executor.call(
