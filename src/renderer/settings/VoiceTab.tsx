@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import type {
   DownloadProgress,
   TtsSetupProgress,
@@ -179,219 +179,222 @@ function TtsSection({
   )
 
   return (
-    <Group title="Слышать Deskhand">
-      <ToggleRow
-        title="Сообщать о ходе работы"
-        hint="Короткие реплики, пока агент работает."
-        checked={voice.agentFeedback}
-        onChange={(agentFeedback) => onVoiceChange({ agentFeedback })}
-      />
-      <Row
-        stacked
-        title="Читать ответы вслух"
-        hint={voice.answerVoice === 'neural' && speech && !speech.configured
-          ? 'Пока нейроголос не настроен, ответы читает голос macOS.'
-          : undefined}
-      >
-        <select
-          aria-label="Читать ответы вслух"
-          value={voice.answerVoice}
-          onChange={(event) => {
-            const answerVoice = event.target.value
-            if (answerVoice === 'off' || answerVoice === 'system' || answerVoice === 'neural') {
-              onVoiceChange({ answerVoice })
-            }
-          }}
+    <>
+      <Group>
+        <Row
+          title="Пример голоса"
+          hint={!usesSystemVoice && applying ? 'Применяем настройки голоса…' : previewHint}
         >
-          <option value="off">Не читать</option>
-          <option value="system">Голос macOS</option>
-          <option value="neural">Нейроголос</option>
-        </select>
-      </Row>
-      <Row
-        stacked
-        title="Пример голоса"
-        hint={!usesSystemVoice && applying ? 'Применяем настройки голоса…' : previewHint}
-      >
-        <button
-          disabled={previewing || !readsAnswers || (!usesSystemVoice && (applying || !speech?.configured))}
-          onClick={onPreview}
+          <button
+            disabled={previewing || !readsAnswers || (!usesSystemVoice && (applying || !speech?.configured))}
+            onClick={onPreview}
+          >
+            {previewing ? 'Играет…' : 'Послушать пример'}
+          </button>
+        </Row>
+      </Group>
+      <Group title="Слышать Deskhand">
+        <ToggleRow
+          title="Сообщать о ходе работы"
+          hint="Короткие реплики, пока агент работает."
+          checked={voice.agentFeedback}
+          onChange={(agentFeedback) => onVoiceChange({ agentFeedback })}
+        />
+        <Row
+          stacked
+          title="Читать ответы вслух"
+          hint={voice.answerVoice === 'neural' && speech && !speech.configured
+            ? 'Пока нейроголос не настроен, ответы читает голос macOS.'
+            : undefined}
         >
-          {previewing ? 'Играет…' : 'Послушать пример'}
-        </button>
-      </Row>
-      <AnimatedDisclosure title="Дополнительные настройки озвучки">
-        <Group
-          title="Синтез речи"
-          footnote={
-            speech?.recordedVoice
-              ? `Короткие фразы записаны заранее голосом «${speech.recordedVoice}» и звучат мгновенно без ключа и сети. Синтез ниже нужен только для ответов и для фраз, которых нет в записи.`
-              : 'Короткие фразы записаны заранее и звучат мгновенно без ключа и сети. Синтез ниже нужен только для ответов и для фраз, которых нет в записи.'
-          }
-        >
-          <ToggleRow
-            title="Включить синтез"
-            hint={
-              tts.engine === 'silero'
-                ? 'Локальная модель Silero: ключ и сеть не нужны, только загрузка весов.'
-                : 'Endpoint, модель, голос и стиль — твои. Ключ хранится в Keychain и не показывается.'
-            }
-            checked={tts.enabled}
-            onChange={(enabled) => onTtsChange({ enabled })}
-          />
-          <Row
-            stacked
-            title="Движок"
-            hint={
-              tts.engine === 'silero'
-                ? 'Silero V5.6 RU скачивается один раз и работает офлайн.'
-                : 'OpenAI-совместимый сервис синтеза: ключ и адрес задаёшь сам.'
+          <select
+            aria-label="Читать ответы вслух"
+            value={voice.answerVoice}
+            onChange={(event) => {
+              const answerVoice = event.target.value
+              if (answerVoice === 'off' || answerVoice === 'system' || answerVoice === 'neural') {
+                onVoiceChange({ answerVoice })
+              }
+            }}
+          >
+            <option value="off">Не читать</option>
+            <option value="system">Голос macOS</option>
+            <option value="neural">Нейроголос</option>
+          </select>
+        </Row>
+        <AnimatedDisclosure title="Дополнительные настройки озвучки">
+          <Group
+            title="Синтез речи"
+            footnote={
+              speech?.recordedVoice
+                ? `Короткие фразы записаны заранее голосом «${speech.recordedVoice}» и звучат мгновенно без ключа и сети. Синтез ниже нужен только для ответов и для фраз, которых нет в записи.`
+                : 'Короткие фразы записаны заранее и звучат мгновенно без ключа и сети. Синтез ниже нужен только для ответов и для фраз, которых нет в записи.'
             }
           >
-            <div className="segmented">
-              <button
-                className={tts.engine === 'silero' ? 'active' : ''}
-                onClick={() => onTtsChange({
-                  engine: 'silero',
-                  enabled: true,
-                  sileroVoice: sileroSpeaker(tts.sileroVoice)
-                })}
-              >
-                Silero · V5.6 RU
-              </button>
-              <button
-                className={tts.engine === 'remote' ? 'active' : ''}
-                onClick={() => onTtsChange({ engine: 'remote' })}
-              >
-                Сервис по API
-              </button>
-            </div>
-          </Row>
-
-          {tts.engine === 'silero' && (
-            <>
-              <Row stacked title="Голос Silero" hint="Голос берётся из модели, без ключа и сети.">
-                <select
-                  aria-label="Голос Silero"
-                  value={sileroSpeaker(tts.sileroVoice)}
-                  onChange={(event) => onTtsChange({ sileroVoice: event.target.value })}
+            <ToggleRow
+              title="Включить синтез"
+              hint={
+                tts.engine === 'silero'
+                  ? 'Локальная модель Silero: ключ и сеть не нужны, только загрузка весов.'
+                  : 'Endpoint, модель, голос и стиль — твои. Ключ хранится в Keychain и не показывается.'
+              }
+              checked={tts.enabled}
+              onChange={(enabled) => onTtsChange({ enabled })}
+            />
+            <Row
+              stacked
+              title="Движок"
+              hint={
+                tts.engine === 'silero'
+                  ? 'Silero V5.6 RU скачивается один раз и работает офлайн.'
+                  : 'OpenAI-совместимый сервис синтеза: ключ и адрес задаёшь сам.'
+              }
+            >
+              <div className="segmented">
+                <button
+                  className={tts.engine === 'silero' ? 'active' : ''}
+                  onClick={() => onTtsChange({
+                    engine: 'silero',
+                    enabled: true,
+                    sileroVoice: sileroSpeaker(tts.sileroVoice)
+                  })}
                 >
-                  {SILERO_SPEAKERS.map((speaker) => (
-                    <option key={speaker} value={speaker}>{speaker}</option>
-                  ))}
-                </select>
-              </Row>
-              <Row
-                stacked
-                title={sileroInstalled ? 'Модель установлена' : 'Модель не установлена'}
-                hint={setupProgress
-                  ? setupProgressText(setupProgress)
-                  : sileroInstalled
-                    ? 'Первая фраза загружает модель пару секунд, дальше — из кэша.'
-                    : 'Нужны Python 3.12+ и около 300 МБ на диске.'}
-              >
-                {sileroInstalled ? (
-                  <button className="ghost" disabled={setupProgress !== null} onClick={onRemoveSilero}>
-                    Удалить
-                  </button>
-                ) : (
-                  <button disabled={setupProgress !== null} onClick={onInstallSilero}>
-                    {setupProgress ? 'Скачиваем…' : 'Скачать модель'}
-                  </button>
-                )}
-              </Row>
-              <Row stacked>
-                <div className="row-hint">
-                  Лицензия Silero V5.6 RU — CC BY-NC-SA 4.0, только для некоммерческого теста.
-                </div>
-              </Row>
-              {setupError && (
-                <Row stacked>
-                  <div className="row-hint err">{setupError}</div>
-                </Row>
-              )}
-            </>
-          )}
+                  Silero · V5.6 RU
+                </button>
+                <button
+                  className={tts.engine === 'remote' ? 'active' : ''}
+                  onClick={() => onTtsChange({ engine: 'remote' })}
+                >
+                  Сервис по API
+                </button>
+              </div>
+            </Row>
 
-          {tts.engine === 'remote' && (
-            <>
-              <Row
-                stacked
-                title="Адрес сервиса"
-                hint="Корень API без завершающего слэша, например https://host/v1."
-              >
-                <input
-                  value={tts.baseUrl}
-                  onChange={(event) => onTtsChange({ baseUrl: event.target.value })}
-                  placeholder="https://host/v1"
-                  spellCheck={false}
-                />
-              </Row>
-              <Row stacked title="Модель" hint="ID модели синтеза у этого сервиса.">
-                <input
-                  value={tts.model}
-                  onChange={(event) => onTtsChange({ model: event.target.value })}
-                  placeholder="ID модели синтеза"
-                  spellCheck={false}
-                />
-              </Row>
-              <Row stacked title="Голос" hint="Имя голоса, как его называет сервис.">
-                <input
-                  value={tts.voice}
-                  onChange={(event) => onTtsChange({ voice: event.target.value })}
-                  placeholder="имя голоса"
-                  spellCheck={false}
-                />
-              </Row>
-              <Row
-                stacked
-                title="Стиль подачи"
-                hint="Свободная инструкция для движка: «дружный», «спокойно», «бодро». Пусто — без неё."
-              >
-                <input
-                  value={tts.style}
-                  onChange={(event) => onTtsChange({ style: event.target.value })}
-                  placeholder="дружный"
-                />
-              </Row>
-              <Row
-                stacked
-                title="Ключ синтеза"
-                hint={
-                  speech?.keyConfigured
-                    ? 'Ключ лежит в Keychain и никогда не показывается целиком.'
-                    : 'Отдельный ключ для этого endpoint. Не тот, что у модели, если сервисы разные.'
-                }
-              >
-                {speech?.keyConfigured ? (
-                  <div className="row-actions">
-                    <span className="permission-state ok">● Ключ сохранён</span>
-                    <button className="ghost" onClick={onRemoveKey}>
+            {tts.engine === 'silero' && (
+              <>
+                <Row stacked title="Голос Silero" hint="Голос берётся из модели, без ключа и сети.">
+                  <select
+                    aria-label="Голос Silero"
+                    value={sileroSpeaker(tts.sileroVoice)}
+                    onChange={(event) => onTtsChange({ sileroVoice: event.target.value })}
+                  >
+                    {SILERO_SPEAKERS.map((speaker) => (
+                      <option key={speaker} value={speaker}>{speaker}</option>
+                    ))}
+                  </select>
+                </Row>
+                <Row
+                  stacked
+                  title={sileroInstalled ? 'Модель установлена' : 'Модель не установлена'}
+                  hint={setupProgress
+                    ? setupProgressText(setupProgress)
+                    : sileroInstalled
+                      ? 'Первая фраза загружает модель пару секунд, дальше — из кэша.'
+                      : 'Нужны Python 3.12+ и около 300 МБ на диске.'}
+                >
+                  {sileroInstalled ? (
+                    <button className="ghost" disabled={setupProgress !== null} onClick={onRemoveSilero}>
                       Удалить
                     </button>
-                  </div>
-                ) : (
-                  <div className="row-actions">
-                    <input
-                      type="password"
-                      value={ttsKey}
-                      onChange={(event) => onTtsKeyInput(event.target.value)}
-                      placeholder="sk-…"
-                      onKeyDown={(event) => {
-                        if (event.key === 'Enter') onSaveKey()
-                      }}
-                    />
-                    <button disabled={!ttsKey.trim()} onClick={onSaveKey}>
-                      Сохранить
+                  ) : (
+                    <button disabled={setupProgress !== null} onClick={onInstallSilero}>
+                      {setupProgress ? 'Скачиваем…' : 'Скачать модель'}
                     </button>
+                  )}
+                </Row>
+                <Row stacked>
+                  <div className="row-hint">
+                    Лицензия Silero V5.6 RU — CC BY-NC-SA 4.0, только для некоммерческого теста.
                   </div>
+                </Row>
+                {setupError && (
+                  <Row stacked>
+                    <div className="row-hint err">{setupError}</div>
+                  </Row>
                 )}
-              </Row>
-            </>
-          )}
-        </Group>
-      </AnimatedDisclosure>
-    </Group>
+              </>
+            )}
+
+            {tts.engine === 'remote' && (
+              <>
+                <Row
+                  stacked
+                  title="Адрес сервиса"
+                  hint="Корень API без завершающего слэша, например https://host/v1."
+                >
+                  <input
+                    value={tts.baseUrl}
+                    onChange={(event) => onTtsChange({ baseUrl: event.target.value })}
+                    placeholder="https://host/v1"
+                    spellCheck={false}
+                  />
+                </Row>
+                <Row stacked title="Модель" hint="ID модели синтеза у этого сервиса.">
+                  <input
+                    value={tts.model}
+                    onChange={(event) => onTtsChange({ model: event.target.value })}
+                    placeholder="ID модели синтеза"
+                    spellCheck={false}
+                  />
+                </Row>
+                <Row stacked title="Голос" hint="Имя голоса, как его называет сервис.">
+                  <input
+                    value={tts.voice}
+                    onChange={(event) => onTtsChange({ voice: event.target.value })}
+                    placeholder="имя голоса"
+                    spellCheck={false}
+                  />
+                </Row>
+                <Row
+                  stacked
+                  title="Стиль подачи"
+                  hint="Свободная инструкция для движка: «дружный», «спокойно», «бодро». Пусто — без неё."
+                >
+                  <input
+                    value={tts.style}
+                    onChange={(event) => onTtsChange({ style: event.target.value })}
+                    placeholder="дружный"
+                  />
+                </Row>
+                <Row
+                  stacked
+                  title="Ключ синтеза"
+                  hint={
+                    speech?.keyConfigured
+                      ? 'Ключ лежит в Keychain и никогда не показывается целиком.'
+                      : 'Отдельный ключ для этого endpoint. Не тот, что у модели, если сервисы разные.'
+                  }
+                >
+                  {speech?.keyConfigured ? (
+                    <div className="row-actions">
+                      <span className="permission-state ok">● Ключ сохранён</span>
+                      <button className="ghost" onClick={onRemoveKey}>
+                        Удалить
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="row-actions">
+                      <input
+                        type="password"
+                        value={ttsKey}
+                        onChange={(event) => onTtsKeyInput(event.target.value)}
+                        placeholder="sk-…"
+                        onKeyDown={(event) => {
+                          if (event.key === 'Enter') onSaveKey()
+                        }}
+                      />
+                      <button disabled={!ttsKey.trim()} onClick={onSaveKey}>
+                        Сохранить
+                      </button>
+                    </div>
+                  )}
+                </Row>
+              </>
+            )}
+          </Group>
+        </AnimatedDisclosure>
+      </Group>
+    </>
   )
 }
 
@@ -417,10 +420,10 @@ function ReadinessSection({
   const ready = status?.ready ?? false
 
   return (
-    <Group title="Состояние">
+    <Group title="Проверка записи">
       <Row
         stacked
-        title={status === null ? 'Проверяем…' : ready ? 'Готово' : 'Не готово'}
+        title={status === null ? 'Проверяем…' : ready ? 'Голосовой ввод готов' : 'Голосовой ввод не готов'}
         hint={
           model !== savedModel
             ? 'Применяем модель…'
@@ -430,7 +433,7 @@ function ReadinessSection({
         <div className="row-actions">
           {ready && <span className="permission-state ok">● Всё на месте</span>}
           <button disabled={checking} onClick={onCheck}>
-            {checking ? 'Проверка…' : 'Проверить'}
+            {checking ? 'Проверка…' : 'Проверить ввод'}
           </button>
         </div>
       </Row>
@@ -459,6 +462,8 @@ export function VoiceTab({
   onTtsChange
 }: VoiceTabProps) {
   const { model: savedModel, enabled: savedVoiceEnabled, hotkey: savedHotkey } = savedVoice
+  const [section, setSection] = useState<'input' | 'speech'>('input')
+  const sectionId = useId()
   const [status, setStatus] = useState<VoiceStatus | null>(null)
   const [speech, setSpeech] = useState<TtsStatus | null>(null)
   const [ttsKey, setTtsKeyInput] = useState('')
@@ -695,125 +700,142 @@ export function VoiceTab({
 
   return (
     <div className="pane voice-pane">
-      <Group title="Говорить с Deskhand">
-        <ToggleRow
-          title="Голосовой ввод"
-          hint="Удерживай клавишу записи и говори."
-          checked={voice.enabled}
-          onChange={(enabled) => onVoiceChange({ enabled })}
-        />
-        <Row stacked title="Клавиша записи" hint="Речь распознаётся на этом Mac.">
-          <HotkeyField value={voice.hotkey} onChange={(hotkey) => onVoiceChange({ hotkey })} />
-        </Row>
-        <Row stacked title="Что делать с речью">
-          <select
-            aria-label="Что делать с речью"
-            value={voice.action}
-            onChange={(event) => {
-              const action = event.target.value
-              if (action === 'command' || action === 'dictate') onVoiceChange({ action })
-            }}
+      <div className="segmented" role="group" aria-label="Раздел звука и голоса">
+        {(['input', 'speech'] as const).map((item) => (
+          <button
+            key={item}
+            type="button"
+            className={section === item ? 'active' : undefined}
+            aria-pressed={section === item}
+            aria-controls={`${sectionId}-${item}`}
+            onClick={() => setSection(item)}
           >
-            <option value="command">{voice.autoSend ? 'Отправить запрос' : 'Подготовить запрос'}</option>
-            <option value="dictate">Вставить текст</option>
-          </select>
-        </Row>
-        {voice.enabled && !microphoneGranted && (
-          <Row stacked title="Разреши доступ к микрофону">
-            <button onClick={onOpenMicrophoneSettings}>Открыть «Приватность»</button>
-          </Row>
-        )}
-        {voice.enabled && microphoneGranted && status?.listenerError && (
-          <Row hint={status.listenerError} />
-        )}
-        <AnimatedDisclosure title="Дополнительные настройки ввода">
-          <Group title="Распознавание">
-            {voice.action === 'command' && (
-              <ToggleRow
-                title="Отправлять не дожидаясь Enter"
-                hint="Ответ начнётся сразу, как только речь распознана."
-                checked={voice.autoSend}
-                onChange={(autoSend) => onVoiceChange({ autoSend })}
-              />
-            )}
-
-            <Row
-              stacked
-              title="Модель распознавания"
-              hint={
-                voice.model !== savedModel
-                  ? 'Применяем модель…'
-                  : selectedModel === BUNDLED_VOICE_MODEL.id || !status
-                    ? `${BUNDLED_VOICE_MODEL.label} · встроенная модель для русского языка.`
-                    : modelName ? `Используется «${modelName}».` : (status.detail ?? 'Модель недоступна.')
-              }
-            >
-              {voice.model !== BUNDLED_VOICE_MODEL.id && installed.has(BUNDLED_VOICE_MODEL.id) && (
-                <button disabled={progress !== null || deleting !== null} onClick={() => onVoiceChange({ model: BUNDLED_VOICE_MODEL.id })}>
-                  Выбрать GigaAM
-                </button>
-              )}
-            </Row>
-          </Group>
-
-          <Disclosure title="Другие модели распознавания">
-            <ModelList
-              activeModel={selectedModel}
-              installed={installed}
-              applying={voice.model !== savedModel}
-              progress={progress}
-              deleting={deleting}
-              downloadError={downloadError}
-              onPick={(id) => onVoiceChange({ model: id })}
-              onDownload={(id) => void download(id)}
-              onImport={() => void importModel()}
-              onRemove={(id, label) => void remove(id, label)}
-            />
-            {selectedModel && selectedModel !== BUNDLED_VOICE_MODEL.id && (
-              <Row stacked title="Язык речи" hint="Для коротких команд язык надёжнее автоопределения.">
-                <select
-                  value={voice.language}
-                  aria-label="Язык речи"
-                  onChange={(event) => onVoiceChange({ language: event.target.value })}
-                >
-                  {WHISPER_LANGUAGES.map((language) => (
-                    <option key={language.id} value={language.id}>{language.label}</option>
-                  ))}
-                </select>
-              </Row>
-            )}
-          </Disclosure>
-
-          <ReadinessSection
-            model={voice.model}
-            savedModel={savedModel}
-            status={status}
-            testError={testError}
-            checking={checking}
-            onCheck={() => void testVoice()}
+            {item === 'input' ? 'Ввод' : 'Озвучка'}
+          </button>
+        ))}
+      </div>
+      <div className="voice-section" id={`${sectionId}-input`} hidden={section !== 'input'}>
+        <ReadinessSection
+          model={voice.model}
+          savedModel={savedModel}
+          status={status}
+          testError={testError}
+          checking={checking}
+          onCheck={() => void testVoice()}
+        />
+        <Group title="Говорить с Deskhand">
+          <ToggleRow
+            title="Голосовой ввод"
+            hint="Удерживай клавишу записи и говори."
+            checked={voice.enabled}
+            onChange={(enabled) => onVoiceChange({ enabled })}
           />
-        </AnimatedDisclosure>
-      </Group>
+          <Row stacked title="Клавиша записи" hint="Речь распознаётся на этом Mac.">
+            <HotkeyField value={voice.hotkey} onChange={(hotkey) => onVoiceChange({ hotkey })} />
+          </Row>
+          <Row stacked title="Что делать с речью">
+            <select
+              aria-label="Что делать с речью"
+              value={voice.action}
+              onChange={(event) => {
+                const action = event.target.value
+                if (action === 'command' || action === 'dictate') onVoiceChange({ action })
+              }}
+            >
+              <option value="command">{voice.autoSend ? 'Отправить запрос' : 'Подготовить запрос'}</option>
+              <option value="dictate">Вставить текст</option>
+            </select>
+          </Row>
+          {voice.enabled && !microphoneGranted && (
+            <Row stacked title="Разреши доступ к микрофону">
+              <button onClick={onOpenMicrophoneSettings}>Открыть «Приватность»</button>
+            </Row>
+          )}
+          {voice.enabled && microphoneGranted && status?.listenerError && (
+            <Row hint={status.listenerError} />
+          )}
+          <AnimatedDisclosure title="Дополнительные настройки ввода">
+            <Group title="Распознавание">
+              {voice.action === 'command' && (
+                <ToggleRow
+                  title="Отправлять не дожидаясь Enter"
+                  hint="Ответ начнётся сразу, как только речь распознана."
+                  checked={voice.autoSend}
+                  onChange={(autoSend) => onVoiceChange({ autoSend })}
+                />
+              )}
 
-      <TtsSection
-        voice={voice}
-        tts={tts}
-        speech={speech}
-        applying={ttsApplying}
-        ttsKey={ttsKey}
-        previewing={previewing}
-        previewError={previewError}
-        onVoiceChange={onVoiceChange}
-        onTtsChange={onTtsChange}
-        onTtsKeyInput={setTtsKeyInput}
-        onSaveKey={() => void saveTtsKey()}
-        onRemoveKey={() => void removeTtsKey()}
-        onPreview={() => void previewVoice()}
-        setupProgress={setupProgress}
-        setupError={setupError}
-        onInstallSilero={() => void installSileroEngine()}
-        onRemoveSilero={() => void removeSileroEngine()}
-      />
+              <Row
+                stacked
+                title="Модель распознавания"
+                hint={
+                  voice.model !== savedModel
+                    ? 'Применяем модель…'
+                    : selectedModel === BUNDLED_VOICE_MODEL.id || !status
+                      ? `${BUNDLED_VOICE_MODEL.label} · встроенная модель для русского языка.`
+                      : modelName ? `Используется «${modelName}».` : (status.detail ?? 'Модель недоступна.')
+                }
+              >
+                {voice.model !== BUNDLED_VOICE_MODEL.id && installed.has(BUNDLED_VOICE_MODEL.id) && (
+                  <button disabled={progress !== null || deleting !== null} onClick={() => onVoiceChange({ model: BUNDLED_VOICE_MODEL.id })}>
+                    Выбрать GigaAM
+                  </button>
+                )}
+              </Row>
+            </Group>
+
+            <Disclosure title="Другие модели распознавания">
+              <ModelList
+                activeModel={selectedModel}
+                installed={installed}
+                applying={voice.model !== savedModel}
+                progress={progress}
+                deleting={deleting}
+                downloadError={downloadError}
+                onPick={(id) => onVoiceChange({ model: id })}
+                onDownload={(id) => void download(id)}
+                onImport={() => void importModel()}
+                onRemove={(id, label) => void remove(id, label)}
+              />
+              {selectedModel && selectedModel !== BUNDLED_VOICE_MODEL.id && (
+                <Row stacked title="Язык речи" hint="Для коротких команд язык надёжнее автоопределения.">
+                  <select
+                    value={voice.language}
+                    aria-label="Язык речи"
+                    onChange={(event) => onVoiceChange({ language: event.target.value })}
+                  >
+                    {WHISPER_LANGUAGES.map((language) => (
+                      <option key={language.id} value={language.id}>{language.label}</option>
+                    ))}
+                  </select>
+                </Row>
+              )}
+            </Disclosure>
+
+          </AnimatedDisclosure>
+        </Group>
+      </div>
+      <div className="voice-section" id={`${sectionId}-speech`} hidden={section !== 'speech'}>
+        <TtsSection
+          voice={voice}
+          tts={tts}
+          speech={speech}
+          applying={ttsApplying}
+          ttsKey={ttsKey}
+          previewing={previewing}
+          previewError={previewError}
+          onVoiceChange={onVoiceChange}
+          onTtsChange={onTtsChange}
+          onTtsKeyInput={setTtsKeyInput}
+          onSaveKey={() => void saveTtsKey()}
+          onRemoveKey={() => void removeTtsKey()}
+          onPreview={() => void previewVoice()}
+          setupProgress={setupProgress}
+          setupError={setupError}
+          onInstallSilero={() => void installSileroEngine()}
+          onRemoveSilero={() => void removeSileroEngine()}
+        />
+      </div>
     </div>
   )
 }
