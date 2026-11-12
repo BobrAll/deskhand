@@ -1,6 +1,25 @@
 import XCTest
 @testable import DeskhandCore
 
+/// Records what the executor offered the policy before a mutating call.
+private final class SpyToolPolicy: ToolPolicy, @unchecked Sendable {
+    private let lock = NSLock()
+    private var seen: [ToolCallContext] = []
+
+    func authorize(_ call: ToolCallContext) -> ToolPolicyDecision {
+        lock.lock()
+        seen.append(call)
+        lock.unlock()
+        return .allow
+    }
+
+    var calls: [ToolCallContext] {
+        lock.lock()
+        defer { lock.unlock() }
+        return seen
+    }
+}
+
 /// Tool-call plumbing: the executor must reject stale indices rather than
 /// acting on whatever element now occupies that slot.
 final class ToolExecutorTests: XCTestCase {
@@ -144,6 +163,89 @@ final class ToolExecutorTests: XCTestCase {
             result.plainText.contains("invalid scroll direction")
                 || result.plainText.contains("no running or installed app")
         )
+    }
+
+    func testExcludedAppIsRefusedBeforeItCanRun() async throws {
+        // Finder is the intended target, but a test runner without a GUI cannot
+        // resolve it; any installed app proves the same gate.
+        let target = try resolvableApp()
+        let bundle = try XCTUnwrap(target.bundleIdentifier)
+        let executor = ToolExecutor(excludedBundleIds: [bundle])
+        // `activate_app` resolves the app before any permission check, so this
+        // path reaches the exclusion gate on a machine without Accessibility.
+        let result = await executor.call(
+            name: "activate_app",
+            arguments: .object(["app": .string(bundle)])
+        )
+        XCTAssertTrue(result.isError, "an excluded app must not be activated")
+        XCTAssertTrue(
+            result.plainText.contains("exclusion list"),
+            "expected the exclusion message, got: \(result.plainText)"
+        )
+        XCTAssertTrue(result.plainText.contains(target.name))
+        XCTAssertTrue(
+            executor.allSessions().isEmpty,
+            "an excluded app must not get a session or be launched"
+        )
+    }
+
+    func testAllowedAppIsNotAffectedByOthersExclusions() async throws {
+        let target = try resolvableApp()
+        let bundle = try XCTUnwrap(target.bundleIdentifier)
+        let executor = ToolExecutor(excludedBundleIds: ["com.example.not-\(bundle)"])
+        let result = await executor.call(
+            name: "activate_app",
+            arguments: .object(["app": .string(bundle)])
+        )
+        XCTAssertFalse(
+            result.plainText.contains("exclusion list"),
+            "a different app's exclusion must not match \(target.name), got: \(result.plainText)"
+        )
+    }
+
+    func testExcludedAppIsNotReadBeforeThePolicyRefusesIt() async throws {
+        let target = try resolvableApp()
+        let bundle = try XCTUnwrap(target.bundleIdentifier)
+        let executor = ToolExecutor(excludedBundleIds: [bundle])
+        // Seed a session the way an earlier call would have, so this exercises
+        // the cached-session branch of `knownSession` without needing a GUI app
+        // to already be running.
+        let session = executor.session(for: target)
+        let policy = SpyToolPolicy()
+        executor.policy = policy
+        let result = await executor.call(
+            name: "click",
+            arguments: .object([
+                "app": .string(bundle),
+                "element_index": .number(0),
+            ])
+        )
+
+        // The tool is still refused by `resolveSession`…
+        XCTAssertTrue(result.isError)
+        XCTAssertTrue(
+            result.plainText.contains("exclusion list"),
+            "expected the exclusion message, got: \(result.plainText)"
+        )
+        // …but the policy never got a description of the app or its controls,
+        // and the pre-action lookup did not walk the tree for one.
+        let context = try XCTUnwrap(policy.calls.first)
+        XCTAssertNil(context.appName)
+        XCTAssertNil(context.bundleIdentifier)
+        XCTAssertNil(context.pid)
+        XCTAssertNil(context.role)
+        XCTAssertNil(context.title)
+        XCTAssertNil(context.label)
+        XCTAssertFalse(context.isTextField)
+        XCTAssertNil(session.snapshot, "the policy path must not refresh the tree")
+    }
+
+    private func resolvableApp() throws -> AppHandle {
+        if let finder = try? AppCatalog.resolve("Finder") { return finder }
+        if let calculator = try? AppCatalog.resolve("Calculator") { return calculator }
+        guard let fallback = AppCatalog.installedApps().first(where: { $0.bundleIdentifier != nil })
+        else { throw XCTSkip("no resolvable app on this machine") }
+        return fallback
     }
 }
 

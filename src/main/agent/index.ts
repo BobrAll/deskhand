@@ -82,6 +82,8 @@ export interface AgentRunInput {
   history?: AgentExchange[]
   /** The model the user configured, with the key only the main process holds. */
   provider: AgentProvider
+  /** Bundle ids the agent must never read or act on. */
+  excludedApps?: string[]
 }
 
 const IDLE_EVENT: AgentEvent = { phase: 'idle', step: 0, total: 0, label: '' }
@@ -470,7 +472,8 @@ export function createAgentController(host: AgentHost) {
         // Presentation only: the same run either way. `showActions` is the
         // switch a background mode will turn off, and the agent treats it as
         // "describe what you are about to do", not as "do it differently".
-        visualize: settings.agent.showActions !== false
+        visualize: settings.agent.showActions !== false,
+        excludedApps: input.excludedApps ?? []
       })
       // A stop can land while the sidecar is starting, before this run reaches
       // the pipe. `done` is already settled with the stop; recording an

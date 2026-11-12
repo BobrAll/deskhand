@@ -199,6 +199,10 @@ describe('routing: the agent or the writer', () => {
     await h.controller.send({ ...h.request, voice: false, prompt: 'Нажми «Экспорт»' })
 
     expect(state.agentCalls).toHaveLength(1)
+    // The agent sees the same exclusion list the overlay and writer enforce.
+    expect(state.agentCalls[0]).toMatchObject({
+      excludedApps: state.settings.excludedApps
+    })
     // The writer was never called: an action must not pay for a text round whose
     // only job would be to guess what the agent is about to do anyway.
     expect(buildTurnRequest).not.toHaveBeenCalled()
