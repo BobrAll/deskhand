@@ -201,24 +201,42 @@ describe('the settings panes', () => {
     expect(off).toContain('<button disabled="">Послушать пример</button>')
   })
 
-  it('offers the bundled Ruslan voice and the remote engine', () => {
+  it('puts Silero before the API engine and leaves Piper out', () => {
     const html = renderToStaticMarkup(
       createElement(VoiceTab, {
         voice: DEFAULT_SETTINGS.voice,
-        tts: { ...DEFAULT_SETTINGS.tts, engine: 'piper' },
+        tts: DEFAULT_SETTINGS.tts,
         savedVoice: DEFAULT_SETTINGS.voice,
-        savedTts: { ...DEFAULT_SETTINGS.tts, engine: 'piper' },
+        savedTts: DEFAULT_SETTINGS.tts,
         microphoneGranted: true,
         onOpenMicrophoneSettings: noop,
         onVoiceChange: noop,
         onTtsChange: noop
       })
     )
-    expect(html).toContain('Piper · Руслан')
-    expect(html).toContain('Руслан уже в приложении')
-    expect(html).not.toContain('Голос Piper')
-    expect(html).not.toContain('Указать файл .onnx')
-    // The remote-only fields belong to the other engine and are not shown here.
+    expect(html).toMatch(/Silero · V5\.6 RU.*Сервис по API/s)
+    expect(html).not.toContain('Piper')
+    expect(html).not.toContain('Руслан')
+  })
+
+  it('offers the Silero engine with a download action while it is missing', () => {
+    const html = renderToStaticMarkup(
+      createElement(VoiceTab, {
+        voice: DEFAULT_SETTINGS.voice,
+        tts: { ...DEFAULT_SETTINGS.tts, engine: 'silero', sileroVoice: 'xenia', enabled: true },
+        savedVoice: DEFAULT_SETTINGS.voice,
+        savedTts: { ...DEFAULT_SETTINGS.tts, engine: 'silero', sileroVoice: 'xenia', enabled: true },
+        microphoneGranted: true,
+        onOpenMicrophoneSettings: noop,
+        onVoiceChange: noop,
+        onTtsChange: noop
+      })
+    )
+    expect(html).toContain('Голос Silero')
+    expect(html).toContain('Модель не установлена')
+    expect(html).toContain('Скачать модель')
+    expect(html).toContain('CC BY-NC-SA 4.0')
+    // The remote-only fields belong to the other engine.
     expect(html).not.toContain('Адрес сервиса')
   })
 

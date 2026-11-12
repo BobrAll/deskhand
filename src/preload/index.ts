@@ -20,6 +20,7 @@ import type {
   DrawingPayload,
   ProviderId,
   SendRequest,
+  TtsSetupProgress,
   StreamEvent,
   TtsStatus,
   VoiceEvent
@@ -131,7 +132,13 @@ const api: DeskhandApi = {
     status: () => ipcRenderer.invoke(CH.tts.status) as Promise<TtsStatus>,
     setKey: (key: string) => ipcRenderer.invoke(CH.tts.setKey, key) as Promise<TtsStatus>,
     deleteKey: () => ipcRenderer.invoke(CH.tts.deleteKey) as Promise<TtsStatus>,
-    preview: () => ipcRenderer.invoke(CH.tts.preview) as Promise<TtsResult>
+    preview: () => ipcRenderer.invoke(CH.tts.preview) as Promise<TtsResult>,
+    installSilero: () => ipcRenderer.invoke(CH.tts.installSilero) as Promise<{
+      status: TtsStatus
+      error: string | null
+    }>,
+    removeSilero: () => ipcRenderer.invoke(CH.tts.removeSilero) as Promise<TtsStatus>,
+    onSetupProgress: (handler) => subscribe<TtsSetupProgress>(CH.tts.setupProgress, handler)
   }
 }
 

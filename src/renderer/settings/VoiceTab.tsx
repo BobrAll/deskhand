@@ -1,12 +1,19 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { DownloadProgress, TtsSettings, TtsStatus, VoiceSettings, VoiceStatus } from '@shared/types'
+import type {
+  DownloadProgress,
+  TtsSetupProgress,
+  TtsSettings,
+  TtsStatus,
+  VoiceSettings,
+  VoiceStatus
+} from '@shared/types'
 import {
   WHISPER_LANGUAGES,
   BUNDLED_VOICE_MODEL,
   WHISPER_MODELS,
   voiceModel
 } from '@shared/defaults'
-import { PREVIEW_LINE } from '@shared/tts'
+import { PREVIEW_LINE, SILERO_SPEAKERS, sileroSpeaker } from '@shared/tts'
 import { AnimatedDisclosure, Disclosure, Group, Row, ToggleRow } from './Row'
 import { InstallList } from './InstallList'
 import { HotkeyField } from './HotkeyField'
@@ -114,12 +121,24 @@ interface TtsSectionProps {
   ttsKey: string
   previewing: boolean
   previewError: string | null
+  setupProgress: TtsSetupProgress | null
+  setupError: string | null
   onVoiceChange(changes: Partial<VoiceSettings>): void
   onTtsChange(changes: Partial<TtsSettings>): void
   onTtsKeyInput(value: string): void
   onSaveKey(): void
   onRemoveKey(): void
   onPreview(): void
+  onInstallSilero(): void
+  onRemoveSilero(): void
+}
+
+/** One line for the Silero download row: what is happening and how far along it is. */
+function setupProgressText(progress: TtsSetupProgress): string {
+  if (progress.stage === 'python') return 'Ищу Python 3.12+…'
+  if (progress.stage === 'runtime') return 'Ставлю движок Silero…'
+  if (progress.done || progress.total === 0) return 'Скачиваю модель…'
+  return `Скачиваю модель: ${Math.round((progress.received / progress.total) * 100)}%`
 }
 
 /** How the assistant sounds: which voice reads the answer, and the engine behind it. */
@@ -131,15 +150,20 @@ function TtsSection({
   ttsKey,
   previewing,
   previewError,
+  setupProgress,
+  setupError,
   onVoiceChange,
   onTtsChange,
   onTtsKeyInput,
   onSaveKey,
   onRemoveKey,
-  onPreview
+  onPreview,
+  onInstallSilero,
+  onRemoveSilero
 }: TtsSectionProps) {
   const usesSystemVoice = voice.answerVoice === 'system'
   const readsAnswers = voice.answerVoice !== 'off'
+  const sileroInstalled = speech?.silero?.installed ?? false
   const previewHint = previewError ?? (
     !readsAnswers
       ? 'Ответы не читаются. Выбери голос, чтобы услышать пример.'
@@ -208,8 +232,8 @@ function TtsSection({
           <ToggleRow
             title="Включить синтез"
             hint={
-              tts.engine === 'piper'
-                ? 'Локальный голос: файлы лежат на этом Mac, сеть и ключ не нужны.'
+              tts.engine === 'silero'
+                ? 'Локальная модель Silero: ключ и сеть не нужны, только загрузка весов.'
                 : 'Endpoint, модель, голос и стиль — твои. Ключ хранится в Keychain и не показывается.'
             }
             checked={tts.enabled}
@@ -219,17 +243,21 @@ function TtsSection({
             stacked
             title="Движок"
             hint={
-              tts.engine === 'piper'
-                ? 'Руслан уже в приложении. Работает офлайн без ключа.'
+              tts.engine === 'silero'
+                ? 'Silero V5.6 RU скачивается один раз и работает офлайн.'
                 : 'OpenAI-совместимый сервис синтеза: ключ и адрес задаёшь сам.'
             }
           >
             <div className="segmented">
               <button
-                className={tts.engine === 'piper' ? 'active' : ''}
-                onClick={() => onTtsChange({ engine: 'piper', enabled: true })}
+                className={tts.engine === 'silero' ? 'active' : ''}
+                onClick={() => onTtsChange({
+                  engine: 'silero',
+                  enabled: true,
+                  sileroVoice: sileroSpeaker(tts.sileroVoice)
+                })}
               >
-                Piper · Руслан
+                Silero · V5.6 RU
               </button>
               <button
                 className={tts.engine === 'remote' ? 'active' : ''}
@@ -239,6 +267,51 @@ function TtsSection({
               </button>
             </div>
           </Row>
+
+          {tts.engine === 'silero' && (
+            <>
+              <Row stacked title="Голос Silero" hint="Голос берётся из модели, без ключа и сети.">
+                <select
+                  aria-label="Голос Silero"
+                  value={sileroSpeaker(tts.sileroVoice)}
+                  onChange={(event) => onTtsChange({ sileroVoice: event.target.value })}
+                >
+                  {SILERO_SPEAKERS.map((speaker) => (
+                    <option key={speaker} value={speaker}>{speaker}</option>
+                  ))}
+                </select>
+              </Row>
+              <Row
+                stacked
+                title={sileroInstalled ? 'Модель установлена' : 'Модель не установлена'}
+                hint={setupProgress
+                  ? setupProgressText(setupProgress)
+                  : sileroInstalled
+                    ? 'Первая фраза загружает модель пару секунд, дальше — из кэша.'
+                    : 'Нужны Python 3.12+ и около 300 МБ на диске.'}
+              >
+                {sileroInstalled ? (
+                  <button className="ghost" disabled={setupProgress !== null} onClick={onRemoveSilero}>
+                    Удалить
+                  </button>
+                ) : (
+                  <button disabled={setupProgress !== null} onClick={onInstallSilero}>
+                    {setupProgress ? 'Скачиваем…' : 'Скачать модель'}
+                  </button>
+                )}
+              </Row>
+              <Row stacked>
+                <div className="row-hint">
+                  Лицензия Silero V5.6 RU — CC BY-NC-SA 4.0, только для некоммерческого теста.
+                </div>
+              </Row>
+              {setupError && (
+                <Row stacked>
+                  <div className="row-hint err">{setupError}</div>
+                </Row>
+              )}
+            </>
+          )}
 
           {tts.engine === 'remote' && (
             <>
@@ -391,6 +464,8 @@ export function VoiceTab({
   const [ttsKey, setTtsKeyInput] = useState('')
   const [previewing, setPreviewing] = useState(false)
   const [previewError, setPreviewError] = useState<string | null>(null)
+  const [setupProgress, setSetupProgress] = useState<TtsSetupProgress | null>(null)
+  const [setupError, setSetupError] = useState<string | null>(null)
   const previewAudio = useRef<HTMLAudioElement | null>(null)
   const previewGeneration = useRef(0)
   const [deleting, setDeleting] = useState<string | null>(null)
@@ -430,6 +505,11 @@ export function VoiceTab({
   useEffect(() => window.deskhand.voice.onDownloadProgress((event) => {
     if (event.error) setDownloadError(event.error)
     if (!event.done) setProgress(event)
+  }), [])
+
+  useEffect(() => window.deskhand.tts.onSetupProgress((progress) => {
+    setSetupProgress(progress.done ? null : progress)
+    if (progress.error) setSetupError(progress.error)
   }), [])
 
   const installed = useMemo(() => new Set(status?.installed ?? []), [status])
@@ -525,6 +605,32 @@ export function VoiceTab({
 
   const removeTtsKey = useCallback(async () => {
     setSpeech(await window.deskhand.tts.deleteKey())
+  }, [])
+
+  /** Downloads or repairs the local Silero runtime; the pane shows each stage. */
+  const installSileroEngine = useCallback(async () => {
+    setSetupError(null)
+    setSetupProgress({ stage: 'python', received: 0, total: 0, done: false })
+    try {
+      const result = await window.deskhand.tts.installSilero()
+      setSpeech(result.status)
+      if (result.error) setSetupError(result.error)
+    } catch (error) {
+      setSetupError(error instanceof Error ? error.message : 'Не удалось установить Silero. Попробуй ещё раз.')
+    } finally {
+      setSetupProgress(null)
+      refreshTts()
+    }
+  }, [refreshTts])
+
+  const removeSileroEngine = useCallback(async () => {
+    if (!window.confirm('Удалить Silero и скачанные файлы с этого Mac?')) return
+    setSetupError(null)
+    try {
+      setSpeech(await window.deskhand.tts.removeSilero())
+    } catch {
+      setSetupError('Не удалось удалить Silero. Попробуй ещё раз.')
+    }
   }, [])
 
   /** Plays one fixed line in the selected voice, so the choice can be judged. */
@@ -703,6 +809,10 @@ export function VoiceTab({
         onSaveKey={() => void saveTtsKey()}
         onRemoveKey={() => void removeTtsKey()}
         onPreview={() => void previewVoice()}
+        setupProgress={setupProgress}
+        setupError={setupError}
+        onInstallSilero={() => void installSileroEngine()}
+        onRemoveSilero={() => void removeSileroEngine()}
       />
     </div>
   )

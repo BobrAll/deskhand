@@ -195,7 +195,8 @@ const MAIN_TO_RENDERER = new Set<string>([
   CH.voice.record,
   CH.voice.stop,
   CH.voice.transcript,
-  CH.voice.downloadProgress
+  CH.voice.downloadProgress,
+  CH.tts.setupProgress
 ])
 
 function wire(): void {

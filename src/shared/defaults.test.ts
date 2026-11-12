@@ -449,7 +449,8 @@ describe('normalizeSettings: live synthesis', () => {
       baseUrl: 'https://speech.example/v1',
       model: 'tts-model',
       voice: 'Kore',
-      style: 'дружный'
+      style: 'дружный',
+      sileroVoice: 'xenia'
     })
   })
 
@@ -462,13 +463,20 @@ describe('normalizeSettings: live synthesis', () => {
     expect(JSON.stringify(settings)).not.toContain('sk-x')
   })
 
-  it('keeps the local engine and drops the old voice setting', () => {
-    const local = normalizeSettings({
-      tts: { engine: 'piper', piperVoice: ' ru-denis-medium ' }
-    }).tts
-    expect(local.engine).toBe('piper')
-    expect(local).not.toHaveProperty('piperVoice')
-
+  it('keeps Silero and turns removed engines into the API one', () => {
+    expect(normalizeSettings({ tts: { engine: 'silero' } }).tts.engine).toBe('silero')
+    expect(normalizeSettings({ tts: { engine: 'piper' } }).tts.engine).toBe('remote')
     expect(normalizeSettings({ tts: { engine: 'other' } }).tts.engine).toBe('remote')
+  })
+
+  it('moves a legacy shared voice into the Silero field and leaves the API voice empty', () => {
+    const legacy = normalizeSettings({ tts: { engine: 'silero', voice: 'baya' } }).tts
+    expect(legacy.sileroVoice).toBe('baya')
+    expect(legacy.voice).toBe('')
+
+    const explicit = normalizeSettings({ tts: { voice: 'Kore', sileroVoice: 'aidar' } }).tts
+    expect(explicit.voice).toBe('Kore')
+    expect(explicit.sileroVoice).toBe('aidar')
+    expect(normalizeSettings({ tts: { sileroVoice: 'nobody' } }).tts.sileroVoice).toBe('xenia')
   })
 })

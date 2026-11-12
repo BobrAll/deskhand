@@ -53,10 +53,11 @@ export type AnswerVoice = 'off' | 'system' | 'neural'
  * Where a line that was not recorded in advance is synthesised.
  *
  * `remote` is the OpenAI-compatible endpoint the user configures with a key.
- * `piper` is a local neural voice: the engine and the `.onnx` model stay on the
- * machine, so it works offline and costs nothing per answer.
+ * `silero` is the Russian Silero V5.6 RU model, downloaded on demand. It runs
+ * locally: the runtime is Python-based and is installed from the settings
+ * window, not shipped inside the app.
  */
-export type TtsEngine = 'remote' | 'piper'
+export type TtsEngine = 'remote' | 'silero'
 
 /**
  * Live speech synthesis for lines that were not recorded in advance.
@@ -82,6 +83,13 @@ export interface TtsSettings {
   voice: string
   /** `remote` only: free-form delivery instruction, sent as `instructions`. */
   style: string
+  /**
+   * `silero` only: the speaker name.
+   *
+   * Kept apart from `voice` on purpose: both fields used to share one value, so
+   * picking a Silero speaker rewrote the API voice in the next tab.
+   */
+  sileroVoice: string
 }
 
 /**
@@ -472,13 +480,32 @@ export interface TtsStatus {
   reason: string | null
   /** Which engine will speak. */
   engine: TtsEngine
-  /** The remote voice that will speak live lines, as configured. */
+  /** The voice that will speak live lines: the API voice or the Silero speaker. */
   voice: string
   model: string
   /** Whether an API key is stored for this endpoint. */
   keyConfigured: boolean
   /** The voice the shipped recordings were made with; always available. */
   recordedVoice: string
+  /**
+   * `silero` only: whether the local runtime and the model are on disk.
+   *
+   * The pane needs this to decide between "download it" and "it is ready" even
+   * when synthesis is switched off; the reason alone is for the failure text.
+   */
+  silero: { installed: boolean } | null
+}
+
+/** One stage of the on-demand Silero installation, for the settings window. */
+export interface TtsSetupProgress {
+  /** `python` finds an interpreter, `runtime` installs the package, `models` downloads the weights. */
+  stage: 'python' | 'runtime' | 'models'
+  /** Bytes downloaded so far across all model files; zero for the first two stages. */
+  received: number
+  /** Total model bytes; zero for the first two stages. */
+  total: number
+  done: boolean
+  error?: string
 }
 
 export interface TranscribeResult {

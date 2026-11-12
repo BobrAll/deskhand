@@ -8,8 +8,8 @@
  *
  * Three decisions are worth knowing:
  *
- * - The bundled Piper engine speaks with Ruslan. The remote engine uses the
- *   endpoint, model and voice from settings. Its key is read only in main.
+ * - Silero runs locally from weights installed on demand; the remote engine uses
+ *   the endpoint, model and voice from settings. Its key is read only in main.
  * - **Every clip is cached on disk** by the full configuration plus the text, so
  *   a sentence is paid for once, and a change of voice is a new cache, not a
  *   stale file in the wrong voice.
@@ -24,10 +24,16 @@ import { createHash } from 'node:crypto'
 import { mkdir, readFile, readdir, stat, unlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { AppSettings, TtsSettings, TtsStatus } from '@shared/types'
-import { RECORDED, TTS_MAX_CHARS, type TtsResult } from '@shared/tts'
+import { RECORDED, TTS_MAX_CHARS, sileroSpeaker, type TtsResult } from '@shared/tts'
 import { getTtsKey } from '../settings/secrets'
 import { getSettings } from '../settings/store'
-import { piperBinary, piperModel, synthesizePiper } from './piper'
+import {
+  SILERO_CACHE_ID,
+  sileroModelsReady,
+  sileroRuntimeReady,
+  synthesizeSilero,
+  TRANSLITERATION_VERSION
+} from './silero'
 
 /** Long enough for a slow gateway, short enough not to outlive the answer. */
 const TTS_TIMEOUT_MS = 20_000
@@ -58,24 +64,21 @@ const CACHE_KEY_SEPARATOR = '\u0000'
  * to another never plays the previous voice's file. The key is deliberately not
  * part of it — rotating a key does not change the voice.
  */
-async function cacheKey(settings: TtsSettings, text: string, voicePath: string | null): Promise<string | null> {
+function cacheKey(settings: TtsSettings, text: string): string {
   let identity: Array<string | number> = [settings.baseUrl, settings.model, settings.voice, settings.style]
-  if (voicePath) {
-    try {
-      const files = await Promise.all([stat(voicePath), stat(`${voicePath}.json`)])
-      identity = ['piper', voicePath, ...files.flatMap((file) => [file.ino, file.size, file.mtimeMs])]
-    } catch {
-      return null
-    }
+  if (settings.engine === 'silero') {
+    // The weights come from a pinned release, so the version and the speaker are
+    // the whole identity; hashing 300 MB on every line would be absurd.
+    identity = [SILERO_CACHE_ID, sileroSpeaker(settings.sileroVoice), TRANSLITERATION_VERSION]
   }
   return createHash('sha256')
     .update([...identity, text].join(CACHE_KEY_SEPARATOR))
     .digest('hex')
 }
 
-/** The remote engine answers in MP3; Piper writes a WAV. */
+/** The remote engine answers in MP3; the local engine writes a WAV. */
 function cacheExtension(settings: TtsSettings): 'mp3' | 'wav' {
-  return settings.engine === 'piper' ? 'wav' : 'mp3'
+  return settings.engine === 'remote' ? 'mp3' : 'wav'
 }
 
 function mimeFor(extension: 'mp3' | 'wav'): string {
@@ -91,9 +94,9 @@ function mimeFor(extension: 'mp3' | 'wav'): string {
 export function ttsBlockReason(settings: AppSettings = getSettings()): string | null {
   const tts = settings.tts
   if (!tts.enabled) return 'Синтез выключен.'
-  if (tts.engine === 'piper') {
-    if (!piperBinary()) return 'В сборке нет движка Piper.'
-    if (!piperModel()) return 'В сборке нет голоса «Руслан».'
+  if (tts.engine === 'silero') {
+    if (!sileroRuntimeReady()) return 'Silero не установлен. Нажми «Скачать модель».'
+    if (!sileroModelsReady()) return 'Нет модели Silero V5.6 RU. Нажми «Скачать модель».'
     return null
   }
   if (!tts.baseUrl) return 'Не указан адрес сервиса.'
@@ -198,18 +201,13 @@ export async function synthesize(text: string, localOnly = false): Promise<TtsRe
   if (line.length > TTS_MAX_CHARS) return { ok: false, message: 'Фрагмент слишком длинный для синтеза.' }
 
   const settings = getSettings()
-  if (localOnly && settings.tts.engine !== 'piper') {
-    return { ok: false, message: 'Локальный синтез Piper выключен.' }
+  if (localOnly && settings.tts.engine === 'remote') {
+    return { ok: false, message: 'Локальный синтез выключен.' }
   }
   const blocked = ttsBlockReason(settings)
   if (blocked) return { ok: false, message: blocked }
 
-  const voicePath = settings.tts.engine === 'piper' ? piperModel() : null
-  if (settings.tts.engine === 'piper' && !voicePath) {
-    return { ok: false, message: 'В сборке нет голоса «Руслан».' }
-  }
-  const key = await cacheKey(settings.tts, line, voicePath)
-  if (!key) return { ok: false, message: 'Файлы голоса Piper недоступны.' }
+  const key = cacheKey(settings.tts, line)
   const extension = cacheExtension(settings.tts)
   const running = inFlight.get(key)
   if (running) return running
@@ -219,15 +217,16 @@ export async function synthesize(text: string, localOnly = false): Promise<TtsRe
   if (pending) return pending
   if (cached) return cached
 
-  const job = (voicePath
-    ? synthesizePiper(line, voicePath)
+  const job = (settings.tts.engine === 'silero'
+    ? synthesizeSilero(line, sileroSpeaker(settings.tts.sileroVoice))
     : requestSynthesis(line, settings.tts))
     .then(async (result): Promise<TtsResult> => {
       if (result.ok) {
         await writeCache(key, extension, Buffer.from(result.audio, 'base64'))
         void pruneCache()
       } else {
-        console.warn('[tts] synthesis failed:', settings.tts.engine)
+        // The message explains which half failed; the line itself is never logged.
+        console.warn('[tts] synthesis failed:', settings.tts.engine, result.message)
       }
       lastFailure = result.ok ? null : { config: JSON.stringify(settings.tts), message: result.message }
       return result
@@ -248,15 +247,17 @@ export async function synthesize(text: string, localOnly = false): Promise<TtsRe
 export function ttsStatus(): TtsStatus {
   const settings = getSettings()
   const blocked = ttsBlockReason(settings)
+  const silero = settings.tts.engine === 'silero'
   return {
     configured: blocked === null,
     // A configuration can be complete and still fail at the service; saying so
     // here is what keeps the pane from promising a voice that was refused.
     reason: blocked ?? (lastFailure?.config === JSON.stringify(settings.tts) ? lastFailure.message : null),
     engine: settings.tts.engine,
-    voice: settings.tts.voice,
+    voice: silero ? sileroSpeaker(settings.tts.sileroVoice) : settings.tts.voice,
     model: settings.tts.model,
     keyConfigured: Boolean(getTtsKey()),
-    recordedVoice: RECORDED.voice
+    recordedVoice: RECORDED.voice,
+    silero: silero ? { installed: sileroRuntimeReady() && sileroModelsReady() } : null
   }
 }

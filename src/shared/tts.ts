@@ -22,6 +22,22 @@ export const RECORDED = {
 export const TTS_MAX_CHARS = 600
 
 /**
+ * The voices of the optional Silero engine.
+ *
+ * Silero names its speakers in English, and the service takes those names as
+ * they are — so the list stays in that spelling rather than inventing Russian
+ * labels that would not match what the engine prints. `xenia` is the default
+ * because it is the voice the model's own examples use.
+ */
+export const SILERO_SPEAKERS = ['xenia', 'kseniya', 'baya', 'aidar', 'eugene'] as const
+export const SILERO_DEFAULT_SPEAKER = SILERO_SPEAKERS[0]
+
+/** The speaker to ask for: the configured one when it is real, the default otherwise. */
+export function sileroSpeaker(voice: string): string {
+  return (SILERO_SPEAKERS as readonly string[]).includes(voice) ? voice : SILERO_DEFAULT_SPEAKER
+}
+
+/**
  * What the settings pane plays when the user asks to hear the voice.
  *
  * A fixed line, not user text: it has to be short enough to judge a voice by and
@@ -31,7 +47,7 @@ export const TTS_MAX_CHARS = 600
 export const PREVIEW_LINE = 'Так, посмотрим. Сейчас разберусь и всё сделаю.'
 
 export type TtsResult =
-  /** `mime` is what the clip actually is; the remote engine returns MP3, Piper WAV. */
+  /** `mime` is what the clip actually is; the remote engine returns MP3, the local one a WAV. */
   | { ok: true; audio: string; cached: boolean; mime: string }
   /** `ok: false` is not an error the user must read: the caller falls back. */
   | { ok: false; message: string }

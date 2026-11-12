@@ -1,8 +1,8 @@
 /**
  * The list of installable models in the «Голос» pane.
  *
- * Two things are installed the same way — recognition models and local Piper
- * voices — so they share one list: a name, a size, a state («Скачать» / «Готово»
+ * Recognition models and local voices are installed the same way, so they share
+ * one list: a name, a size, a state («Скачать» / «Готово»
  * / progress) and a delete button. The two callers only supply their catalog,
  * the sentence about the current selection, and what an imported file is called;
  * everything that is about *how* an install looks lives here once.

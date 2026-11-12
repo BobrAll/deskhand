@@ -52,8 +52,6 @@ resources/transcribe-cli
 resources/transcribe-licenses/
 resources/speech/*.gguf
 resources/speech/*.part
-resources/piper/
-resources/.piper-build-*/
 resources/cu-service
 resources/deskhand-agent
 resources/*.dylib

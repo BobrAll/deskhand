@@ -179,6 +179,12 @@ export const CH = {
     setKey: 'tts:set-key',
     deleteKey: 'tts:delete-key',
     /** Settings window: renders one short line so the voice can be heard. */
-    preview: 'tts:preview'
+    preview: 'tts:preview',
+    /** Settings window: downloads the optional Silero runtime and weights. */
+    installSilero: 'tts:install-silero',
+    /** main -> settings: one stage of that download. */
+    setupProgress: 'tts:setup-progress',
+    /** Settings window: removes the Silero runtime, weights and tokenizer cache. */
+    removeSilero: 'tts:remove-silero'
   }
 } as const

@@ -231,11 +231,11 @@ describe('the local engine', () => {
   const tts = (): { speak: typeof window.deskhand.tts.speak; status: typeof window.deskhand.tts.status } =>
     window.deskhand.tts
 
-  /** A configured Piper engine: free and offline, so it reads the bank's lines too. */
+  /** A configured Silero engine: free and offline, so it reads the bank's lines too. */
   function localEngine(): ReturnType<typeof vi.fn> {
     const synth = vi.fn(async () => ({ ok: true as const, audio: 'AAA', cached: false, mime: 'audio/wav' }))
     tts().speak = synth
-    tts().status = vi.fn(async () => ({ configured: true, engine: 'piper' } as Awaited<ReturnType<typeof window.deskhand.tts.status>>))
+    tts().status = vi.fn(async () => ({ configured: true, engine: 'silero' } as Awaited<ReturnType<typeof window.deskhand.tts.status>>))
     return synth
   }
 
@@ -252,7 +252,7 @@ describe('the local engine', () => {
 
   it('falls back to the recorded line when the engine refuses', async () => {
     tts().speak = vi.fn(async () => ({ ok: false as const, message: 'нет' }))
-    tts().status = vi.fn(async () => ({ configured: true, engine: 'piper' } as Awaited<ReturnType<typeof window.deskhand.tts.status>>))
+    tts().status = vi.fn(async () => ({ configured: true, engine: 'silero' } as Awaited<ReturnType<typeof window.deskhand.tts.status>>))
     const speech = useSpeech()
     speech.begin('one', 'Открой новую вкладку', true)
     await vi.advanceTimersByTimeAsync(1500)

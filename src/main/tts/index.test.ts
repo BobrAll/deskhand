@@ -20,20 +20,21 @@ const fake = vi.hoisted(() => ({
   calls: [] as Array<Record<string, unknown>>
 }))
 
-const local = vi.hoisted(() => ({
-  binary: null as string | null,
-  voice: false,
-  file: 'ru_RU-ruslan-medium.onnx',
-  calls: [] as string[],
+const silero = vi.hoisted(() => ({
+  runtime: false,
+  models: false,
+  calls: [] as Array<[string, string]>,
   result: { ok: true, audio: '', cached: false, mime: 'audio/wav' } as TtsResult
 }))
 
-vi.mock('./piper', () => ({
-  piperBinary: () => local.binary,
-  piperModel: () => local.voice ? `/voices/${local.file}` : null,
-  synthesizePiper: async (text: string) => {
-    local.calls.push(text)
-    return local.result
+vi.mock('./silero', () => ({
+  SILERO_CACHE_ID: 'silero-test',
+  TRANSLITERATION_VERSION: 1,
+  sileroRuntimeReady: () => silero.runtime,
+  sileroModelsReady: () => silero.models,
+  synthesizeSilero: async (text: string, speaker: string) => {
+    silero.calls.push([text, speaker])
+    return silero.result
   }
 }))
 
@@ -73,15 +74,17 @@ const CONFIGURED: AppSettings = {
     baseUrl: 'https://speech.example/v1',
     model: 'tts-model',
     voice: 'Kore',
-    style: 'дружный'
+    style: 'дружный',
+    sileroVoice: 'xenia'
   }
 }
 
-const LOCAL: AppSettings = {
+const SILERO: AppSettings = {
   ...CONFIGURED,
   tts: {
     ...CONFIGURED.tts,
-    engine: 'piper'
+    engine: 'silero',
+    sileroVoice: 'baya'
   }
 }
 
@@ -90,11 +93,10 @@ beforeEach(() => {
   fake.key = 'sk-test'
   fake.cache.clear()
   fake.calls = []
-  local.binary = null
-  local.voice = false
-  local.file = 'ru_RU-ruslan-medium.onnx'
-  local.calls = []
-  local.result = { ok: true, audio: '', cached: false, mime: 'audio/wav' }
+  silero.runtime = false
+  silero.models = false
+  silero.calls = []
+  silero.result = { ok: true, audio: '', cached: false, mime: 'audio/wav' }
   vi.stubGlobal('fetch', vi.fn(async (url: string, init: RequestInit) => {
     fake.calls.push({ url, body: JSON.parse(String(init.body)) })
     return new Response(new Uint8Array([1, 2, 3]), {
@@ -168,55 +170,53 @@ describe('live synthesis', () => {
     expect(result.ok).toBe(false)
     expect(fake.calls).toHaveLength(0)
   })
-})
 
-describe('the local engine', () => {
-  it('does not send a local-only line to the remote service after an engine change', async () => {
+  it('refuses a local-only line when the configured engine is the remote one', async () => {
     const { synthesize } = await load()
     const result = await synthesize('Готово.', true)
-    expect(result.ok).toBe(false)
+    expect(result).toMatchObject({ ok: false, message: 'Локальный синтез выключен.' })
     expect(fake.calls).toHaveLength(0)
   })
+})
 
-  it('needs the bundled engine and model', async () => {
+describe('the Silero engine', () => {
+  it('explains which half is missing instead of failing at synthesis', async () => {
     const { ttsBlockReason } = await load()
-    expect(ttsBlockReason(LOCAL)).toContain('движка Piper')
+    expect(ttsBlockReason(SILERO)).toContain('не установлен')
 
-    local.binary = '/piper/piper'
-    expect(ttsBlockReason(LOCAL)).toContain('Руслан')
+    silero.runtime = true
+    expect(ttsBlockReason(SILERO)).toContain('Нет модели')
 
-    local.voice = true
-    expect(ttsBlockReason(LOCAL)).toBeNull()
+    silero.models = true
+    expect(ttsBlockReason(SILERO)).toBeNull()
   })
 
-  it('speaks through Piper and caches a WAV instead of calling the service', async () => {
-    local.binary = '/piper/piper'
-    local.voice = true
-    local.result = { ok: true, audio: 'AAA', cached: false, mime: 'audio/wav' }
-    fake.settings = LOCAL
+  it('speaks with the chosen speaker, caches a WAV, and never calls the service', async () => {
+    silero.runtime = true
+    silero.models = true
+    silero.result = { ok: true, audio: 'AAA', cached: false, mime: 'audio/wav' }
+    fake.settings = SILERO
 
     const { synthesize } = await load()
     const result = await synthesize('Готово.')
     expect(result).toMatchObject({ ok: true, mime: 'audio/wav' })
-    expect(local.calls).toEqual(['Готово.'])
+    expect(silero.calls).toEqual([['Готово.', 'baya']])
     expect(fake.calls).toHaveLength(0)
 
     const again = await synthesize('Готово.')
-    expect(again).toMatchObject({ ok: true, cached: true, mime: 'audio/wav' })
-    expect(local.calls).toHaveLength(1)
+    expect(again).toMatchObject({ ok: true, cached: true })
+    expect(silero.calls).toHaveLength(1)
   })
 
-  it('keeps caches distinct when the bundled model path changes', async () => {
-    local.binary = '/piper/piper'
-    local.voice = true
-    fake.settings = LOCAL
-
-    const { synthesize } = await load()
-    await synthesize('Готово.')
-    local.file = 'updated/ru_RU-ruslan-medium.onnx'
-    await synthesize('Готово.')
-
-    expect(local.calls).toHaveLength(2)
-    expect(fake.calls).toHaveLength(0)
+  it('reports the engine and the installed state to the settings pane', async () => {
+    fake.settings = SILERO
+    silero.runtime = true
+    const { ttsStatus } = await load()
+    const status = ttsStatus()
+    expect(status.engine).toBe('silero')
+    expect(status.voice).toBe('baya')
+    expect(status.silero).toEqual({ installed: false })
+    expect(status.configured).toBe(false)
+    expect(status.reason).toContain('Нет модели')
   })
 })

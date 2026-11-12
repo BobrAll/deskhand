@@ -7,6 +7,7 @@ import type {
   TtsSettings,
   VoiceSettings
 } from './types'
+import { SILERO_DEFAULT_SPEAKER, SILERO_SPEAKERS, sileroSpeaker } from './tts'
 
 export const DEFAULT_SYSTEM_PROMPT =
   'Ты ассистент в курсоре пользователя. Используй контекст активного приложения. ' +
@@ -245,7 +246,8 @@ export const DEFAULT_TTS: TtsSettings = {
   baseUrl: '',
   model: '',
   voice: '',
-  style: ''
+  style: '',
+  sileroVoice: SILERO_DEFAULT_SPEAKER
 }
 
 export const WHISPER_LANGUAGES: Array<{ id: string; label: string }> = [
@@ -439,15 +441,22 @@ function sanitizeAnswerVoice(raw: { answerVoice?: unknown; dialogue?: unknown })
 function sanitizeTts(input: unknown): TtsSettings {
   const raw = (typeof input === 'object' && input !== null ? input : {}) as Partial<TtsSettings>
   const text = (value: unknown): string => (typeof value === 'string' ? value.trim() : '')
+  const voice = text(raw.voice)
+  const explicitSpeaker = text(raw.sileroVoice)
+  // Before the fields were split, `voice` held both the API voice and the
+  // Silero speaker. Treat a known speaker there as the Silero one and leave the
+  // API field empty rather than showing a Russian speaker in the API tab.
+  const legacySpeaker = !explicitSpeaker && (SILERO_SPEAKERS as readonly string[]).includes(voice)
   return {
     enabled: raw.enabled === true,
-    engine: raw.engine === 'piper' ? 'piper' : 'remote',
+    engine: raw.engine === 'silero' ? 'silero' : 'remote',
     // A base URL is normalised the same way provider URLs are, so a pasted
     // `.../v1/audio/speech` becomes the root instead of a doubled path.
     baseUrl: normalizeBaseUrl(raw.baseUrl),
     model: text(raw.model).slice(0, 120),
-    voice: text(raw.voice).slice(0, 60),
-    style: text(raw.style).slice(0, 300)
+    voice: legacySpeaker ? '' : voice,
+    style: text(raw.style).slice(0, 300),
+    sileroVoice: explicitSpeaker ? sileroSpeaker(explicitSpeaker) : legacySpeaker ? voice : SILERO_DEFAULT_SPEAKER
   }
 }
 

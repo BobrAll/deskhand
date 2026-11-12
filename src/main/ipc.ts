@@ -42,6 +42,7 @@ import {
 } from './settings/secrets'
 import { getSettings, patchSettings } from './settings/store'
 import { ttsStatus, synthesize } from './tts'
+import { installSilero, removeSilero } from './tts/silero'
 import {
   closeOnboardingWindow,
   closeSettingsWindow,
@@ -368,6 +369,16 @@ export function registerIpc(deps: IpcDeps): void {
     return ttsStatus()
   })
   ipcMain.handle(CH.tts.preview, () => synthesize(PREVIEW_LINE))
+  ipcMain.handle(CH.tts.installSilero, async (event) => {
+    const error = await installSilero((progress) => {
+      if (!event.sender.isDestroyed()) event.sender.send(CH.tts.setupProgress, progress)
+    })
+    return { status: ttsStatus(), error }
+  })
+  ipcMain.handle(CH.tts.removeSilero, async () => {
+    await removeSilero()
+    return ttsStatus()
+  })
 
   // ---- agent (mouse and keyboard control) --------------------------------
   // The card can ask whether the assistant may press anything, can stop a run and

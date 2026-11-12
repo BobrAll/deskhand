@@ -6,8 +6,8 @@ The app bundles and uses the components below. Each one stays under its own
 license, and nothing in the Deskhand license overrides those terms.
 
 Full license texts ship inside the app:
-`Deskhand.app/Contents/Resources/` (`piper/licenses/`, `whisper-licenses/`,
-`transcribe-licenses/`, `speech/GigaAM-LICENSE.txt`).
+`Deskhand.app/Contents/Resources/` (`whisper-licenses/`, `transcribe-licenses/`,
+`speech/GigaAM-LICENSE.txt`).
 
 ## Speech recognition
 
@@ -28,27 +28,20 @@ bundled: the user points the app at their own file.
 
 | Component | Source | License |
 | --- | --- | --- |
-| Piper | https://github.com/rhasspy/piper | MIT, © 2022 Michael Hansen |
-| piper-phonemize | https://github.com/rhasspy/piper-phonemize | MIT |
-| ONNX Runtime 1.14.1 | https://github.com/microsoft/onnxruntime | MIT |
-| eSpeak NG 1.52.0 (`libespeak-ng`, `espeak-ng-data`) | https://github.com/espeak-ng/espeak-ng | GPL-3.0 |
-| Voice `ru_RU-ruslan-medium` | https://huggingface.co/rhasspy/piper-voices (`ru/ru_RU/ruslan/medium`) | Training dataset: CC BY-NC-SA 4.0 |
+| Silero TTS V5.6 RU weights (downloaded on demand) | https://github.com/snakers4/silero-models | CC BY-NC-SA 4.0, © Silero Team |
+| `silero-onnx-tts` runtime (installed on demand) | https://github.com/some1-in-here/silero-tts-onnx | CC BY-NC-SA 4.0 |
+| ONNX Runtime (installed with the Silero runtime) | https://github.com/microsoft/onnxruntime | MIT |
 
-### eSpeak NG (GPL-3.0)
+### Silero V5.6 RU (CC BY-NC-SA 4.0)
 
-eSpeak NG ships as a separate dylib plus its data directory, unmodified, taken
-from Piper's macOS release archives. The full license text is in
-`Resources/piper/licenses/eSpeak-NG.txt`. When distributing the binaries, make
-the corresponding source for the exact bundled build available as required by
-[GPL-3.0 section 6](https://www.gnu.org/licenses/gpl-3.0.html#section6).
-
-### Ruslan voice (CC BY-NC-SA 4.0)
-
-The [voice model card](https://huggingface.co/rhasspy/piper-voices/blob/217ddc79818708b078d0d14a8fae9608b9d77141/ru/ru_RU/ruslan/medium/MODEL_CARD)
-identifies the [Ruslan corpus](https://ruslan-corpus.github.io/) as the training
-dataset and lists its license as CC BY-NC-SA 4.0. Deskhand includes this voice for
-non-commercial use. Use a voice with commercially usable terms in a commercial
-distribution.
+The Silero engine is optional and is not part of the app bundle. When the user
+presses “Скачать модель”, Deskhand installs
+[`silero-onnx-tts`](https://github.com/some1-in-here/silero-tts-onnx) into a local
+Python virtual environment and downloads the ONNX weights from its pinned
+release. Both are derivative works of the Silero TTS V5 family and stay under
+CC BY-NC-SA 4.0. They are offered for non-commercial use only; a commercial
+distribution needs a different engine or a separate license from the Silero
+Team.
 
 ## Application runtime
 

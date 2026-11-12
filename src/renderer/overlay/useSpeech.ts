@@ -93,7 +93,7 @@ async function readVoice(): Promise<VoiceSettingsRead | null> {
     const status = typeof api?.status === 'function' ? await api.status().catch(() => null) : null
     return {
       voice: settings.voice,
-      local: status?.configured === true && status.engine === 'piper'
+      local: status?.configured === true && status.engine !== 'remote'
     }
   } catch {
     return null
@@ -144,9 +144,9 @@ export function useSpeech() {
    * Whether the configured engine is the local one, and ready.
    *
    * A local voice is free and offline, so it may read the recorded bank's lines
-   * too — that is what makes «Руслан» the voice of the whole assistant instead of
-   * only of long answers. The remote engine does not get that: a recorded line
-   * is a line nobody pays for.
+   * too — that is what makes the chosen local voice the voice of the whole
+   * assistant instead of only of long answers. The remote engine does not get
+   * that: a recorded line is a line nobody pays for.
    */
   const localVoice = useRef(false)
 
@@ -256,7 +256,7 @@ export function useSpeech() {
     }
   }, [])
 
-  /** Piper can voice cues locally. Remote synthesis uses the recording when available. */
+  /** Silero can voice cues itself; the remote engine uses the recording. */
   const prepareCue = useCallback(async (clean: string): Promise<string> => {
     const recorded = phraseAudio(clean)
     if (localVoice.current) {

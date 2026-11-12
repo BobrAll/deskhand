@@ -20,6 +20,7 @@ import type {
   DrawingPayload,
   ProviderId,
   SendRequest,
+  TtsSetupProgress,
   StreamEvent,
   ModelListResult,
   TestKeyResult,
@@ -256,5 +257,17 @@ export interface DeskhandApi {
     deleteKey(): Promise<TtsStatus>
     /** Renders a short sample with the current settings, for listening in the pane. */
     preview(): Promise<TtsResult>
+    /**
+     * Downloads the Silero runtime and weights, then reports the new state.
+     *
+     * `error` is the sentence to show when a stage failed; it is not thrown, so
+     * the pane keeps the status it already had instead of losing the window to
+     * an unhandled rejection.
+     */
+    installSilero(): Promise<{ status: TtsStatus; error: string | null }>
+    /** Removes the Silero runtime, weights and its tokenizer cache. */
+    removeSilero(): Promise<TtsStatus>
+    /** One stage of the Silero download; unsubscribes on return. */
+    onSetupProgress(handler: (progress: TtsSetupProgress) => void): Unsubscribe
   }
 }
