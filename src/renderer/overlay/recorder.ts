@@ -29,8 +29,8 @@ const TARGET_RATE = 16_000
  * `voice.maxDurationMs`, and the main process closes the turn at that value. The
  * two have to agree at the top end, or the tail of a long recording is dropped
  * here while the card says the recording is still running — hence the same
- * 10 minutes that `sanitizeVoice` allows the setting to reach. At 16 kHz mono
- * that is 38 MB, which a wedged key cannot grow past.
+ * 10 minutes that `sanitizeVoice` allows the setting to reach. At the typical
+ * 48 kHz mono that is 115 MB, which a wedged key cannot grow past.
  */
 const MAX_RECORDING_MS = 10 * 60_000
 
@@ -295,11 +295,13 @@ export async function startRecording(maxDurationMs: number): Promise<RecorderHan
   if (context.state !== 'running') await context.resume()
 
   // The resampler needs the real input rate; read it once, while the context is
-  // certainly alive.
+  // certainly alive. The buffer budget is in input frames too: the processor
+  // delivers at this rate, not at TARGET_RATE, which applies only after
+  // resampling.
   const inputRate = context.sampleRate
   const chunks: Float32Array[] = []
   let buffered = 0
-  const limit = Math.floor((TARGET_RATE * Math.min(maxDurationMs, MAX_RECORDING_MS)) / 1000)
+  const limit = Math.floor((inputRate * Math.min(maxDurationMs, MAX_RECORDING_MS)) / 1000)
   let lastLevel = 0
 
   const detach = openGraph(context, stream, (input) => {
