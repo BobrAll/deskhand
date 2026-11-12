@@ -46,4 +46,5 @@ into `resources/` and builds both architectures. `swift test` runs the package's
 tests; they cover the loop's batching, history trimming and loop guard, which the
 TypeScript suite cannot see.
 
-Licensed under the PolyForm Noncommercial License 1.0.0 in `LICENSE`.
+Licensed under the PolyForm Noncommercial License 1.0.0 in the repository root
+[`LICENSE`](../../LICENSE).
