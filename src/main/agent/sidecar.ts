@@ -231,6 +231,17 @@ export class AgentSidecar {
   private readonly pending = new Map<number, PendingRequest>()
   private handlers: ((event: AgentSidecarEvent) => void)[] = []
   private starting: Promise<void> | null = null
+  /**
+   * Stops requested by the host, counted so a run can tell its own stop from an
+   * earlier one.
+   *
+   * A stop often arrives while the process is still starting: the first run
+   * waits up to ten seconds for `ready`, and `cancel()` has nothing to write to
+   * until the spawn has happened. Remembering the request is what keeps that
+   * stop from being lost — otherwise the run is written as soon as the pipe
+   * opens, into an agent nobody is watching and Escape no longer reaches.
+   */
+  private cancelCount = 0
 
   /** Whether a process exists and has not exited. */
   get alive(): boolean {
@@ -342,9 +353,17 @@ export class AgentSidecar {
     })
   }
 
-  /** Starts a task. Resolves when the run is accepted, not when it finishes. */
+  /**
+   * Starts a task. Resolves when the run is accepted, not when it finishes.
+   *
+   * A stop that arrived while the process was starting resolves without writing
+   * a run: the host has already settled the turn, and a run sent after it would
+   * be an agent with no card, no events and no Escape.
+   */
   async run(runOptions: AgentRunOptions): Promise<void> {
+    const cancelsBefore = this.cancelCount
     await this.start()
+    if (this.cancelCount !== cancelsBefore) return
     this.traceRunId = runOptions.traceRunId
     await this.request('run', {
       task: runOptions.task,
@@ -362,6 +381,9 @@ export class AgentSidecar {
         visualize: runOptions.visualize
       }
     })
+    // A stop can reach the process before this run does. That cancel is a no-op
+    // on a process with no active run, so repeat it now that one exists.
+    if (this.cancelCount !== cancelsBefore) this.cancel()
   }
 
   /** Answers a pending confirmation. */
@@ -376,6 +398,7 @@ export class AgentSidecar {
 
   /** Stops the run in flight; the process stays up for the next one. */
   cancel(): void {
+    this.cancelCount += 1
     if (!this.alive) return
     this.child?.stdin.write(`${JSON.stringify({ id: ++this.counter, method: 'cancel', params: {} })}\n`)
   }

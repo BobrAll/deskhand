@@ -29,6 +29,8 @@ const state = vi.hoisted(() => ({
   /** Events the controller will receive, pushed by each test. */
   emit: (_event: unknown) => {},
   runRejects: null as Error | null,
+  /** Holds a run in flight, as the sidecar does while it starts. */
+  runGate: null as Promise<void> | null,
   approvals: [] as { id: string; allow: boolean; reason?: string }[],
   cancels: 0,
   runs: [] as unknown[],
@@ -78,6 +80,7 @@ vi.mock('./sidecar', () => ({
     }
     async run(options: unknown) {
       state.runs.push(options)
+      if (state.runGate) await state.runGate
       if (state.runRejects) throw state.runRejects
     }
     approve(id: string, allow: boolean, reason?: string) {
@@ -150,6 +153,7 @@ beforeEach(() => {
   state.showActions = true
   state.emit = () => {}
   state.runRejects = null
+  state.runGate = null
   state.approvals = []
   state.cancels = 0
   state.runs = []
@@ -658,6 +662,38 @@ describe('stopping', () => {
     const result = await running
     expect(result.aborted).toBe(true)
     expect(h.passthrough).toEqual([true, false, false])
+  })
+
+  it('does not accept a run stopped while the sidecar was starting', async () => {
+    let release = (): void => {}
+    state.runGate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const h = harness()
+    const running = h.run()
+    await vi.waitFor(() => expect(state.runs).toHaveLength(1))
+
+    h.controller.stop('Остановлено по Escape.')
+
+    // The card hears about the stop immediately, even while the sidecar is
+    // still starting.
+    expect(h.last()).toMatchObject({ phase: 'aborted', message: 'Остановлено по Escape.' })
+
+    release()
+    const result = await running
+    expect(result).toMatchObject({ aborted: true, message: 'Остановлено по Escape.' })
+    // The run never reached the agent, so there is no acceptance to record.
+    expect(h.trace().some((line) => line.event === 'agent.accepted')).toBe(false)
+    expect(h.passthrough).toEqual([true, false])
+
+    // The controller is free again: the next request is not refused as
+    // "a run is already in progress".
+    state.runGate = null
+    const next = h.run()
+    await vi.waitFor(() => expect(state.runs).toHaveLength(2))
+    state.emit({ kind: 'done', complete: true, answer: 'Готово.' })
+
+    expect((await next).answer).toBe('Готово.')
   })
 
   it('is safe with nothing running', () => {

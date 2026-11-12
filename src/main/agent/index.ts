@@ -472,14 +472,21 @@ export function createAgentController(host: AgentHost) {
         // "describe what you are about to do", not as "do it differently".
         visualize: settings.agent.showActions !== false
       })
-      trace('agent.accepted', { maxSteps: total })
+      // A stop can land while the sidecar is starting, before this run reaches
+      // the pipe. `done` is already settled with the stop; recording an
+      // acceptance would put a start in the trace for an agent that never ran.
+      if (token === generation) trace('agent.accepted', { maxSteps: total })
     } catch (error) {
-      settleRun({
-        answer: '',
-        actions: actionRows(),
-        message: error instanceof Error ? error.message : 'Не удалось запустить агента.',
-        blocked: true
-      })
+      // The same for a start that failed after the stop: the card already says
+      // what happened, and a second verdict would replace the user's message.
+      if (token === generation) {
+        settleRun({
+          answer: '',
+          actions: actionRows(),
+          message: error instanceof Error ? error.message : 'Не удалось запустить агента.',
+          blocked: true
+        })
+      }
     }
 
     const result = await done
