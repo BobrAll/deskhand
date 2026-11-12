@@ -526,7 +526,13 @@ static CGEventRef watchCallback(CGEventTapProxy proxy, CGEventType type, CGEvent
 static int commandWatch(BOOL watchMouse, BOOL interaction) {
   if (agentRequireAccessibility()) return 0;
 
-  WatchState state = {.origin = CGEventGetLocation(CGEventCreate(NULL)), .moved = NO, .interaction = interaction, .tap = NULL};
+  CGEventRef current = CGEventCreate(NULL);
+  CGPoint origin = CGPointZero;
+  if (current) {
+    origin = CGEventGetLocation(current);
+    CFRelease(current);
+  }
+  WatchState state = {.origin = origin, .moved = NO, .interaction = interaction, .tap = NULL};
   CGEventMask mask = CGEventMaskBit(kCGEventKeyDown);
   if (interaction) {
     mask |= CGEventMaskBit(kCGEventLeftMouseDown) | CGEventMaskBit(kCGEventRightMouseDown) |
