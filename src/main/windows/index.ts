@@ -24,7 +24,6 @@ import { clamp } from '../util'
 import { denyExternalLinks } from '../denyExternalLinks'
 import { loadPage } from '../pageLoad'
 import { openAppWindows } from './settings'
-import { setWindowBlur } from './windowBlur'
 
 export {
   openSettingsWindow,
@@ -47,7 +46,7 @@ export {
 const OVERLAY_MIN_HEIGHT = 31
 const OVERLAY_MAX_HEIGHT = 520
 
-const CARD_BLUR_RADIUS = 40
+const CARD_VIBRANCY = 'under-window' as const
 
 const preload = join(__dirname, '../preload/index.js')
 
@@ -78,7 +77,11 @@ let passthroughActive = false
 function applyWindowChrome(): void {
   const win = overlayWindow
   if (!win || win.isDestroyed()) return
-  setWindowBlur(win, drawingActive || voiceActive ? 0 : CARD_BLUR_RADIUS)
+  // The vibrancy view is clipped to the window's rounded corners by macOS, so
+  // the blur follows the card's silhouette. A plain WindowServer blur does not
+  // and shows a translucent square behind the rounded panel — see
+  // `roundedCorners` below.
+  win.setVibrancy(drawingActive || voiceActive ? null : CARD_VIBRANCY)
 }
 
 function createOverlayWindow(): BrowserWindow {
@@ -95,9 +98,16 @@ function createOverlayWindow(): BrowserWindow {
     maximizable: false,
     fullscreenable: false,
     acceptFirstMouse: true,
-    // The renderer draws the inset silhouette and its shadow.
-    roundedCorners: false,
+    // The renderer draws the card edge-to-edge, and macOS clips both the window
+    // shape and the vibrancy view to the same rounded rectangle. Without this
+    // the square window would show its blur in the four rounded-off corners.
+    roundedCorners: true,
     hasShadow: false,
+    // Real frosting: `backdrop-filter` in a transparent window only has the
+    // page's own (empty) backdrop to sample, so the glass would just show the
+    // app behind it unblurred. The vibrancy view blurs the desktop instead.
+    vibrancy: drawingActive || voiceActive ? undefined : CARD_VIBRANCY,
+    visualEffectState: 'active',
     webPreferences: {
       preload,
       sandbox: false,

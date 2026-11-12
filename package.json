@@ -7,9 +7,9 @@
   "license": "PolyForm-Noncommercial-1.0.0",
   "private": true,
   "scripts": {
-    "dev": "node scripts/build-window-blur.mjs && node scripts/prepare-speech.mjs && electron-vite dev",
+    "dev": "node scripts/prepare-speech.mjs && electron-vite dev",
     "dev:fresh": "node scripts/dev-fresh.mjs",
-    "build": "node scripts/build-window-blur.mjs && node scripts/prepare-speech.mjs && electron-vite build",
+    "build": "node scripts/prepare-speech.mjs && electron-vite build",
     "preview": "electron-vite preview",
     "typecheck": "npm run typecheck:node && npm run typecheck:web",
     "typecheck:node": "tsc --noEmit -p tsconfig.node.json",
@@ -54,11 +54,6 @@
         "to": "whisper-licenses"
       },
       {
-        "from": "resources",
-        "to": ".",
-        "filter": ["deskhand-window-blur.node"]
-      },
-      {
         "from": "resources/deskhand-helper",
         "to": "deskhand-helper"
       },
@@ -90,7 +85,7 @@
       "identity": null,
       "hardenedRuntime": false,
       "gatekeeperAssess": false,
-      "x64ArchFiles": "Contents/Resources/{deskhand-helper,deskhand-window-blur.node,whisper-cli,transcribe-cli,deskhand-agent}",
+      "x64ArchFiles": "Contents/Resources/{deskhand-helper,whisper-cli,transcribe-cli,deskhand-agent}",
       "target": [
         {
           "target": "zip",
