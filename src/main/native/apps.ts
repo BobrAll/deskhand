@@ -87,6 +87,21 @@ export async function helperFrontApplication(): Promise<RawFrontApp | null> {
   return mapFront(await runHelper(['front-quick']))
 }
 
+/**
+ * Bundle ids of the applications that have a window on screen right now.
+ *
+ * `null` means the helper could not answer (missing binary, timeout, malformed
+ * payload). Callers deciding whether a screenshot is safe treat that as "the
+ * screen cannot be proven clean", not as "nothing is visible".
+ */
+export async function helperVisibleBundleIds(): Promise<string[] | null> {
+  const payload = await runHelper(['visible-apps'])
+  const ids = payload?.visibleBundleIds
+  if (payload?.ok !== true || !Array.isArray(ids)) return null
+  if (!ids.every((id): id is string => typeof id === 'string' && id.length > 0)) return null
+  return ids
+}
+
 /** Brings a previously remembered application back to the front. */
 export async function helperActivate(target: { bundleId: string; pid: number }, signal?: AbortSignal): Promise<boolean> {
   if (signal) {

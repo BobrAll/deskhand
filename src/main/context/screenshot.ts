@@ -15,7 +15,10 @@
  * enumerate sources and would still need the user to pick one, so the native CLI
  * is the better fit here. When the window id is unavailable (helper binary
  * missing / no Automation rights) we crop the window bounds with `-R`, and only
- * as a last resort take a full-screen `-x` capture.
+ * as a last resort take a full-screen `-x` capture. Callers that must not show
+ * excluded applications disable that last resort with
+ * `allowFullScreenFallback: false`: they get the window they asked for, or
+ * `null`, never the display.
  *
  * Every call takes a *fresh* picture: the same function serves the preview shown
  * when the overlay opens and the capture re-taken right before a request is
@@ -43,6 +46,13 @@ export interface CaptureTarget {
    * capture would show the model only a part of what the user actually sees.
    */
   fullDisplay?: boolean
+  /**
+   * Allow the last-resort whole-screen `-x` capture when neither the window id
+   * nor its bounds produced an image. Disabled when excluded apps are
+   * configured: the display may contain one of them, so a failed window capture
+   * has to stay failed instead of quietly photographing the whole screen.
+   */
+  allowFullScreenFallback?: boolean
 }
 
 /** Which rectangle the image covers, and whether it is the whole display. */
@@ -243,7 +253,7 @@ export async function captureScreenshot(
         placement = { area: areaFromBounds(target.bounds), fullScreen: false }
       }
     }
-    if (!placement) {
+    if (!placement && target.allowFullScreenFallback !== false) {
       if (await captureFullScreen(file)) placement = { area: displayUnderCursor(), fullScreen: true }
     }
     if (!placement) return null

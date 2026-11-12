@@ -41,6 +41,7 @@ import { searchWeb } from '../llm/webSearch'
 import { copyText, pasteAnswer } from '../paste'
 import { hideAnnotations, showAnnotations } from '../drawing'
 import { buildTurnRequest, type Exchange } from './request'
+import { captureTargetFor } from './captureTarget'
 import { readPreviousCommand, saveCommand } from './history'
 import { timed, trace, traceTurn } from '../agent/trace'
 import { emptyAnswerFallback } from './emptyAnswer'
@@ -48,7 +49,7 @@ import { groundAnnotation } from '../annotationGrounding'
 import type { OverlayHost } from './host'
 import { consumeTurnStream } from '../turnStream'
 import { sameObservedWindow } from '../agent/observation'
-import { helperActivate, helperFrontApplication, helperFrontWindow, helperWindow, type RawFrontApp } from '../native/helper'
+import { helperActivate, helperFrontApplication, helperFrontWindow, helperVisibleBundleIds, helperWindow, type RawFrontApp } from '../native/helper'
 import { getApiKey } from '../settings/secrets'
 import { getSettings, patchSettings } from '../settings/store'
 import { sameScreenRect } from '../layerWindow'
@@ -139,6 +140,14 @@ const INITIAL_HEIGHT = 31
  */
 const MODEL_REFUSED_IMAGE =
   'Модель не принимает изображения — ответ получен без скриншота и рисунка.'
+
+/**
+ * Shown when the card's app is on the exclusion list.
+ *
+ * The card normally never opens for such an app; this is the race where the
+ * target changes while the card is already on screen.
+ */
+const EXCLUDED_APP = 'Приложение входит в список исключений — запрос не отправлен.'
 
 /**
  * How long a spoken transcript stays on screen while its request is already
@@ -405,11 +414,16 @@ export function createOverlayController(host: OverlayHost) {
   /**
    * Takes a new picture of the screen *right now*.
    *
-   * The whole display, not the active window: the drawing tool has to be able to
-   * point at the menu bar, the Dock or a second app, and a window-sized capture
-   * would make those targets impossible to show. The painting layer is pinned over
-   * exactly the rectangle recorded in `ScreenshotInfo.area`, so display-wide
-   * coordinates stay honest.
+   * Normally the whole display, not the active window: the drawing tool has to
+   * be able to point at the menu bar, the Dock or a second app, and a
+   * window-sized capture would make those targets impossible to show. The
+   * painting layer is pinned over exactly the rectangle recorded in
+   * `ScreenshotInfo.area`, so display-wide coordinates stay honest.
+   *
+   * With excluded apps configured the display is safe only while none of them
+   * has a window on screen; once one does, or when that cannot be checked, the
+   * capture is limited to the observed window and never falls back to the whole
+   * screen (`captureTargetFor`).
    *
    * The overlay's own window is temporarily excluded from the capture: without
    * that, the `-R` / full-screen fallbacks would photograph our own card, and a
@@ -438,27 +452,36 @@ export function createOverlayController(host: OverlayHost) {
           // Give the compositor a beat to apply the new sharing state.
           await delay(45)
         }
-        const front = settings.agent.enabled ? await helperFrontWindow() : null
+        // The front window is read even when the agent is off if exclusions are
+        // configured: otherwise a window the user switched to could never be
+        // checked against the list before the shutter opens. The visible apps are
+        // read in parallel and only when exclusions exist: with none configured
+        // the whole display is always safe, so that call would be pure cost.
+        const excludedApps = settings.excludedApps
+        const [front, visibleBundleIds] = await Promise.all([
+          settings.agent.enabled || excludedApps.length > 0
+            ? helperFrontWindow()
+            : Promise.resolve(null),
+          excludedApps.length > 0 ? helperVisibleBundleIds() : Promise.resolve(null)
+        ])
         const underOverlay = front?.pid === process.pid
         // Under our own card the frontmost window is not the one being acted on:
         // read the remembered target's window instead.
         const observed = underOverlay
           ? (target.target ? await helperWindow(target.target.pid) : null)
           : front
-        if (observed && settings.excludedApps.includes(observed.bundleId)) {
+        const capture = captureTargetFor({
+          observed,
+          remembered: target.target,
+          excludedApps,
+          visibleBundleIds
+        })
+        if (!capture) {
           target.snapshot.screenshot = null
           return null
         }
         const shot = await timed('screen.capture', () => captureScreenshot(
-          {
-            windowId: observed?.windowId ?? target.target?.windowId ?? null,
-            bounds: observed?.bounds ?? target.target?.bounds ?? null,
-            // The whole display, not one window: drawing is a tool the assistant
-            // reaches for on its own, and a pointer that could only aim inside one
-            // window would make "нажми на иконку в доке" impossible to show. The
-            // painting layer is pinned over exactly the captured rectangle.
-            fullDisplay: true
-          },
+          capture,
           { maxSide: settings.screenshotMaxSide, quality: settings.screenshotQuality }
         ))
         if (shot && observed) {
@@ -948,18 +971,23 @@ export function createOverlayController(host: OverlayHost) {
   async function sendTurn(request: SendRequest): Promise<void> {
     if (!session) return
     const settings = getSettings()
-    if (isExcluded(session.target, settings.excludedApps)) {
-      trace('turn.outcome', { outcome: 'blocked', reason: 'excluded-app' })
-      return
-    }
-    const model = resolveChatModel(settings)
-    const apiKey = getApiKey(settings.provider)
 
     const fail = (message: string, retryable: boolean, code?: StreamEventCode): void => {
       const event: StreamEvent = { type: 'error', requestId: request.requestId, message, retryable, code }
       sendToWindow(CH.overlay.stream, event)
       if (request.voice) host.showInactive(INITIAL_HEIGHT)
     }
+
+    // The card normally closes before a turn can start in an excluded app, but
+    // the target can change while it is already on screen. The error is what
+    // clears the busy state; a bare return left the card waiting forever.
+    if (isExcluded(session.target, settings.excludedApps)) {
+      trace('turn.outcome', { outcome: 'blocked', reason: 'excluded-app' })
+      fail(EXCLUDED_APP, false)
+      return
+    }
+    const model = resolveChatModel(settings)
+    const apiKey = getApiKey(settings.provider)
 
     if (!model) {
       fail('Модель не выбрана. Открой настройки и укажи модель.', false)
@@ -1033,7 +1061,9 @@ export function createOverlayController(host: OverlayHost) {
       const bundleId = turnSession.target?.bundleId || null
       const currentSettings = getSettings()
       if (isExcluded(turnSession.target, currentSettings.excludedApps)) {
-        if (request.voice) host.hide()
+        outcome = 'blocked'
+        reason = 'excluded-app'
+        fail(EXCLUDED_APP, false)
         return
       }
       const useHistory = settings.rememberConversation && currentSettings.rememberConversation

@@ -27,6 +27,7 @@ const READ_ONLY = [
   ['permissions', 'reads the TCC state without prompting (request=false)'],
   ['front', 'reads the frontmost app and its window'],
   ['apps', 'lists Dock-visible apps'],
+  ['visible-apps', 'lists bundle ids with a window on screen'],
   ['cursor', 'reads the mouse position']
 ]
 
@@ -131,6 +132,24 @@ console.log('\napps')
   check('every entry has bundleId and name', list.every((app) => typeof app.bundleId === 'string' && typeof app.name === 'string'))
   // The list is the settings picker: it must not be empty on a normal desktop.
   check('is not empty', list.length > 0, `${list.length} apps`)
+}
+
+console.log('\nvisible-apps')
+{
+  const { json } = run('visible-apps')
+  check('visibleBundleIds is an array', Array.isArray(json.visibleBundleIds))
+  const list = Array.isArray(json.visibleBundleIds) ? json.visibleBundleIds : []
+  check(
+    'every entry is a non-empty string',
+    list.every((id) => typeof id === 'string' && id.length > 0)
+  )
+  check('entries are unique', new Set(list).size === list.length)
+  check(
+    'entries are sorted',
+    list.every((id, index) => index === 0 || list[index - 1] <= id)
+  )
+  // An empty list is valid: every window may be on another Space, and the
+  // screenshot policy then treats the screen as safe.
 }
 
 console.log('\ncursor')

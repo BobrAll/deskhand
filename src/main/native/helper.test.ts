@@ -338,6 +338,41 @@ describe('helperFrontWindow: the frontmost app', () => {
   })
 })
 
+describe('helperVisibleBundleIds: what the helper can prove', () => {
+  it('returns the bundle ids the helper reported', async () => {
+    answerWith({
+      'visible-apps': {
+        stdout: JSON.stringify({ ok: true, visibleBundleIds: ['com.apple.Safari', 'com.apple.Finder'] })
+      }
+    })
+
+    expect(await helper.helperVisibleBundleIds()).toEqual([
+      'com.apple.Safari',
+      'com.apple.Finder'
+    ])
+  })
+
+  it('returns an empty array as a trustworthy answer', async () => {
+    answerWith({ 'visible-apps': { stdout: '{"ok":true,"visibleBundleIds":[]}' } })
+
+    expect(await helper.helperVisibleBundleIds()).toEqual([])
+  })
+
+  it('returns null when the helper fails', async () => {
+    answerWith({ 'visible-apps': { error: new Error('timeout') } })
+
+    expect(await helper.helperVisibleBundleIds()).toBeNull()
+  })
+
+  it('returns null for a malformed list', async () => {
+    answerWith({
+      'visible-apps': { stdout: '{"ok":true,"visibleBundleIds":["com.a",1]}' }
+    })
+
+    expect(await helper.helperVisibleBundleIds()).toBeNull()
+  })
+})
+
 describe('helperSendKey and helperActivate', () => {
   it('sends `copy`/`paste` as the helper command', async () => {
     answerWith({ copy: { stdout: '{"ok":true}' }, paste: { stdout: '{"ok":true}' } })
