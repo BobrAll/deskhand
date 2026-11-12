@@ -103,10 +103,10 @@ console.log('\nfront')
   check('bundleId is a string', typeof json.bundleId === 'string')
   check('name is a string', typeof json.name === 'string')
   check('pid is a number', typeof json.pid === 'number')
-  // KNOWN BUG: `front` prints `accessibility` as 1/0, not as a JSON boolean, so
-  // `helperFront()`'s strict `payload.accessibility === true` is always false.
+  // `front` prints `accessibility` as 0/1, not as a JSON boolean; TypeScript
+  // normalises both with `flag()`.
   check(
-    'accessibility is a number 0/1 (known: not a boolean)',
+    'accessibility is a number 0/1',
     json.accessibility === 0 || json.accessibility === 1,
     String(json.accessibility)
   )
