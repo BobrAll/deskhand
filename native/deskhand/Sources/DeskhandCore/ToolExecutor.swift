@@ -296,8 +296,8 @@ public final class ToolExecutor: @unchecked Sendable {
         if let point, let hit = session.smallestNode(containing: point) {
             text += " The point landed on " + describe(hit)
             if let frame = hit.frame {
-                text += " at \(Int(frame.origin.x)),\(Int(frame.origin.y)) "
-                    + "\(Int(frame.width))x\(Int(frame.height))"
+                text += " at \(integerText(frame.origin.x)),\(integerText(frame.origin.y)) "
+                    + "\(integerText(frame.width))x\(integerText(frame.height))"
             }
             text += "."
             if hit.childrenRefused {
@@ -351,6 +351,33 @@ public final class ToolExecutor: @unchecked Sendable {
     private func requireDouble(_ args: JSONValue, _ key: String) throws -> Double {
         guard let value = args[key]?.doubleValue else { throw ToolError.missing(key) }
         return value
+    }
+
+    /// A model-supplied screenshot pixel, rejected before it reaches the
+    /// mapper. `ToolSurface` documents these as pixels from the most recent
+    /// screenshot, whose longest edge is `WindowCapture.defaultMaxDimension`,
+    /// so a finite value in `0...defaultMaxDimension` is the only sane input.
+    private func requireCoordinate(_ args: JSONValue, _ key: String) throws -> Double {
+        guard let value = optionalDouble(args, key) else { throw ToolError.missing(key) }
+        let limit = Double(WindowCapture.defaultMaxDimension)
+        guard value.isFinite, value >= 0, value <= limit else {
+            throw ToolError.message(
+                "\(key) must be a screenshot pixel between 0 and "
+                    + "\(WindowCapture.defaultMaxDimension); got \(value). "
+                    + "Call get_app_state with a screenshot and use coordinates from that image.")
+        }
+        return value
+    }
+
+    /// Renders a geometry value as an integer without trapping. `Int(value)`
+    /// crashes on NaN, infinity and out-of-range doubles, and a result message
+    /// must never take down a run. Truncating toward zero matches the old
+    /// formatting.
+    private func integerText(_ value: Double) -> String {
+        guard let int = Int(exactly: value.rounded(.towardZero)) else {
+            return String(value)
+        }
+        return String(int)
     }
 
     private func requireString(_ args: JSONValue, _ key: String) throws -> String {
@@ -563,7 +590,7 @@ public final class ToolExecutor: @unchecked Sendable {
                 blocks.append(.text(
                     """
                     Screenshot: \(capture.pixelWidth)x\(capture.pixelHeight) px, window at \
-                    \(Int(frame.origin.x)),\(Int(frame.origin.y)) size \(Int(frame.width))x\(Int(frame.height)) pt, \
+                    \(integerText(frame.origin.x)),\(integerText(frame.origin.y)) size \(integerText(frame.width))x\(integerText(frame.height)) pt, \
                     scale \(String(format: "%.2f", capture.scale)). Click coordinates are in screenshot pixels.
                     """))
             } else {
@@ -645,6 +672,18 @@ public final class ToolExecutor: @unchecked Sendable {
 
     private func click(_ args: JSONValue, verify: Bool) async throws -> ToolResult {
         let appQuery = try requireApp(args)
+        // Validate model-supplied pixels before resolving the app: garbage must
+        // not launch anything, refresh a tree or reach the message formatting.
+        // A usable element index wins over pixels, so only validate when the
+        // coordinates are the target.
+        let pixelPoint: CGPoint?
+        if optionalInt(args, "element_index") == nil, args["x"] != nil || args["y"] != nil {
+            pixelPoint = CGPoint(
+                x: try requireCoordinate(args, "x"),
+                y: try requireCoordinate(args, "y"))
+        } else {
+            pixelPoint = nil
+        }
         let session = try resolveSession(appQuery: appQuery)
         if session.snapshot == nil {
             await session.refresh()
@@ -689,12 +728,12 @@ public final class ToolExecutor: @unchecked Sendable {
                 // Fall through to a pixel click if the app refused the action.
             }
             point = try session.centre(of: index)
-        } else if let x = optionalDouble(args, "x"), let y = optionalDouble(args, "y") {
+        } else if let pixelPoint {
             guard let mapper = session.coordinateMapper else {
                 throw ToolError.message(
                     "no screenshot coordinates available; call get_app_state with a screenshot first")
             }
-            point = mapper.screenPoint(fromImagePixel: CGPoint(x: x, y: y))
+            point = mapper.screenPoint(fromImagePixel: pixelPoint)
         } else {
             throw ToolError.message("click needs either element_index or both x and y")
         }
@@ -702,7 +741,8 @@ public final class ToolExecutor: @unchecked Sendable {
         let warning = bringToFrontChecked(session, actionLabel: "the click")
         Mouse.click(at: point, button: button, count: count, modifiers: modifiers)
         let clickedPoint = optionalInt(args, "element_index") == nil ? point : nil
-        var message = "Clicked \(button.rawValue) at screen \(Int(point.x)),\(Int(point.y)) x\(count)."
+        var message = "Clicked \(button.rawValue) at screen "
+            + "\(integerText(point.x)),\(integerText(point.y)) x\(count)."
             + (warning ?? "")
         // Clicking a container is aiming at a region, not at an item: the
         // index carried no target of its own, so whatever sat under the
@@ -831,29 +871,34 @@ public final class ToolExecutor: @unchecked Sendable {
         bringToFront(session)
         Mouse.scroll(at: point, direction: direction, pages: pages)
         return finish(
-            "Scrolled \(direction.rawValue) \(pages) page(s) at \(Int(point.x)),\(Int(point.y)).",
+            "Scrolled \(direction.rawValue) \(pages) page(s) at "
+                + "\(integerText(point.x)),\(integerText(point.y)).",
             session: session, actionLabel: "the scroll", verify: verify)
     }
 
     private func drag(_ args: JSONValue, verify: Bool) async throws -> ToolResult {
         let appQuery = try requireApp(args)
-        let fromX = try requireDouble(args, "from_x")
-        let fromY = try requireDouble(args, "from_y")
-        let toX = try requireDouble(args, "to_x")
-        let toY = try requireDouble(args, "to_y")
+        // Same validation order as click: reject garbage before resolving.
+        let startPixel = CGPoint(
+            x: try requireCoordinate(args, "from_x"),
+            y: try requireCoordinate(args, "from_y"))
+        let endPixel = CGPoint(
+            x: try requireCoordinate(args, "to_x"),
+            y: try requireCoordinate(args, "to_y"))
         let session = try resolveSession(appQuery: appQuery)
         if session.snapshot == nil { await session.refresh() }
         guard let mapper = session.coordinateMapper else {
             throw ToolError.message("no screenshot coordinates available; call get_app_state first")
         }
 
-        let start = mapper.screenPoint(fromImagePixel: CGPoint(x: fromX, y: fromY))
-        let end = mapper.screenPoint(fromImagePixel: CGPoint(x: toX, y: toY))
+        let start = mapper.screenPoint(fromImagePixel: startPixel)
+        let end = mapper.screenPoint(fromImagePixel: endPixel)
 
         bringToFront(session)
         Mouse.drag(from: start, to: end)
         return finish(
-            "Dragged from \(Int(start.x)),\(Int(start.y)) to \(Int(end.x)),\(Int(end.y)).",
+            "Dragged from \(integerText(start.x)),\(integerText(start.y)) "
+                + "to \(integerText(end.x)),\(integerText(end.y)).",
             session: session, actionLabel: "the drag", verify: verify)
     }
 

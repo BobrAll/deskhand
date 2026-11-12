@@ -13,6 +13,9 @@ import UniformTypeIdentifiers
 /// burn the whole context window, and the scale factor is reported back so
 /// pixel coordinates from the model map onto real screen points.
 public enum WindowCapture {
+    /// Default longest edge of the returned image, in pixels. Coordinates the
+    /// model reports against a screenshot are bounded by this.
+    public static let defaultMaxDimension = 1280
     /// A window smaller than this on either side is a tooltip, a shadow or a
     /// stray panel, not something worth screenshotting.
     private static let minimumWindowSide: CGFloat = 40
@@ -52,7 +55,7 @@ public enum WindowCapture {
         public var maxDimension: Int
         public var showsCursor: Bool
 
-        public init(maxDimension: Int = 1280, showsCursor: Bool = false) {
+        public init(maxDimension: Int = WindowCapture.defaultMaxDimension, showsCursor: Bool = false) {
             self.maxDimension = maxDimension
             self.showsCursor = showsCursor
         }

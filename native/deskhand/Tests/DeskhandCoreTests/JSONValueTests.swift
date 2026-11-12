@@ -36,6 +36,24 @@ final class JSONValueTests: XCTestCase {
         XCTAssertEqual(reparsed["k"]?.stringValue, "line\nbreak\t\"quoted\"")
     }
 
+    /// Regression: `Int(d)` trapped on non-finite and out-of-range JSON
+    /// numbers, killing the sidecar process. Those values must yield nil.
+    func testIntValueRejectsNonFiniteAndOutOfRangeNumbers() {
+        XCTAssertNil(JSONValue.number(1e300).intValue)
+        XCTAssertNil(JSONValue.number(-1e300).intValue)
+        XCTAssertNil(JSONValue.number(.infinity).intValue)
+        XCTAssertNil(JSONValue.number(-.infinity).intValue)
+        XCTAssertNil(JSONValue.number(.nan).intValue)
+        // `Double(Int.max)` rounds up to 2^63, which is outside `Int`.
+        XCTAssertNil(JSONValue.number(Double(Int.max)).intValue)
+    }
+
+    func testIntValueTruncatesTowardZero() {
+        XCTAssertEqual(JSONValue.number(3.9).intValue, 3)
+        XCTAssertEqual(JSONValue.number(-3.9).intValue, -3)
+        XCTAssertEqual(JSONValue.number(Double(Int.min)).intValue, Int.min)
+    }
+
     func testIntegerSerializationHasNoDecimalPoint() {
         XCTAssertEqual(JSONValue.number(42).serialized(), "42")
         XCTAssertEqual(JSONValue.number(42.5).serialized(), "42.5")
