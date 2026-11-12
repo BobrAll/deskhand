@@ -15,8 +15,9 @@
 - If isolation fails, stop before editing.
 - Commit completed changes to the task branch.
 - Once the user confirms the task is finished, offer a code review by a separate subagent.
-- After review, propose merging into `dev` and removing the task's worktree.
-- Never merge or delete worktrees without explicit user approval.
+- Propose merging into `dev`. Never merge without explicit user approval.
+- After a successful merge into `dev`, delete the task branch and remove its worktree immediately — the approval to merge covers the cleanup, so do not ask again.
+- Never delete a worktree whose branch is not merged into `dev`.
 - Mechanically: `tools.opencode.worktree_create` for the worktree and `tools.opencode.session_move` to move the session into it. If those tools are unavailable, ask before touching files.
 
 ## Copy and tone
