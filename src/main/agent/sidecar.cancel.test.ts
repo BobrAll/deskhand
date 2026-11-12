@@ -85,7 +85,8 @@ const RUN: AgentRunOptions = {
   },
   maxSteps: 3,
   verifyActions: false,
-  visualize: false
+  visualize: false,
+  excludedApps: []
 }
 
 function latest(): (typeof state.children)[number] {
