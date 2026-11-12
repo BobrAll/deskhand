@@ -1,6 +1,25 @@
 import XCTest
 @testable import DeskhandCore
 
+/// Records what the executor offered the policy before a mutating call.
+private final class SpyToolPolicy: ToolPolicy, @unchecked Sendable {
+    private let lock = NSLock()
+    private var seen: [ToolCallContext] = []
+
+    func authorize(_ call: ToolCallContext) -> ToolPolicyDecision {
+        lock.lock()
+        seen.append(call)
+        lock.unlock()
+        return .allow
+    }
+
+    var calls: [ToolCallContext] {
+        lock.lock()
+        defer { lock.unlock() }
+        return seen
+    }
+}
+
 /// Tool-call plumbing: the executor must reject stale indices rather than
 /// acting on whatever element now occupies that slot.
 final class ToolExecutorTests: XCTestCase {
@@ -146,6 +165,43 @@ final class ToolExecutorTests: XCTestCase {
             result.plainText.contains("exclusion list"),
             "a different app's exclusion must not match \(target.name), got: \(result.plainText)"
         )
+    }
+
+    func testExcludedAppIsNotReadBeforeThePolicyRefusesIt() async throws {
+        let target = try resolvableApp()
+        let bundle = try XCTUnwrap(target.bundleIdentifier)
+        let executor = ToolExecutor(excludedBundleIds: [bundle])
+        // Seed a session the way an earlier call would have, so this exercises
+        // the cached-session branch of `knownSession` without needing a GUI app
+        // to already be running.
+        let session = executor.session(for: target)
+        let policy = SpyToolPolicy()
+        executor.policy = policy
+        let result = await executor.call(
+            name: "click",
+            arguments: .object([
+                "app": .string(bundle),
+                "element_index": .number(0),
+            ])
+        )
+
+        // The tool is still refused by `resolveSession`…
+        XCTAssertTrue(result.isError)
+        XCTAssertTrue(
+            result.plainText.contains("exclusion list"),
+            "expected the exclusion message, got: \(result.plainText)"
+        )
+        // …but the policy never got a description of the app or its controls,
+        // and the pre-action lookup did not walk the tree for one.
+        let context = try XCTUnwrap(policy.calls.first)
+        XCTAssertNil(context.appName)
+        XCTAssertNil(context.bundleIdentifier)
+        XCTAssertNil(context.pid)
+        XCTAssertNil(context.role)
+        XCTAssertNil(context.title)
+        XCTAssertNil(context.label)
+        XCTAssertFalse(context.isTextField)
+        XCTAssertNil(session.snapshot, "the policy path must not refresh the tree")
     }
 
     private func resolvableApp() throws -> AppHandle {

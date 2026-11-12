@@ -99,7 +99,11 @@ public final class ToolExecutor: @unchecked Sendable {
         return Array(sessions.values)
     }
 
-    private func session(for handle: AppHandle) -> AppSession {
+    /// The session for an app handle, creating one when it is the first call.
+    ///
+    /// Internal rather than private so the policy-path test can seed a session
+    /// without going through a running app; production callers stay in this file.
+    func session(for handle: AppHandle) -> AppSession {
         lock.lock()
         defer { lock.unlock() }
         if let existing = sessions[handle.pid], existing.app.name == handle.name {
@@ -429,14 +433,22 @@ public final class ToolExecutor: @unchecked Sendable {
     /// resolving a query that matched an installed-but-closed app must not be
     /// the thing that starts a password manager.
     private func refuseIfExcluded(_ handle: AppHandle) throws {
-        guard let bundle = handle.bundleIdentifier,
-              excludedBundleIds.contains(bundle) else { return }
+        guard isExcluded(handle) else { return }
         throw ToolError.message(
             """
             \(handle.name) is on the user's exclusion list: its screen, accessibility tree and \
             contents must not be read, and no input may be sent to it. Work with the app the \
             user asked about instead.
             """)
+    }
+
+    /// Whether an app is on the user's exclusion list.
+    ///
+    /// Shared by the tool gate and the policy/presentation lookup so the two
+    /// cannot disagree about which app is off limits.
+    private func isExcluded(_ handle: AppHandle) -> Bool {
+        guard let bundle = handle.bundleIdentifier else { return false }
+        return excludedBundleIds.contains(bundle)
     }
 
     /// Everything the policy needs to judge a call, resolved from the same state
@@ -479,13 +491,18 @@ public final class ToolExecutor: @unchecked Sendable {
         let existing = allSessions()
         if let match = existing.first(where: { $0.app.name == query })
             ?? existing.first(where: { $0.app.bundleIdentifier == query }) {
-            return match
+            return isExcluded(match.app) ? nil : match
         }
         // A query nothing has touched yet: resolve it against the running apps
         // only, so the policy can name the app before the first tool ran.
         guard let handle = try? AppCatalog.resolve(query),
               let running = AppCatalog.runningApps().first(where: { $0.pid == handle.pid })
         else { return nil }
+        // The policy/presentation path must not read an excluded app either:
+        // naming it would refresh its tree and describe its controls before the
+        // tool call is refused. Returning nil only drops that pre-read and the
+        // approval/preview description; `resolveSession` still refuses the call.
+        guard !isExcluded(running) else { return nil }
         return session(for: running)
     }
 
