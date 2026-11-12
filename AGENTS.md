@@ -6,6 +6,19 @@
 - Read and follow [Refactoring](.agents/skills/refactoring/SKILL.md) only when the user asks for a refactor or invokes it by name.
 - Read and follow [Bug and Issue Detection](.agents/skills/bug-and-issue-detection/SKILL.md) only when the user asks to find bugs, audit code, or invokes it by name.
 
+## Git Worktree Isolation
+
+- Each independent task MUST use its own Git worktree, branch, and agent session.
+- Before editing, create a worktree with a new branch and move the session into it.
+- Reuse the existing worktree when continuing the same task.
+- Never edit files outside the task's worktree or share a working directory with another coding agent.
+- If isolation fails, stop before editing.
+- Commit completed changes to the task branch.
+- Once the user confirms the task is finished, offer a code review by a separate subagent.
+- After review, propose merging into `dev` and removing the task's worktree.
+- Never merge or delete worktrees without explicit user approval.
+- Mechanically: `tools.opencode.worktree_create` for the worktree and `tools.opencode.session_move` to move the session into it. If those tools are unavailable, ask before touching files.
+
 ## Copy and tone
 
 - Every user-facing Russian string addresses the user as «ты»: «нажми», «попробуй ещё раз», «твой ключ». No «вы» forms in UI text, errors, approvals, notifications or recorded voice lines.
