@@ -24,8 +24,10 @@ import { DEFAULT_SETTINGS } from '@shared/defaults'
 import type { ActiveAppInfo, AgentRunResult, AppSettings, SendRequest } from '@shared/types'
 import { beginAgentTurn, endAgentTurn } from '../agent/cursor'
 import { captureScreenshot } from '../context/screenshot'
+import type { CaptureTarget } from '../context/screenshot'
 import { getProvider } from '../llm'
 import { searchWeb } from '../llm/webSearch'
+import { helperVisibleBundleIds } from '../native/helper'
 import { buildTurnRequest } from './request'
 import { applyHistorySettings } from './history'
 import { delay } from '../util'
@@ -66,6 +68,7 @@ vi.mock('../native/helper', () => ({
   helperFrontWindow: vi.fn(),
   helperFrontApplication: vi.fn(),
   helperActivate: vi.fn(),
+  helperVisibleBundleIds: vi.fn(async () => null),
   helperWindow: vi.fn(),
   watchForAbort: vi.fn(() => ({ stop: vi.fn() }))
 }))
@@ -158,6 +161,7 @@ beforeEach(() => {
   state.streams = 0
   state.agentNotice = undefined
   applyHistorySettings(false, [])
+  vi.mocked(helperVisibleBundleIds).mockReset().mockResolvedValue(null)
 })
 
 async function harness() {
@@ -274,6 +278,79 @@ describe('an excluded target', () => {
       message: expect.stringContaining('исключ')
     }))
     expect(h.visible()).toBe(true)
+  })
+})
+
+describe('screenshot privacy with exclusions configured', () => {
+  const SAFARI: ActiveAppInfo = {
+    bundleId: 'com.apple.Safari',
+    name: 'Safari',
+    pid: 42,
+    windowTitle: 'Start',
+    windowId: 7,
+    bounds: { x: 10, y: 20, width: 800, height: 600 }
+  }
+  const SHOT = {
+    dataUrl: 'data:image/jpeg;base64,abc',
+    width: 1440,
+    height: 900,
+    bytes: 3,
+    capturedAt: Date.now(),
+    area: { x: 0, y: 0, width: 1440, height: 900 },
+    fullScreen: true
+  }
+
+  async function preparedCapture(
+    visibleBundleIds: string[] | null,
+    excludedApps = ['com.apple.Passwords']
+  ): Promise<CaptureTarget | null> {
+    state.settings.excludedApps = excludedApps
+    state.activeApp = SAFARI
+    vi.mocked(helperVisibleBundleIds).mockReset().mockResolvedValueOnce(visibleBundleIds)
+    const h = await harness()
+    vi.mocked(captureScreenshot).mockReset().mockResolvedValueOnce(SHOT)
+    vi.mocked(buildTurnRequest).mockImplementationOnce(async ({ ensureFreshScreenshot }) => {
+      await ensureFreshScreenshot()
+      return {
+        messages: [],
+        maxTokens: 1024,
+        area: null,
+        screenshot: null,
+        useImage: false,
+        canDraw: false,
+        abandoned: false
+      }
+    })
+
+    await h.controller.send({ ...h.request, voice: false, includeScreenshot: true })
+
+    return vi.mocked(captureScreenshot).mock.calls[0]?.[0] ?? null
+  }
+
+  it('restores the whole display when no excluded app has a window on screen', async () => {
+    const capture = await preparedCapture([SAFARI.bundleId, 'com.apple.Finder'])
+
+    expect(capture).toMatchObject({ fullDisplay: true })
+    expect(capture?.allowFullScreenFallback).toBeUndefined()
+  })
+
+  it('captures only the window when an excluded app has a window on screen', async () => {
+    const capture = await preparedCapture(['com.apple.Safari', 'com.apple.Passwords'])
+
+    expect(capture).toMatchObject({ fullDisplay: false, allowFullScreenFallback: false })
+  })
+
+  it('stays window-only when the visible list is unknown', async () => {
+    const capture = await preparedCapture(null)
+
+    expect(capture).toMatchObject({ fullDisplay: false, allowFullScreenFallback: false })
+  })
+
+  it('does not ask for visible apps when nothing is excluded', async () => {
+    const capture = await preparedCapture(null, [])
+
+    expect(capture).toMatchObject({ fullDisplay: true })
+    expect(helperVisibleBundleIds).not.toHaveBeenCalled()
   })
 })
 

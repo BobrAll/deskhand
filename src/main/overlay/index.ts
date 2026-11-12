@@ -49,7 +49,7 @@ import { groundAnnotation } from '../annotationGrounding'
 import type { OverlayHost } from './host'
 import { consumeTurnStream } from '../turnStream'
 import { sameObservedWindow } from '../agent/observation'
-import { helperActivate, helperFrontApplication, helperFrontWindow, helperWindow, type RawFrontApp } from '../native/helper'
+import { helperActivate, helperFrontApplication, helperFrontWindow, helperVisibleBundleIds, helperWindow, type RawFrontApp } from '../native/helper'
 import { getApiKey } from '../settings/secrets'
 import { getSettings, patchSettings } from '../settings/store'
 import { sameScreenRect } from '../layerWindow'
@@ -420,9 +420,10 @@ export function createOverlayController(host: OverlayHost) {
    * painting layer is pinned over exactly the rectangle recorded in
    * `ScreenshotInfo.area`, so display-wide coordinates stay honest.
    *
-   * With excluded apps configured the display is not a safe frame — any window
-   * on it may belong to one of them — so the capture is limited to the observed
-   * window and never falls back to the whole screen (`captureTargetFor`).
+   * With excluded apps configured the display is safe only while none of them
+   * has a window on screen; once one does, or when that cannot be checked, the
+   * capture is limited to the observed window and never falls back to the whole
+   * screen (`captureTargetFor`).
    *
    * The overlay's own window is temporarily excluded from the capture: without
    * that, the `-R` / full-screen fallbacks would photograph our own card, and a
@@ -453,10 +454,16 @@ export function createOverlayController(host: OverlayHost) {
         }
         // The front window is read even when the agent is off if exclusions are
         // configured: otherwise a window the user switched to could never be
-        // checked against the list before the shutter opens.
-        const front = settings.agent.enabled || settings.excludedApps.length > 0
-          ? await helperFrontWindow()
-          : null
+        // checked against the list before the shutter opens. The visible apps are
+        // read in parallel and only when exclusions exist: with none configured
+        // the whole display is always safe, so that call would be pure cost.
+        const excludedApps = settings.excludedApps
+        const [front, visibleBundleIds] = await Promise.all([
+          settings.agent.enabled || excludedApps.length > 0
+            ? helperFrontWindow()
+            : Promise.resolve(null),
+          excludedApps.length > 0 ? helperVisibleBundleIds() : Promise.resolve(null)
+        ])
         const underOverlay = front?.pid === process.pid
         // Under our own card the frontmost window is not the one being acted on:
         // read the remembered target's window instead.
@@ -466,7 +473,8 @@ export function createOverlayController(host: OverlayHost) {
         const capture = captureTargetFor({
           observed,
           remembered: target.target,
-          excludedApps: settings.excludedApps
+          excludedApps,
+          visibleBundleIds
         })
         if (!capture) {
           target.snapshot.screenshot = null

@@ -23,6 +23,7 @@ export {
   helperFrontApplication,
   helperFrontWindow,
   helperRunningApps,
+  helperVisibleBundleIds,
   helperWindow
 } from './apps'
 export type { RawFrontApp, RunningApp } from './apps'

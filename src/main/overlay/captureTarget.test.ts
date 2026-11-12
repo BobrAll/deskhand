@@ -20,9 +20,16 @@ const PASSWORDS: ActiveAppInfo = {
   bounds: { x: 100, y: 100, width: 640, height: 480 }
 }
 
+const EXCLUDED = [PASSWORDS.bundleId]
+
 describe('captureTargetFor: no excluded apps', () => {
-  it('asks for the whole display as before', () => {
-    expect(captureTargetFor({ observed: SAFARI, remembered: null, excludedApps: [] })).toEqual({
+  it('asks for the whole display even when the visible list is unknown', () => {
+    expect(captureTargetFor({
+      observed: SAFARI,
+      remembered: null,
+      excludedApps: [],
+      visibleBundleIds: null
+    })).toEqual({
       windowId: 7,
       bounds: SAFARI.bounds,
       fullDisplay: true
@@ -31,11 +38,39 @@ describe('captureTargetFor: no excluded apps', () => {
 })
 
 describe('captureTargetFor: with excluded apps', () => {
-  it('captures only the observed window and never falls back to the screen', () => {
+  it('restores the whole display when no excluded app has a window on screen', () => {
     expect(captureTargetFor({
       observed: SAFARI,
       remembered: null,
-      excludedApps: [PASSWORDS.bundleId]
+      excludedApps: EXCLUDED,
+      visibleBundleIds: [SAFARI.bundleId, 'com.apple.Finder']
+    })).toEqual({
+      windowId: 7,
+      bounds: SAFARI.bounds,
+      fullDisplay: true
+    })
+  })
+
+  it('captures only the window when an excluded app has a window on screen', () => {
+    expect(captureTargetFor({
+      observed: SAFARI,
+      remembered: null,
+      excludedApps: EXCLUDED,
+      visibleBundleIds: [SAFARI.bundleId, PASSWORDS.bundleId]
+    })).toEqual({
+      windowId: 7,
+      bounds: SAFARI.bounds,
+      fullDisplay: false,
+      allowFullScreenFallback: false
+    })
+  })
+
+  it('stays conservative when the visible list is unknown', () => {
+    expect(captureTargetFor({
+      observed: SAFARI,
+      remembered: null,
+      excludedApps: EXCLUDED,
+      visibleBundleIds: null
     })).toEqual({
       windowId: 7,
       bounds: SAFARI.bounds,
@@ -48,12 +83,12 @@ describe('captureTargetFor: with excluded apps', () => {
     expect(captureTargetFor({
       observed: null,
       remembered: SAFARI,
-      excludedApps: [PASSWORDS.bundleId]
+      excludedApps: EXCLUDED,
+      visibleBundleIds: []
     })).toEqual({
       windowId: 7,
       bounds: SAFARI.bounds,
-      fullDisplay: false,
-      allowFullScreenFallback: false
+      fullDisplay: true
     })
   })
 
@@ -61,7 +96,8 @@ describe('captureTargetFor: with excluded apps', () => {
     expect(captureTargetFor({
       observed: PASSWORDS,
       remembered: SAFARI,
-      excludedApps: [PASSWORDS.bundleId]
+      excludedApps: EXCLUDED,
+      visibleBundleIds: [PASSWORDS.bundleId]
     })).toBeNull()
   })
 
@@ -69,7 +105,8 @@ describe('captureTargetFor: with excluded apps', () => {
     expect(captureTargetFor({
       observed: null,
       remembered: PASSWORDS,
-      excludedApps: [PASSWORDS.bundleId]
+      excludedApps: EXCLUDED,
+      visibleBundleIds: [PASSWORDS.bundleId]
     })).toBeNull()
   })
 })

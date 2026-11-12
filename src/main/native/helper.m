@@ -1,6 +1,7 @@
 // Native helper for Deskhand.
 // Provides the macOS pieces that Electron cannot do reliably from JS:
 //   * front        - frontmost application info + focused window id/bounds/title
+//   * visible-apps - bundle ids of applications with an on-screen window
 //   * cursor       - current mouse location in screen coordinates
 //   * copy / paste - synthesize Cmd+C / Cmd+V
 //   * activate     - bring an application back to the front
@@ -747,6 +748,31 @@ static int commandApps(void) {
   return 0;
 }
 
+/**
+ * Bundle ids of the applications that have a window on screen right now.
+ *
+ * Only window-server metadata is read (owner PID), so this needs no Screen
+ * Recording or Accessibility grant. The caller uses it to decide whether the
+ * whole display is safe to photograph: an excluded app without a window cannot
+ * appear in the picture, while one that is on screen can.
+ */
+static int commandVisibleApps(void) {
+  NSArray *windows = CFBridgingRelease(CGWindowListCopyWindowInfo(
+      kCGWindowListOptionOnScreenOnly | kCGWindowListExcludeDesktopElements, kCGNullWindowID));
+  NSMutableSet<NSString *> *bundleIds = [NSMutableSet set];
+  for (NSDictionary *window in windows) {
+    NSNumber *owner = window[(id)kCGWindowOwnerPID];
+    if (![owner isKindOfClass:[NSNumber class]]) continue;
+    NSRunningApplication *app = [NSRunningApplication
+        runningApplicationWithProcessIdentifier:(pid_t)[owner intValue]];
+    NSString *bundleId = [app bundleIdentifier];
+    if (bundleId.length > 0) [bundleIds addObject:bundleId];
+  }
+  NSArray<NSString *> *sorted = [[bundleIds allObjects] sortedArrayUsingSelector:@selector(compare:)];
+  emit(@{@"ok" : @YES, @"visibleBundleIds" : sorted});
+  return 0;
+}
+
 static int commandPermissions(BOOL request) {
   BOOL accessibility = AXIsProcessTrusted();
   if (request && !accessibility) {
@@ -1338,6 +1364,7 @@ int main(int argc, const char *argv[]) {
     if (strcmp(command, "request-permissions") == 0) return commandPermissions(YES);
     if (strcmp(command, "cursor") == 0) return commandCursor();
     if (strcmp(command, "apps") == 0) return commandApps();
+    if (strcmp(command, "visible-apps") == 0) return commandVisibleApps();
     if (strcmp(command, "front") == 0) return commandFront(0, YES);
     // front-quick: which application is in front, without reading its window.
     // The window costs a cold Accessibility round trip and a full on-screen
