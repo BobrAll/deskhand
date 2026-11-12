@@ -218,6 +218,28 @@ describe('requestMicrophonePermission', () => {
 })
 
 describe('requestPermissions: what it actually asks for', () => {
+  it('requests screen recording without prompting for Accessibility', async () => {
+    const { requestPermissions } = await loadPermissions()
+
+    await requestPermissions('screenRecording')
+
+    expect(env.captured).toBe(1)
+    expect(env.calls).not.toContain('accessibility:prompt')
+    expect(env.calls).not.toContain('helper:request')
+    expect(env.asked).toBe(0)
+  })
+
+  it('requests Accessibility without touching the screen capturer', async () => {
+    const { requestPermissions } = await loadPermissions()
+
+    await requestPermissions('accessibility')
+
+    expect(env.calls).toContain('accessibility:prompt')
+    expect(env.calls).not.toContain('helper:request')
+    expect(env.captured).toBe(0)
+    expect(env.asked).toBe(0)
+  })
+
   it('prompts for Accessibility once, touches the capturer, then re-reads', async () => {
     env.accessibility = true
     const { requestPermissions } = await loadPermissions()

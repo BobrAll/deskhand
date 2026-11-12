@@ -104,7 +104,7 @@ const api: DeskhandApi = {
   },
   permissions: {
     status: () => ipcRenderer.invoke(CH.permissions.status),
-    request: () => ipcRenderer.invoke(CH.permissions.request),
+    request: (kind) => ipcRenderer.invoke(CH.permissions.request, kind),
     open: (kind) => ipcRenderer.send(CH.permissions.open, kind),
     requestMicrophone: () => ipcRenderer.invoke(CH.permissions.requestMicrophone)
   },

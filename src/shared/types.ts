@@ -165,6 +165,8 @@ export type AgentPhase =
  * "модель не видит экран" are different problems with different fixes.
  */
 export interface AgentAvailability {
+  /** The agent is blocked specifically by macOS Accessibility. */
+  needsAccessibility?: boolean
   /** The user turned the mode on. */
   enabled: boolean
   /** A native helper exists and Accessibility is granted. */
@@ -669,6 +671,8 @@ export interface ContextSnapshot {
   warnings: string[]
   collectedMs: number
 }
+
+export type SystemPermissionRequest = 'accessibility' | 'screenRecording'
 
 export interface PermissionState {
   accessibility: boolean

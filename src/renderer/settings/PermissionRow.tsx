@@ -1,12 +1,3 @@
-/**
- * One permission, as a row: what it is, whether it is granted, and the two ways
- * to get it.
- *
- * The state is a word, not a tick: "Разрешено" / "Не разрешено" survives a
- * colour-blind glance and a screenshot in a bug report, where a green check and
- * an amber dash are two blobs of similar shape.
- */
-
 import { Row } from './Row'
 
 export interface PermissionRowProps {
@@ -33,8 +24,12 @@ export function PermissionRow(props: PermissionRowProps) {
             Запросить
           </button>
         )}
-        <button className="ghost" onClick={props.onOpen}>
-          Системные настройки
+        <button
+          className="ghost"
+          aria-label={props.granted ? `Отозвать в macOS · ${props.title}` : `Системные настройки · ${props.title}`}
+          onClick={props.onOpen}
+        >
+          {props.granted ? 'Отозвать в macOS' : 'Системные настройки'}
         </button>
       </div>
     </Row>

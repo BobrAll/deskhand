@@ -171,13 +171,16 @@ describe('availability: three separate reasons, three separate fixes', () => {
     const { controller } = harness()
 
     expect(controller.availability().reason).toContain('npm run build:agent')
+    expect(controller.availability().needsAccessibility).toBeUndefined()
   })
 
   it('names the grant when Accessibility was never given', () => {
     state.trusted = false
     const { controller } = harness()
 
-    expect(controller.availability()).toMatchObject({ enabled: true, ready: false })
+    expect(controller.availability()).toMatchObject({
+      enabled: true, ready: false, needsAccessibility: true
+    })
     expect(controller.availability().reason).toContain('Универсальный доступ')
   })
 

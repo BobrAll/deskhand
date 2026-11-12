@@ -252,7 +252,12 @@ export function registerIpc(deps: IpcDeps): void {
 
   // ---- permissions -------------------------------------------------------
   ipcMain.handle(CH.permissions.status, () => readPermissions())
-  ipcMain.handle(CH.permissions.request, () => requestPermissions())
+  ipcMain.handle(CH.permissions.request, (_event, kind: unknown) => {
+    if (kind === undefined || kind === 'accessibility' || kind === 'screenRecording') {
+      return requestPermissions(kind)
+    }
+    return readPermissions()
+  })
   ipcMain.handle(CH.permissions.requestMicrophone, () => requestMicrophonePermission())
   ipcMain.on(
     CH.permissions.open,

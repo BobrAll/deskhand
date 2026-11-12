@@ -1,19 +1,4 @@
-/**
- * The «Агент» settings tab.
- *
- * This section is not a list of preferences, it is a permission form. Everything
- * on it answers one question the user is right to ask before turning it on:
- * "what exactly is it allowed to do to my machine, and how do I stop it?"
- *
- * Two cards, in that order: what it may do (the switch and the grant it needs),
- * then the limits that keep a misunderstood request from running all afternoon.
- * There is deliberately no list of per-action permissions here: the actions that
- * need one are asked about at the moment they happen, in the card, next to the
- * element they concern — a switch in a settings window is a worse place to
- * decide whether to send a message than the message itself.
- */
-
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useId, useState } from 'react'
 import type { AgentAvailability, AgentSettings } from '@shared/types'
 import { Group, Row, ToggleRow } from './Row'
 
@@ -32,7 +17,15 @@ interface AgentTabProps {
   onEnabledChange(enabled: boolean): Promise<AgentAvailability>
 }
 
+const AGENT_VIEWS = [
+  { id: 'screen', label: 'На экране' },
+  { id: 'limits', label: 'Границы задачи' },
+  { id: 'permissions', label: 'Разрешения' }
+] as const
+
 export function AgentTab({ agent, onChange, onEnabledChange }: AgentTabProps) {
+  const navId = useId()
+  const [view, setView] = useState<(typeof AGENT_VIEWS)[number]['id']>('screen')
   const [approvalStatus, setApprovalStatus] = useState('')
   const [availability, setAvailability] = useState<AgentAvailability | null>(null)
   const [steps, setSteps] = useState(String(agent.maxSteps))
@@ -86,10 +79,9 @@ export function AgentTab({ agent, onChange, onEnabledChange }: AgentTabProps) {
 
   return (
     <div className="pane">
-      <Group title="Управление">
+      <Group>
         <ToggleRow
-          title="Разрешить управлять мышью и клавиатурой"
-          hint="Сохраняется сразу. Пока выключено, ассистент отвечает словами и рисует, но ничего не нажимает."
+          title="Управлять мышью и клавиатурой"
           checked={agent.enabled}
           onChange={(enabled) => {
             // This one is written straight through instead of waiting for the
@@ -108,9 +100,9 @@ export function AgentTab({ agent, onChange, onEnabledChange }: AgentTabProps) {
           <span>
             {state === 'off' && 'Режим выключен — ассистент отвечает текстом и рисует.'}
             {state === 'ready' && 'Права выданы, режим включён.'}
-            {state === 'blocked' && (availability?.reason ?? 'Нужен доступ в «Универсальный доступ».')}
+            {state === 'blocked' && (availability?.reason ?? 'Готовность агента пока неизвестна.')}
           </span>
-          {state === 'blocked' && (
+          {state === 'blocked' && availability?.needsAccessibility && (
             <button
               onClick={() => window.deskhand.permissions.open('accessibility')}
             >
@@ -118,73 +110,93 @@ export function AgentTab({ agent, onChange, onEnabledChange }: AgentTabProps) {
             </button>
           )}
         </div>
+      </Group>
 
-        <Row
-          title="Постоянные разрешения"
-          hint={
-            approvalStatus ||
-            'Выбор «Разрешить всегда» запоминается для каждого действия отдельно.'
-          }
-        >
+      <nav className="segmented settings-subnav" aria-label="Настройки агента">
+        {AGENT_VIEWS.map(({ id, label }) => (
           <button
+            key={id}
             type="button"
-            onClick={() => {
-              void window.deskhand.agent.clearApprovals().then(
-                () => setApprovalStatus('Разрешено заново спрашивать обо всём.'),
-                () => setApprovalStatus('Не удалось сбросить разрешения.')
-              )
-            }}
+            className={view === id ? 'active' : ''}
+            aria-pressed={view === id}
+            aria-controls={`${navId}-${id}`}
+            onClick={() => setView(id)}
           >
-            Забыть
+            {label}
           </button>
-        </Row>
-      </Group>
+        ))}
+      </nav>
 
-      <Group
-        title="На экране"
-        footnote="Только показ: действия идут через те же API macOS, скорость не меняется."
-      >
-        <ToggleRow
-          title="Показывать действия"
-          hint="Нужное окно выходит вперёд, и по экрану ходит курсор агента. Выключи, если он не должен забирать экран."
-          checked={agent.showActions}
-          onChange={(showActions) => onChange({ showActions })}
-        />
-      </Group>
-
-      <Group
-        title="Границы"
-        footnote="Escape останавливает задачу в любой момент, независимо от этих настроек."
-      >
-        <Row
-          title="Лимит шагов задачи"
-          hint="Сколько действий агент может сделать за одну задачу."
-        >
-          <input
-            type="number"
-            min={1}
-            step={1}
-            value={steps}
-            aria-label="Лимит шагов задачи"
-            onChange={(event) => editSteps(event.target.value)}
-            onBlur={() => setSteps(String(agent.maxSteps))}
+      <div id={`${navId}-screen`} hidden={view !== 'screen'}>
+        <Group>
+          <ToggleRow
+            title="Показывать действия"
+            hint="Deskhand выводит нужное окно вперёд и показывает курсор агента."
+            checked={agent.showActions}
+            onChange={(showActions) => onChange({ showActions })}
           />
-        </Row>
+        </Group>
+      </div>
 
-        <ToggleRow
-          title="Останавливать, если я взял мышь"
-          hint="Потянулся за курсором — управление сразу вернулось к тебе."
-          checked={agent.abortOnMouseMove}
-          onChange={(abortOnMouseMove) => onChange({ abortOnMouseMove })}
-        />
+      <div id={`${navId}-limits`} hidden={view !== 'limits'}>
+        <Group>
+          <ToggleRow
+            title="Останавливать при движении мыши"
+            hint="Двинь мышь, чтобы вернуть управление."
+            checked={agent.abortOnMouseMove}
+            onChange={(abortOnMouseMove) => onChange({ abortOnMouseMove })}
+          />
 
-        <ToggleRow
-          title="Проверять результат по экрану"
-          hint="После действия агент проверяет, что на экране действительно изменилось."
-          checked={agent.verifyResult}
-          onChange={(verifyResult) => onChange({ verifyResult })}
-        />
-      </Group>
+          <ToggleRow
+            title="Проверять результат по экрану"
+            hint="После действия агент проверяет, что на экране действительно изменилось."
+            checked={agent.verifyResult}
+            onChange={(verifyResult) => onChange({ verifyResult })}
+          />
+
+          <Row
+            title="Лимит шагов задачи"
+            hint="Сколько действий агент может сделать за одну задачу."
+          >
+            <input
+              type="number"
+              min={1}
+              step={1}
+              value={steps}
+              aria-label="Лимит шагов задачи"
+              onChange={(event) => editSteps(event.target.value)}
+              onBlur={() => setSteps(String(agent.maxSteps))}
+            />
+          </Row>
+        </Group>
+      </div>
+
+      <div id={`${navId}-permissions`} hidden={view !== 'permissions'}>
+        <Group>
+          <Row
+            stacked
+            title="Запомненные разрешения"
+            hint="Сбрось решения «Разрешить всегда», чтобы агент снова спрашивал перед этими действиями."
+          >
+            <div className="row-actions">
+              <button
+                type="button"
+                onClick={() => {
+                  void window.deskhand.agent.clearApprovals().then(
+                    () => setApprovalStatus('Разрешения сброшены.'),
+                    () => setApprovalStatus('Не удалось сбросить разрешения.')
+                  )
+                }}
+              >
+                Сбросить
+              </button>
+              <span className="row-hint" role="status">{approvalStatus}</span>
+            </div>
+          </Row>
+        </Group>
+      </div>
+
+      <p className="group-foot"><kbd>Esc</kbd> останавливает задачу в любой момент.</p>
     </div>
   )
 }

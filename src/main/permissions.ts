@@ -7,7 +7,7 @@
  */
 
 import { desktopCapturer, shell, systemPreferences } from 'electron'
-import type { PermissionState } from '@shared/types'
+import type { PermissionState, SystemPermissionRequest } from '@shared/types'
 import { helperPermissions } from './native/helper'
 
 const ACCESSIBILITY_PANE =
@@ -93,30 +93,25 @@ export async function requestMicrophonePermission(): Promise<boolean> {
   }
 }
 
-/**
- * Asks macOS for both permissions. The accessibility call shows the system
- * prompt once; screen recording has no direct request API in Electron, so we
- * touch the capturer which makes the system ask.
- */
-export async function requestPermissions(): Promise<PermissionState> {
-  try {
-    // Passing `true` makes macOS show the "grant accessibility" prompt once.
-    systemPreferences.isTrustedAccessibilityClient(true)
-  } catch {
-    /* not available on this macOS version */
+/** Requests one grant from Settings, or both grants during onboarding. */
+export async function requestPermissions(kind?: SystemPermissionRequest): Promise<PermissionState> {
+  if (kind !== 'screenRecording') {
+    safe(() => systemPreferences.isTrustedAccessibilityClient(true), false)
   }
 
-  try {
-    const status = systemPreferences.getMediaAccessStatus('screen')
-    if (status !== 'granted') {
-      // Triggers the Screen Recording prompt on macOS 10.15+.
-      await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: 1, height: 1 } })
+  if (kind !== 'accessibility') {
+    try {
+      if (systemPreferences.getMediaAccessStatus('screen') !== 'granted') {
+        // Touching the capturer triggers the Screen Recording prompt.
+        await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: 1, height: 1 } })
+      }
+    } catch {
+      /* the user may simply have no screen */
     }
-  } catch {
-    /* the user may simply have no screen */
   }
 
-  await helperPermissions(true).catch(() => null)
+  // The native helper can request both permissions, so use it only for onboarding.
+  if (kind === undefined) await helperPermissions(true).catch(() => null)
   return readPermissions()
 }
 

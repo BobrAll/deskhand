@@ -80,7 +80,7 @@ export function ProviderSection({
 
   return (
     <div className="pane">
-      <nav className="segmented model-subnav" aria-label="Настройки модели">
+      <nav className="segmented settings-subnav" aria-label="Настройки модели">
         {MODEL_VIEWS.map(({ id, label }) => (
           <button
             key={id}

@@ -16,6 +16,7 @@ import type {
   OverlayState,
   PasteResult,
   PermissionState,
+  SystemPermissionRequest,
   DrawingPayload,
   ProviderId,
   SendRequest,
@@ -168,7 +169,7 @@ export interface DeskhandApi {
   }
   permissions: {
     status(): Promise<PermissionState>
-    request(): Promise<PermissionState>
+    request(kind?: SystemPermissionRequest): Promise<PermissionState>
     open(kind: 'accessibility' | 'screenRecording' | 'microphone'): void
     requestMicrophone(): Promise<boolean>
   }

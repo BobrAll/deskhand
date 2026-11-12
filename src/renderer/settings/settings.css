@@ -960,7 +960,7 @@ a {
   background: var(--success);
 }
 
-.model-subnav {
+.settings-subnav {
   align-self: flex-start;
   max-width: 100%;
   flex-wrap: wrap;

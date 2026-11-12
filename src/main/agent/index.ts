@@ -320,6 +320,7 @@ export function createAgentController(host: AgentHost) {
       return {
         enabled: true,
         ready: false,
+        needsAccessibility: true,
         reason: 'Нужен доступ «Универсальный доступ», иначе macOS не даст нажимать за тебя.'
       }
     }
