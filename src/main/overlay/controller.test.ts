@@ -42,6 +42,10 @@ const state = vi.hoisted(() => ({
   webLookup: false,
   agentReady: false,
   onAgentRun: () => {},
+  /** The mocked controller's `stop`, recorded so an abort can be checked. */
+  agentStop: vi.fn<(message?: string) => void>(),
+  /** Holds the mocked run in flight until the test releases it. */
+  agentRunGate: null as Promise<void> | null,
   agentResult: { answer: '', actions: [] } as AgentRunResult,
   agentCalls: [] as { prompt: string }[],
   /** Whether the built turn says an image is going out. */
@@ -94,9 +98,10 @@ vi.mock('../agent', () => ({
     run: async (input: { prompt: string }) => {
       state.agentCalls.push(input)
       state.onAgentRun()
+      if (state.agentRunGate) await state.agentRunGate
       return state.agentResult
     },
-    stop: vi.fn(),
+    stop: (message?: string) => state.agentStop(message),
     answer: vi.fn(),
     dispose: vi.fn(),
     last: () => ({ phase: 'idle', step: 0, total: 0, label: '', notice: state.agentNotice })
@@ -143,6 +148,8 @@ beforeEach(() => {
   state.webLookup = false
   state.agentReady = false
   state.onAgentRun = () => {}
+  state.agentStop.mockClear()
+  state.agentRunGate = null
   state.agentResult = { answer: '', actions: [] }
   state.agentCalls = []
   state.useImage = false
@@ -174,6 +181,13 @@ async function harness() {
     includeSelection: false, includeScreenshot: false
   }
   return { controller, host, request, send, visible: () => visible }
+}
+
+/** A promise the test resolves when the mocked work may finish. */
+function gate(): { wait: Promise<void>; release: () => void } {
+  let release!: () => void
+  const wait = new Promise<void>((resolve) => { release = resolve })
+  return { wait, release }
 }
 
 describe('routing: the agent or the writer', () => {
@@ -327,6 +341,89 @@ describe('the agent turn on the card', () => {
     expect(h.send).toHaveBeenCalledWith('overlay:stream', expect.objectContaining({
       type: 'done', text: 'Остановлено.'
     }))
+  })
+})
+
+describe('stopping the agent with the turn', () => {
+  beforeEach(() => {
+    state.agentReady = true
+  })
+
+  it('stops the run when the card cancels the turn', async () => {
+    const h = await harness()
+    const run = gate()
+    state.agentRunGate = run.wait
+    const sending = h.controller.send({ ...h.request, voice: false, prompt: 'Нажми «Экспорт»' })
+    await vi.waitFor(() => expect(state.agentCalls).toHaveLength(1))
+    // Starting a turn stops the plan of the previous one; this stop belongs to
+    // the turn under test.
+    state.agentStop.mockClear()
+
+    h.controller.cancel('r1')
+
+    // The run does not learn about the abort on its own: without the stop it
+    // keeps clicking after the card said the turn was over.
+    expect(state.agentStop).toHaveBeenCalledOnce()
+    run.release()
+    await sending
+  })
+
+  it('stops the run when a new voice press supersedes the turn', async () => {
+    const h = await harness()
+    const run = gate()
+    state.agentRunGate = run.wait
+    const sending = h.controller.send({ ...h.request, prompt: 'Нажми «Экспорт»' })
+    await vi.waitFor(() => expect(state.agentCalls).toHaveLength(1))
+    state.agentStop.mockClear()
+
+    h.controller.setVoice(true)
+
+    expect(state.agentStop).toHaveBeenCalledOnce()
+    run.release()
+    await sending
+  })
+
+  it('stops the run when the turn deadline expires', async () => {
+    const h = await harness()
+    const run = gate()
+    state.agentRunGate = run.wait
+    vi.useFakeTimers()
+    try {
+      const sending = h.controller.send({ ...h.request, voice: false, prompt: 'Нажми «Экспорт»' })
+      await vi.advanceTimersByTimeAsync(0)
+      state.agentStop.mockClear()
+
+      await vi.advanceTimersByTimeAsync(120_000)
+
+      expect(state.agentStop).toHaveBeenCalledOnce()
+      run.release()
+      await sending
+      expect(h.send).toHaveBeenCalledWith('overlay:stream', expect.objectContaining({
+        type: 'error', code: 'timeout', message: 'Время выполнения истекло. Результат не подтверждён.'
+      }))
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('leaves the agent alone when a writer turn is cancelled', async () => {
+    const h = await harness()
+    const round = gate()
+    vi.mocked(consumeTurnStream).mockImplementationOnce(async () => {
+      await round.wait
+      return { text: 'Ответ', webLookup: false }
+    })
+    const sending = h.controller.send({ ...h.request, voice: false, prompt: 'Что это за кнопка?' })
+    await vi.waitFor(() => expect(consumeTurnStream).toHaveBeenCalled())
+    state.agentStop.mockClear()
+
+    h.controller.cancel('r1')
+
+    // The writer's controller has no agent run of its own; stopping the agent
+    // here would end a run that belongs to somebody else.
+    expect(state.agentStop).not.toHaveBeenCalled()
+    round.release()
+    await sending
   })
 })
 

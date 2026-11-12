@@ -1153,6 +1153,24 @@ export function createOverlayController(host: OverlayHost) {
   }
 
   /**
+   * Stops the agent when the turn that started it is aborted.
+   *
+   * The card's Stop button, the turn deadline, a new voice press and a closed
+   * card all abort the turn's controller, while the run itself only knows about
+   * Escape and the mouse. Without this the agent keeps clicking after the card
+   * said the turn was over. The listener lives exactly as long as the run it
+   * guards, so aborting a writer turn cannot reach a run that is not its own.
+   *
+   * Returns the cleanup; a listener left on an old signal would stop a later
+   * turn's run.
+   */
+  function stopAgentOnAbort(abort: AbortController): () => void {
+    const stop = (): void => agent.stop()
+    abort.signal.addEventListener('abort', stop, { once: true })
+    return () => abort.signal.removeEventListener('abort', stop)
+  }
+
+  /**
    * The agent's half of a turn: hand the request to the plan runner and translate
    * what it did into the text the card shows and the verdict the trace records.
    *
@@ -1162,6 +1180,7 @@ export function createOverlayController(host: OverlayHost) {
   async function runAgentTurn(turn: TurnContext): Promise<TurnResult | null> {
     const { request, session: turnSession, settings, apiKey, history, previousCommand, useHistory, abort } = turn
     trace('tool.route', { backend: 'agent', reason: 'action-request' })
+    if (abort.signal.aborted) return null
     if (!host.window()?.isVisible()) host.showInactive(INITIAL_HEIGHT)
     // The card shows the screen the agent is about to work on. The agent
     // takes its own captures — this one is for the person watching, and it
@@ -1178,13 +1197,19 @@ export function createOverlayController(host: OverlayHost) {
       agentHistory.push({ question: previousCommand, answer: '' })
     }
 
-    const run = await timed('agent.run', () => agent.run({
-      prompt: request.prompt,
-      appName: turnSession.target?.name ?? null,
-      windowTitle: turnSession.target?.windowTitle ?? null,
-      history: agentHistory,
-      provider: agentProvider(settings, apiKey)
-    }))
+    const stopOnAbort = stopAgentOnAbort(abort)
+    let run: AgentRunResult
+    try {
+      run = await timed('agent.run', () => agent.run({
+        prompt: request.prompt,
+        appName: turnSession.target?.name ?? null,
+        windowTitle: turnSession.target?.windowTitle ?? null,
+        history: agentHistory,
+        provider: agentProvider(settings, apiKey)
+      }))
+    } finally {
+      stopOnAbort()
+    }
     if (abort.signal.aborted || session !== turnSession) return null
 
     // What the loop had to work around — a refused screenshot is the case that
