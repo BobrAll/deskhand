@@ -4,7 +4,7 @@
   "description": "Deskhand — контекстный AI-ассистент для macOS",
   "main": "./out/main/index.js",
   "author": "Alexander Bobrus",
-  "license": "MIT",
+  "license": "PolyForm-Noncommercial-1.0.0",
   "private": true,
   "scripts": {
     "dev": "node scripts/build-window-blur.mjs && node scripts/prepare-speech.mjs && electron-vite dev",

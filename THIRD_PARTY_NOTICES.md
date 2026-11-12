@@ -1,6 +1,6 @@
 # Third-party notices
 
-Deskhand itself is released under the [MIT License](LICENSE).
+Deskhand itself is released under the [PolyForm Noncommercial License 1.0.0](LICENSE).
 
 The app bundles and uses the components below. Each one stays under its own
 license, and nothing in the Deskhand license overrides those terms.
