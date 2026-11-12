@@ -46,7 +46,6 @@ dist_electron/
 # ---------- Compiled native binaries ----------
 # Собираются из исходников: src/main/native/helper.m, scripts/build-helper.mjs
 resources/deskhand-helper
-resources/deskhand-window-blur.node
 resources/whisper-cli
 resources/transcribe-cli
 resources/transcribe-licenses/

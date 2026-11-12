@@ -44,22 +44,26 @@ body,
   animation: appear 100ms ease-out;
 }
 
-/* Leave room for the silhouette inside Electron's clipped viewport. */
+/* The panel is the window: its rounded corners are the window's own, so the
+   native vibrancy blur follows the same silhouette instead of showing a square
+   behind it. `-1px` reaches past the card's transparent border to the window
+   edge. The radius matches the mask macOS puts on a rounded window (9 pt), which
+   keeps the blur from peeking out at the corners. */
 .card::before {
   content: '';
   position: absolute;
-  inset: 0 3px;
+  inset: -1px;
   z-index: -1;
   pointer-events: none;
   border: 1px solid var(--panel-edge);
-  border-radius: 10px;
+  border-radius: 9px;
   background-color: var(--panel);
   background-image: linear-gradient(
     to bottom,
     light-dark(rgb(255 255 255 / 0.16), rgb(255 255 255 / 0.08)),
     transparent 26px
   );
-  box-shadow: 0 0 2px rgb(0 0 0 / 0.16);
+  box-shadow: inset 0 0 2px rgb(0 0 0 / 0.16);
   transition: background-color 180ms ease-out, border-color 180ms ease-out;
 }
 
