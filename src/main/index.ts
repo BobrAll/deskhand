@@ -9,6 +9,7 @@
 import { app, Menu, nativeTheme } from 'electron'
 import { createOverlayController } from './overlay'
 import { createVoiceController } from './voice'
+import { createRecordingMode } from './recording'
 import { registerHotkey, unregisterHotkey } from './hotkey'
 import { registerIpc } from './ipc'
 import { createTray, destroyTray, refreshTray } from './tray'
@@ -16,7 +17,13 @@ import { destroyDrawing } from './drawing'
 import { destroyAgentCursor } from './agent/cursor'
 import { destroyAgentPresentation } from './agent/presentation'
 import { flushTrace } from './agent/trace'
-import { openOnboardingWindow, openSettingsWindow, overlayHost, showActiveWindow } from './windows'
+import {
+  openOnboardingWindow,
+  openSettingsWindow,
+  overlayHost,
+  setSettingsWindowClosedHandler,
+  showActiveWindow
+} from './windows'
 import { getSettings, patchSettings } from './settings/store'
 import { readPermissions } from './permissions'
 import { encryptionAvailable } from './settings/secrets'
@@ -87,18 +94,20 @@ function applyHotkey(accelerator: string): boolean {
  * sees it: the old binding is still registered globally, and the voice tap
  * swallows its own key, so re-assigning a shortcut to itself is impossible and
  * re-assigning it to another one fires the old action mid-recording.
+ *
+ * Restoring reads the settings store, so a combination the system refused is not
+ * re-armed by accident.
  */
-function setRecording(active: boolean): void {
-  if (active) {
+const setRecording = createRecordingMode({
+  standDown: () => {
     unregisterHotkey()
     voice.suspend()
-    return
+  },
+  restore: () => {
+    applyHotkey(getSettings().hotkey)
+    voice.applySettings()
   }
-  // Both are re-read from the settings store, so a combination the system
-  // refused is not re-armed by accident.
-  applyHotkey(getSettings().hotkey)
-  voice.applySettings()
-}
+})
 
 function quit(): void {
   app.quit()
@@ -174,6 +183,11 @@ function reportStartupPermissions(): void {
 
 function bootstrap(): void {
   buildApplicationMenu()
+
+  // The renderer cannot end a recording when its window is destroyed, so the
+  // window's own teardown does it. An explicit `false` that already arrived wins:
+  // the switch ignores the repeat instead of registering the hotkey twice.
+  setSettingsWindowClosedHandler(() => setRecording(false))
 
   // IPC registration must happen before anything that can throw: without it the
   // settings window opens but every `invoke` rejects, so it stays empty forever.

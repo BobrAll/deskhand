@@ -28,6 +28,19 @@ let onboardingWindow: BrowserWindow | null = null
 let settingsHeld = false
 
 /**
+ * Told when the settings window is gone.
+ *
+ * The renderer ends a hotkey recording from its unmount cleanup, which never runs
+ * when the window is destroyed by the red button, ⌘W or a crash. The owner of
+ * the global listeners registers here so those listeners are not left off.
+ */
+let settingsClosedHandler: (() => void) | null = null
+
+export function setSettingsWindowClosedHandler(handler: () => void): void {
+  settingsClosedHandler = handler
+}
+
+/**
  * Creates one of the standalone windows and shows it on its first paint.
  *
  * Only the fields a caller passes are set, so the settings window keeps its
@@ -97,6 +110,7 @@ export function openSettingsWindow(): BrowserWindow {
   win.on('closed', () => {
     settingsWindow = null
     settingsHeld = false
+    settingsClosedHandler?.()
   })
   denyExternalLinks(win)
   return win

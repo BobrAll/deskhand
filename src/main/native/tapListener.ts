@@ -12,6 +12,11 @@
  * `args()`, `describeError()`, what to do when the child dies before `ready`,
  * and whether `stop()` should forget the combination it was started with.
  *
+ * Exit and error events belong to the child that emitted them, not to the
+ * listener: `start()` retires a process and spawns its replacement at once, and
+ * the old one can report its death a moment later. Only the current child's exit
+ * or error may change the listener's state or schedule a restart.
+ *
  * The known backoff defect (`failures` is reset by every `ready`, so the cap is
  * unreachable in practice) lives here; the characterization tests in
  * `listen.test.ts` pin it.
@@ -130,7 +135,11 @@ export abstract class TapListener<Event extends string> {
 
     child.on('exit', (code) => {
       reader.close()
-      if (this.child === child) this.child = null
+      // A child that was stopped or replaced is no longer this listener's
+      // process; its delayed exit must not clear the replacement and schedule a
+      // restart beside it.
+      if (this.child !== child) return
+      this.child = null
       if (this.stopped) return
       // A start that never reported `ready` failed for a reason that will not fix
       // itself in a second; retrying that in a loop would only fill the log.
@@ -143,7 +152,8 @@ export abstract class TapListener<Event extends string> {
     })
 
     child.on('error', (error) => {
-      if (this.child === child) this.child = null
+      if (this.child !== child) return
+      this.child = null
       if (this.stopped) return
       this.lastError = error.message
       this.onError(error.message)

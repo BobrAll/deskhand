@@ -418,6 +418,39 @@ describe('VoiceKeyListener: restart and stop', () => {
     expect(state.timers).toHaveLength(0)
   })
 
+  it('ignores the delayed exit of a child that start() already replaced', () => {
+    const { tap } = started()
+    const replaced = state.children[0]
+    replaced.stdout.emit('{"event":"ready"}')
+
+    tap.start('Alt+Shift+Space')
+    expect(replaced.killed).toBe('SIGTERM')
+
+    // The old helper was signalled but has not exited yet. When it finally does,
+    // its exit belongs to a process this listener no longer owns.
+    replaced.exit(0)
+
+    expect(state.timers).toHaveLength(0)
+    expect(state.children).toHaveLength(2)
+    expect(state.children[1].killed).toBeNull()
+    expect(tap.listening).toBe(true)
+    expect(tap.accelerator).toBe('Alt+Shift+Space')
+  })
+
+  it('ignores a delayed error from a child that start() already replaced', () => {
+    const { tap, errors } = started()
+    const replaced = state.children[0]
+    replaced.stdout.emit('{"event":"ready"}')
+
+    tap.start('Alt+Shift+Space')
+    replaced.fail(new Error('ENOENT'))
+
+    expect(errors).toEqual([])
+    expect(tap.lastError).toBeNull()
+    expect(state.timers).toHaveLength(0)
+    expect(tap.listening).toBe(true)
+  })
+
   it('stop() kills the process, clears the accelerator and any pending restart', () => {
     const { tap } = started()
     state.children[0].stdout.emit('{"event":"ready"}')

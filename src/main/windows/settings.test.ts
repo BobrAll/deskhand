@@ -105,6 +105,45 @@ describe('settings window lifecycle', () => {
     expect(state.windows[1].destroyed).toBe(true)
   })
 
+  it('tells the listener once when the settings window is destroyed', async () => {
+    const api = await load()
+    const closed = vi.fn()
+    api.setSettingsWindowClosedHandler(closed)
+
+    api.openSettingsWindow()
+    api.closeSettingsWindow()
+    api.closeSettingsWindow()
+
+    expect(closed).toHaveBeenCalledOnce()
+  })
+
+  it('does not report the onboarding window as the settings window', async () => {
+    const api = await load()
+    const closed = vi.fn()
+    api.setSettingsWindowClosedHandler(closed)
+
+    api.openOnboardingWindow()
+    api.closeOnboardingWindow()
+
+    expect(closed).not.toHaveBeenCalled()
+  })
+
+  it('waits for the actual destruction before reporting the close', async () => {
+    const api = await load()
+    const closed = vi.fn()
+    api.setSettingsWindowClosedHandler(closed)
+    api.openSettingsWindow()
+    api.setSettingsHeld(true)
+
+    api.closeSettingsWindow()
+    vi.advanceTimersByTime(80)
+    expect(closed).not.toHaveBeenCalled()
+
+    api.setSettingsHeld(false)
+    vi.advanceTimersByTime(80)
+    expect(closed).toHaveBeenCalledOnce()
+  })
+
   it('keeps onboarding separate and returns settings first for activation', async () => {
     const api = await load()
     const onboarding = api.openOnboardingWindow()
