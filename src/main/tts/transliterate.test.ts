@@ -45,6 +45,13 @@ describe('transliterate', () => {
     expect(unknownWords('JWT JWTs')).toEqual([])
   })
 
+  it('keeps the common voweled abbreviations as letter names', () => {
+    expect(transliterate('ASAP QA CEO KPI SLA UAT OOO'))
+      .toBe('эй эс эй пи кью эй си и оу кей пи ай эс эл эй ю эй ти оу оу оу')
+    expect(transliterate('VUE')).toBe('вью')
+    expect(unknownWords('ASAP QA CEO KPI SLA UAT OOO VUE')).toEqual([])
+  })
+
   it('recognises lowercase abbreviations that the letter rules would mangle', () => {
     expect(transliterate('api url id http html json'))
       .toBe('эй пи ай ю ар эл ай ди эйч ти ти пи эйч ти эм эл дж+ейсон')

@@ -86,7 +86,9 @@ describe('the warm Silero worker', () => {
 
   it('turns a stdin error into a failed job instead of an unhandled stream error', async () => {
     const child = new FakeChild()
-    child.onWrite = () => { child.stdin.emit('error', new Error('EPIPE')) }
+    // A real EPIPE arrives asynchronously; emitting it inside `write` would be
+    // caught by the write's own try/catch even without the stream listener.
+    child.onWrite = () => { queueMicrotask(() => child.stdin.emit('error', new Error('EPIPE'))) }
     const worker = createWorker(() => asChild(child))
     const fallback = vi.fn(async () => undefined)
 
@@ -111,6 +113,32 @@ describe('the warm Silero worker', () => {
     expect(child.kill).toHaveBeenCalledWith('SIGKILL')
     expect(fallback).toHaveBeenCalledTimes(1)
     expect(onTimeout).toHaveBeenCalledOnce()
+    worker.stop()
+  })
+
+  it('serializes two phrases without waiting for the first render', async () => {
+    let firstId = 0
+    const child = new FakeChild()
+    child.onWrite = (request, target) => {
+      if (request.text === 'Первый.') {
+        firstId = request.id
+        return
+      }
+      target.reply({ id: request.id, ok: true })
+    }
+    const worker = createWorker(() => asChild(child))
+
+    const first = worker.render('Первый.', '/tmp/one.wav', vi.fn(async () => undefined))
+    const second = worker.render('Второй.', '/tmp/two.wav', vi.fn(async () => undefined))
+
+    await vi.waitFor(() => expect(child.requests).toHaveLength(1))
+    expect(child.requests[0].text).toBe('Первый.')
+
+    child.reply({ id: firstId, ok: true })
+    await first
+    await second
+
+    expect(child.requests.map((request) => request.text)).toEqual(['Первый.', 'Второй.'])
     worker.stop()
   })
 

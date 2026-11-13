@@ -221,6 +221,8 @@ let installation: Promise<string | null> | null = null
  */
 export function installSilero(onProgress: (progress: TtsSetupProgress) => void): Promise<string | null> {
   if (!installation) {
+    // A reinstall is not a quit: synthesis must be allowed again afterwards.
+    shuttingDown = false
     // The venv is about to be replaced under the running workers.
     stopSileroWorker()
     installation = runInstall(onProgress).finally(() => {
@@ -313,6 +315,8 @@ const oneShotProcesses = new Set<ChildProcess>()
 /** While this is in the future, that worker key goes straight to the one-shot. */
 let workerUnavailableUntil = 0
 let workerUnavailableFor = ''
+/** Set on quit so a fallback already in flight cannot spawn a new child. */
+let shuttingDown = false
 
 /**
  * Kills every Python child this module owns.
@@ -327,6 +331,18 @@ export function stopSileroWorker(): void {
   oneShotProcesses.clear()
   workerUnavailableUntil = 0
   workerUnavailableFor = ''
+}
+
+/**
+ * Stops synthesis for good while the app is quitting.
+ *
+ * `stopSileroWorker` is also used by reinstall, where a later synthesis is
+ * expected. This variant additionally blocks a fallback that is about to spawn
+ * its own `batch_tts.py` after the sweep has already run.
+ */
+export function shutdownSilero(): void {
+  shuttingDown = true
+  stopSileroWorker()
 }
 
 function sileroEnvironment(): NodeJS.ProcessEnv {
@@ -374,6 +390,7 @@ function spawnCaptured(
   env: NodeJS.ProcessEnv,
   timeoutMs: number
 ): Promise<void> {
+  if (shuttingDown) return Promise.reject(new Error('Синтез остановлен.'))
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, { env, stdio: ['ignore', 'ignore', 'pipe'] })
     oneShotProcesses.add(child)
@@ -432,6 +449,7 @@ async function renderThroughWorker(
   speaker: string,
   directory: string
 ): Promise<void> {
+  if (shuttingDown) throw new Error('Синтез остановлен.')
   let script: string
   try {
     script = await ensureWorkerScript()
@@ -475,6 +493,7 @@ export async function synthesizeSilero(
   speaker: string,
   hints?: Readonly<Record<string, string>>
 ): Promise<TtsResult> {
+  if (shuttingDown) return { ok: false, message: 'Синтез остановлен.' }
   if (!sileroRuntimeReady()) return { ok: false, message: 'Silero не установлен.' }
   if (!sileroModelsReady()) return { ok: false, message: 'Нет модели Silero V5.6 RU.' }
 
