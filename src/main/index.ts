@@ -52,9 +52,10 @@ const voice = createVoiceController({
   prewarm: () => overlayHost.prewarm(),
   open: () => overlay.open(),
   isOpen: () => overlay.isOpen(),
+  beginDictation: () => overlay.beginDictation(),
   showIndicator: () => overlay.showVoiceIndicator(),
   deliver: (text, options) => overlay.deliver(text, options),
-  hide: () => overlay.close(),
+  endDictation: () => overlay.endDictation(),
   emit: (channel, payload) => overlay.emit(channel, payload),
   // The indicator is the card itself now (see `App.tsx`): the field is replaced
   // by the bars while a turn runs, so nothing is drawn at the cursor any more.

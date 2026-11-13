@@ -27,7 +27,8 @@ import { captureScreenshot } from '../context/screenshot'
 import type { CaptureTarget } from '../context/screenshot'
 import { getProvider } from '../llm'
 import { searchWeb } from '../llm/webSearch'
-import { helperVisibleBundleIds } from '../native/helper'
+import { helperActivate, helperFrontApplication, helperVisibleBundleIds } from '../native/helper'
+import type { RawFrontApp } from '../native/helper'
 import { buildTurnRequest } from './request'
 import { applyHistorySettings } from './history'
 import { delay } from '../util'
@@ -57,7 +58,9 @@ const state = vi.hoisted(() => ({
   imageRefusedOnce: false,
   streams: 0,
   /** What the agent reports as a warning it worked around. */
-  agentNotice: undefined as string | undefined
+  agentNotice: undefined as string | undefined,
+  /** Holds context collection so a test can inspect an open that is in flight. */
+  collectGate: null as Promise<void> | null
 }))
 
 vi.mock('electron', () => ({ app: {}, BrowserWindow: {}, systemPreferences: { isTrustedAccessibilityClient: () => true } }))
@@ -112,16 +115,19 @@ vi.mock('../agent', () => ({
   })
 }))
 vi.mock('../context/collect', () => ({
-  collectContext: async () => ({
-    snapshot: {
-      activeApp: state.activeApp,
-      selection: null,
-      screenshot: null,
-      warnings: [],
-      excluded: false
-    },
-    flags: { includeSelection: false, includeScreenshot: false }
-  })
+  collectContext: async () => {
+    if (state.collectGate) await state.collectGate
+    return {
+      snapshot: {
+        activeApp: state.activeApp,
+        selection: null,
+        screenshot: null,
+        warnings: [],
+        excluded: false
+      },
+      flags: { includeSelection: false, includeScreenshot: false }
+    }
+  }
 }))
 vi.mock('../llm', () => ({ resolveChatModel: () => 'gpt-4o', getProvider: vi.fn() }))
 vi.mock('../llm/webSearch', () => ({ searchWeb: vi.fn() }))
@@ -167,11 +173,12 @@ beforeEach(() => {
   state.imageRefusedOnce = false
   state.streams = 0
   state.agentNotice = undefined
+  state.collectGate = null
   applyHistorySettings(false, [])
   vi.mocked(helperVisibleBundleIds).mockReset().mockResolvedValue(null)
 })
 
-async function harness() {
+async function harness(openCard = true) {
   const { createOverlayController } = await import('./index')
   let visible = false
   const send = vi.fn()
@@ -185,7 +192,7 @@ async function harness() {
     resize: vi.fn(), setDrawing: vi.fn(), setVoice: vi.fn(), setPassthrough: vi.fn()
   }
   const controller = createOverlayController(host)
-  await controller.open()
+  if (openCard) await controller.open()
   vi.mocked(host.showInactive).mockClear()
   vi.mocked(host.show).mockClear()
   const request: SendRequest = {
@@ -736,6 +743,151 @@ describe('voice result visibility', () => {
     await h.controller.send({ ...h.request, voice: false })
     expect(h.visible()).toBe(true)
     expect(h.host.hide).not.toHaveBeenCalled()
+  })
+})
+
+describe('dictation without the card', () => {
+  const textEdit: ActiveAppInfo = {
+    bundleId: 'com.apple.TextEdit',
+    name: 'TextEdit',
+    pid: 900,
+    windowTitle: 'Заметка',
+    windowId: 5,
+    bounds: null
+  }
+
+  function front(bundleId: string, pid: number): RawFrontApp {
+    return {
+      bundleId,
+      name: bundleId,
+      pid,
+      windowId: null,
+      windowTitle: null,
+      bounds: null,
+      accessibility: true
+    }
+  }
+
+  beforeEach(() => {
+    vi.mocked(helperFrontApplication).mockReset()
+    vi.mocked(helperActivate).mockReset().mockResolvedValue(true)
+  })
+
+  it('remembers the front app without opening or focusing the card', async () => {
+    vi.mocked(helperFrontApplication).mockResolvedValue(front('com.apple.TextEdit', 900))
+    const h = await harness(false)
+
+    await h.controller.beginDictation()
+
+    expect(h.controller.target()).toEqual({
+      bundleId: 'com.apple.TextEdit',
+      name: 'com.apple.TextEdit',
+      pid: 900,
+      windowTitle: null,
+      windowId: null,
+      bounds: null
+    })
+    expect(h.host.show).not.toHaveBeenCalled()
+    expect(h.host.showInactive).not.toHaveBeenCalled()
+    expect(h.visible()).toBe(false)
+  })
+
+  it('uses the app behind a frontmost card', async () => {
+    state.activeApp = textEdit
+    const h = await harness()
+    vi.mocked(helperFrontApplication).mockResolvedValue(front('com.bobr.deskhand', process.pid))
+
+    await h.controller.beginDictation()
+
+    expect(h.controller.target()).toEqual(textEdit)
+  })
+
+  it('reads the app in front even when a card is open behind it', async () => {
+    state.activeApp = textEdit
+    const h = await harness()
+    vi.mocked(helperFrontApplication).mockResolvedValue(front('com.apple.Safari', 12))
+
+    await h.controller.beginDictation()
+
+    expect(h.controller.target()).toMatchObject({ bundleId: 'com.apple.Safari', pid: 12 })
+  })
+
+  it('hides only the bars when the hold never opened a card', async () => {
+    vi.mocked(helperFrontApplication).mockResolvedValue(front('com.apple.TextEdit', 900))
+    const h = await harness(false)
+    await h.controller.beginDictation()
+    h.host.showInactive(31)
+
+    h.controller.endDictation()
+
+    expect(h.host.hide).toHaveBeenCalled()
+    expect(h.controller.target()).toBeNull()
+    expect(helperActivate).not.toHaveBeenCalled()
+  })
+
+  it('closes a card that owned the keyboard and gives focus back to its app', async () => {
+    state.activeApp = textEdit
+    const h = await harness()
+    vi.mocked(helperFrontApplication).mockResolvedValue(front('com.bobr.deskhand', process.pid))
+    await h.controller.beginDictation()
+
+    h.controller.endDictation()
+
+    expect(h.visible()).toBe(false)
+    await vi.waitFor(() => expect(helperActivate).toHaveBeenCalledWith({
+      bundleId: 'com.apple.TextEdit',
+      pid: 900
+    }))
+  })
+
+  it('does not let a card that is still opening take the keyboard', async () => {
+    let release = (): void => undefined
+    state.collectGate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    vi.mocked(helperFrontApplication).mockResolvedValue(front('com.apple.TextEdit', 900))
+    const h = await harness(false)
+    const opening = h.controller.open()
+    await vi.waitFor(() => expect(h.host.showInactive).toHaveBeenCalled())
+    vi.mocked(h.host.showInactive).mockClear()
+
+    await h.controller.beginDictation()
+    h.host.showInactive(31)
+    release()
+    await opening
+
+    expect(h.host.show).not.toHaveBeenCalled()
+    // The bars that the dictation just put up are not hidden by the stale open.
+    expect(h.host.hide).not.toHaveBeenCalled()
+    h.controller.endDictation()
+  })
+
+  it('drops a target that arrives after the hold has ended', async () => {
+    let release = (): void => undefined
+    const read = new Promise<RawFrontApp | null>((resolve) => {
+      release = () => resolve(front('com.apple.TextEdit', 900))
+    })
+    vi.mocked(helperFrontApplication).mockReturnValue(read)
+    const h = await harness(false)
+    const pending = h.controller.beginDictation()
+
+    h.controller.endDictation()
+    release()
+    await pending
+
+    expect(h.controller.target()).toBeNull()
+  })
+
+  it('forgets the remembered app so the next hold reads the screen again', async () => {
+    vi.mocked(helperFrontApplication).mockResolvedValue(front('com.apple.TextEdit', 900))
+    const h = await harness(false)
+    await h.controller.beginDictation()
+    h.controller.endDictation()
+    vi.mocked(helperFrontApplication).mockResolvedValue(front('com.apple.Safari', 12))
+
+    await h.controller.beginDictation()
+
+    expect(h.controller.target()).toMatchObject({ bundleId: 'com.apple.Safari', pid: 12 })
   })
 })
 

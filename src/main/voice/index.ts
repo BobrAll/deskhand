@@ -48,12 +48,26 @@ export interface VoiceHost {
   open(): Promise<void>
   /** True while the card is on screen, so a transcript can land in it. */
   isOpen(): boolean
+  /**
+   * Prepares a dictation hold without opening or focusing the card.
+   *
+   * Remembers the application that owns the keyboard right now — the one the
+   * transcript will be pasted into — so the user's field keeps it for the whole
+   * hold. The renderer must already be alive from `prewarm()`: the microphone
+   * lives there.
+   */
+  beginDictation(): Promise<void>
   /** Reveals the bars without activating the card or collecting context again. */
   showIndicator(): void
   /** Puts recognised text into an open card. */
   deliver(text: string, options: DeliverOptions): void
-  /** Closes the card — dictation needs the user's own app in front. */
-  hide(): void
+  /**
+   * Ends a dictation hold and puts the screen back the way it was.
+   *
+   * Hides the non-activating bars, or closes a card that owned the keyboard
+   * when the hold began so focus returns to the app the card belongs to.
+   */
+  endDictation(): void
   /** Raw channel emit; the controller owns the voice protocol. */
   emit(channel: string, payload: unknown): void
   /**
@@ -379,7 +393,7 @@ export function createVoiceController(host: VoiceHost) {
     // own app, so a card would have nothing to show and would sit there as an
     // empty rectangle. This also covers the failed turns — a press that heard
     // nothing has no message worth a panel in the middle of the sentence.
-    if (action === 'dictate') host.hide()
+    if (action === 'dictate') host.endDictation()
     setPhase('idle', payload)
     // A tap too short to transcribe never loaded the model; the idle moment after
     // it is the next chance to warm it.
@@ -424,6 +438,10 @@ export function createVoiceController(host: VoiceHost) {
       // the card, and the old result is discarded when it returns (see the
       // `turn` check in `handleRecording`).
       supersede()
+      // A superseded dictation still owns the non-activating surface. The new
+      // turn has to be free to open the card or show its own bars, so the old
+      // hold ends here rather than at a `finishIdle` that will never run.
+      if (turnAction === 'dictate') host.endDictation()
     }
     turnAction = binding === 'dictation' ? 'dictate' : getSettings().voice.action
     // Recording starts *before* the card is prepared. Collecting the context
@@ -436,7 +454,20 @@ export function createVoiceController(host: VoiceHost) {
     // No panel while the microphone is open: the bars replace the field and the
     // window loses its glass entirely.
     host.setVoice(true)
+    if (binding === 'dictation') {
+      // The microphone lives in the overlay renderer, so a window destroyed
+      // since the last turn has to be created — hidden, without taking focus.
+      host.prewarm()
+    }
     host.emit(CH.voice.record, { maxDurationMs: getSettings().voice.maxDurationMs })
+    if (binding === 'dictation') {
+      // A dictation must leave the keyboard exactly where it is. The card is
+      // never opened: it collects the selection and then focuses itself, and
+      // both would take the user out of their field mid-sentence. Only the
+      // bars are shown, and only once the target app has been read.
+      void showDictationIndicator(mine)
+      return
+    }
     // The card comes up in parallel and shows the listening state while it is
     // still being assembled; it is the same window, so no extra work is done.
     // It is shown before the context is collected: the bars are the only
@@ -454,6 +485,22 @@ export function createVoiceController(host: VoiceHost) {
     }
     // Do this after open has chosen between a fresh and an existing session:
     // making the old window visible first would resurrect a closed session.
+    host.showIndicator()
+  }
+
+  /**
+   * Reveals the dictation bars after the app that owns the keyboard is known.
+   *
+   * The order is the point: `showIndicator` orders our window in front, and the
+   * target has to be read before anything of ours can look like the frontmost
+   * app. A read that fails still leaves a usable turn — without a target the
+   * transcript goes to the clipboard instead of a field.
+   */
+  async function showDictationIndicator(mine: number): Promise<void> {
+    await host.beginDictation().catch(() => undefined)
+    // The hold can end while the app is being read: a turn that is already idle
+    // must not put its bars on screen after the key is up.
+    if (mine !== turn || phase === 'idle') return
     host.showIndicator()
   }
 
@@ -565,10 +612,11 @@ export function createVoiceController(host: VoiceHost) {
   function applyTranscript(text: string): void {
     const settings = getSettings()
     if ((turnAction ?? settings.voice.action) === 'dictate') {
-      // Dictation replaces the assistant card: the words belong in the app the
-      // user was working in, so the card gets out of the way and types there.
+      // Dictation never opened the card, and the target was read at press time
+      // before any of our windows could take focus. The words therefore go back
+      // into the field the user kept typing in — pasting must not depend on a
+      // card having collected the app first.
       const target = host.target()
-      host.hide()
       void pasteAnswer(text, target)
       return
     }

@@ -245,10 +245,104 @@ export function createOverlayController(host: OverlayHost) {
    * saying the next thing, and the old turn must not keep acting underneath them.
    */
   let voiceTurn: AbortController | null = null
+  /**
+   * The app a dictation hold is typing into.
+   *
+   * Kept apart from `session.target`: a dictation never opens a card, and a card
+   * from an earlier question may remember a different app or none at all. Read
+   * at press time, before any of our windows is on screen, because the
+   * frontmost app after that may be us.
+   */
+  let dictationTarget: ActiveAppInfo | null = null
+  /**
+   * Which dictation hold is reading the screen right now.
+   *
+   * Reading the app is a helper round trip, and a short hold can end before it
+   * answers. The bump in `endDictation` is what keeps that late answer from
+   * becoming the target of the next hold.
+   */
+  let dictationRead = 0
+  /**
+   * Whether the assistant card owned the keyboard when the hold began.
+   *
+   * Such a hold ends by closing the card, which is also what hands focus back
+   * to its app. An indicator-only hold just hides the bars and leaves the app
+   * the user is typing in untouched.
+   */
+  let dictationOwnsCard = false
+  /**
+   * True while a dictation owns the screen.
+   *
+   * A card that was already collecting context when the hold began must not
+   * finish by focusing itself, and its own `generation` check cannot see that:
+   * the open is legitimate, it is only the moment that is wrong.
+   */
+  let dictating = false
 
   function setVoice(active: boolean): void {
     if (active) voiceTurn?.abort()
     host.setVoice(active)
+  }
+
+  /**
+   * Remembers where a dictation hold has to paste, without opening the card.
+   *
+   * Opening the card means reading the selection with a synthetic ⌘C and then
+   * focusing the window — both take the user out of the field they are still
+   * typing in. Dictation therefore captures only the application that owns the
+   * keyboard right now, which is enough for the paste and costs no context work.
+   */
+  async function beginDictation(): Promise<void> {
+    dictating = true
+    // A card still collecting context would focus itself in the middle of the
+    // hold. Bumping the generation cancels that focus; `dictating` keeps its
+    // cleanup from hiding the bars once they are up.
+    if (opening) generation += 1
+    const mine = ++dictationRead
+    const front = await helperFrontApplication()
+    // A newer hold, or the end of this one, owns the answer by now.
+    if (mine !== dictationRead) return
+    const win = host.window()
+    const cardVisible = Boolean(session && win && !win.isDestroyed() && win.isVisible())
+    const ours = front?.pid === process.pid
+    dictationOwnsCard = ours && cardVisible
+    if (ours) {
+      // The card itself was in front: the app it belongs to is the one the user
+      // came from. Without a visible card (settings is frontmost) there is no
+      // field behind us worth typing into.
+      dictationTarget = cardVisible ? session?.target ?? null : null
+      return
+    }
+    dictationTarget = front && front.pid > 0
+      ? {
+          bundleId: front.bundleId,
+          name: front.name,
+          pid: front.pid,
+          windowTitle: front.windowTitle,
+          windowId: front.windowId,
+          bounds: front.bounds
+        }
+      : null
+  }
+
+  /**
+   * Puts the screen back after a dictation hold.
+   *
+   * The remembered app is dropped here: the next hold starts wherever the user
+   * is by then, and a stale target would paste one sentence into the window
+   * before.
+   */
+  function endDictation(): void {
+    const ownsCard = dictationOwnsCard
+    dictating = false
+    dictationRead += 1
+    dictationTarget = null
+    dictationOwnsCard = false
+    if (ownsCard) {
+      close()
+      return
+    }
+    host.hide()
   }
 
   /**
@@ -670,7 +764,7 @@ export function createOverlayController(host: OverlayHost) {
       } else if (session.snapshot.activeApp) {
         void ensureFreshScreenshot(session)
       }
-      if (startedIn !== generation) return
+      if (startedIn !== generation || dictating) return
       win.focus()
       startLive(session)
       return
@@ -703,14 +797,17 @@ export function createOverlayController(host: OverlayHost) {
       excludedApps: settings.excludedApps,
       wantsScreenshot: settings.captureScreenshotByDefault,
       onCopySent: () => {
-        if (startedIn === generation) host.show(INITIAL_HEIGHT)
+        if (!dictating && startedIn === generation) host.show(INITIAL_HEIGHT)
       }
     })
 
-    // The turn ended while the context was being collected: showing the card now
-    // would leave an empty panel on screen with no way to dismiss it.
-    if (startedIn !== generation) {
-      host.hide()
+    // The turn ended while the context was being collected, or a dictation took
+    // the screen: showing the card now would leave an empty panel on screen with
+    // no way to dismiss it, or take the keyboard from the user's own field. A
+    // dictation is the one case that hides nothing — the same window is already
+    // showing its bars.
+    if (startedIn !== generation || dictating) {
+      if (!dictating) host.hide()
       return
     }
 
@@ -1510,6 +1607,8 @@ export function createOverlayController(host: OverlayHost) {
     clearDrawing: clearAnnotations,
     setTyping,
     setVoice,
+    beginDictation,
+    endDictation,
     showVoiceIndicator: () => host.showInactive(INITIAL_HEIGHT),
     resize,
     send,
@@ -1531,7 +1630,7 @@ export function createOverlayController(host: OverlayHost) {
       agent.stop()
       if (session?.abort) session.abort.abort(STOP_AGENT)
     },
-    target: (): ActiveAppInfo | null => session?.target ?? null,
+    target: (): ActiveAppInfo | null => dictationTarget ?? session?.target ?? null,
     isOpen: (): boolean => Boolean(session && host.window()?.isVisible())
   }
 }

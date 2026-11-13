@@ -126,12 +126,19 @@ function makeHost() {
     opened: 0,
     openResult: true,
     delivered: [] as Array<{ text: string; submit: boolean }>,
-    hidden: 0,
+    dictationsBegun: 0,
+    dictationsEnded: 0,
     targetValue: null as ActiveAppInfo | null,
     prewarmed: 0,
+    indicators: 0,
     target: () => host.targetValue,
     isOpen: () => host.openResult,
-    showIndicator: () => {},
+    beginDictation: async () => {
+      host.dictationsBegun += 1
+    },
+    showIndicator: () => {
+      host.indicators += 1
+    },
     prewarm: () => {
       host.prewarmed += 1
     },
@@ -141,8 +148,8 @@ function makeHost() {
     deliver: (text: string, options: { submit: boolean }) => {
       host.delivered.push({ text, submit: options.submit })
     },
-    hide: () => {
-      host.hidden += 1
+    endDictation: () => {
+      host.dictationsEnded += 1
     },
     emit: (channel: string, payload: unknown) => {
       host.emitted.push({ channel, payload })
@@ -250,6 +257,105 @@ describe('createVoiceController: press and release', () => {
 
     expect(host.emitted).toContainEqual({ channel: 'voice:stop', payload: { transcribe: false } })
     expect(voice.phase()).toBe('idle')
+  })
+
+  it('starts a dictation hold without opening the card', async () => {
+    const host = makeHost()
+    host.openResult = false
+    const voice = createVoiceController(host)
+    voice.applySettings()
+
+    voice.press('dictation')
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect(host.opened).toBe(0)
+    expect(host.dictationsBegun).toBe(1)
+    expect(host.emitted).toContainEqual({
+      channel: 'voice:record',
+      payload: { maxDurationMs: 120_000 }
+    })
+    expect(voice.phase()).toBe('listening')
+    voice.cancel()
+  })
+
+  it('reveals the dictation bars only after the target app is known', async () => {
+    let release = (): void => undefined
+    const targetRead = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const host = makeHost()
+    host.beginDictation = async () => {
+      host.dictationsBegun += 1
+      await targetRead
+    }
+    const voice = createVoiceController(host)
+    voice.applySettings()
+
+    voice.press('dictation')
+    await vi.advanceTimersByTimeAsync(0)
+    expect(host.indicators).toBe(0)
+
+    release()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(host.indicators).toBe(1)
+    voice.cancel()
+  })
+
+  it('does not reveal dictation bars after the hold has ended', async () => {
+    let release = (): void => undefined
+    const targetRead = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const host = makeHost()
+    host.beginDictation = async () => {
+      host.dictationsBegun += 1
+      await targetRead
+    }
+    const voice = createVoiceController(host)
+    voice.applySettings()
+
+    voice.press('dictation')
+    state.now += 100
+    voice.release()
+    release()
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect(host.indicators).toBe(0)
+  })
+
+  it('frees the voice surface when a command press supersedes a dictation', async () => {
+    const host = makeHost()
+    host.openResult = false
+    host.open = async () => {
+      host.opened += 1
+      host.openResult = true
+    }
+    const voice = createVoiceController(host)
+    voice.applySettings()
+    voice.press('dictation')
+    state.now += 500
+    voice.release()
+    expect(voice.phase()).toBe('transcribing')
+
+    voice.press()
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect(host.dictationsEnded).toBe(1)
+    expect(host.opened).toBe(1)
+    voice.cancel()
+  })
+
+  it('opens the card for the main hold and never prepares a dictation', () => {
+    const host = makeHost()
+    host.openResult = false
+    const voice = createVoiceController(host)
+    voice.applySettings()
+
+    voice.press()
+    voice.cancel()
+
+    expect(host.opened).toBe(1)
+    expect(host.dictationsBegun).toBe(0)
   })
 
   it('ignores a second press while already listening', () => {
@@ -374,7 +480,7 @@ describe('createVoiceController: recognition', () => {
 
     expect(state.pasted).toEqual([{ text: 'привет', target }])
     expect(host.delivered).toEqual([])
-    expect(host.hidden).toBeGreaterThan(0)
+    expect(host.dictationsEnded).toBeGreaterThan(0)
   })
 
   it('dictates from its own hotkey even when the main action is command', async () => {
@@ -398,7 +504,9 @@ describe('createVoiceController: recognition', () => {
 
     expect(state.pasted).toEqual([{ text: 'привет', target }])
     expect(host.delivered).toEqual([])
-    expect(host.hidden).toBeGreaterThan(0)
+    expect(host.opened).toBe(0)
+    expect(host.dictationsBegun).toBe(1)
+    expect(host.dictationsEnded).toBeGreaterThan(0)
   })
 
   it('refuses a recording that arrives outside `transcribing`', async () => {
