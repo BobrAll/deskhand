@@ -74,7 +74,7 @@ async function resolve(text: string): Promise<Record<string, string>> {
 
 async function prefetch(text: string): Promise<void> {
   const module = await import('./pronounce')
-  await module.prefetchPronunciations(text)
+  await module.prefetchHints(text)
 }
 
 beforeEach(() => {
@@ -323,7 +323,7 @@ describe('resolvePronunciations', () => {
   })
 })
 
-describe('prefetchPronunciations', () => {
+describe('prefetchHints', () => {
   const target = '/tmp/deskhand-pronounce-test/tts-pronunciation.json'
 
   it('starts the lookup without waiting for its answer', async () => {

@@ -29,13 +29,17 @@ const silero = vi.hoisted(() => ({
 
 const pronounce = vi.hoisted(() => ({
   hints: {} as Record<string, string>,
-  calls: [] as string[]
+  calls: [] as string[],
+  prefetch: [] as string[]
 }))
 
 vi.mock('./pronounce', () => ({
   resolvePronunciations: async (text: string) => {
     pronounce.calls.push(text)
     return pronounce.hints
+  },
+  prefetchHints: async (text: string) => {
+    pronounce.prefetch.push(text)
   }
 }))
 
@@ -112,6 +116,7 @@ beforeEach(() => {
   silero.result = { ok: true, audio: '', cached: false, mime: 'audio/wav' }
   pronounce.hints = {}
   pronounce.calls = []
+  pronounce.prefetch = []
   vi.stubGlobal('fetch', vi.fn(async (url: string, init: RequestInit) => {
     fake.calls.push({ url, body: JSON.parse(String(init.body)) })
     return new Response(new Uint8Array([1, 2, 3]), {
@@ -249,3 +254,36 @@ describe('the Silero engine', () => {
     expect(status.reason).toContain('Нет модели')
   })
 })
+
+describe('prefetching pronunciation hints', () => {
+  it('does not ask while the local engine cannot synthesise', async () => {
+    fake.settings = SILERO
+    silero.runtime = true
+    silero.models = false
+
+    const { prefetchPronunciations } = await load()
+    prefetchPronunciations('Открой Figma')
+    expect(pronounce.prefetch).toEqual([])
+  })
+
+  it('does not ask when synthesis is switched off', async () => {
+    fake.settings = { ...SILERO, tts: { ...SILERO.tts, enabled: false } }
+    silero.runtime = true
+    silero.models = true
+
+    const { prefetchPronunciations } = await load()
+    prefetchPronunciations('Открой Figma')
+    expect(pronounce.prefetch).toEqual([])
+  })
+
+  it('warms the cache when the local engine is ready', async () => {
+    fake.settings = SILERO
+    silero.runtime = true
+    silero.models = true
+
+    const { prefetchPronunciations } = await load()
+    prefetchPronunciations('Открой Figma')
+    expect(pronounce.prefetch).toEqual(['Открой Figma'])
+  })
+})
+

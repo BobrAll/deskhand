@@ -368,12 +368,15 @@ export async function resolvePronunciations(text: string): Promise<Hints> {
 /**
  * Warms the cache for words in text the assistant is about to say.
  *
- * The prompt is known while the model is still thinking, and the answer is known
+ * The prompt is known while the model is still thinking, and an answer is known
  * a sentence before it is spoken; both are enough time for the lookup to finish
  * without making the line wait. This is only a bet, so it never waits itself and
  * never arms the backoff: a lost bet must not change how the next line sounds.
+ *
+ * Availability is checked by the caller in `tts/index.ts`: this module does not
+ * know whether synthesis can run at all.
  */
-export async function prefetchPronunciations(text: string): Promise<void> {
+export async function prefetchHints(text: string): Promise<void> {
   const settings = getSettings()
   if (settings.tts.pronunciationLookup === false) return
   // Hints are only read by the local engine; a remote or system voice would pay

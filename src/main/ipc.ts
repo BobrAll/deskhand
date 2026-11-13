@@ -41,8 +41,7 @@ import {
   setTtsKey
 } from './settings/secrets'
 import { getSettings, patchSettings } from './settings/store'
-import { ttsStatus, synthesize } from './tts'
-import { prefetchPronunciations } from './tts/pronounce'
+import { ttsStatus, synthesize, prefetchPronunciations } from './tts'
 import { installSilero, removeSilero } from './tts/silero'
 import {
   closeOnboardingWindow,

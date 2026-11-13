@@ -27,7 +27,7 @@ import type { AppSettings, TtsSettings, TtsStatus } from '@shared/types'
 import { RECORDED, TTS_MAX_CHARS, sileroSpeaker, type TtsResult } from '@shared/tts'
 import { getTtsKey } from '../settings/secrets'
 import { getSettings } from '../settings/store'
-import { resolvePronunciations } from './pronounce'
+import { prefetchHints, resolvePronunciations } from './pronounce'
 import {
   SILERO_CACHE_ID,
   sileroModelsReady,
@@ -253,6 +253,18 @@ export async function synthesize(text: string, localOnly = false): Promise<TtsRe
     .finally(() => inFlight.delete(key))
   inFlight.set(key, job)
   return job
+}
+
+/**
+ * Warms pronunciation hints for text that is about to be spoken.
+ *
+ * Same availability rule as `synthesize`: a line the engine cannot say must not
+ * spend a provider request on hints that never reach it. Fire-and-forget — the
+ * caller is the streaming overlay, not a line waiting for audio.
+ */
+export function prefetchPronunciations(text: string): void {
+  if (ttsBlockReason() !== null) return
+  void prefetchHints(text)
 }
 
 /**

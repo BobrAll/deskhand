@@ -13,6 +13,7 @@ import { speechLine, speaksCue } from './speechCues'
 import {
   ANSWER_FALLBACK,
   SPEECH_COOLDOWN_MS,
+  answerIsSpoken,
   automaticSpeech,
   requestedReading,
   speechText
@@ -349,8 +350,8 @@ export function useSpeech() {
     const token = generation.current
     const cancelled = options.cancelled
     const live = kind === 'manual' || (kind === 'answer' && liveAllowed.current)
-    // A manual replay hands over the whole answer at once; warmer words are
-    // looked up while the first fragment is being synthesised.
+    // A manual replay hands over the whole answer at once, so later fragments
+    // can have their hints before their turn comes.
     if (live && kind === 'manual') prefetch(clean)
     const chunks = live ? speechChunks(clean, TTS_MAX_CHARS) : [clean].values()
     const prepare = async (chunk: string): Promise<string> => {
@@ -462,8 +463,9 @@ export function useSpeech() {
         liveAllowed.current = read?.voice.answerVoice === 'neural' ||
           (read?.voice.answerVoice === 'off' && requestedReading(prompt))
         localVoice.current = read?.local === true
-        // The model is still thinking, so its likely words can be looked up now.
-        if (liveAllowed.current) prefetch(prompt)
+        // The model is still thinking, so words it is likely to use in the
+        // answer can be looked up now — unless the answer will stay silent.
+        if (liveAllowed.current && answerIsSpoken(prompt)) prefetch(prompt)
       })
       .catch(() => {
         liveAllowed.current = false
@@ -506,8 +508,6 @@ export function useSpeech() {
     // Only complete sentences can be spoken; keep partial Markdown/code private.
     if (current.buffer.includes('```') || current.buffer.includes('|')) return
     const clean = speechText(current.buffer)
-    // Words of the next sentence are warmed while this one is still speaking.
-    if (liveAllowed.current) prefetch(clean)
     // The last full stop is not always a sentence end: `1.` opens a list and
     // `2.5` is a number, so those candidates are skipped.
     const boundary = sentenceBoundary(clean)
@@ -519,6 +519,9 @@ export function useSpeech() {
     if (fresh) {
       clearWaiting()
       enqueue(fresh, 'answer')
+      // The sentence after the one just queued is already partly here: its
+      // words can be looked up while the queued line is being spoken.
+      if (liveAllowed.current) prefetch(clean.slice(boundary + 1).trim())
     }
   }, [enqueue, clearWaiting])
 
