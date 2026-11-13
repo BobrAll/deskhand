@@ -380,7 +380,7 @@ export function createAgentController(host: AgentHost) {
     // that does not trace would otherwise be invisible — and an invisible run
     // is indistinguishable from one that never happened.
     const request = traceWithin({ source: 'agent-controller' }, async () => {
-      const runTrace = createRunTrace()
+      const runTrace = createRunTrace({ detailed: getSettings().agent.saveRunTraces })
       runTrace.record('start', {
         prompt: input.prompt,
         appName: input.appName,

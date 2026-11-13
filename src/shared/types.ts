@@ -141,6 +141,14 @@ export interface AgentSettings {
    * per-app or per-tool switch, so nothing has to be taught about a new app.
    */
   showActions: boolean
+  /**
+   * Write a per-run trace with the exact prompts, window titles and screenshots.
+   *
+   * Off by default: the aggregate `agent-trace.jsonl` already answers why a run
+   * was slow, while these files hold everything the user saw and typed. They are
+   * a debugging tool, not a history, so turning this on is a deliberate choice.
+   */
+  saveRunTraces: boolean
 }
 
 /**
