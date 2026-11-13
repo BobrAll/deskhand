@@ -128,11 +128,13 @@ export class AnthropicProvider implements LlmProvider {
         inputTokens = payload.message?.usage?.input_tokens
         outputTokens = payload.message?.usage?.output_tokens
       }
-      if (payload.type === 'message_delta') outputTokens = payload.usage?.output_tokens ?? outputTokens
-      if (payload.type === 'message_delta' && payload.delta?.stop_reason) {
-        const reason = payload.delta.stop_reason
-        end = reason === 'end_turn' || reason === 'stop_sequence' ? 'complete'
-          : reason === 'max_tokens' ? 'limit' : 'incomplete'
+      if (payload.type === 'message_delta') {
+        outputTokens = payload.usage?.output_tokens ?? outputTokens
+        if (payload.delta?.stop_reason) {
+          const reason = payload.delta.stop_reason
+          end = reason === 'end_turn' || reason === 'stop_sequence' ? 'complete'
+            : reason === 'max_tokens' ? 'limit' : 'incomplete'
+        }
       }
       if (payload.type === 'message_stop') {
         traceModelUsage(inputTokens, outputTokens)

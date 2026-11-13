@@ -98,7 +98,7 @@ vi.mock('./settings/store', async () => {
       ...DEFAULT_SETTINGS,
       ...patch
     })),
-    storeRecovered: () => false
+    settingsWereRecovered: () => false
   }
 })
 

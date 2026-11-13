@@ -41,12 +41,6 @@ import { DEFAULT_SETTINGS } from '@shared/defaults'
  */
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required')
 
-// Regular activation policy: the app behaves like a normal program — it has a
-// Dock icon and a Cmd+Tab entry, and its windows can be focused, raised and sent
-// to the background by the system like any other window. (Keeping the Dock icon
-// hidden turned the app into a tray-only "accessory", whose windows macOS would
-// hide the moment focus moved elsewhere.)
-
 const overlay = createOverlayController(overlayHost)
 
 /**
@@ -313,6 +307,9 @@ if (!app.requestSingleInstanceLock()) {
     void overlay.open()
   })
 
+  // Regular activation policy is the default, so it is never set: the app keeps a
+  // Dock icon and a Cmd+Tab entry instead of becoming a tray-only accessory that
+  // macOS hides the moment focus moves elsewhere.
   app.whenReady().then(() => {
     nativeTheme.themeSource = 'system'
     // A failure while wiring the UI must not leave the process half-initialised:

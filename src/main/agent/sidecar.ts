@@ -290,7 +290,10 @@ export class AgentSidecar {
     this.child = child
 
     const ready = new Promise<void>((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error('Агент не ответил за 10 секунд.')), START_TIMEOUT_MS)
+      const timer = setTimeout(
+        () => reject(new Error(`Агент не ответил за ${START_TIMEOUT_MS / 1000} секунд.`)),
+        START_TIMEOUT_MS
+      )
       const off = this.onEvent((event) => {
         if (event.kind !== 'ready') return
         clearTimeout(timer)

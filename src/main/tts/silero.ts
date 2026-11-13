@@ -153,9 +153,10 @@ async function downloadFile(
   onBytes: (bytes: number) => void
 ): Promise<void> {
   const temporary = `${target}.part`
+  const fileName = target.split('/').pop() ?? target
   const response = await fetch(url, { signal: AbortSignal.timeout(timeoutMs) })
-  if (!response.ok) throw new Error(`Не удалось скачать ${target.split('/').pop()}: ${response.status}.`)
-  if (!response.body) throw new Error(`Пустой ответ при скачивании ${target.split('/').pop()}.`)
+  if (!response.ok) throw new Error(`Не удалось скачать ${fileName}: ${response.status}.`)
+  if (!response.body) throw new Error(`Пустой ответ при скачивании ${fileName}.`)
 
   const hash = createHash('sha256')
   // Hashing in the stream keeps the download one pass and the memory flat; a
@@ -177,7 +178,7 @@ async function downloadFile(
   )
   if (hash.digest('hex') !== sha256) {
     await rm(temporary, { force: true })
-    throw new Error(`Файл ${target.split('/').pop()} скачался повреждённым. Попробуй ещё раз.`)
+    throw new Error(`Файл ${fileName} скачался повреждённым. Попробуй ещё раз.`)
   }
   await rename(temporary, target)
 }

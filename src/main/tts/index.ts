@@ -42,6 +42,9 @@ const TTS_TIMEOUT_MS = 20_000
 /** One clip in flight per text; a repeated sentence waits for the first copy. */
 const inFlight = new Map<string, Promise<TtsResult>>()
 
+/** The container a cached clip is stored in. */
+type ClipFormat = 'mp3' | 'wav'
+
 /**
  * Why the last request failed, if it did.
  *
@@ -92,11 +95,11 @@ function cacheKey(
 }
 
 /** The remote engine answers in MP3; the local engine writes a WAV. */
-function cacheExtension(settings: TtsSettings): 'mp3' | 'wav' {
+function cacheExtension(settings: TtsSettings): ClipFormat {
   return settings.engine === 'remote' ? 'mp3' : 'wav'
 }
 
-function mimeFor(extension: 'mp3' | 'wav'): string {
+function mimeFor(extension: ClipFormat): string {
   return extension === 'wav' ? 'audio/wav' : 'audio/mpeg'
 }
 
@@ -122,7 +125,7 @@ export function ttsBlockReason(settings: AppSettings = getSettings()): string | 
 }
 
 /** Reads a cached clip, if one exists for exactly this configuration and text. */
-async function readCache(key: string, extension: 'mp3' | 'wav'): Promise<TtsResult | null> {
+async function readCache(key: string, extension: ClipFormat): Promise<TtsResult | null> {
   try {
     const file = await readFile(join(cacheDir(), `${key}.${extension}`))
     return { ok: true, audio: file.toString('base64'), cached: true, mime: mimeFor(extension) }
@@ -131,7 +134,7 @@ async function readCache(key: string, extension: 'mp3' | 'wav'): Promise<TtsResu
   }
 }
 
-async function writeCache(key: string, extension: 'mp3' | 'wav', audio: Buffer): Promise<void> {
+async function writeCache(key: string, extension: ClipFormat, audio: Buffer): Promise<void> {
   try {
     await mkdir(cacheDir(), { recursive: true })
     await writeFile(join(cacheDir(), `${key}.${extension}`), audio)

@@ -110,7 +110,7 @@ function NavIcon({ tab }: { tab: Tab }) {
 
 /** How long a footer message stays up before the apply status comes back. */
 const BANNER_WRITE_ERROR_MS = 2600
-const BANNER_KEY_SAVE_MS = 3600
+const BANNER_KEY_NOTICE_MS = 3600
 const BANNER_KEY_REMOVED_MS = 2200
 
 /** Quiet time after the last edit before the draft is written. */
@@ -414,10 +414,10 @@ export function App() {
       const next = await window.deskhand.settings.setKey(draft.provider, keyInput)
       setBundle(next)
       setKeyInput('')
-      showNotice({ kind: 'ok', text: 'Ключ сохранён.' }, BANNER_KEY_SAVE_MS)
+      showNotice({ kind: 'ok', text: 'Ключ сохранён.' }, BANNER_KEY_NOTICE_MS)
       return true
     } catch {
-      showNotice({ kind: 'err', text: 'Не удалось сохранить ключ.' }, BANNER_KEY_SAVE_MS)
+      showNotice({ kind: 'err', text: 'Не удалось сохранить ключ.' }, BANNER_KEY_NOTICE_MS)
       return false
     }
   }, [draft, keyInput, showNotice])
@@ -429,7 +429,7 @@ export function App() {
       setBundle(next)
       showNotice({ kind: 'ok', text: 'Ключ удалён' }, BANNER_KEY_REMOVED_MS)
     } catch {
-      showNotice({ kind: 'err', text: 'Не удалось удалить ключ.' }, BANNER_KEY_SAVE_MS)
+      showNotice({ kind: 'err', text: 'Не удалось удалить ключ.' }, BANNER_KEY_NOTICE_MS)
     }
   }, [draft, showNotice])
 

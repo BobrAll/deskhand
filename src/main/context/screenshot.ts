@@ -23,9 +23,9 @@
  * Every call takes a *fresh* picture: the same function serves the preview shown
  * when the overlay opens and the capture re-taken right before a request is
  * sent, so the model sees the screen as it is now, not as it was minutes ago.
- * Our own overlay window never ends up in the image — see `setContentProtection`
- * in `windows.ts`, which keeps it out of every capture path, including the
- * full-screen fallback.
+ * Our own overlay window never ends up in the image: its content protection is
+ * switched on for every capture (`overlay/index.ts`), which keeps it out of every
+ * capture path, including the full-screen fallback.
  */
 
 import { execFile } from 'node:child_process'

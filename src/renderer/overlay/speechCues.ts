@@ -92,6 +92,6 @@ export function speaksCue(cue: SpeechCue, gate: SpeechGate): boolean {
  */
 export function speechLine(cue: SpeechCue, index: number): SpeechLine | null {
   const lines = SPEECH_BANK[cue]
-  if (!lines || lines.length === 0) return null
+  if (lines.length === 0) return null
   return lines[Math.abs(index) % lines.length]
 }

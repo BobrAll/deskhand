@@ -375,6 +375,17 @@ const WORDS: Record<string, string> = {
   escape: 'эск+ейп'
 }
 
+/** Apostrophes and hyphens people type instead of the ASCII ones. */
+const JOINERS = /['’-]/g
+
+/** Every Latin word in a line: letters joined by an inner apostrophe or hyphen. */
+const LATIN_WORD = /\p{Script=Latin}+(?:['’-]\p{Script=Latin}+)*/gu
+
+/** The dictionary entry for a word, also trying it without its joiners. */
+function dictionaryForm(word: string): string | undefined {
+  return WORDS[word] ?? WORDS[word.replace(JOINERS, '')]
+}
+
 /** How a letter is pronounced when an acronym is spelled out. */
 const LETTER_NAMES: Record<string, string> = {
   a: 'эй', b: 'би', c: 'си', d: 'ди', e: 'и', f: 'эф', g: 'джи',
@@ -522,7 +533,7 @@ function pluralOf(word: string): string | null {
     // A two-letter stem is a function word (`us`, `it`), not a noun that takes
     // an English plural; `uses` must not become «асис».
     if (stem.length < 3) continue
-    const singular = WORDS[stem] ?? WORDS[stem.replace(/['’-]/g, '')]
+    const singular = dictionaryForm(stem)
     if (!singular) continue
     const last = singular[singular.length - 1]
     // A russified word ending in `а`/`е`/`я` adds the English plural differently
@@ -548,7 +559,7 @@ function acronymPluralOf(word: string): string | null {
 /** Whether the dictionary, the plural rule or the acronym rules can say this word. */
 function needsPronunciation(word: string): boolean {
   const lower = word.toLowerCase()
-  if (WORDS[lower] ?? WORDS[lower.replace(/['’-]/g, '')]) return false
+  if (dictionaryForm(lower)) return false
   if (acronymPluralOf(word)) return false
   if (pluralOf(lower)) return false
   return !looksLikeAcronym(word)
@@ -563,9 +574,9 @@ function needsPronunciation(word: string): boolean {
  */
 export function unknownWords(text: string): string[] {
   const words = new Set<string>()
-  for (const token of text.match(/\p{Script=Latin}+(?:['’-]\p{Script=Latin}+)*/gu) ?? []) {
+  for (const token of text.match(LATIN_WORD) ?? []) {
     const lower = token.toLowerCase()
-    if (WORDS[lower] ?? WORDS[lower.replace(/['’-]/g, '')]) continue
+    if (dictionaryForm(lower)) continue
     for (const part of token.split(/['’-]/).filter(Boolean)) {
       if (part.length < 2) continue
       if (needsPronunciation(part)) words.add(part.toLowerCase())
@@ -576,7 +587,7 @@ export function unknownWords(text: string): string[] {
 
 function transliterateWord(word: string, pronunciations: Readonly<Record<string, string>>): string {
   const lower = word.toLowerCase()
-  const known = WORDS[lower] ?? WORDS[lower.replace(/['’-]/g, '')]
+  const known = dictionaryForm(lower)
   if (known) return known
   const acronymPlural = acronymPluralOf(word)
   if (acronymPlural) return acronymPlural
@@ -602,9 +613,9 @@ export function transliterate(
   text: string,
   pronunciations: Readonly<Record<string, string>> = {}
 ): string {
-  return text.replace(/\p{Script=Latin}+(?:['’-]\p{Script=Latin}+)*/gu, (token) => {
+  return text.replace(LATIN_WORD, (token) => {
     const lower = token.toLowerCase()
-    const whole = WORDS[lower] ?? WORDS[lower.replace(/['’-]/g, '')]
+    const whole = dictionaryForm(lower)
     if (whole) return whole
     return token
       .split(/['’-]/)

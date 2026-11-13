@@ -1,9 +1,8 @@
-import { apiEndpoint } from './http'
+import { apiEndpoint, toProviderError, toTransportError } from './http'
 import {
   isPlusVibeApi, providerInfo, resolveBaseUrl, resolveSearchModel
 } from '@shared/defaults'
 import type { AppSettings } from '@shared/types'
-import { toProviderError, toTransportError } from './http'
 import { ProviderError } from './provider'
 
 const INSTRUCTION = [

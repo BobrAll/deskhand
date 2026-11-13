@@ -294,22 +294,22 @@ final class Bridge: @unchecked Sendable {
         let deadline = Date().addingTimeInterval(Self.approvalTimeout)
         while Date() < deadline {
             if cancel.isCancelled {
-                lock.lock()
-                pendingApprovals.removeValue(forKey: id)
-                lock.unlock()
+                forgetApproval(id)
                 return .deny("Отменено.")
             }
             if wait.semaphore.wait(timeout: .now() + Self.approvalPollInterval) == .success {
-                lock.lock()
-                pendingApprovals.removeValue(forKey: id)
-                lock.unlock()
+                forgetApproval(id)
                 return wait.value
             }
         }
+        forgetApproval(id)
+        return .deny("The user did not answer in time.")
+    }
+
+    private func forgetApproval(_ id: String) {
         lock.lock()
         pendingApprovals.removeValue(forKey: id)
         lock.unlock()
-        return .deny("The user did not answer in time.")
     }
 
     private func resolveApproval(params: JSONValue) {

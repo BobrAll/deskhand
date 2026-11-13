@@ -55,7 +55,7 @@ export function runHelper(
 ): Promise<HelperPayload | null> {
   const binary = resolveHelperPath()
   if (!binary || signal?.aborted) return Promise.resolve(null)
-  const command = args[0] === 'input' ? args[4] : args[0]
+  const command = args[0]
   const end = traceEnd('helper', { command })
   return new Promise((resolve) => {
     // Wait for process close instead of using execFile's AbortSignal: its
