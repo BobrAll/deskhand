@@ -93,7 +93,7 @@ async function readVoice(): Promise<VoiceSettingsRead | null> {
     const status = typeof api?.status === 'function' ? await api.status().catch(() => null) : null
     return {
       voice: settings.voice,
-      local: status?.configured === true && status.engine !== 'remote'
+      local: settings.voice.answerVoice === 'neural' && status?.configured === true && status.engine === 'silero'
     }
   } catch {
     return null
@@ -343,7 +343,11 @@ export function useSpeech() {
 
   const speak = useCallback((text: string) => {
     stop()
-    enqueue(text, 'manual')
+    const token = generation.current
+    void readVoice().then((read) => {
+      if (token !== generation.current) return
+      enqueue(text, read?.voice.answerVoice === 'system' ? 'answer' : 'manual')
+    })
   }, [stop, enqueue])
 
   const begin = useCallback((id: string, prompt: string, spoken: boolean) => {

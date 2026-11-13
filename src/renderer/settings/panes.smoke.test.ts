@@ -16,6 +16,7 @@ import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 import { DEFAULT_SETTINGS } from '@shared/defaults'
+import type { TtsSettings, VoiceSettings } from '@shared/types'
 import { AgentTab } from './AgentTab'
 import { VoiceTab } from './VoiceTab'
 import { ProviderSection } from './sections/ProviderSection'
@@ -48,13 +49,17 @@ function agent(): string {
   )
 }
 
-function voice(): string {
+function voice(
+  answerVoice: VoiceSettings['answerVoice'] = DEFAULT_SETTINGS.voice.answerVoice,
+  tts: TtsSettings = DEFAULT_SETTINGS.tts
+): string {
+  const settings = { ...DEFAULT_SETTINGS.voice, answerVoice }
   return renderToStaticMarkup(
     createElement(VoiceTab, {
-      voice: DEFAULT_SETTINGS.voice,
-      tts: DEFAULT_SETTINGS.tts,
-      savedVoice: DEFAULT_SETTINGS.voice,
-      savedTts: DEFAULT_SETTINGS.tts,
+      voice: settings,
+      tts,
+      savedVoice: settings,
+      savedTts: tts,
       microphoneGranted: true,
       onOpenMicrophoneSettings: noop,
       onVoiceChange: noop,
@@ -159,85 +164,53 @@ describe('the settings panes', () => {
     expect(extraBody).toBeGreaterThan(baseUrl)
   })
 
-  it('shows the bundled recognizer and keeps Whisper and import in a closed disclosure', () => {
+  it('keeps recognition model management behind one disclosure', () => {
     const html = voice()
-    const alternatives = html.match(/<details class="disclosure"><summary>Другие модели распознавания<\/summary>.*?<\/details>/)?.[0]
-    expect(alternatives).toContain('Модели Whisper')
-    expect(alternatives).toContain('Импортировать модель Whisper')
-    expect(alternatives).not.toContain('GigaAM')
-    expect(html).toMatch(/class="disclosure animated-disclosure" data-open="false"><button[^>]*aria-expanded="false">Дополнительные настройки ввода/)
-    expect(html).toContain('GigaAM v3 · встроенная модель для русского языка.')
+    const management = html.match(/<details class="disclosure"><summary>Управление моделями<\/summary>.*?<\/details>/)?.[0]
+    expect(management).toContain('Скачать модель Whisper')
+    expect(management).toContain('Импортировать модель Whisper')
+    expect(management?.match(/<details/g)).toHaveLength(1)
+    expect(html).toContain('Распознавание речи')
+    expect(html).not.toContain('Дополнительные настройки ввода')
   })
 
-  it('previews the voice that answers will actually use', () => {
-    const render = (answerVoice: 'off' | 'system' | 'neural'): string =>
-      renderToStaticMarkup(
-        createElement(VoiceTab, {
-          voice: { ...DEFAULT_SETTINGS.voice, answerVoice },
-          tts: DEFAULT_SETTINGS.tts,
-          savedVoice: { ...DEFAULT_SETTINGS.voice, answerVoice },
-          savedTts: DEFAULT_SETTINGS.tts,
-          microphoneGranted: true,
-          onOpenMicrophoneSettings: noop,
-          onVoiceChange: noop,
-          onTtsChange: noop
-        })
-      )
-
-    const system = render('system')
-    expect(system).toContain('Пример голоса')
-    expect(system).toContain('голосом macOS')
-    // The macOS preview needs no synthesizer, so it works while the neural
-    // engine is off — and it says what it will play.
-    expect(system).toContain('<button>Послушать пример</button>')
-
-    // A neural preview waits for the engine status and its configuration.
-    expect(render('neural')).toContain('<button disabled="">Послушать пример</button>')
-
-    // With answers silent there is no voice to demonstrate, so the preview is
-    // unavailable instead of quietly playing a voice the user did not pick.
-    const off = render('off')
-    expect(off).toContain('Ответы не читаются')
-    expect(off).toContain('<button disabled="">Послушать пример</button>')
+  it.each(['silero', 'remote'] as const)('shows only the macOS preview with a saved %s engine', (engine) => {
+    const html = voice('system', { ...DEFAULT_SETTINGS.tts, engine, enabled: true })
+    expect(html).toContain('Короткий пример голосом macOS.')
+    expect(html).toContain('<button>Послушать пример</button>')
+    expect(html).not.toContain('Голос Silero')
+    expect(html).not.toContain('xenia')
+    expect(html).not.toContain('Адрес API')
+    expect(html).not.toContain('Ключ API')
+    expect(html).not.toContain('Дополнительные настройки озвучки')
   })
 
-  it('puts Silero before the API engine and leaves Piper out', () => {
-    const html = renderToStaticMarkup(
-      createElement(VoiceTab, {
-        voice: DEFAULT_SETTINGS.voice,
-        tts: DEFAULT_SETTINGS.tts,
-        savedVoice: DEFAULT_SETTINGS.voice,
-        savedTts: DEFAULT_SETTINGS.tts,
-        microphoneGranted: true,
-        onOpenMicrophoneSettings: noop,
-        onVoiceChange: noop,
-        onTtsChange: noop
-      })
-    )
-    expect(html).toMatch(/Silero · V5\.6 RU.*Сервис по API/s)
-    expect(html).not.toContain('Piper')
-    expect(html).not.toContain('Руслан')
+  it('keeps the work feedback switch when automatic reading is off', () => {
+    const html = voice('off')
+    expect(html).toContain('Озвучивать ход работы')
+    expect(html).not.toContain('Послушать пример')
+    expect(html).not.toContain('Голос Silero')
+    expect(html).not.toContain('Ключ API')
   })
 
-  it('offers the Silero engine with a download action while it is missing', () => {
-    const html = renderToStaticMarkup(
-      createElement(VoiceTab, {
-        voice: DEFAULT_SETTINGS.voice,
-        tts: { ...DEFAULT_SETTINGS.tts, engine: 'silero', sileroVoice: 'xenia', enabled: true },
-        savedVoice: DEFAULT_SETTINGS.voice,
-        savedTts: { ...DEFAULT_SETTINGS.tts, engine: 'silero', sileroVoice: 'xenia', enabled: true },
-        microphoneGranted: true,
-        onOpenMicrophoneSettings: noop,
-        onVoiceChange: noop,
-        onTtsChange: noop
-      })
-    )
-    expect(html).toContain('Голос Silero')
-    expect(html).toContain('Модель не установлена')
-    expect(html).toContain('Скачать модель')
+  it('checks whether Silero is installed before offering a download or a voice', () => {
+    const html = voice('neural', { ...DEFAULT_SETTINGS.tts, engine: 'silero', enabled: true })
+    expect(html).toContain('Проверяю установку…')
     expect(html).toContain('CC BY-NC-SA 4.0')
-    // The remote-only fields belong to the other engine.
-    expect(html).not.toContain('Адрес сервиса')
+    expect(html).toContain('<button disabled="">Послушать пример</button>')
+    expect(html).not.toContain('Голос Silero')
+    expect(html).not.toContain('>Скачать модель</button>')
+    expect(html).not.toContain('Адрес API')
+  })
+
+  it('shows only the API connection fields with optional style in one disclosure', () => {
+    const html = voice('neural', { ...DEFAULT_SETTINGS.tts, engine: 'remote', enabled: true })
+    expect(html).toContain('Адрес API')
+    expect(html).toContain('Ключ API')
+    expect(html).toContain('<details class="disclosure"><summary>Стиль речи</summary>')
+    expect(html).toContain('<button disabled="">Послушать пример</button>')
+    expect(html).not.toContain('Голос Silero')
+    expect(html).not.toContain('>Скачать модель</button>')
   })
 
   it('survives an empty exclusion list instead of rendering nothing', () => {
