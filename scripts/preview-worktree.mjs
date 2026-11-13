@@ -92,6 +92,25 @@ function copyResource(source, destination) {
   }
 }
 
+function rebuildResource(target, buildScript, output, extra) {
+  const directory = dirname(output)
+  mkdirSync(directory, { recursive: true })
+  const temporary = mkdtempSync(join(directory, '.preview-build-'))
+  const previous = join(temporary, 'previous')
+  try {
+    if (lstatSync(output, { throwIfNoEntry: false })) renameSync(output, previous)
+    execFileSync(process.execPath, [buildScript], { cwd: target, stdio: 'inherit' })
+    if (!executable(output) || extra.some((file) => !existsSync(join(directory, file)))) {
+      throw new Error(`Сборка ${buildScript} не создала все необходимые файлы.`)
+    }
+  } catch (error) {
+    if (lstatSync(previous, { throwIfNoEntry: false })) renameSync(previous, output)
+    throw error
+  } finally {
+    rmSync(temporary, { recursive: true, force: true })
+  }
+}
+
 function prepareResources(source, target, inspectOnly) {
   const resources = join(target, 'resources')
   for (const { binary, build, inputs, extra = [] } of nativeResources) {
@@ -110,8 +129,7 @@ function prepareResources(source, target, inspectOnly) {
     } else {
       console.log(`${binary}: сборка в выбранном worktree`)
       if (inspectOnly) continue
-      execFileSync(process.execPath, [buildScript], { cwd: target, stdio: 'inherit' })
-      if (!executable(output) || extra.some((file) => !existsSync(join(resources, file)))) throw new Error(`Сборка ${binary} не создала исполняемый файл.`)
+      rebuildResource(target, buildScript, output, extra)
     }
   }
 
