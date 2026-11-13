@@ -68,6 +68,10 @@ const voice = createVoiceController({
 })
 
 function applyLaunchAtLogin(enabled: boolean): void {
+  // macOS refuses to register a login item for an unsigned development build.
+  // The native error is not actionable, and the setting is still stored, so a
+  // packaged build will apply it on the next launch.
+  if (!app.isPackaged) return
   try {
     app.setLoginItemSettings({ openAtLogin: enabled, openAsHidden: true })
   } catch (error) {

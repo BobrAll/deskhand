@@ -504,8 +504,10 @@ export function createVoiceController(host: VoiceHost) {
       // binary, a missing model or a failed temp-file write has not.
       if (transcribed.spawned === true && getSettings().voice.model === model) warmedModel = model
       // One line per turn: enough to diagnose a complaint, never the transcript
-      // itself — what the user said is not log material.
-      console.log(`[voice] ${transcribed.ok ? 'ok' : 'failed'} in ${transcribed.ms} мс`)
+      // itself — what the user said is not log material. Audio length separates
+      // "the model was slow" from "the phrase was long".
+      console.log(`[voice] ${transcribed.ok ? 'ok' : 'failed'} in ${transcribed.ms} мс, ` +
+        `${Math.round(result.durationMs)} мс аудио, модель ${model}`)
       if (mine !== turn) {
         // The user started another phrase while this one was being recognised.
         // The card already belongs to the newer turn, and both the text and the
