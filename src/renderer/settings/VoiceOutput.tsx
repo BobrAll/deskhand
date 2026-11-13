@@ -1,22 +1,23 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { TtsSettings, TtsSetupProgress, TtsStatus, VoiceSettings } from '@shared/types'
-import { PREVIEW_LINE, SILERO_SPEAKERS, sileroSpeaker } from '@shared/tts'
+import {
+  PREVIEW_LINE,
+  SILERO_SPEAKERS,
+  SPEECH_RATE,
+  SPEECH_VOICE_RETRIES,
+  SPEECH_VOICE_RETRY_MS,
+  sileroSpeaker
+} from '@shared/tts'
 import { Disclosure, Group, Row, ToggleRow } from './Row'
-
-/** Chromium lists the macOS voices a frame or two after the first ask. */
-const SYSTEM_VOICE_RETRY_MS = 200
-const SYSTEM_VOICE_RETRIES = 10
-/** The same pace the card reads answers at. */
-const SYSTEM_PREVIEW_RATE = 1.3
 
 /** The local macOS voice for the preview line, waited for while Chromium fills its list. */
 async function systemPreviewVoice(stillWanted: () => boolean): Promise<SpeechSynthesisVoice | null> {
-  for (let attempt = 0; attempt < SYSTEM_VOICE_RETRIES; attempt++) {
+  for (let attempt = 0; attempt < SPEECH_VOICE_RETRIES; attempt++) {
     const voice = window.speechSynthesis?.getVoices()
       .find((candidate) => candidate.localService && candidate.lang.toLowerCase().startsWith('ru'))
     if (voice) return voice
     if (!stillWanted()) return null
-    await new Promise((resolve) => setTimeout(resolve, SYSTEM_VOICE_RETRY_MS))
+    await new Promise((resolve) => setTimeout(resolve, SPEECH_VOICE_RETRY_MS))
   }
   return null
 }
@@ -38,7 +39,7 @@ async function playSystemPreview(stillWanted: () => boolean): Promise<void> {
     const utterance = new SpeechSynthesisUtterance(PREVIEW_LINE)
     utterance.voice = voice
     utterance.lang = voice.lang
-    utterance.rate = SYSTEM_PREVIEW_RATE
+    utterance.rate = SPEECH_RATE
     utterance.onend = () => resolve()
     utterance.onerror = () => reject(new Error('Не удалось воспроизвести пример.'))
     synth.speak(utterance)

@@ -19,6 +19,8 @@
  *   spying".
  */
 
+import { MAX_VOICE_DURATION_MS } from '@shared/defaults'
+
 /** whisper.cpp only accepts 16 kHz mono input. */
 const TARGET_RATE = 16_000
 
@@ -29,10 +31,10 @@ const TARGET_RATE = 16_000
  * `voice.maxDurationMs`, and the main process closes the turn at that value. The
  * two have to agree at the top end, or the tail of a long recording is dropped
  * here while the card says the recording is still running — hence the same
- * 10 minutes that `sanitizeVoice` allows the setting to reach. At the typical
- * 48 kHz mono that is 115 MB, which a wedged key cannot grow past.
+ * `MAX_VOICE_DURATION_MS` that `sanitizeVoice` allows the setting to reach. At
+ * the typical 48 kHz mono that is 115 MB, which a wedged key cannot grow past.
  */
-const MAX_RECORDING_MS = 10 * 60_000
+const MAX_RECORDING_MS = MAX_VOICE_DURATION_MS
 
 /** Below this the recording is silence, not speech. */
 const SILENCE_RMS = 0.0035

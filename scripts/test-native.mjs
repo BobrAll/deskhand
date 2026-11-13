@@ -7,9 +7,9 @@
 // `null` at runtime.
 //
 // Only the read-only commands are exercised — `ping`, `permissions`, `front`,
-// `apps`, `cursor`. Nothing here moves the mouse, presses a key, types, pastes,
-// activates another app, records voice or asks for permissions: those are
-// deliberately absent to keep this contract check read-only.
+// `apps`, `visible-apps`, `cursor`. Nothing here moves the mouse, presses a key,
+// types, pastes, activates another app, records voice or asks for permissions:
+// those are deliberately absent to keep this contract check read-only.
 //
 // Not part of `npm test`: it needs macOS, the built binary and a real session.
 // Run it with `npm run test:native`.

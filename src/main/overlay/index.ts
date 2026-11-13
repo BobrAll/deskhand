@@ -38,6 +38,7 @@ import { captureScreenshot } from '../context/screenshot'
 import { getProvider, resolveChatModel } from '../llm'
 import { ProviderError, type ChatMessage } from '../llm/provider'
 import { searchWeb } from '../llm/webSearch'
+import { CARD_FOLDED_HEIGHT } from '../card'
 import { copyText, pasteAnswer } from '../paste'
 import { hideAnnotations, showAnnotations } from '../drawing'
 import { buildTurnRequest, type Exchange } from './request'
@@ -124,12 +125,13 @@ interface Session {
 }
 
 /**
- * Size the card is placed with before the renderer has laid itself out: the
- * folded card — one input line and the chevron. Only placement uses it; the
- * renderer reports the real size a frame later, so a slightly generous guess here
- * just keeps the first placement from flipping sides afterwards.
+ * Size the card is placed with before the renderer has laid itself out.
+ *
+ * Only placement uses it; the renderer reports the real size a frame later, so a
+ * slightly generous guess here just keeps the first placement from flipping
+ * sides afterwards.
  */
-const INITIAL_HEIGHT = 31
+const INITIAL_HEIGHT = CARD_FOLDED_HEIGHT
 
 /**
  * Shown when the provider refuses the screenshot.
@@ -180,6 +182,12 @@ const MAX_HISTORY_CHARS = 1_500
 
 const STOP_AGENT = Symbol('stop-agent')
 const TURN_DEADLINE_MS = 120_000
+
+/** Time the compositor needs to start excluding the card from screen captures. */
+const CONTENT_PROTECTION_SETTLE_MS = 45
+
+/** The agent's exact reply for success without caveats. */
+const AGENT_DONE_MARKER = '[[ACTION_DONE]]'
 
 /** What OpenRouter wants on every request to attribute the traffic to this app. */
 const OPENROUTER_ATTRIBUTION = {
@@ -449,8 +457,7 @@ export function createOverlayController(host: OverlayHost) {
       try {
         if (visible && win) {
           win.setContentProtection(true)
-          // Give the compositor a beat to apply the new sharing state.
-          await delay(45)
+          await delay(CONTENT_PROTECTION_SETTLE_MS)
         }
         // The front window is read even when the agent is off if exclusions are
         // configured: otherwise a window the user switched to could never be
@@ -1253,8 +1260,7 @@ export function createOverlayController(host: OverlayHost) {
     }
 
     const report = run.answer.trim()
-    // The agent uses this exact reply for success without caveats.
-    const acknowledged = report === '[[ACTION_DONE]]' && !run.message &&
+    const acknowledged = report === AGENT_DONE_MARKER && !run.message &&
       !run.blocked && !run.aborted && !run.incomplete
     const answer = acknowledged ? '' : run.incomplete
       ? (run.message ?? '')
@@ -1526,8 +1532,7 @@ export function createOverlayController(host: OverlayHost) {
       if (session?.abort) session.abort.abort(STOP_AGENT)
     },
     target: (): ActiveAppInfo | null => session?.target ?? null,
-    isOpen: (): boolean => Boolean(session && host.window()?.isVisible()),
-    hasSession: (): boolean => session !== null
+    isOpen: (): boolean => Boolean(session && host.window()?.isVisible())
   }
 }
 

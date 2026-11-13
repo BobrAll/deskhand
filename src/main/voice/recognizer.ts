@@ -297,7 +297,7 @@ export async function transcribe(options: TranscribeOptions): Promise<Transcribe
   }
 }
 
-/** Long enough for the recognizer to start, load its model and take one pass. */
+/** Length of the silent clip a warm-up turn feeds the recognizer. */
 const WARMUP_WAV_MS = 160
 const WARMUP_RATE = 16_000
 

@@ -31,14 +31,11 @@ export type ApprovalDecision =
 /**
  * Risk signals, not a model of the interface.
  *
- * Inflected Russian, so these are stems. `[^а-яё]` stands in for a word boundary
- * because `\b` is ASCII-only and treats every Cyrillic letter as a boundary.
- *
- * Grouped by what the action commits to, because that is the judgement this list
- * encodes: money leaves, something is said in public, something is destroyed,
- * access is granted, a credential changes, an agreement is signed. The groups are
- * joined into one expression, since the classifier only asks whether any of them
- * is present.
+ * Inflected Russian, so these are stems, matched as substrings. Grouped by what
+ * the action commits to, because that is the judgement this list encodes: money
+ * leaves, something is said in public, something is destroyed, access is granted,
+ * a credential changes, an agreement is signed. The groups are joined into one
+ * expression, since the classifier only asks whether any of them is present.
  */
 const PAYMENT_WORDS =
   'оплат|купить|покупк|оформить заказ|подтвердить заказ|подписаться|продлить подписк|' +

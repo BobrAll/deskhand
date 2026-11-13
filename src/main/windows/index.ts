@@ -16,6 +16,7 @@ import {
 import type { OverlayHost } from '../overlay/host'
 import {
   boundsFor,
+  CARD_FOLDED_HEIGHT,
   placeAnchor,
   resizeAnchor,
   type CardAnchor
@@ -43,7 +44,7 @@ export {
  * numbers to decide where a line wraps and how wide a card to ask for. Height and
  * the placement gap are main's business only, so they stay here.
  */
-const OVERLAY_MIN_HEIGHT = 31
+const OVERLAY_MIN_HEIGHT = CARD_FOLDED_HEIGHT
 const OVERLAY_MAX_HEIGHT = 520
 
 const CARD_VIBRANCY = 'under-window' as const
@@ -226,9 +227,9 @@ function performShow(height: number, width: number, activate: boolean): void {
   if (!win || win.isDestroyed()) return
   // A card that is already on screen keeps its own size.
   //
-  // Both numbers passed here are guesses: the folded card is 31 points tall until
-  // the renderer lays itself out, and 112 wide until the user types something. The
-  // renderer reports the real size a frame later and resizes the window itself, so
+  // Both numbers passed here are guesses: until the renderer lays itself out the
+  // card is one folded line tall and 112 points wide, still empty. The renderer
+  // reports the real size a frame later and resizes the window itself, so
   // re-applying a guess over a card that is already being typed into would shrink
   // it back to the empty pill between two keystrokes. Keep the position when the
   // visible card takes focus after context collection.
@@ -287,7 +288,7 @@ function performShow(height: number, width: number, activate: boolean): void {
 function presentOverlay(height: number, width: number, activate: boolean): void {
   const safeHeight = Math.round(clamp(height, OVERLAY_MIN_HEIGHT, OVERLAY_MAX_HEIGHT))
   // A voice turn is bars only, and the caller's width describes a card that is
-  // not there: the overlay shows itself mid-turn at `INITIAL_HEIGHT` with its
+  // not there: the overlay shows itself mid-turn at `CARD_FOLDED_HEIGHT` with its
   // default narrow width, which would leave the invisible window 32 points wider
   // than the few pixels it paints. That extra strip is invisible but still
   // belongs to the window, so it sits between the pointer and whatever is under
@@ -319,7 +320,7 @@ function presentOverlay(height: number, width: number, activate: boolean): void 
 
 /**
  * Drops the floating level a running plan raised, so the card goes back to being
- * an ordinary window. Called when the plan ends and when the card is hidden.
+ * an ordinary window. Called when the card is hidden.
  */
 function clearAlwaysOnTop(): void {
   const win = overlayWindow

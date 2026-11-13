@@ -8,7 +8,7 @@
  * functions and is tested with real numbers instead of a fake `BrowserWindow`.
  *
  * The two `screen.*` lookups that the arithmetic needs stay with the caller
- * (`windows.ts`) and arrive as arguments: a work area for the pointer, a work area
+ * (`windows/index.ts`) and arrive as arguments: a work area for the pointer, a work area
  * for a card the user dragged to another display.
  *
  * The rules, in the order they matter:
@@ -34,6 +34,12 @@ export const CARD_GAP = 10
 
 /** How close the card may get to a display edge. */
 export const CARD_MARGIN = 8
+
+/**
+ * Height of the folded card — one input line and the chevron — before the
+ * renderer has laid itself out.
+ */
+export const CARD_FOLDED_HEIGHT = 31
 
 /** How far the window may drift from where it was placed before it counts as dragged. */
 const DRAG_SLACK = 2

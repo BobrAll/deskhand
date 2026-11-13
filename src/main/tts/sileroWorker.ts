@@ -303,12 +303,12 @@ export class SileroWorker {
     if (at > 0) {
       // A C extension can write to fd 1 without a newline. The reply is still
       // complete, so keep it and log the prefix as noise.
-      this.log(`[tts] silero worker stdout: ${text.slice(0, at).slice(0, LOG_LINE_CHARS)}`)
+      this.log(`[tts] silero worker stdout: ${text.slice(0, Math.min(at, LOG_LINE_CHARS))}`)
     }
 
     const pending = this.pending
     if (!pending) {
-      this.log(`[tts] silero worker replied with no request waiting: ${text.slice(at).slice(0, LOG_LINE_CHARS)}`)
+      this.log(`[tts] silero worker replied with no request waiting: ${text.slice(at, at + LOG_LINE_CHARS)}`)
       return
     }
 

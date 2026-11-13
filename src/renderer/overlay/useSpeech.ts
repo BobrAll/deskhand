@@ -3,7 +3,12 @@ import { WAIT_STATUS_MS, waitingPhrases } from './waiting'
 import { looksLikeAction } from '@shared/intent'
 import type { AnswerVoice, VoiceSettings } from '@shared/types'
 import type { SpeechCue } from '@shared/speechBank'
-import { TTS_MAX_CHARS } from '@shared/tts'
+import {
+  SPEECH_RATE,
+  SPEECH_VOICE_RETRIES,
+  SPEECH_VOICE_RETRY_MS,
+  TTS_MAX_CHARS
+} from '@shared/tts'
 import { speechLine, speaksCue } from './speechCues'
 import {
   ANSWER_FALLBACK,
@@ -31,14 +36,8 @@ import { phraseAudio } from './speechAudio'
  * finish.
  */
 
-/** Chromium can populate the voice list a frame or two after the first call. */
-const VOICE_RETRY_MS = 200
-const VOICE_RETRIES = 10
-
 /** The system voice is fed the answer in chunks of at most this many characters. */
 const SPEECH_CHUNK_CHARS = 220
-/** Faster than the macOS default, which reads slower than a person scans the card. */
-const SPEECH_RATE = 1.3
 
 function* speechChunks(text: string, limit: number): Generator<string> {
   let remaining = text
@@ -269,8 +268,8 @@ export function useSpeech() {
       synth?.getVoices().filter(v => v.localService).find(v => v.lang.toLowerCase().startsWith(language))
 
     let voice = pick()
-    for (let attempt = 0; !voice && attempt < VOICE_RETRIES; attempt++) {
-      await sleep(VOICE_RETRY_MS)
+    for (let attempt = 0; !voice && attempt < SPEECH_VOICE_RETRIES; attempt++) {
+      await sleep(SPEECH_VOICE_RETRY_MS)
       if (token !== generation.current) return
       voice = pick()
     }

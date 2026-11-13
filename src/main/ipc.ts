@@ -61,8 +61,6 @@ const PROVIDER_IDS: ProviderId[] = PROVIDERS.map((provider) => provider.id)
 /** `defaults read` is a local call; a slow one means the app has no readable plist. */
 const BUNDLE_ID_TIMEOUT_MS = 4000
 
-
-
 function isProvider(value: unknown): value is ProviderId {
   return typeof value === 'string' && (PROVIDER_IDS as string[]).includes(value)
 }
@@ -148,7 +146,7 @@ async function applySettingsSideEffects(
       // Roll back so the UI and the actual binding never disagree.
       patchSettings({ hotkey: previous.hotkey })
       deps.applyHotkey(previous.hotkey)
-      return { ...(await loadSettingsBundle()), settings: getSettings(), hotkeyError: true }
+      return { ...(await loadSettingsBundle()), hotkeyError: true }
     }
   }
   if (next.launchAtLogin !== previous.launchAtLogin) {

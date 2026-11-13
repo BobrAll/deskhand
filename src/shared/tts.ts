@@ -22,6 +22,18 @@ export const RECORDED = {
 export const TTS_MAX_CHARS = 600
 
 /**
+ * The system voice, in the card and in the settings preview.
+ *
+ * Chromium can populate the voice list a frame or two after the first call, so
+ * both places poll. They also share the reading pace, because the preview is
+ * meant to sound like the card.
+ */
+export const SPEECH_VOICE_RETRY_MS = 200
+export const SPEECH_VOICE_RETRIES = 10
+/** Faster than the macOS default, which reads slower than a person scans the card. */
+export const SPEECH_RATE = 1.3
+
+/**
  * The voices of the optional Silero engine.
  *
  * Silero names its speakers in English, and the service takes those names as

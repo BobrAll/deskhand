@@ -44,12 +44,6 @@ public struct AXElement {
         return nil
     }
 
-    public func int(_ attribute: String) -> Int? {
-        guard let v = copy(attribute) else { return nil }
-        if let n = v as? NSNumber { return n.intValue }
-        return nil
-    }
-
     /// The outcome of asking an element for its children.
     ///
     /// "No children" and "this element will not say" are different facts, and
@@ -108,10 +102,6 @@ public struct AXElement {
 
     public var role: String {
         string(kAXRoleAttribute) ?? ""
-    }
-
-    public var subrole: String {
-        string(kAXSubroleAttribute) ?? ""
     }
 
     public var title: String? {
@@ -186,16 +176,6 @@ public struct AXElement {
     @discardableResult
     public func setFocused(_ focused: Bool) -> Bool {
         setValue(focused, for: kAXFocusedAttribute)
-    }
-
-    public func isEnabled() -> Bool {
-        bool(kAXEnabledAttribute) ?? true
-    }
-
-    /// Element identifier: `AXIdentifier` when present, which many AppKit apps
-    /// expose and which stays stable across layout changes.
-    public var identifier: String? {
-        nonEmpty(string("AXIdentifier"))
     }
 
     private func nonEmpty(_ s: String?) -> String? {

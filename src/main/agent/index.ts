@@ -38,7 +38,13 @@ import { accessibilityTrusted } from '../permissions'
 import { getSettings, patchSettings } from '../settings/store'
 import { AGENT_MIN_OUTPUT_TOKENS } from '@shared/defaults'
 import { classifyCall, describeCall, rememberKey } from './approval'
-import { agentBinary, AgentSidecar, type AgentProvider, type AgentSidecarEvent } from './sidecar'
+import {
+  agentBinary,
+  AgentSidecar,
+  type AgentProvider,
+  type AgentSidecarEvent,
+  type AgentToolTiming
+} from './sidecar'
 import { trace, traceWithin } from './trace'
 import { createRunTrace } from './run-trace'
 
@@ -220,13 +226,7 @@ function withAgentBudget(provider: AgentProvider): AgentProvider {
 }
 
 /** The same rounding, applied to the phases a tool call may have reported. */
-function roundedTiming(timing: {
-  wallMs?: number
-  treeMs?: number
-  captureMs?: number
-  encodeMs?: number
-  imageBytes?: number
-}): Record<string, number> {
+function roundedTiming(timing: AgentToolTiming): Record<string, number> {
   const fields: Record<string, number> = {}
   if (timing.wallMs !== undefined) fields.wallMs = ms(timing.wallMs)
   if (timing.treeMs !== undefined) fields.treeMs = ms(timing.treeMs)

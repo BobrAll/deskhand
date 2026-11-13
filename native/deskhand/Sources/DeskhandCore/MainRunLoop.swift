@@ -21,11 +21,9 @@ public enum MainRunLoop {
     /// below the cost of a single tool call and keeps the loop responsive.
     public static func run(
         until isDone: () -> Bool,
-        slice: TimeInterval = 0.02,
-        deadline: Date? = nil
+        slice: TimeInterval = 0.02
     ) {
         while !isDone() {
-            if let deadline, Date() >= deadline { return }
             RunLoop.main.run(until: Date().addingTimeInterval(slice))
         }
     }
@@ -56,6 +54,13 @@ public enum MainRunLoop {
             }
         }
         return true
+    }
+
+    /// Lets the main run loop run for `seconds` so a window-server round trip
+    /// started just before can land. Off the main thread there is no loop to
+    /// pump, so this sleeps.
+    public static func pump(for seconds: TimeInterval) {
+        wait(until: { false }, deadline: Date().addingTimeInterval(seconds))
     }
 
     /// Bridges an async operation into a synchronous entry point without

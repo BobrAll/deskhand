@@ -208,6 +208,9 @@ export function isVoiceModelFile(name: string): boolean {
   return /^ggml-[^/\\]*\.bin$/.test(name)
 }
 
+/** The longest press push-to-talk accepts, in milliseconds. */
+export const MAX_VOICE_DURATION_MS = 10 * 60_000
+
 /** Key held to talk, language and what to do with the transcript. */
 export const DEFAULT_VOICE: VoiceSettings = {
   enabled: true,
@@ -423,7 +426,7 @@ function sanitizeVoice(input: unknown): VoiceSettings {
     maxDurationMs: sanitizeDuration(
       raw.maxDurationMs,
       1_000,
-      10 * 60_000,
+      MAX_VOICE_DURATION_MS,
       DEFAULT_VOICE.maxDurationMs
     )
   }

@@ -550,15 +550,7 @@ export function App() {
    */
   const hasAnswer = answer.trim().length > 0
 
-  /**
-   * How wide the text in the field actually is, in points.
-   *
-   * Measured, not estimated from the character count: «ш» and «i» are not the
-   * same letter, and a card that widens by a different step than the typing does
-   * reads as a glitch rather than as the card making room. The measuring canvas
-   * uses the field's own computed font, so the run is shaped exactly as it will
-   * be inside the textarea.
-   */
+  /** How wide the text in the field is, measured in the field's own font. */
   const textWidth = prompt ? measureLine(prompt, fontRef.current) : 0
 
   // Drawers and confirmations need room for controls. Progress and answers

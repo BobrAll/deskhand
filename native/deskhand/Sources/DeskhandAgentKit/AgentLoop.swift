@@ -242,12 +242,15 @@ public final class AgentLoop {
                     self.observer?.stepStreamed(step, text: streamed)
                 }
             }
-            do {
-                completion = try await askModel(prompt, systemPrompt: systemPrompt, onText: onText)
-                // The last delta may have arrived inside the throttle window.
+            // The last delta may have arrived inside the throttle window.
+            let flushStream: () -> Void = {
                 if !streamed.isEmpty, streamed.count != lastStreamLength {
                     self.observer?.stepStreamed(step, text: streamed)
                 }
+            }
+            do {
+                completion = try await askModel(prompt, systemPrompt: systemPrompt, onText: onText)
+                flushStream()
             } catch {
                 // The provider refused the picture. Whether a model takes images
                 // is not knowable before the call — the user names it, and it may
@@ -271,9 +274,7 @@ public final class AgentLoop {
                     timingLog.record(TimingLabel.model, milliseconds: stepClock.milliseconds)
                     throw error
                 }
-                if !streamed.isEmpty, streamed.count != lastStreamLength {
-                    self.observer?.stepStreamed(step, text: streamed)
-                }
+                flushStream()
             }
             let llmMilliseconds = stepClock.milliseconds
             if let record = ModelTrace.record {
