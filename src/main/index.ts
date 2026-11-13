@@ -26,6 +26,7 @@ import {
 } from './windows'
 import { getSettings, patchSettings } from './settings/store'
 import { readPermissions } from './permissions'
+import { stopSileroWorker } from './tts/silero'
 import { encryptionAvailable } from './settings/secrets'
 import { QUIT_LABEL, SETTINGS_ACCELERATOR, SETTINGS_LABEL } from './menus'
 import { DEFAULT_SETTINGS } from '@shared/defaults'
@@ -361,6 +362,9 @@ if (!app.requestSingleInstanceLock()) {
     // The tap is a child process blocked in a run loop; without this it outlives
     // the app and keeps swallowing the shortcut.
     voice.stop()
+    // Silero keeps a Python process with the model in memory between lines; it
+    // must not outlive the app either.
+    stopSileroWorker()
     // The agent is a child process that blocks in a run loop; without this it
     // outlives the app and keeps a pipe open.
     await overlay.disposeAgent()
