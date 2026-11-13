@@ -90,6 +90,15 @@ export interface TtsSettings {
    * picking a Silero speaker rewrote the API voice in the next tab.
    */
   sileroVoice: string
+  /**
+   * `silero` only: ask the configured text model for words the seed dictionary
+   * does not know, and cache the answer.
+   *
+   * Silero itself stays offline; this is the one optional request, and turning
+   * it off leaves every unknown word to the transliteration rules and the stress
+   * model.
+   */
+  pronunciationLookup: boolean
 }
 
 /**

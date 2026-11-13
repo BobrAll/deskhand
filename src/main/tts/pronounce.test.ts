@@ -1,0 +1,149 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { DEFAULT_SETTINGS } from '@shared/defaults'
+import type { AppSettings } from '@shared/types'
+import type { ChatMessage } from '../llm/provider'
+
+const fake = vi.hoisted(() => ({
+  settings: {} as AppSettings,
+  key: 'sk-test' as string | null,
+  model: 'chat-model',
+  calls: [] as ChatMessage[][],
+  reply: '{}',
+  fail: false,
+  files: new Map<string, string>()
+}))
+
+vi.mock('electron', () => ({
+  app: { getPath: () => '/tmp/deskhand-pronounce-test' }
+}))
+
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>()
+  return {
+    ...actual,
+    mkdir: async () => undefined,
+    readFile: async (path: string) => {
+      const hit = fake.files.get(path)
+      if (!hit) throw new Error('ENOENT')
+      return hit
+    },
+    writeFile: async (path: string, data: string) => { fake.files.set(path, data) }
+  }
+})
+
+vi.mock('../llm', () => ({
+  getProvider: () => ({
+    id: 'openai',
+    async *stream(messages: ChatMessage[]) {
+      fake.calls.push(messages)
+      if (fake.fail) throw new Error('provider down')
+      yield { delta: fake.reply }
+    }
+  }),
+  resolveChatModel: () => fake.model
+}))
+
+vi.mock('../settings/store', () => ({ getSettings: () => fake.settings }))
+vi.mock('../settings/secrets', () => ({ getApiKey: () => fake.key }))
+
+function settings(): AppSettings {
+  return {
+    ...DEFAULT_SETTINGS,
+    tts: { ...DEFAULT_SETTINGS.tts, engine: 'silero', pronunciationLookup: true }
+  }
+}
+
+async function resolve(text: string): Promise<Record<string, string>> {
+  const module = await import('./pronounce')
+  return module.resolvePronunciations(text)
+}
+
+beforeEach(() => {
+  fake.settings = settings()
+  fake.key = 'sk-test'
+  fake.model = 'chat-model'
+  fake.calls = []
+  fake.reply = '{}'
+  fake.fail = false
+  fake.files.clear()
+  vi.resetModules()
+})
+
+afterEach(() => {
+  vi.restoreAllMocks()
+})
+
+describe('resolvePronunciations', () => {
+  it('asks the model only for the words the dictionary does not know', async () => {
+    fake.reply = JSON.stringify({ localhost: 'локалх+ост', unrelated: 'анрел+ейтед' })
+
+    const hints = await resolve('Открой README и проверь localhost.')
+
+    expect(hints).toEqual({ localhost: 'локалх+ост' })
+    expect(fake.calls).toHaveLength(1)
+    const sent = fake.calls[0][1].parts[0]
+    expect(sent).toEqual({ type: 'text', text: '["localhost"]' })
+    expect([...fake.files.values()].join('')).not.toContain('unrelated')
+  })
+
+  it('writes the hint to the cache and uses it on the next call', async () => {
+    fake.reply = JSON.stringify({ localhost: 'локалх+ост' })
+    await resolve('localhost')
+    expect(fake.calls).toHaveLength(1)
+
+    vi.resetModules()
+    fake.calls = []
+    const hints = await resolve('localhost')
+
+    expect(hints).toEqual({ localhost: 'локалх+ост' })
+    expect(fake.calls).toHaveLength(0)
+    expect([...fake.files.values()].join('')).toContain('локалх+ост')
+  })
+
+  it('drops a hint the voice cannot read and keeps the valid ones', async () => {
+    fake.reply = JSON.stringify({ localhost: 'локалх+ост', widget: 'виджет' })
+
+    const hints = await resolve('localhost widget')
+
+    expect(hints).toEqual({ localhost: 'локалх+ост' })
+  })
+
+  it('does not ask when the user turned the lookup off', async () => {
+    fake.settings = { ...fake.settings, tts: { ...fake.settings.tts, pronunciationLookup: false } }
+
+    expect(await resolve('localhost')).toEqual({})
+    expect(fake.calls).toHaveLength(0)
+  })
+
+  it('does not ask without a chat key or model', async () => {
+    fake.key = null
+    expect(await resolve('localhost')).toEqual({})
+
+    fake.key = 'sk-test'
+    fake.model = ''
+    expect(await resolve('localhost')).toEqual({})
+    expect(fake.calls).toHaveLength(0)
+  })
+
+  it('stays silent when the provider fails', async () => {
+    fake.fail = true
+    expect(await resolve('localhost')).toEqual({})
+  })
+})
+
+describe('validPronunciation', () => {
+  it('accepts one stress mark before a vowel', async () => {
+    const { validPronunciation } = await import('./pronounce')
+    expect(validPronunciation('локалх+ост')).toBe(true)
+    expect(validPronunciation('сл+ово')).toBe(true)
+    expect(validPronunciation('слов+о')).toBe(true)
+  })
+
+  it('rejects a multi-vowel word without a mark, two marks or a mark on a consonant', async () => {
+    const { validPronunciation } = await import('./pronounce')
+    expect(validPronunciation('локалхост')).toBe(false)
+    expect(validPronunciation('с+ло+во')).toBe(false)
+    expect(validPronunciation('+слово')).toBe(false)
+    expect(validPronunciation('localhost')).toBe(false)
+  })
+})

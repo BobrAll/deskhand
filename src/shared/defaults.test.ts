@@ -450,7 +450,8 @@ describe('normalizeSettings: live synthesis', () => {
       model: 'tts-model',
       voice: 'Kore',
       style: 'дружный',
-      sileroVoice: 'xenia'
+      sileroVoice: 'xenia',
+      pronunciationLookup: true
     })
   })
 

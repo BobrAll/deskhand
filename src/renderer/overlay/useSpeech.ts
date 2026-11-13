@@ -43,7 +43,16 @@ const SPEECH_RATE = 1.3
 function* speechChunks(text: string, limit: number): Generator<string> {
   let remaining = text
   while (remaining.length > limit) {
-    let end = remaining.lastIndexOf(' ', limit)
+    // A boundary at a sentence end sounds like a pause; one at a space in the
+    // middle of a sentence resets the intonation of a half-spoken thought.
+    const window = remaining.slice(0, limit + 1)
+    const sentence = Math.max(
+      window.lastIndexOf('. '),
+      window.lastIndexOf('! '),
+      window.lastIndexOf('? '),
+      window.lastIndexOf('… ')
+    )
+    let end = sentence > 0 ? sentence + 1 : window.lastIndexOf(' ')
     if (end < 1) {
       end = limit
       const next = remaining.charCodeAt(end)

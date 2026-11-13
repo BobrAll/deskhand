@@ -7,8 +7,10 @@
  * single button in the settings rather than a dependency of the build.
  *
  * Silero has no Latin letters in its vocabulary, so `transliterate.ts` writes
- * English words in Russian letters and lets the model's stress model place the
- * marks. The card keeps the original text; only the string sent to synthesis is
+ * English words in Russian letters. Words the seed dictionary does not know may
+ * get a cached hint from the text model first (`pronounce.ts`); if that is
+ * unavailable, the rules and the model's stress model still place the marks.
+ * The card keeps the original text; only the string sent to synthesis is
  * rewritten.
  *
  * Three decisions:
@@ -35,6 +37,7 @@ import { app } from 'electron'
 import type { TtsSetupProgress } from '@shared/types'
 import type { TtsResult } from '@shared/tts'
 import { findPython, firstLine, run } from './python'
+import { resolvePronunciations } from './pronounce'
 import { transliterate } from './transliterate'
 
 /** Pinned: a new release changes the file list and the hashes below. */
@@ -64,7 +67,7 @@ const MODEL_BYTES = MODEL_FILES.reduce((sum, [, bytes]) => sum + bytes, 0)
 export const SILERO_CACHE_ID = `silero-v5_6_ru-${RUNTIME_VERSION}`
 
 /** Bump when the transliteration dictionary or rules change the spoken text. */
-export const TRANSLITERATION_VERSION = 1
+export const TRANSLITERATION_VERSION = 2
 
 const PIP_TIMEOUT_MS = 5 * 60_000
 const MODEL_TIMEOUT_MS = 10 * 60_000
@@ -338,13 +341,16 @@ async function renderSilero(
  *
  * Latin words are transliterated before they reach the model: Silero's
  * vocabulary has no Latin letters at all. The original text never changes, only
- * the string handed to synthesis.
+ * the string handed to synthesis. A word outside the seed dictionary may wait
+ * for one cached hint from the text model; a failed lookup is not an error, it
+ * simply leaves the word to the rules.
  */
 export async function synthesizeSilero(text: string, speaker: string): Promise<TtsResult> {
   if (!sileroRuntimeReady()) return { ok: false, message: 'Silero не установлен.' }
   if (!sileroModelsReady()) return { ok: false, message: 'Нет модели Silero V5.6 RU.' }
 
-  const spoken = transliterate(text)
+  const hints = await resolvePronunciations(text)
+  const spoken = transliterate(text, hints)
   if (!spoken.trim()) return { ok: false, message: 'Нечего произносить.' }
 
   const directory = join(tmpdir(), `deskhand-silero-${process.pid}-${randomUUID()}`)

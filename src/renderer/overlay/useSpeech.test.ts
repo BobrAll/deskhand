@@ -115,7 +115,12 @@ describe('automatic speech lifecycle', () => {
   })
 })
 
-afterEach(() => { vi.clearAllTimers(); vi.useRealTimers(); vi.unstubAllGlobals() })
+afterEach(() => {
+  vi.clearAllTimers()
+  vi.useRealTimers()
+  vi.restoreAllMocks()
+  vi.unstubAllGlobals()
+})
 
 describe('manual playback', () => {
   it('uses macOS for manual playback even if a neural engine is still configured', async () => {
@@ -180,6 +185,19 @@ describe('manual playback', () => {
     await flush()
     expect(speak).toHaveBeenCalledTimes(2)
     expect(speak.mock.calls.map(([utterance]) => utterance.text).join(' ')).toBe(answer)
+  })
+
+  it('cuts a long system answer at a sentence boundary', async () => {
+    speak.mockImplementation(() => undefined)
+    const answer = 'Короткое предложение. '.repeat(5) +
+      'Очень длинное предложение без точек '.repeat(10)
+
+    useSpeech().speak(answer)
+    await flush()
+
+    const first = speak.mock.calls[0][0].text as string
+    expect(first.length).toBeLessThanOrEqual(220)
+    expect(first.endsWith('.')).toBe(true)
   })
 })
 
