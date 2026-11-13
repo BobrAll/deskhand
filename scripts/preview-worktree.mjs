@@ -179,7 +179,7 @@ async function stopDeskhand(trees) {
 }
 
 async function main() {
-  if (options.length) throw new Error('Используй npm run preview:worktree -- [ветка или путь] [--dry-run].')
+  if (options.length) throw new Error('Используй npm run worktree -- [ветка или путь] [--dry-run].')
   const trees = worktrees()
   const source = trees[0].path
   const target = (await selectTarget(trees)).path
@@ -226,6 +226,6 @@ async function main() {
 }
 
 main().catch((error) => {
-  console.error(`[preview:worktree] ${error.message}`)
+  console.error(`[worktree] ${error.message}`)
   process.exitCode = 1
 })
