@@ -19,7 +19,7 @@ import { InstallList } from './InstallList'
 import { HotkeyField } from './HotkeyField'
 import { startRecording } from '../overlay/recorder'
 
-const MICROPHONE_TEST_MS = 3000
+const MICROPHONE_LEVEL_BARS = 12
 
 /** Chromium lists the macOS voices a frame or two after the first ask. */
 const SYSTEM_VOICE_RETRY_MS = 200
@@ -227,21 +227,9 @@ function TtsSection({
       </Group>
       <Group>
         <AnimatedDisclosure title="Дополнительные настройки озвучки">
-          <Group
-            title="Синтез речи"
-            footnote={
-              speech?.recordedVoice
-                ? `Короткие фразы записаны заранее голосом «${speech.recordedVoice}» и звучат мгновенно без ключа и сети. Синтез ниже нужен только для ответов и для фраз, которых нет в записи.`
-                : 'Короткие фразы записаны заранее и звучат мгновенно без ключа и сети. Синтез ниже нужен только для ответов и для фраз, которых нет в записи.'
-            }
-          >
+          <Group>
             <ToggleRow
               title="Включить синтез"
-              hint={
-                tts.engine === 'silero'
-                  ? 'Локальная модель Silero: ключ и сеть не нужны, только загрузка весов.'
-                  : 'Endpoint, модель, голос и стиль — твои. Ключ хранится в Keychain и не показывается.'
-              }
               checked={tts.enabled}
               onChange={(enabled) => onTtsChange({ enabled })}
             />
@@ -320,7 +308,7 @@ function TtsSection({
             )}
 
             {tts.engine === 'remote' && (
-              <>
+              <Disclosure title="Подключение сервиса API">
                 <Row
                   stacked
                   title="Адрес сервиса"
@@ -393,7 +381,7 @@ function TtsSection({
                     </div>
                   )}
                 </Row>
-              </>
+              </Disclosure>
             )}
           </Group>
         </AnimatedDisclosure>
@@ -419,7 +407,7 @@ function MicrophoneCheck({
   const active = test.phase === 'starting' || test.phase === 'listening'
   let message = 'Скажи пару слов, чтобы проверить сигнал.'
   if (test.phase === 'starting') message = 'Подключаю микрофон…'
-  if (test.phase === 'listening') message = 'Говори. Проверка займёт три секунды.'
+  if (test.phase === 'listening') message = 'Говори и смотри на полоски. Нажми «Остановить», когда закончишь.'
   if (test.phase === 'finished') {
     message = test.heard ? 'Микрофон работает. Сигнал есть.' : 'Сигнал слишком тихий. Подойди ближе и попробуй ещё раз.'
   }
@@ -433,7 +421,14 @@ function MicrophoneCheck({
         </button>
       </Row>
       {test.phase === 'listening' && (
-        <Row><meter className="microphone-level" aria-label="Уровень сигнала" min={0} max={1} value={test.level} /></Row>
+        <Row stacked>
+          <div className="microphone-level" role="meter" aria-label="Уровень сигнала"
+            aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(test.level * 100)}>
+            {Array.from({ length: MICROPHONE_LEVEL_BARS }, (_, index) => (
+              <span key={index} data-lit={index < Math.ceil(test.level * MICROPHONE_LEVEL_BARS)} />
+            ))}
+          </div>
+        </Row>
       )}
       {test.phase === 'error' && (
         <Row><button type="button" onClick={onOpenMicrophoneSettings}>Открыть «Приватность»</button></Row>
@@ -588,7 +583,7 @@ export function VoiceTab({
     const { signal } = controller
     setMicrophoneTest({ phase: 'starting' })
     try {
-      const recording = await startRecording(MICROPHONE_TEST_MS)
+      const recording = await startRecording(0)
       let peak = 0
       const sampleLevel = () => {
         const level = recording.level()
@@ -602,17 +597,15 @@ export function VoiceTab({
           const meter = window.setInterval(sampleLevel, 80)
           const finish = () => {
             window.clearInterval(meter)
-            window.clearTimeout(timeout)
             signal.removeEventListener('abort', finish)
             resolve()
           }
-          const timeout = window.setTimeout(finish, MICROPHONE_TEST_MS)
           signal.addEventListener('abort', finish, { once: true })
         })
       } finally {
         await recording.stop(false)
       }
-      if (!signal.aborted) setMicrophoneTest({ phase: 'finished', heard: peak >= 0.025 })
+      if (signal.reason === 'finished') setMicrophoneTest({ phase: 'finished', heard: peak >= 0.025 })
     } catch (error) {
       if (!signal.aborted) {
         const name = error instanceof Error ? error.name : ''
@@ -753,7 +746,10 @@ export function VoiceTab({
         <MicrophoneCheck
           test={microphoneTest}
           onCheck={() => void checkMicrophone()}
-          onCancel={cancelMicrophoneCheck}
+          onCancel={() => {
+            if (microphoneTest.phase === 'listening') microphoneCheck.current?.abort('finished')
+            else cancelMicrophoneCheck()
+          }}
           onOpenMicrophoneSettings={onOpenMicrophoneSettings}
         />
         <Group title="Запись и команды">
@@ -792,27 +788,23 @@ export function VoiceTab({
           )}
         </Group>
         <Group>
+          <Row
+            title="Модель распознавания"
+            hint={
+              voice.model !== savedModel
+                ? 'Применяем модель…'
+                : selectedModel === BUNDLED_VOICE_MODEL.id || !status
+                  ? `${BUNDLED_VOICE_MODEL.label} · встроенная модель для русского языка.`
+                  : modelName ? `Используется «${modelName}».` : (status.detail ?? 'Модель недоступна.')
+            }
+          >
+            {voice.model !== BUNDLED_VOICE_MODEL.id && installed.has(BUNDLED_VOICE_MODEL.id) && (
+              <button disabled={progress !== null || deleting !== null} onClick={() => onVoiceChange({ model: BUNDLED_VOICE_MODEL.id })}>
+                Выбрать GigaAM
+              </button>
+            )}
+          </Row>
           <AnimatedDisclosure title="Дополнительные настройки ввода">
-            <Group title="Распознавание">
-              <Row
-                stacked
-                title="Модель распознавания"
-                hint={
-                  voice.model !== savedModel
-                    ? 'Применяем модель…'
-                    : selectedModel === BUNDLED_VOICE_MODEL.id || !status
-                      ? `${BUNDLED_VOICE_MODEL.label} · встроенная модель для русского языка.`
-                      : modelName ? `Используется «${modelName}».` : (status.detail ?? 'Модель недоступна.')
-                }
-              >
-                {voice.model !== BUNDLED_VOICE_MODEL.id && installed.has(BUNDLED_VOICE_MODEL.id) && (
-                  <button disabled={progress !== null || deleting !== null} onClick={() => onVoiceChange({ model: BUNDLED_VOICE_MODEL.id })}>
-                    Выбрать GigaAM
-                  </button>
-                )}
-              </Row>
-            </Group>
-
             <Disclosure title="Другие модели распознавания">
               <ModelList
                 activeModel={selectedModel}
