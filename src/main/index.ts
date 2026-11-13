@@ -270,22 +270,25 @@ function bootstrap(): void {
     // An immediate quit may have run `finishQuit` already; creating the tray
     // after `destroyTray()` would leave an icon nobody removes.
     if (quitStarted) return
-    try {
-      createTray({
-        openAssistant: () => {
-          void overlay.open()
-        },
-        openSettings: () => openSettingsWindow(),
-        openOnboarding: () => openOnboardingWindow(),
-        quit
-      })
-      applyLaunchAtLogin(settings.launchAtLogin)
-      reportStartupPermissions()
-    } catch (error) {
-      // Same contract as the bootstrap itself: a tray or login item that fails
-      // must not leave the hotkey and the card unusable.
-      console.error('[app] deferred startup work failed:', error)
+    // Each step stands alone: a tray icon that cannot be created must not skip
+    // the login item or the permission diagnostic as well.
+    const attempt = (task: () => void): void => {
+      try {
+        task()
+      } catch (error) {
+        console.error('[app] deferred startup step failed:', error)
+      }
     }
+    attempt(() => createTray({
+      openAssistant: () => {
+        void overlay.open()
+      },
+      openSettings: () => openSettingsWindow(),
+      openOnboarding: () => openOnboardingWindow(),
+      quit
+    }))
+    attempt(() => applyLaunchAtLogin(settings.launchAtLogin))
+    attempt(reportStartupPermissions)
   }, 0)
 }
 

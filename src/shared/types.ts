@@ -531,6 +531,13 @@ export interface TranscribeResult {
   /** Wall-clock milliseconds spent in whisper, shown as "распознано за 0.9 с". */
   ms: number
   message?: string
+  /**
+   * True when the recognizer child process actually ran.
+   *
+   * The warm-up may treat a silent run as proof that the model loaded; a missing
+   * binary, a model that never started or a failed temp-file write must not.
+   */
+  spawned?: boolean
 }
 
 export interface AppSettings {

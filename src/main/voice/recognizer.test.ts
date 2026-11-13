@@ -21,6 +21,8 @@ const state = vi.hoisted(() => ({
   whisper: { stdout: '', stderr: '', code: 0 as number | null, emitError: false },
   transcript: '',
   written: [] as Array<{ path: string; data: Buffer }>,
+  /** Pretend the disk is full before the recognizer can be spawned. */
+  writeFails: false,
   removed: [] as string[],
   renamed: [] as Array<[string, string]>,
   copied: [] as Array<[string, string]>,
@@ -62,6 +64,7 @@ vi.mock('node:fs/promises', () => ({
     state.madeDirs.push(path)
   },
   writeFile: async (path: string, data: Buffer) => {
+    if (state.writeFails) throw new Error('disk full')
     state.written.push({ path, data })
   },
   rm: async (path: string) => {
@@ -141,6 +144,7 @@ beforeEach(async () => {
   state.whisper = { stdout: '', stderr: '', code: 0, emitError: false }
   state.transcript = ''
   state.written = []
+  state.writeFails = false
   state.removed = []
   state.renamed = []
   state.copied = []
@@ -373,7 +377,8 @@ describe('transcribe', () => {
       ok: false,
       text: '',
       ms: 0,
-      message: 'Не найден whisper-cli.'
+      message: 'Не найден whisper-cli.',
+      spawned: false
     })
   })
 
@@ -384,7 +389,8 @@ describe('transcribe', () => {
       ok: false,
       text: '',
       ms: 0,
-      message: 'Не скачана модель распознавания.'
+      message: 'Не скачана модель распознавания.',
+      spawned: false
     })
   })
 
@@ -572,13 +578,16 @@ describe('warmRecognizer', () => {
 
   it('reports a warm-up that really loaded the model', async () => {
     ready()
-    // A deterministic clock: the mocked recognizer finishes within the same
-    // millisecond, and `warmRecognizer` reads the elapsed time as the proof
-    // that a process actually ran.
-    let clock = 0
-    vi.spyOn(Date, 'now').mockImplementation(() => (clock += 1))
 
     await expect(recognizer.warmRecognizer()).resolves.toBe(true)
+  })
+
+  it('does not report a warm-up whose temp file never reached the recognizer', async () => {
+    ready()
+    state.writeFails = true
+
+    await expect(recognizer.warmRecognizer()).resolves.toBe(false)
+    expect(state.spawned).toHaveLength(0)
   })
 
   it('reports false when there is nothing to load', async () => {

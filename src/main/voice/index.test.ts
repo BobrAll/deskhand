@@ -37,7 +37,13 @@ const state = vi.hoisted(() => ({
   pasted: [] as Array<{ text: string; target: ActiveAppInfo | null }>,
   transcribed: null as
     | null
-    | ((options: { wav: Buffer }) => Promise<{ ok: boolean; text: string; ms: number; message?: string }>)
+    | ((options: { wav: Buffer }) => Promise<{
+        ok: boolean
+        text: string
+        ms: number
+        message?: string
+        spawned?: boolean
+      }>)
 }))
 
 vi.mock('../native/helper', () => ({ helperBinary: () => state.binary }))
@@ -53,7 +59,7 @@ vi.mock('../paste', () => ({
 
 vi.mock('./recognizer', () => ({
   transcribe: (options: { wav: Buffer }) =>
-    state.transcribed?.(options) ?? Promise.resolve({ ok: true, text: 'привет', ms: 5 }),
+    state.transcribed?.(options) ?? Promise.resolve({ ok: true, text: 'привет', ms: 5, spawned: true }),
   warmRecognizer: () => {
     state.warmed += 1
     const gate = state.warmGate
@@ -643,6 +649,22 @@ describe('createVoiceController: recognizer warm-up', () => {
     await vi.advanceTimersByTimeAsync(3_000)
 
     expect(state.warmed).toBe(0)
+  })
+
+  it('does not mark the model warm when the recognizer never spawned', async () => {
+    state.transcribed = () => Promise.resolve({
+      ok: false, text: '', ms: 0, message: 'нет модели', spawned: false
+    })
+    const voice = createVoiceController(makeHost())
+    voice.applySettings()
+    voice.press()
+    state.now += 500
+    voice.release()
+
+    await voice.handleRecording({ wavBase64: 'AAAA', durationMs: 800 })
+    await vi.advanceTimersByTimeAsync(3_000)
+
+    expect(state.warmed).toBe(1)
   })
 
   it('tries again after a warm-up that was cancelled mid-load', async () => {

@@ -14,7 +14,7 @@
  * the answer, the selection or the screen.
  */
 
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { app } from 'electron'
 import { parseExtraBody, resolveBaseUrl } from '@shared/defaults'
@@ -115,7 +115,9 @@ function parseReply(reply: string): Hints {
   for (const [word, value] of Object.entries(parsed)) {
     if (typeof value !== 'string') continue
     const key = word.trim().toLowerCase()
-    const pronunciation = value.trim().toLowerCase()
+    // A model may punctuate the value as a sentence; the punctuation is not part
+    // of the pronunciation Silero receives.
+    const pronunciation = value.trim().toLowerCase().replace(/[.,;:!?…]+$/, '')
     if (key && validPronunciation(pronunciation)) hints[key] = pronunciation
   }
   return hints
@@ -143,14 +145,27 @@ async function loadCache(): Promise<Hints> {
   return loading
 }
 
-async function saveCache(words: Hints): Promise<void> {
-  try {
-    await mkdir(dirname(cachePath()), { recursive: true })
-    await writeFile(cachePath(), JSON.stringify({ version: CACHE_VERSION, words }))
-  } catch (error) {
-    // A full disk must not lose the hints already in memory.
-    console.warn('[tts] unable to cache pronunciation hints:', error)
+/** Serialises writes so an older snapshot cannot land after a newer one. */
+let saving: Promise<void> = Promise.resolve()
+
+function saveCache(words: Hints): Promise<void> {
+  const target = cachePath()
+  const temporary = `${target}.part`
+  const write = async (): Promise<void> => {
+    try {
+      await mkdir(dirname(target), { recursive: true })
+      // A crash mid-write leaves a `.part` file, never a truncated cache that
+      // the next launch would read as a valid dictionary.
+      await writeFile(temporary, JSON.stringify({ version: CACHE_VERSION, words }))
+      await rename(temporary, target)
+    } catch (error) {
+      await rm(temporary, { force: true }).catch(() => undefined)
+      // A full disk must not lose the hints already in memory.
+      console.warn('[tts] unable to cache pronunciation hints:', error)
+    }
   }
+  saving = saving.then(write, write)
+  return saving
 }
 
 /** Resolves with the promise's value, or `null` after `ms`; the promise keeps running. */

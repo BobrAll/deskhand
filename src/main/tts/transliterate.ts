@@ -115,6 +115,7 @@ const WORDS: Record<string, string> = {
   csv: 'си эс ви',
   sql: 'эс кью эл',
   llm: 'эл эл эм',
+  aws: 'эй дабл ю эс',
 
   // The assistant itself
   agent: '+ейджент',
@@ -420,7 +421,10 @@ function spellAcronym(word: string): string {
 }
 
 function looksLikeAcronym(word: string): boolean {
-  if (/^[A-Z]{2,6}$/.test(word)) return true
+  // A vowel-less capitalised token is an abbreviation (`JWT`, `HTML`, `SQL`).
+  // A capitalised product name with vowels (`KAFKA`, `REDIS`) is a word and
+  // must reach the rules or the pronunciation hint, not the letter names.
+  if (/^[A-Z]{2,6}$/.test(word)) return !/[AEIOU]/.test(word)
   // A lowercase short token with no vowel is an abbreviation too: `md`, `pkg`.
   return word.length >= 2 && word.length <= 3 && !/[aeiouy]/i.test(word)
 }

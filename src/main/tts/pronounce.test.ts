@@ -29,7 +29,14 @@ vi.mock('node:fs/promises', async (importOriginal) => {
       if (!hit) throw new Error('ENOENT')
       return hit
     },
-    writeFile: async (path: string, data: string) => { fake.files.set(path, data) }
+    writeFile: async (path: string, data: string) => { fake.files.set(path, data) },
+    rename: async (from: string, to: string) => {
+      const data = fake.files.get(from)
+      if (data === undefined) throw new Error('ENOENT')
+      fake.files.delete(from)
+      fake.files.set(to, data)
+    },
+    rm: async (path: string) => { fake.files.delete(path) }
   }
 })
 
@@ -116,6 +123,22 @@ describe('resolvePronunciations', () => {
     const hints = await resolve('localhost widget')
 
     expect(hints).toEqual({ localhost: 'локалх+ост' })
+  })
+
+  it('accepts a hint the model punctuated like a sentence', async () => {
+    fake.reply = JSON.stringify({ localhost: 'локалх+ост.' })
+
+    await expect(resolve('localhost')).resolves.toEqual({ localhost: 'локалх+ост' })
+  })
+
+  it('writes the cache through a temporary file and renames it into place', async () => {
+    fake.reply = JSON.stringify({ localhost: 'локалх+ост' })
+
+    await resolve('localhost')
+
+    const target = '/tmp/deskhand-pronounce-test/tts-pronunciation.json'
+    expect(fake.files.has(`${target}.part`)).toBe(false)
+    expect(fake.files.get(target)).toContain('локалх+ост')
   })
 
   it('does not ask when the user turned the lookup off', async () => {
