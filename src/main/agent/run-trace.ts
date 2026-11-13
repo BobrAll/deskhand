@@ -43,9 +43,25 @@ function openTrace(directory: string, filename: string): RunTraceWriter {
   return { record, close }
 }
 
-/** One full trace and, if the model was called, one dialogue per agent request. */
-export function createRunTrace() {
+/** One full trace, as the controller uses it. */
+interface RunTrace {
+  id: string
+  record(event: string, data: unknown): void
+  close(): Promise<void>
+}
+
+/**
+ * One full trace and, if the model was called, one dialogue per agent request.
+ *
+ * `detailed` is off unless the user asked for it in the settings: with it on,
+ * every file holds the prompt, the window title and the raw request bodies,
+ * screenshots included. With it off the run still gets an id — the sidecar
+ * names its own trace with it — but nothing reaches the disk.
+ */
+export function createRunTrace(options: { detailed?: boolean } = {}): RunTrace {
   const id = randomUUID()
+  if (!options.detailed) return { id, record: () => undefined, close: async () => undefined }
+
   const started = performance.now()
   const timestamp = new Date().toISOString()
   const root = app.isPackaged === false ? app.getAppPath() : app.getPath('userData')

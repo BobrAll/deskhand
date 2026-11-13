@@ -292,7 +292,11 @@ export const DEFAULT_AGENT: AgentSettings = {
   // Show what is happening: the target window comes forward and a pointer
   // travels to the element. This is presentation only — the same tools run when
   // it is off — and it is the switch a background mode will turn off.
-  showActions: true
+  showActions: true,
+  // Off: the per-run files copy the prompt, the window title and the request
+  // bodies, screenshots included. They exist for debugging a single bad run and
+  // must be asked for, never collected by default.
+  saveRunTraces: false
 }
 
 /**
@@ -483,7 +487,8 @@ function sanitizeAgent(input: unknown): AgentSettings {
         : DEFAULT_AGENT.maxSteps,
     abortOnMouseMove: flag(raw.abortOnMouseMove, DEFAULT_AGENT.abortOnMouseMove),
     verifyResult: flag(raw.verifyResult, DEFAULT_AGENT.verifyResult),
-    showActions: flag(raw.showActions, DEFAULT_AGENT.showActions)
+    showActions: flag(raw.showActions, DEFAULT_AGENT.showActions),
+    saveRunTraces: flag(raw.saveRunTraces, DEFAULT_AGENT.saveRunTraces)
   }
 }
 

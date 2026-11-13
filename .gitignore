@@ -51,7 +51,6 @@ resources/transcribe-cli
 resources/transcribe-licenses/
 resources/speech/*.gguf
 resources/speech/*.part
-resources/cu-service
 resources/deskhand-agent
 resources/*.dylib
 resources/*.so
@@ -65,6 +64,7 @@ resources/*.so
 .electron-cache/
 .swift-cache/
 .tmp-userdata/
+.home/
 .scratch/
 *.log
 logs/

@@ -357,13 +357,23 @@ describe('normalizeSettings: agent', () => {
 
   it('keeps the flags and falls back on non-booleans', () => {
     const result = normalizeSettings({
-      agent: { enabled: true, abortOnMouseMove: 'yes', verifyResult: false, showActions: false }
+      agent: {
+        enabled: true, abortOnMouseMove: 'yes', verifyResult: false,
+        showActions: false, saveRunTraces: 'yes'
+      }
     })
 
     expect(result.agent.enabled).toBe(true)
     expect(result.agent.abortOnMouseMove).toBe(DEFAULT_AGENT.abortOnMouseMove)
     expect(result.agent.verifyResult).toBe(false)
     expect(result.agent.showActions).toBe(false)
+    expect(result.agent.saveRunTraces).toBe(false)
+    expect(normalizeSettings({ agent: { saveRunTraces: true } }).agent.saveRunTraces).toBe(true)
+  })
+
+  it('keeps detailed run traces off unless the user asked for them', () => {
+    expect(normalizeSettings({}).agent.saveRunTraces).toBe(false)
+    expect(DEFAULT_AGENT.saveRunTraces).toBe(false)
   })
 
   it('drops a settings file written by the old plan runner', () => {
@@ -378,7 +388,8 @@ describe('normalizeSettings: agent', () => {
     })
 
     expect(Object.keys(result.agent).sort()).toEqual([
-      'abortOnMouseMove', 'enabled', 'maxSteps', 'rememberedApprovals', 'showActions', 'verifyResult'
+      'abortOnMouseMove', 'enabled', 'maxSteps', 'rememberedApprovals',
+      'saveRunTraces', 'showActions', 'verifyResult'
     ])
     expect(result.agent.enabled).toBe(true)
   })

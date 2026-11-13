@@ -26,6 +26,7 @@ const state = vi.hoisted(() => ({
   abortOnMouseMove: true,
   verifyResult: true,
   showActions: true,
+  saveRunTraces: false,
   /** Events the controller will receive, pushed by each test. */
   emit: (_event: unknown) => {},
   runRejects: null as Error | null,
@@ -62,6 +63,7 @@ vi.mock('../settings/store', () => ({
       abortOnMouseMove: state.abortOnMouseMove,
       verifyResult: state.verifyResult,
       showActions: state.showActions,
+      saveRunTraces: state.saveRunTraces,
       rememberedApprovals: state.remembered
     }
   }),
@@ -151,6 +153,7 @@ beforeEach(() => {
   state.abortOnMouseMove = true
   state.verifyResult = true
   state.showActions = true
+  state.saveRunTraces = false
   state.emit = () => {}
   state.runRejects = null
   state.runGate = null
