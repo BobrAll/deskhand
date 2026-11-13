@@ -490,7 +490,7 @@ export function createVoiceController(host: VoiceHost) {
     // copy of the same work. Cancel first: stopping drops the mark of the load it
     // interrupts, and this turn takes over from there.
     stopWarmup()
-    warmedModel = getSettings().voice.model
+    const model = getSettings().voice.model
     const controller = new AbortController()
     abort = controller
     // `busy` is set first: `setPhase` arms the watchdog, and which budget applies
@@ -500,9 +500,15 @@ export function createVoiceController(host: VoiceHost) {
     try {
       const wav = Buffer.from(result.wavBase64, 'base64')
       const transcribed = await transcribe({ wav, signal: controller.signal })
+      // Only a run that finished and was not cancelled has loaded the model; a
+      // missing binary, a missing model, a failed temp-file write or an aborted
+      // run has not.
+      if (transcribed.spawned === true && getSettings().voice.model === model) warmedModel = model
       // One line per turn: enough to diagnose a complaint, never the transcript
-      // itself — what the user said is not log material.
-      console.log(`[voice] ${transcribed.ok ? 'ok' : 'failed'} in ${transcribed.ms} мс`)
+      // itself — what the user said is not log material. Audio length separates
+      // "the model was slow" from "the phrase was long".
+      console.log(`[voice] ${transcribed.ok ? 'ok' : 'failed'} in ${transcribed.ms} мс, ` +
+        `${Math.round(result.durationMs)} мс аудио, модель ${model}`)
       if (mine !== turn) {
         // The user started another phrase while this one was being recognised.
         // The card already belongs to the newer turn, and both the text and the

@@ -14,7 +14,8 @@
  * the answer, the selection or the screen.
  */
 
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { createHash } from 'node:crypto'
+import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { app } from 'electron'
 import { parseExtraBody, resolveBaseUrl } from '@shared/defaults'
@@ -36,7 +37,7 @@ const LOOKUP_TIMEOUT_MS = 4_000
  * same word is correct the next time it appears. Waiting the full timeout would
  * make the first offline line pause for seconds before it says anything.
  */
-const LOOKUP_WAIT_MS = 1_800
+const LOOKUP_WAIT_MS = 800
 /**
  * After a lookup that did not answer in time, stop paying the wait on every line.
  *
@@ -44,7 +45,7 @@ const LOOKUP_WAIT_MS = 1_800
  * new word and each answer. The running request still finishes in the background
  * and clears the backoff when it actually produces hints.
  */
-const LOOKUP_BACKOFF_MS = 30_000
+const LOOKUP_BACKOFF_MS = 10 * 60_000
 /** One small request is cheaper than a long tail of one-word lookups. */
 const MAX_TERMS = 40
 const MAX_REPLY_CHARS = 8_000
@@ -69,8 +70,20 @@ let cache: Hints | null = null
 let loading: Promise<Hints> | null = null
 /** While this is in the future, a miss uses the rules instead of waiting again. */
 let unavailableUntil = 0
-/** One lookup per term, shared by every line that needs it while it runs. */
-const pending = new Map<string, Promise<string | null>>()
+/** The provider configuration the backoff belongs to; a change retries at once. */
+let unavailableFor = ''
+/** One provider request at a time; every line waits on the same one. */
+let activeLookup: Promise<Hints> | null = null
+/** The words `activeLookup` already carries, so they are not asked for twice. */
+const activeTerms = new Set<string>()
+/**
+ * Words that arrived while a request was already running.
+ *
+ * The line that needed them speaks with the rules; once the running request
+ * settles they are asked for in the background, so the next line gets the hint
+ * instead of losing the word for the rest of the answer.
+ */
+const pendingTerms = new Set<string>()
 
 function cachePath(): string {
   return join(app.getPath('userData'), 'tts-pronunciation.json')
@@ -115,7 +128,9 @@ function parseReply(reply: string): Hints {
   for (const [word, value] of Object.entries(parsed)) {
     if (typeof value !== 'string') continue
     const key = word.trim().toLowerCase()
-    const pronunciation = value.trim().toLowerCase()
+    // A model may punctuate the value as a sentence; the punctuation is not part
+    // of the pronunciation Silero receives.
+    const pronunciation = value.trim().toLowerCase().replace(/[.,;:!?…]+$/, '')
     if (key && validPronunciation(pronunciation)) hints[key] = pronunciation
   }
   return hints
@@ -143,14 +158,27 @@ async function loadCache(): Promise<Hints> {
   return loading
 }
 
-async function saveCache(words: Hints): Promise<void> {
-  try {
-    await mkdir(dirname(cachePath()), { recursive: true })
-    await writeFile(cachePath(), JSON.stringify({ version: CACHE_VERSION, words }))
-  } catch (error) {
-    // A full disk must not lose the hints already in memory.
-    console.warn('[tts] unable to cache pronunciation hints:', error)
+/** Serialises writes so an older snapshot cannot land after a newer one. */
+let saving: Promise<void> = Promise.resolve()
+
+function saveCache(words: Hints): Promise<void> {
+  const target = cachePath()
+  const temporary = `${target}.part`
+  const write = async (): Promise<void> => {
+    try {
+      await mkdir(dirname(target), { recursive: true })
+      // A crash mid-write leaves a `.part` file, never a truncated cache that
+      // the next launch would read as a valid dictionary.
+      await writeFile(temporary, JSON.stringify({ version: CACHE_VERSION, words }))
+      await rename(temporary, target)
+    } catch (error) {
+      await rm(temporary, { force: true }).catch(() => undefined)
+      // A full disk must not lose the hints already in memory.
+      console.warn('[tts] unable to cache pronunciation hints:', error)
+    }
   }
+  saving = saving.then(write, write)
+  return saving
 }
 
 /** Resolves with the promise's value, or `null` after `ms`; the promise keeps running. */
@@ -194,12 +222,97 @@ async function askModel(terms: string[], settings: AppSettings): Promise<Hints> 
         break
       }
     }
-  } catch (error) {
-    // The words themselves are never logged.
-    console.warn('[tts] pronunciation lookup failed:', error instanceof Error ? error.message : String(error))
+  } catch {
+    // The caller logs one timeout and backs off; a courtesy lookup must not fill
+    // the log with one line per sentence that happened while it was silent.
     return {}
   }
   return parseReply(reply)
+}
+
+/**
+ * True when a model and a key exist and this exact configuration's backoff has
+ * expired.
+ */
+function lookupAllowed(settings: AppSettings): boolean {
+  const model = resolveChatModel(settings)
+  let apiKey: string | null
+  try {
+    apiKey = getApiKey(settings.provider)
+  } catch {
+    // A broken secrets store is not a reason to fail synthesis on every line;
+    // it only means this courtesy lookup is unavailable.
+    return false
+  }
+  if (!model || !apiKey) return false
+  // Switching to a faster provider or model, or rotating the key, is a reason
+  // to try again now, not to serve the rest of the old backoff window. The key
+  // itself never stays in module state — only a fingerprint of it.
+  const keyId = createHash('sha256').update(apiKey).digest('hex')
+  const config = [settings.provider, model,
+    settings.baseUrls[settings.provider] ?? '', keyId].join('\u0000')
+  if (config !== unavailableFor) {
+    unavailableFor = config
+    unavailableUntil = 0
+    // The request that armed the old backoff belongs to the old configuration.
+    // Its result is still cached when it settles, but it must not keep serving
+    // this line: the new key or model is allowed to start its own request.
+    activeLookup = null
+    activeTerms.clear()
+  }
+  return Date.now() >= unavailableUntil
+}
+
+/** Starts the one request that is allowed at a time and caches what it answers. */
+function startLookup(terms: string[], settings: AppSettings, words: Hints): Promise<Hints> {
+  for (const term of terms) activeTerms.add(term)
+  const lookup = askModel(terms, settings)
+    .catch((): Hints => ({}))
+    .then(async (fetched) => {
+      const accepted: Hints = {}
+      for (const term of terms) {
+        const value = fetched[term]
+        if (value) accepted[term] = value
+      }
+      if (Object.keys(accepted).length > 0) {
+        unavailableUntil = 0
+        Object.assign(words, accepted)
+        await saveCache(words)
+      }
+      return accepted
+    })
+  activeLookup = lookup
+  void lookup.finally(() => {
+    if (activeLookup !== lookup) return
+    activeLookup = null
+    activeTerms.clear()
+    startQueuedLookup(words)
+  })
+  return lookup
+}
+
+/**
+ * Asks for the words that arrived while another request ran.
+ *
+ * Best effort: their own line has already spoken with the rules, so nothing
+ * waits here. A failure leaves them out of the cache, and the next line that
+ * needs one queues it again.
+ */
+function startQueuedLookup(words: Hints): void {
+  for (const term of pendingTerms) {
+    if (words[term]) pendingTerms.delete(term)
+  }
+  if (pendingTerms.size === 0 || activeLookup) return
+  const settings = getSettings()
+  // A missing key or an active backoff would fail the same way the request that
+  // just settled did, and waiting for it is exactly what the backoff prevents.
+  if (settings.tts.pronunciationLookup === false || !lookupAllowed(settings)) {
+    pendingTerms.clear()
+    return
+  }
+  const terms = [...pendingTerms].slice(0, MAX_TERMS)
+  for (const term of terms) pendingTerms.delete(term)
+  startLookup(terms, settings, words)
 }
 
 /**
@@ -210,7 +323,13 @@ async function askModel(terms: string[], settings: AppSettings): Promise<Hints> 
  */
 export async function resolvePronunciations(text: string): Promise<Hints> {
   const settings = getSettings()
-  if (settings.tts.pronunciationLookup === false) return {}
+  if (settings.tts.pronunciationLookup === false) {
+    // Turning the feature back on is a fresh start, not the rest of an old
+    // backoff window from before it was disabled.
+    unavailableUntil = 0
+    unavailableFor = ''
+    return {}
+  }
 
   const terms = unknownWords(text).slice(0, MAX_TERMS)
   if (terms.length === 0) return {}
@@ -224,48 +343,35 @@ export async function resolvePronunciations(text: string): Promise<Hints> {
     else missing.push(term)
   }
   if (missing.length === 0) return hints
-  if (Date.now() < unavailableUntil) return hints
+  if (!lookupAllowed(settings)) return hints
 
-  // Streamed sentences are prepared together, so the same new word can be asked
-  // about several times before the first answer lands. Share one request per
-  // term instead of paying for the same lookup once per line.
-  const fresh = missing.filter((term) => !pending.has(term))
-  if (fresh.length > 0) {
-    const lookup = askModel(fresh, settings)
-      .catch((): Hints => ({}))
-      .then(async (fetched) => {
-        const accepted: Hints = {}
-        for (const term of fresh) {
-          const value = fetched[term]
-          if (value) accepted[term] = value
-        }
-        if (Object.keys(accepted).length > 0) {
-          unavailableUntil = 0
-          Object.assign(words, accepted)
-          await saveCache(words)
-        }
-        return accepted
-      })
-    for (const term of fresh) {
-      pending.set(term, lookup
-        .then((accepted) => accepted[term] ?? null)
-        .finally(() => { pending.delete(term) }))
+  // Streamed sentences are prepared one after another, but a provider that is
+  // slow to answer would still see a request per line. One active request is
+  // shared by every line that needs its words; the rest are queued behind it.
+  if (activeLookup) {
+    let covered = false
+    for (const term of missing) {
+      if (activeTerms.has(term)) covered = true
+      else pendingTerms.add(term)
     }
+    // The running request carries none of this line's words, so waiting for it
+    // cannot help: speak with the rules and let the queued words arrive later.
+    if (!covered) return hints
   }
+  const lookup = activeLookup ?? startLookup(missing, settings, words)
 
-  const values = await waitFor(
-    Promise.all(missing.map((term) => pending.get(term) ?? Promise.resolve(null))),
-    LOOKUP_WAIT_MS
-  )
-  if (!values) {
-    // The requests keep running and will cache their answers; until then, do not
-    // make the next line wait for the same silence.
+  const fetched = await waitFor(lookup, LOOKUP_WAIT_MS)
+  if (!fetched) {
+    // The request keeps running and will cache its answer; until then, do not
+    // make the next line wait for the same silence. One line in the log is
+    // enough for a courtesy feature that is clearly not available.
     unavailableUntil = Date.now() + LOOKUP_BACKOFF_MS
+    console.warn('[tts] pronunciation lookup did not answer; using the rules for a while')
     return hints
   }
-  missing.forEach((term, index) => {
-    const value = values[index]
+  for (const term of missing) {
+    const value = fetched[term]
     if (value) hints[term] = value
-  })
+  }
   return hints
 }

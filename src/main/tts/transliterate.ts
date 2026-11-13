@@ -115,6 +115,25 @@ const WORDS: Record<string, string> = {
   csv: 'си эс ви',
   sql: 'эс кью эл',
   llm: 'эл эл эм',
+  aws: 'эй дабл ю эс',
+  asap: 'эй эс эй пи',
+  qa: 'кью эй',
+  ceo: 'си и оу',
+  cto: 'си ти оу',
+  cio: 'си ай оу',
+  cfo: 'си эф оу',
+  kpi: 'кей пи ай',
+  sla: 'эс эл эй',
+  eof: 'и оу эф',
+  eol: 'и оу эл',
+  uat: 'ю эй ти',
+  ooo: 'оу оу оу',
+  mvp: 'эм ви пи',
+  roi: 'ар оу ай',
+  seo: 'эс и оу',
+  sre: 'эс ар и',
+  poc: 'пи оу си',
+  vue: 'вью',
 
   // The assistant itself
   agent: '+ейджент',
@@ -420,7 +439,10 @@ function spellAcronym(word: string): string {
 }
 
 function looksLikeAcronym(word: string): boolean {
-  if (/^[A-Z]{2,6}$/.test(word)) return true
+  // A vowel-less capitalised token is an abbreviation (`JWT`, `HTML`, `SQL`).
+  // A capitalised product name with vowels (`KAFKA`, `REDIS`) is a word and
+  // must reach the rules or the pronunciation hint, not the letter names.
+  if (/^[A-Z]{2,6}$/.test(word)) return !/[AEIOU]/.test(word)
   // A lowercase short token with no vowel is an abbreviation too: `md`, `pkg`.
   return word.length >= 2 && word.length <= 3 && !/[aeiouy]/i.test(word)
 }
@@ -513,11 +535,21 @@ function pluralOf(word: string): string | null {
   return null
 }
 
+function acronymPluralOf(word: string): string | null {
+  const match = /^([A-Z]{2,6})s$/.exec(word)
+  if (!match) return null
+  const stem = match[1]
+  const lower = stem.toLowerCase()
+  const known = WORDS[lower]
+  if (known && known.includes(' ')) return `${known}с`
+  return looksLikeAcronym(stem) ? `${spellAcronym(stem)}с` : null
+}
+
 /** Whether the dictionary, the plural rule or the acronym rules can say this word. */
 function needsPronunciation(word: string): boolean {
   const lower = word.toLowerCase()
   if (WORDS[lower] ?? WORDS[lower.replace(/['’-]/g, '')]) return false
-  if (/^([A-Z]{2,6})s$/.test(word)) return false
+  if (acronymPluralOf(word)) return false
   if (pluralOf(lower)) return false
   return !looksLikeAcronym(word)
 }
@@ -546,8 +578,8 @@ function transliterateWord(word: string, pronunciations: Readonly<Record<string,
   const lower = word.toLowerCase()
   const known = WORDS[lower] ?? WORDS[lower.replace(/['’-]/g, '')]
   if (known) return known
-  const acronymPlural = /^([A-Z]{2,6})s$/.exec(word)
-  if (acronymPlural) return `${spellAcronym(acronymPlural[1])}с`
+  const acronymPlural = acronymPluralOf(word)
+  if (acronymPlural) return acronymPlural
   const plural = pluralOf(lower)
   if (plural) return plural
   const hint = pronunciations[lower]

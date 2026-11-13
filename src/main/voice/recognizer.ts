@@ -239,18 +239,21 @@ export async function transcribe(options: TranscribeOptions): Promise<Transcribe
   const selected = voiceModel(model.id ?? voice.model)
   const engine = selected?.engine ?? 'whisper'
   const binary = resolveBinary(engine)
-  if (!binary) return { ok: false, text: '', ms: 0, message: `Не найден ${binaryName(engine)}.` }
+  if (!binary) {
+    return { ok: false, text: '', ms: 0, message: `Не найден ${binaryName(engine)}.`, spawned: false }
+  }
 
   if (!model.path) {
     const message = selected?.id === BUNDLED_VOICE_MODEL.id
       ? MISSING_BUNDLED_MODEL
       : 'Не скачана модель распознавания.'
-    return { ok: false, text: '', ms: 0, message }
+    return { ok: false, text: '', ms: 0, message, spawned: false }
   }
 
   const dir = join(tmpdir(), `deskhand-voice-${randomUUID()}`)
   await mkdir(dir, { recursive: true })
   const wavPath = join(dir, 'input.wav')
+  let spawned = false
   try {
     await writeFile(wavPath, options.wav)
     const language = selected?.language ?? (voice.language || 'ru')
@@ -260,25 +263,34 @@ export async function transcribe(options: TranscribeOptions): Promise<Transcribe
       engine === 'transcribe'
         ? ['-m', model.path, '-l', language, '--timestamps', 'none', '-o', transcriptPath, wavPath]
         : ['-m', model.path, '-f', wavPath, '-l', language, '-nt', '-np', '-t', threads]
-    if (options.signal?.aborted) return { ok: false, text: '', ms: 0, message: 'Отменено.' }
+    if (options.signal?.aborted) {
+      return { ok: false, text: '', ms: 0, message: 'Отменено.', spawned: false }
+    }
     const raw = await runRecognizer(binary, args, engine, options.signal)
     const ms = Date.now() - startedAt
-    if (options.signal?.aborted) return { ok: false, text: '', ms, message: 'Отменено.' }
+    if (options.signal?.aborted) {
+      return { ok: false, text: '', ms, message: 'Отменено.', spawned: false }
+    }
+    // The process finished and was not cancelled, so the model itself is loaded
+    // even if the transcript cannot be read. A missing file becomes the ordinary
+    // "nothing recognised" sentence instead of a raw Node error in the card.
+    spawned = true
     const text = cleanTranscript(
-      engine === 'transcribe' ? await readFile(transcriptPath, 'utf8') : raw
+      engine === 'transcribe' ? await readFile(transcriptPath, 'utf8').catch(() => '') : raw
     )
     if (!text) {
       // Silence is not alarming, but it must not look like a successful empty
       // answer either: the card would sit there with nothing in it.
-      return { ok: false, text: '', ms, message: 'Речь не распознана — попробуй ещё раз.' }
+      return { ok: false, text: '', ms, message: 'Речь не распознана — попробуй ещё раз.', spawned }
     }
-    return { ok: true, text, ms }
+    return { ok: true, text, ms, spawned }
   } catch (error) {
     return {
       ok: false,
       text: '',
       ms: Date.now() - startedAt,
-      message: error instanceof Error ? error.message : 'Распознавание не удалось.'
+      message: error instanceof Error ? error.message : 'Распознавание не удалось.',
+      spawned
     }
   } finally {
     void rm(dir, { recursive: true, force: true })
@@ -327,10 +339,11 @@ function startWarmup(): Promise<boolean> {
       // A cancelled warm-up reports the time it ran before the kill; saying it
       // warmed anything would be wrong.
       if (controller.signal.aborted) return false
-      if (result.ms <= 0) {
+      if (result.spawned !== true) {
         // `transcribe` returns before it starts a process when the binary or the
-        // model is missing. Nothing ran, so nothing is warm; the settings window
-        // already tells the user what to install.
+        // model is missing, or when the temp file cannot be written. Nothing
+        // ran, so nothing is warm; the settings window already tells the user
+        // what to install.
         console.warn('[voice] recognizer warm-up did not start:', result.message)
         return false
       }
@@ -387,6 +400,9 @@ function runRecognizer(
       signal?.removeEventListener('abort', onAbort)
     }
     signal?.addEventListener('abort', onAbort, { once: true })
+    // The signal can be aborted between the caller's pre-check and this line;
+    // the listener would never fire for an event that already happened.
+    if (signal?.aborted) onAbort()
 
     child.stdout.setEncoding('utf8')
     child.stderr.setEncoding('utf8')

@@ -33,7 +33,23 @@ describe('transliterate', () => {
   it('spells acronyms letter by letter', () => {
     expect(transliterate('API')).toBe('эй пи ай')
     expect(transliterate('HTTPS')).toBe('эйч ти ти пи эс')
+    expect(transliterate('JWT')).toBe('джей дабл ю ти')
     expect(transliterate('md')).toBe('эм ди')
+  })
+
+  it('reads an all-caps product name as a word, not as letters', () => {
+    expect(transliterate('KAFKA')).toBe('кафка')
+    expect(transliterate('KAFKAs')).toBe('кафкас')
+    expect(transliterate('JWTs')).toBe('джей дабл ю тис')
+    expect(unknownWords('KAFKA KAFKAs')).toEqual(['kafka', 'kafkas'])
+    expect(unknownWords('JWT JWTs')).toEqual([])
+  })
+
+  it('keeps the common voweled abbreviations as letter names', () => {
+    expect(transliterate('ASAP QA CEO KPI SLA UAT OOO'))
+      .toBe('эй эс эй пи кью эй си и оу кей пи ай эс эл эй ю эй ти оу оу оу')
+    expect(transliterate('VUE')).toBe('вью')
+    expect(unknownWords('ASAP QA CEO KPI SLA UAT OOO VUE')).toEqual([])
   })
 
   it('recognises lowercase abbreviations that the letter rules would mangle', () => {

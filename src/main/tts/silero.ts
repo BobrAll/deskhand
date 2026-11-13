@@ -27,7 +27,7 @@
  *   macOS voice exactly like every other engine failure.
  */
 
-import { spawn } from 'node:child_process'
+import { spawn, type ChildProcess } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
 import { createWriteStream, existsSync, readFileSync } from 'node:fs'
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
@@ -40,6 +40,7 @@ import type { TtsSetupProgress } from '@shared/types'
 import type { TtsResult } from '@shared/tts'
 import { findPython, firstLine, run } from './python'
 import { resolvePronunciations } from './pronounce'
+import { SileroWorker, WORKER_SCRIPT, WORKER_SCRIPT_NAME } from './sileroWorker'
 import { transliterate } from './transliterate'
 
 /** Pinned: a new release changes the file list and the hashes below. */
@@ -69,11 +70,14 @@ const MODEL_BYTES = MODEL_FILES.reduce((sum, [, bytes]) => sum + bytes, 0)
 export const SILERO_CACHE_ID = `silero-v5_6_ru-${RUNTIME_VERSION}`
 
 /** Bump when the transliteration dictionary or rules change the spoken text. */
-export const TRANSLITERATION_VERSION = 3
+export const TRANSLITERATION_VERSION = 4
 
 const PIP_TIMEOUT_MS = 5 * 60_000
 const MODEL_TIMEOUT_MS = 10 * 60_000
 const SYNTHESIS_TIMEOUT_MS = 60_000
+const WORKER_IDLE_TIMEOUT_MS = 3 * 60_000
+/** A worker that hung once is not retried on every line of the same answer. */
+const WORKER_BACKOFF_MS = 10 * 60_000
 const STDERR_TAIL_CHARS = 2000
 const PROGRESS_INTERVAL_MS = 150
 
@@ -114,6 +118,10 @@ function runtimeMarker(): string {
 
 function batchScript(): string {
   return join(sileroDir(), 'batch_tts.py')
+}
+
+function workerScript(): string {
+  return join(sileroDir(), WORKER_SCRIPT_NAME)
 }
 
 /** The venv exists and was built from the pinned package version. */
@@ -213,6 +221,10 @@ let installation: Promise<string | null> | null = null
  */
 export function installSilero(onProgress: (progress: TtsSetupProgress) => void): Promise<string | null> {
   if (!installation) {
+    // A reinstall is not a quit: synthesis must be allowed again afterwards.
+    shuttingDown = false
+    // The venv is about to be replaced under the running workers.
+    stopSileroWorker()
     installation = runInstall(onProgress).finally(() => {
       installation = null
     })
@@ -246,6 +258,7 @@ async function runInstall(onProgress: (progress: TtsSetupProgress) => void): Pro
       )
       await writeFile(runtimeMarker(), `${RUNTIME_VERSION}\n`)
       await writeFile(batchScript(), BATCH_SCRIPT)
+      await writeFile(workerScript(), WORKER_SCRIPT)
     }
 
     stage = 'models'
@@ -268,6 +281,7 @@ async function runInstall(onProgress: (progress: TtsSetupProgress) => void): Pro
 
 /** Removes the venv, the weights and the clip cache in one go. */
 export async function removeSilero(): Promise<void> {
+  stopSileroWorker()
   await rm(sileroDir(), { recursive: true, force: true })
 }
 
@@ -280,19 +294,112 @@ async function ensureBatchScript(): Promise<string> {
   return script
 }
 
+async function ensureWorkerScript(): Promise<string> {
+  const script = workerScript()
+  // An app update may ship a different protocol or a fix in the worker itself.
+  // Rewrite only when the content differs so a warm process is not disturbed on
+  // every phrase.
+  try {
+    if (await readFile(script, 'utf8') === WORKER_SCRIPT) return script
+  } catch {
+    /* the script appears on first use */
+  }
+  await mkdir(sileroDir(), { recursive: true })
+  await writeFile(script, WORKER_SCRIPT)
+  return script
+}
+
+/** One warm process per runtime and speaker, plus the fallback processes in flight. */
+const sileroWorkers = new Map<string, SileroWorker>()
+const oneShotProcesses = new Set<ChildProcess>()
+/** While this is in the future, that worker key goes straight to the one-shot. */
+let workerUnavailableUntil = 0
+let workerUnavailableFor = ''
+/** Set on quit so a fallback already in flight cannot spawn a new child. */
+let shuttingDown = false
+
+/**
+ * Kills every Python child this module owns.
+ *
+ * Called on quit, uninstall and reinstall: a worker keeps 300 MB of weights in
+ * memory and must never outlive the app.
+ */
+export function stopSileroWorker(): void {
+  for (const worker of sileroWorkers.values()) worker.stop()
+  sileroWorkers.clear()
+  for (const child of oneShotProcesses) child.kill('SIGKILL')
+  oneShotProcesses.clear()
+  workerUnavailableUntil = 0
+  workerUnavailableFor = ''
+}
+
+/**
+ * Stops synthesis for good while the app is quitting.
+ *
+ * `stopSileroWorker` is also used by reinstall, where a later synthesis is
+ * expected. This variant additionally blocks a fallback that is about to spawn
+ * its own `batch_tts.py` after the sweep has already run.
+ */
+export function shutdownSilero(): void {
+  shuttingDown = true
+  stopSileroWorker()
+}
+
+function sileroEnvironment(): NodeJS.ProcessEnv {
+  return {
+    ...process.env,
+    PYTHONUTF8: '1',
+    PYTHONUNBUFFERED: '1',
+    SILERO_ONNX_MODELS: sileroModelsDir(),
+    SILERO_ONNX_CACHE: join(sileroDir(), 'cache')
+  }
+}
+
+function workerKey(speaker: string, script: string): string {
+  return [venvPython(), script, speaker].join('\u0000')
+}
+
+function workerFor(speaker: string, script: string): SileroWorker {
+  const key = workerKey(speaker, script)
+  const existing = sileroWorkers.get(key)
+  if (existing) return existing
+
+  const models = sileroModelsDir()
+  const worker = new SileroWorker({
+    spawnWorker: () => spawn(venvPython(), [script, models, speaker], {
+      env: sileroEnvironment(),
+      stdio: ['pipe', 'pipe', 'pipe']
+    }),
+    requestTimeoutMs: SYNTHESIS_TIMEOUT_MS,
+    idleTimeoutMs: WORKER_IDLE_TIMEOUT_MS,
+    onTimeout: () => {
+      // A silent interpreter is not going to answer the next line either. The
+      // one-shot still speaks this one, but the rest of the answer should not
+      // pay the same 60-second wait.
+      workerUnavailableFor = key
+      workerUnavailableUntil = Date.now() + WORKER_BACKOFF_MS
+    }
+  })
+  sileroWorkers.set(key, worker)
+  return worker
+}
+
 function spawnCaptured(
   command: string,
   args: string[],
   env: NodeJS.ProcessEnv,
   timeoutMs: number
 ): Promise<void> {
+  if (shuttingDown) return Promise.reject(new Error('Синтез остановлен.'))
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, { env, stdio: ['ignore', 'ignore', 'pipe'] })
+    oneShotProcesses.add(child)
     let stderr = ''
     let settled = false
     const settle = (error?: Error): void => {
       if (settled) return
       settled = true
+      oneShotProcesses.delete(child)
       clearTimeout(timer)
       if (error) reject(error)
       else resolve()
@@ -327,14 +434,48 @@ async function renderSilero(
   await spawnCaptured(
     venvPython(),
     [script, sileroModelsDir(), jobsPath, speaker],
-    {
-      ...process.env,
-      PYTHONUTF8: '1',
-      PYTHONUNBUFFERED: '1',
-      SILERO_ONNX_MODELS: sileroModelsDir(),
-      SILERO_ONNX_CACHE: join(sileroDir(), 'cache')
-    },
+    sileroEnvironment(),
     SYNTHESIS_TIMEOUT_MS
+  )
+}
+
+/**
+ * Speaks one fragment through the warm process, with the one-shot renderer as a
+ * fallback. The fallback runs inside the worker queue, so the two model loads
+ * never overlap.
+ */
+async function renderThroughWorker(
+  job: { text: string; output: string },
+  speaker: string,
+  directory: string
+): Promise<void> {
+  if (shuttingDown) throw new Error('Синтез остановлен.')
+  let script: string
+  try {
+    script = await ensureWorkerScript()
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    console.warn('[tts] unable to write the silero worker script (%s); using the one-shot renderer', message)
+    await renderSilero([job], speaker, directory)
+    return
+  }
+  const key = workerKey(speaker, script)
+  if (workerUnavailableFor === key && Date.now() < workerUnavailableUntil) {
+    await renderSilero([job], speaker, directory)
+    return
+  }
+  if (workerUnavailableFor !== key) {
+    workerUnavailableFor = key
+    workerUnavailableUntil = 0
+  }
+  await workerFor(speaker, script).render(
+    job.text,
+    job.output,
+    () => renderSilero([job], speaker, directory),
+    async () => {
+      const audio = await readFile(job.output)
+      if (audio.length === 0) throw new Error('Silero вернул пустой файл.')
+    }
   )
 }
 
@@ -352,6 +493,7 @@ export async function synthesizeSilero(
   speaker: string,
   hints?: Readonly<Record<string, string>>
 ): Promise<TtsResult> {
+  if (shuttingDown) return { ok: false, message: 'Синтез остановлен.' }
   if (!sileroRuntimeReady()) return { ok: false, message: 'Silero не установлен.' }
   if (!sileroModelsReady()) return { ok: false, message: 'Нет модели Silero V5.6 RU.' }
 
@@ -361,11 +503,12 @@ export async function synthesizeSilero(
 
   const directory = join(tmpdir(), `deskhand-silero-${process.pid}-${randomUUID()}`)
   const output = join(directory, 'speech.wav')
+  const job = { text: spoken, output }
   try {
     await mkdir(directory, { recursive: true })
-    await renderSilero([{ text: spoken, output }], speaker, directory)
-    const audio = await readFile(output)
-    if (audio.length === 0) return { ok: false, message: 'Silero вернул пустой файл.' }
+    await renderThroughWorker(job, speaker, directory)
+    const audio = await readFile(output).catch(() => null)
+    if (!audio || audio.length === 0) return { ok: false, message: 'Silero вернул пустой файл.' }
     return { ok: true, audio: audio.toString('base64'), cached: false, mime: 'audio/wav' }
   } catch (error) {
     return {
