@@ -93,7 +93,7 @@ async function readVoice(): Promise<VoiceSettingsRead | null> {
     const status = typeof api?.status === 'function' ? await api.status().catch(() => null) : null
     return {
       voice: settings.voice,
-      local: status?.configured === true && status.engine !== 'remote'
+      local: settings.voice.answerVoice === 'neural' && status?.configured === true && status.engine === 'silero'
     }
   } catch {
     return null
@@ -269,7 +269,7 @@ export function useSpeech() {
   }, [])
 
   /** Prepare the first clip while earlier lines play. Request later clips as playback advances. */
-  const enqueue = useCallback((text: string, kind: 'cue' | 'answer' | 'manual' = 'cue') => {
+  const enqueue = useCallback((text: string, kind: 'cue' | 'answer' | 'manual' | 'system' = 'cue') => {
     setError(null)
     const clean = speechText(text)
     if (!clean) return
@@ -343,7 +343,11 @@ export function useSpeech() {
 
   const speak = useCallback((text: string) => {
     stop()
-    enqueue(text, 'manual')
+    const token = generation.current
+    void readVoice().then((read) => {
+      if (token !== generation.current) return
+      enqueue(text, !read || read.voice.answerVoice === 'system' ? 'system' : 'manual')
+    })
   }, [stop, enqueue])
 
   const begin = useCallback((id: string, prompt: string, spoken: boolean) => {

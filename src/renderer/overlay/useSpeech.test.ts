@@ -118,7 +118,31 @@ describe('automatic speech lifecycle', () => {
 afterEach(() => { vi.clearAllTimers(); vi.useRealTimers(); vi.unstubAllGlobals() })
 
 describe('manual playback', () => {
+  it('uses macOS for manual playback even if a neural engine is still configured', async () => {
+    const synth = vi.fn(async () => ({ ok: true as const, audio: 'AAA', cached: false, mime: 'audio/wav' }))
+    window.deskhand.tts.speak = synth
+    useSpeech().speak('Ответ.')
+    await flush()
+    expect(synth).not.toHaveBeenCalled()
+    expect(speak.mock.calls[0][0].text).toBe('Ответ.')
+  })
+
+  it('keeps manual playback local when the voice settings cannot be read', async () => {
+    window.deskhand.settings.load = vi.fn().mockRejectedValue(new Error('IPC unavailable'))
+    const synth = vi.fn()
+    window.deskhand.tts.speak = synth
+
+    useSpeech().speak('Ответ.')
+    await flush()
+
+    expect(synth).not.toHaveBeenCalled()
+    expect(speak.mock.calls[0][0].text).toBe('Ответ.')
+  })
+
   it('uses the configured synthesizer and plays every fragment of a long answer in order', async () => {
+    window.deskhand.settings.load = vi.fn().mockResolvedValue({
+      settings: { voice: { answerVoice: 'neural' } }
+    })
     const synth = vi.fn(async (_text: string) => ({
       ok: true as const, audio: 'AAA', cached: false, mime: 'audio/wav'
     }))
@@ -228,6 +252,12 @@ describe('waiting acknowledgement', () => {
 })
 
 describe('the local engine', () => {
+  beforeEach(() => {
+    window.deskhand.settings.load = vi.fn().mockResolvedValue({
+      settings: { voice: { answerVoice: 'neural' } }
+    })
+  })
+
   const tts = (): { speak: typeof window.deskhand.tts.speak; status: typeof window.deskhand.tts.status } =>
     window.deskhand.tts
 

@@ -12,7 +12,8 @@ interface AudioBlock {
 }
 
 class FakeTrack {
-  stop = vi.fn()
+  readyState: MediaStreamTrackState = 'live'
+  stop = vi.fn(() => { this.readyState = 'ended' })
 }
 
 class FakeStream {
@@ -191,5 +192,34 @@ describe('recording limit', () => {
     expect(audio?.durationMs).toBeGreaterThanOrEqual(2_000)
     // A block that crosses the limit is kept whole; nothing after it is.
     expect(audio?.durationMs).toBeLessThanOrEqual(2_000 + blockMs)
+  })
+})
+
+describe('microphone check lifecycle', () => {
+  it('releases a stream granted after the check was cancelled', async () => {
+    const { startRecording } = await import('./recorder')
+    const track = new FakeTrack()
+    let grant!: (stream: FakeStream) => void
+    getUserMedia.mockImplementationOnce(() => new Promise((resolve) => { grant = resolve }))
+    const controller = new AbortController()
+    const result = startRecording(0, controller.signal)
+    controller.abort()
+    grant(new FakeStream([track]))
+
+    await expect(result).rejects.toMatchObject({ name: 'AbortError' })
+    expect(track.stop).toHaveBeenCalledOnce()
+    expect(FakeAudioContext.created).toHaveLength(0)
+  })
+
+  it('reports when the input track ends during the check', async () => {
+    const { startRecording } = await import('./recorder')
+    const recording = await startRecording(0)
+    expect(recording.isActive()).toBe(true)
+
+    tracks[0].readyState = 'ended'
+
+    expect(recording.isActive()).toBe(false)
+    await recording.stop(false)
+    expect(tracks[0].stop).toHaveBeenCalledOnce()
   })
 })

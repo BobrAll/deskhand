@@ -77,6 +77,7 @@ export interface RecorderHandles {
   stop(capture: boolean): Promise<RecordedAudio | null>
   /** 0..1 loudness of the most recent block. */
   level(): number
+  isActive(): boolean
 }
 
 function encodeWav(samples: Float32Array, sampleRate: number): ArrayBuffer {
@@ -283,41 +284,64 @@ async function warmUp(): Promise<void> {
  * Resolves with the handles rather than a promise of audio: the caller decides
  * when the turn ends, and it may end without any audio at all (Escape).
  */
-export async function startRecording(maxDurationMs: number): Promise<RecorderHandles> {
+export async function startRecording(maxDurationMs: number, signal?: AbortSignal): Promise<RecorderHandles> {
   // A press that lands while the page is still warming the microphone waits for
   // that open instead of starting a second one: two `getUserMedia` calls at once
   // would have the second queue behind the first anyway, and the first turn is
   // the one that must not lose audio.
   if (warming) await warming
 
+  signal?.throwIfAborted()
   const stream = await navigator.mediaDevices.getUserMedia({ audio: MICROPHONE })
-  const context = audioContext()
-  if (context.state !== 'running') await context.resume()
-
-  // The resampler needs the real input rate; read it once, while the context is
-  // certainly alive. The buffer budget is in input frames too: the processor
-  // delivers at this rate, not at TARGET_RATE, which applies only after
-  // resampling.
-  const inputRate = context.sampleRate
+  const tracks = stream.getTracks()
+  let tracksStopped = false
+  const stopTracks = () => {
+    if (tracksStopped) return
+    tracksStopped = true
+    for (const track of tracks) track.stop()
+  }
+  signal?.addEventListener('abort', stopTracks, { once: true })
   const chunks: Float32Array[] = []
-  let buffered = 0
-  const limit = Math.floor((inputRate * Math.min(maxDurationMs, MAX_RECORDING_MS)) / 1000)
   let lastLevel = 0
+  let detach: () => void
+  let inputRate: number
+  try {
+    signal?.throwIfAborted()
+    const context = audioContext()
+    if (context.state !== 'running') await context.resume()
+    signal?.throwIfAborted()
 
-  const detach = openGraph(context, stream, (input) => {
-    lastLevel = Math.min(1, rms(input) * LEVEL_GAIN)
-    if (buffered >= limit) return
-    const copy = new Float32Array(input)
-    chunks.push(copy)
-    buffered += copy.length
-  })
+    // The resampler needs the real input rate; read it once, while the context is
+    // certainly alive. The buffer budget is in input frames too: the processor
+    // delivers at this rate, not at TARGET_RATE, which applies only after
+    // resampling.
+    inputRate = context.sampleRate
+    let buffered = 0
+    const limit = Math.floor((inputRate * Math.min(maxDurationMs, MAX_RECORDING_MS)) / 1000)
+
+    detach = openGraph(context, stream, (input) => {
+      lastLevel = Math.min(1, rms(input) * LEVEL_GAIN)
+      if (buffered >= limit) return
+      const copy = new Float32Array(input)
+      chunks.push(copy)
+      buffered += copy.length
+    })
+  } catch (error) {
+    stopTracks()
+    throw error
+  } finally {
+    signal?.removeEventListener('abort', stopTracks)
+  }
 
   let closed = false
   const teardown = (): void => {
     if (closed) return
     closed = true
-    detach()
-    for (const track of stream.getTracks()) track.stop()
+    try {
+      detach()
+    } finally {
+      stopTracks()
+    }
     // The context stays open on purpose: see `audioContext`. Closing it here
     // would tear the audio subsystem down again and the next press would pay the
     // same startup cost in the middle of the first word.
@@ -325,6 +349,7 @@ export async function startRecording(maxDurationMs: number): Promise<RecorderHan
 
   return {
     level: () => lastLevel,
+    isActive: () => !closed && tracks.some((track) => track.readyState === 'live'),
     async stop(capture: boolean): Promise<RecordedAudio | null> {
       teardown()
       const total = chunks.reduce((sum, chunk) => sum + chunk.length, 0)
