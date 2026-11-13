@@ -68,6 +68,34 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
+/** `1.` / `2)` at the start of a block is a list marker, not a sentence end. */
+const LIST_MARKER_AT_END = /(?:^|\s)\d{1,9}[.)]$/
+
+/**
+ * The last punctuation mark that really ends a sentence.
+ *
+ * `speechText` keeps an ordered-list number as text, so `1. Первый шаг` ends
+ * with a full stop that is not a pause, and `2.5` is a decimal rather than two
+ * sentences. A candidate at either of those places is skipped instead of
+ * speaking a bare number or cutting a number in half.
+ */
+function sentenceBoundary(text: string): number {
+  for (let at = text.length - 1; at >= 0; at -= 1) {
+    const char = text[at]
+    if (char !== '.' && char !== '!' && char !== '?') continue
+    if (char === '.' && isNotSentenceEnd(text, at)) continue
+    return at
+  }
+  return -1
+}
+
+function isNotSentenceEnd(text: string, at: number): boolean {
+  // Between digits: `2.5` is one number.
+  if (/\d/.test(text[at - 1] ?? '') && /\d/.test(text[at + 1] ?? '')) return true
+  // The end of a list marker: `1.` counts as number, not as a sentence.
+  return LIST_MARKER_AT_END.test(text.slice(0, at + 1))
+}
+
 /** A synthesised line, or null when the live engine is unavailable. */
 async function synthesize(text: string, localOnly = false): Promise<string | null> {
   const api = window.deskhand?.tts
@@ -122,7 +150,13 @@ export function useSpeech() {
   const releaseSystem = useRef<(() => void) | null>(null)
   const playing = useRef(0)
   const waitingTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const waitingVoice = useRef(false)
+  /**
+   * Whether the acknowledgement may still play.
+   *
+   * It stays set while the line is being prepared, so the answer can drop it up
+   * to the moment it starts; `clearWaiting` is the one place that turns it off.
+   */
+  const waitingPending = useRef(false)
   const lastAcknowledgement = useRef(-Infinity)
   const phraseIndex = useRef(0)
   /**
@@ -176,14 +210,17 @@ export function useSpeech() {
     setSpeaking(false)
   }, [])
 
+  /**
+   * Cancels an acknowledgement that has not started yet.
+   *
+   * One that is already speaking is left alone: `chain` queues the answer behind
+   * it, and cutting the line mid-phrase sounds broken.
+   */
   const clearWaiting = useCallback(() => {
     if (waitingTimer.current !== null) clearTimeout(waitingTimer.current)
     waitingTimer.current = null
-    if (!waitingVoice.current) return
-    waitingVoice.current = false
-    generation.current++
-    silence()
-  }, [silence])
+    waitingPending.current = false
+  }, [])
 
   const stop = useCallback(() => {
     clearWaiting()
@@ -277,12 +314,24 @@ export function useSpeech() {
     return liveAllowed.current ? (await synthesize(clean)) ?? '' : ''
   }, [])
 
-  /** Prepare the first clip while earlier lines play. Request later clips as playback advances. */
-  const enqueue = useCallback((text: string, kind: 'cue' | 'answer' | 'manual' | 'system' = 'cue') => {
+  /**
+   * Queues one line for playback.
+   *
+   * `cancelled` is an extra gate for a clip that must be droppable while it is
+   * still being prepared: it is re-checked after the audio is ready and just
+   * before it starts. It does not touch the generation, because that would drop
+   * the cues already queued behind this one.
+   */
+  const enqueue = useCallback((
+    text: string,
+    kind: 'cue' | 'answer' | 'manual' | 'system' = 'cue',
+    options: { cancelled?: () => boolean } = {}
+  ) => {
     setError(null)
     const clean = speechText(text)
     if (!clean) return
     const token = generation.current
+    const cancelled = options.cancelled
     const live = kind === 'manual' || (kind === 'answer' && liveAllowed.current)
     const chunks = live ? speechChunks(clean, TTS_MAX_CHARS) : [clean].values()
     const prepare = async (chunk: string): Promise<string> => {
@@ -301,6 +350,7 @@ export function useSpeech() {
         for (let chunk = first.value; ; ) {
           const url = await source
           if (token !== generation.current) return
+          if (cancelled?.()) return
           const played = await playAudio(url)
           if (!played && token === generation.current) await playSystem(chunk, token)
           if (token !== generation.current) return
@@ -402,12 +452,26 @@ export function useSpeech() {
     const acknowledge = async (): Promise<void> => {
       waitingTimer.current = null
       const token = generation.current
-      if (!await acknowledgement || token !== generation.current || turn.current !== current) return
-      if (current.spoken || Date.now() - lastAcknowledgement.current < SPEECH_COOLDOWN_MS) return
+      // The answer may have overtaken the acknowledgement while the settings
+      // were loading, so the pending flag is checked after the wait, not before.
+      if (!await acknowledgement || token !== generation.current ||
+        turn.current !== current || !waitingPending.current || current.spoken) {
+        waitingPending.current = false
+        return
+      }
+      if (Date.now() - lastAcknowledgement.current < SPEECH_COOLDOWN_MS) {
+        waitingPending.current = false
+        return
+      }
       lastAcknowledgement.current = Date.now()
-      waitingVoice.current = true
-      enqueue(waitingPhrases[phraseIndex.current++ % waitingPhrases.length])
+      enqueue(waitingPhrases[phraseIndex.current++ % waitingPhrases.length], 'cue', {
+        // The line can still be dropped while its audio is being prepared: the
+        // answer clears the pending flag, but it does not bump the generation,
+        // so the cue already queued behind it keeps its place.
+        cancelled: () => !waitingPending.current || turn.current !== current
+      })
     }
+    waitingPending.current = true
     waitingTimer.current = setTimeout(() => void acknowledge(), WAIT_STATUS_MS)
   }, [stop, enqueue])
 
@@ -421,7 +485,9 @@ export function useSpeech() {
     // Only complete sentences can be spoken; keep partial Markdown/code private.
     if (current.buffer.includes('```') || current.buffer.includes('|')) return
     const clean = speechText(current.buffer)
-    const boundary = Math.max(clean.lastIndexOf('.'), clean.lastIndexOf('!'), clean.lastIndexOf('?'))
+    // The last full stop is not always a sentence end: `1.` opens a list and
+    // `2.5` is a number, so those candidates are skipped.
+    const boundary = sentenceBoundary(clean)
     if (boundary < 0) return
     const ready = automaticSpeech(current.prompt, clean.slice(0, boundary + 1))
     if (!ready.startsWith(current.spoken) || ready === ANSWER_FALLBACK) return

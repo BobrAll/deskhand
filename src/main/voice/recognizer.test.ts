@@ -532,6 +532,79 @@ describe('transcribe', () => {
   })
 })
 
+describe('warmRecognizer', () => {
+  function ready(): void {
+    state.existing = new Set(['/app/resources/whisper-cli', '/userdata/models/ggml-small-q5_1.bin'])
+  }
+
+  it('runs the recognizer on silence and shares one process between callers', async () => {
+    ready()
+
+    await Promise.all([recognizer.warmRecognizer(), recognizer.warmRecognizer()])
+
+    expect(state.spawned).toHaveLength(1)
+    expect(state.spawned[0].binary).toBe('/app/resources/whisper-cli')
+    expect(state.spawned[0].args[3]).toMatch(/^\/tmp\/deskhand-voice-.+\/input\.wav$/)
+    const written = state.written[0]
+    expect(written.data.subarray(0, 4).toString()).toBe('RIFF')
+    // The warm-up is a normal turn: the temp directory is removed as usual.
+    expect(state.removed).toHaveLength(1)
+  })
+
+  it('starts nothing when there is no model to load', async () => {
+    state.existing = new Set(['/app/resources/whisper-cli'])
+
+    await recognizer.warmRecognizer()
+
+    expect(state.spawned).toHaveLength(0)
+    expect(state.written).toHaveLength(0)
+  })
+
+  it('cancels before the recognizer is spawned', async () => {
+    ready()
+
+    const running = recognizer.warmRecognizer()
+    recognizer.cancelWarmRecognizer()
+    await running
+
+    expect(state.spawned).toHaveLength(0)
+  })
+
+  it('reports a warm-up that really loaded the model', async () => {
+    ready()
+    // A deterministic clock: the mocked recognizer finishes within the same
+    // millisecond, and `warmRecognizer` reads the elapsed time as the proof
+    // that a process actually ran.
+    let clock = 0
+    vi.spyOn(Date, 'now').mockImplementation(() => (clock += 1))
+
+    await expect(recognizer.warmRecognizer()).resolves.toBe(true)
+  })
+
+  it('reports false when there is nothing to load', async () => {
+    state.existing = new Set(['/app/resources/whisper-cli'])
+
+    await expect(recognizer.warmRecognizer()).resolves.toBe(false)
+  })
+
+  it('reports false for a cancelled warm-up', async () => {
+    ready()
+    const running = recognizer.warmRecognizer()
+    recognizer.cancelWarmRecognizer()
+
+    await expect(running).resolves.toBe(false)
+  })
+
+  it('logs a warm-up that could not start once for every caller', async () => {
+    state.existing = new Set(['/app/resources/whisper-cli'])
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+
+    await Promise.all([recognizer.warmRecognizer(), recognizer.warmRecognizer()])
+
+    expect(warn).toHaveBeenCalledTimes(1)
+  })
+})
+
 describe('downloadModel', () => {
   function bodyOf(text: string): ReadableStream<Uint8Array> {
     const encoder = new TextEncoder()

@@ -181,6 +181,14 @@ function reportStartupPermissions(): void {
   })
 }
 
+/**
+ * Whether `finishQuit` has started.
+ *
+ * Read by the deferred startup task: a quit that lands before it runs must not
+ * create the tray after `destroyTray()` has just removed it.
+ */
+let quitStarted = false
+
 function bootstrap(): void {
   buildApplicationMenu()
 
@@ -200,14 +208,24 @@ function bootstrap(): void {
     quit
   })
 
-  createTray({
-    openAssistant: () => {
-      void overlay.open()
-    },
-    openSettings: () => openSettingsWindow(),
-    openOnboarding: () => openOnboardingWindow(),
-    quit
-  })
+  // The renderer's page load is the longest part of showing the first card, and
+  // everything below runs in the main process while that page is already loading
+  // in its own renderer process. Creating the window first therefore overlaps the
+  // two instead of adding one to the other: by the time the manual launch asks
+  // for the card, the page is well past its first paint.
+  //
+  // The keyboard path needs this warm renderer: the card is now put on screen
+  // before the context is collected, so the very first Alt+Space must not land on
+  // a window that is still loading its page. It runs after `registerIpc` because
+  // the page asks for its first state over IPC as soon as it mounts, and an
+  // `invoke` with no handler rejects.
+  try {
+    overlayHost.prewarm()
+  } catch (error) {
+    // A window that cannot be created ahead of time is not fatal: the first
+    // press creates one, only later.
+    console.error('[app] overlay prewarm failed:', error)
+  }
 
   const settings = getSettings()
   if (!applyHotkey(settings.hotkey)) {
@@ -215,22 +233,13 @@ function bootstrap(): void {
     if (settings.hotkey !== DEFAULT_SETTINGS.hotkey) applyHotkey(DEFAULT_SETTINGS.hotkey)
   }
 
-  applyLaunchAtLogin(settings.launchAtLogin)
-
   // The tap has to be up before the first key press, so it is started with the
   // rest of the hotkeys rather than lazily on the first settings save.
   // `applySettings` also prewarms the overlay renderer when voice is enabled: the
   // microphone lives there, and a window created on the first press would lose
-  // that press's animation and transcript.
+  // that press's animation and transcript. The window is already up by now, so
+  // this only confirms it.
   voice.applySettings()
-
-  // The keyboard path needs the same warm renderer, and for the same reason: the
-  // card is now put on screen before the context is collected, so the very first
-  // Alt+Space must not land on a window that is still loading its page. Prewarming
-  // is cheap — one hidden window, created off-screen and reused for every turn.
-  overlayHost.prewarm()
-
-  reportStartupPermissions()
 
   // A manual launch (double-click on the app icon) must produce something visible:
   // otherwise the click looks like a no-op. A launch by the login item must stay
@@ -249,6 +258,35 @@ function bootstrap(): void {
   } else if (launchedManually) {
     void overlay.open()
   }
+
+  // None of this is needed for the first window or the first hotkey, and creating
+  // the tray alone blocks the main thread for tens of milliseconds. The zero
+  // timeout moves it out of the synchronous part of `bootstrap` — it does not
+  // wait for the card to paint, which happens in the renderer process anyway.
+  // What it buys is that the hotkey, the voice tap and the window request are all
+  // registered before the tray, the login item and a permission diagnostic take
+  // the main thread.
+  setTimeout(() => {
+    // An immediate quit may have run `finishQuit` already; creating the tray
+    // after `destroyTray()` would leave an icon nobody removes.
+    if (quitStarted) return
+    try {
+      createTray({
+        openAssistant: () => {
+          void overlay.open()
+        },
+        openSettings: () => openSettingsWindow(),
+        openOnboarding: () => openOnboardingWindow(),
+        quit
+      })
+      applyLaunchAtLogin(settings.launchAtLogin)
+      reportStartupPermissions()
+    } catch (error) {
+      // Same contract as the bootstrap itself: a tray or login item that fails
+      // must not leave the hotkey and the card unusable.
+      console.error('[app] deferred startup work failed:', error)
+    }
+  }, 0)
 }
 
 /** One instance only: a second launch just re-opens the overlay. */
@@ -294,7 +332,6 @@ if (!app.requestSingleInstanceLock()) {
     // Tray app: never quit just because a window closed.
   })
 
-  let quitStarted = false
   let quitReady = false
   // Cleanup is best-effort and must never outlive its usefulness: a run that
   // never settles would otherwise hold the process, the single-instance lock

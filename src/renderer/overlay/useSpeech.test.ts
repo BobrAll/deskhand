@@ -75,6 +75,26 @@ describe('automatic speech lifecycle', () => {
     await flush()
     expect(speak.mock.calls.map(call => call[0].text)).toEqual(['Справа сверху.', 'Затем открой меню.'])
   })
+  it('does not speak an ordered-list marker as a sentence', async () => {
+    const speech = useSpeech()
+    speech.begin('one', 'Объясни', true)
+    await speech.append('one', '1. Первый шаг')
+    await flush()
+    expect(speak).not.toHaveBeenCalled()
+    await speech.append('one', '. Второй шаг.')
+    await flush()
+    expect(speak.mock.calls.map(call => call[0].text)).toEqual(['1. Первый шаг. Второй шаг.'])
+  })
+  it('does not split a decimal number', async () => {
+    const speech = useSpeech()
+    speech.begin('one', 'Объясни', true)
+    await speech.append('one', 'Версия 2.5')
+    await flush()
+    expect(speak).not.toHaveBeenCalled()
+    await speech.append('one', ' готова.')
+    await flush()
+    expect(speak.mock.calls.map(call => call[0].text)).toEqual(['Версия 2.5 готова.'])
+  })
   it('waits for the verified result of an action', async () => {
     const speech = useSpeech()
     speech.begin('one', 'Открой настройки', true)
@@ -202,7 +222,9 @@ describe('manual playback', () => {
 })
 
 describe('waiting acknowledgement', () => {
-  it('speaks once after a delay and interrupts it for the answer', async () => {
+  it('finishes a started acknowledgement before the answer', async () => {
+    // Hold the utterance open so the answer arrives while the line still plays.
+    speak.mockImplementation(() => undefined)
     const speech = useSpeech()
     speech.begin('one', 'Объясни это', true)
     await vi.advanceTimersByTimeAsync(1499)
@@ -213,8 +235,12 @@ describe('waiting acknowledgement', () => {
     expect(speak.mock.calls[0][0].text).toBe('Сейчас посмотрю.')
     await speech.append('one', 'Вот ответ.')
     await flush()
-    expect(window.speechSynthesis.cancel).toHaveBeenCalledTimes(2)
-    expect(speak.mock.calls[1][0].text).toBe('Вот ответ.')
+    // The answer does not cut the line mid-phrase: it waits behind the chain.
+    expect(window.speechSynthesis.cancel).toHaveBeenCalledOnce()
+    expect(speak).toHaveBeenCalledOnce()
+    speak.mock.calls[0][0].onend()
+    await flush(20)
+    expect(speak.mock.calls.map(call => call[0].text)).toEqual(['Сейчас посмотрю.', 'Вот ответ.'])
     await vi.advanceTimersByTimeAsync(30000)
     await flush()
     expect(speak).toHaveBeenCalledTimes(2)
@@ -225,6 +251,66 @@ describe('waiting acknowledgement', () => {
     await speech.finish('one', 'Ответ.')
     await flush()
     expect(speak.mock.calls.map(call => call[0].text)).toEqual(['Ответ.'])
+  })
+  it('cancels a pending acknowledgement the answer arrives before', async () => {
+    const speech = useSpeech()
+    speech.begin('one', 'Объясни это', true)
+    await speech.append('one', 'Вот ответ.')
+    await vi.advanceTimersByTimeAsync(30000)
+    await flush()
+    expect(speak.mock.calls.map(call => call[0].text)).toEqual(['Вот ответ.'])
+  })
+  it.each<[string, (speech: ReturnType<typeof useSpeech>) => void]>([
+    ['a new recording', () => record()],
+    ['stop', (speech) => speech.stop()]
+  ])('cuts a started acknowledgement off on %s', async (_line, act) => {
+    speak.mockImplementation(() => undefined)
+    const speech = useSpeech()
+    speech.begin('one', 'Объясни это', true)
+    await vi.advanceTimersByTimeAsync(1500)
+    await flush()
+    expect(speak).toHaveBeenCalledOnce()
+    act(speech)
+    await flush()
+    expect(window.speechSynthesis.cancel).toHaveBeenCalledTimes(2)
+  })
+  it('drops an acknowledgement whose audio is still being prepared when the answer lands', async () => {
+    // The settings arrive late, so the timer fires while the acknowledgement is
+    // still waiting for them. The local engine then holds the audio open: the
+    // answer lands in exactly that window and must be the only thing heard.
+    let resolveSettings!: (value: unknown) => void
+    window.deskhand.settings.load = vi.fn().mockImplementation(() => new Promise((resolve) => {
+      resolveSettings = resolve
+    }))
+    const audio = { ok: true as const, audio: 'AAA', cached: false, mime: 'audio/wav' }
+    let releaseAudio!: () => void
+    const prepared = new Promise<typeof audio>((resolve) => {
+      releaseAudio = () => resolve(audio)
+    })
+    const synth = vi.fn(() => prepared)
+    window.deskhand.tts.speak = synth
+    window.deskhand.tts.status = vi.fn(async () => (
+      { configured: true, engine: 'silero' } as Awaited<ReturnType<typeof window.deskhand.tts.status>>
+    ))
+
+    const speech = useSpeech()
+    speech.begin('one', 'Объясни это', true)
+    await vi.advanceTimersByTimeAsync(1500)
+    await flush()
+    expect(synth).not.toHaveBeenCalled()
+
+    resolveSettings({ settings: { voice: { answerVoice: 'neural' } } })
+    await flush(20)
+    // The acknowledgement is now queued, but its audio is not ready yet.
+    expect(synth).toHaveBeenCalledOnce()
+
+    await speech.finish('one', 'Вот ответ.')
+    await flush()
+    expect(speak).not.toHaveBeenCalled()
+
+    releaseAudio()
+    await flush(20)
+    expect(speak.mock.calls.map(call => call[0].text)).toEqual(['Вот ответ.'])
   })
   it('never acknowledges a cancelled turn', async () => {
     const speech = useSpeech()
