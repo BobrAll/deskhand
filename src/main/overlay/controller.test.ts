@@ -878,6 +878,23 @@ describe('dictation without the card', () => {
     expect(h.controller.target()).toBeNull()
   })
 
+  it('does not fall back to an old card target while the dictation app is being read', async () => {
+    state.activeApp = textEdit
+    const h = await harness()
+    let release = (): void => undefined
+    const read = new Promise<RawFrontApp | null>((resolve) => {
+      release = () => resolve(front('com.apple.Safari', 12))
+    })
+    vi.mocked(helperFrontApplication).mockReturnValue(read)
+
+    const pending = h.controller.beginDictation()
+    expect(h.controller.target()).toBeNull()
+
+    release()
+    await pending
+    expect(h.controller.target()).toMatchObject({ bundleId: 'com.apple.Safari', pid: 12 })
+  })
+
   it('forgets the remembered app so the next hold reads the screen again', async () => {
     vi.mocked(helperFrontApplication).mockResolvedValue(front('com.apple.TextEdit', 900))
     const h = await harness(false)

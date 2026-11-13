@@ -1630,7 +1630,11 @@ export function createOverlayController(host: OverlayHost) {
       agent.stop()
       if (session?.abort) session.abort.abort(STOP_AGENT)
     },
-    target: (): ActiveAppInfo | null => dictationTarget ?? session?.target ?? null,
+    // While a dictation is reading the front app, the old card target is not a
+    // fallback: a partial window that arrives in that gap must wait rather than
+    // paste into the app a previous card happened to belong to.
+    target: (): ActiveAppInfo | null =>
+      dictating ? dictationTarget : session?.target ?? null,
     isOpen: (): boolean => Boolean(session && host.window()?.isVisible())
   }
 }
