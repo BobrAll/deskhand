@@ -19,7 +19,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { AddressInfo } from 'node:net'
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AgentEvent } from '@shared/types'
 import { agentAcceptsRuns } from './grant'
 import { flushTrace } from './trace'
@@ -33,6 +33,7 @@ const canRun = built && (await agentAcceptsRuns(BINARY))
 
 const state = vi.hoisted(() => ({
   enabled: true,
+  saveRunTraces: false,
   traceDirectory: ''
 }))
 
@@ -56,7 +57,8 @@ vi.mock('../settings/store', () => ({
   getSettings: () => ({
     agent: {
       enabled: true, maxSteps: 3, abortOnMouseMove: false,
-      verifyResult: false, rememberedApprovals: []
+      verifyResult: false, rememberedApprovals: [],
+      saveRunTraces: state.saveRunTraces
     }
   }),
   patchSettings: () => undefined
@@ -109,6 +111,12 @@ beforeAll(async () => {
 
 afterAll(() => {
   server?.close()
+})
+
+/** Every test starts with detailed traces off, as a fresh install does. */
+beforeEach(() => {
+  state.saveRunTraces = false
+  state.traceDirectory = ''
 })
 
 /** Runs one task through the real chain, with the trace pointed at `directory`. */
@@ -216,6 +224,7 @@ describe.skipIf(!canRun)('a run’s timings reach the trace file', () => {
   it('records exact request bodies in a separate file for each task on the same sidecar', async () => {
     const directory = mkdtempSync(join(tmpdir(), 'deskhand-detailed-trace-'))
     state.traceDirectory = directory
+    state.saveRunTraces = true
     const controller = createAgentController({
       emit: () => undefined,
       setPassthrough: () => undefined
@@ -262,6 +271,36 @@ describe.skipIf(!canRun)('a run’s timings reach the trace file', () => {
       }
       expect(readdirSync(runDirectory)).toHaveLength(2)
       expect(readdirSync(dialogueDirectory).sort()).toEqual([...seen].sort())
+    } finally {
+      await controller.dispose()
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('writes no per-run trace when detailed logging is off', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'deskhand-no-detailed-trace-'))
+    state.traceDirectory = directory
+    const events: AgentEvent[] = []
+    const controller = createAgentController({
+      emit: (event) => events.push(event),
+      setPassthrough: () => undefined
+    })
+    try {
+      const result = await controller.run({
+        prompt: 'Посмотри, что открыто',
+        appName: 'Finder',
+        windowTitle: null,
+        provider: {
+          wire: 'openai', baseUrl, model: 'stub',
+          apiKey: 'test', maxTokens: 512, temperature: 0
+        }
+      })
+
+      // The run is unaffected: only the files that copy the screen are gone.
+      expect(result.answer).toBe('Готово: посмотрел.')
+      expect(events.at(-1)).toMatchObject({ phase: 'done', completed: true })
+      expect(existsSync(join(directory, 'project', 'agent-runs'))).toBe(false)
+      expect(existsSync(join(directory, 'project', 'agent-dialogs'))).toBe(false)
     } finally {
       await controller.dispose()
       rmSync(directory, { recursive: true, force: true })

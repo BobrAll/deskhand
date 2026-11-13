@@ -115,6 +115,16 @@ export function PrivacySection({
             checked={draft.rememberConversation}
             onChange={(rememberConversation) => patch({ rememberConversation })}
           />
+          <ToggleRow
+            title="Подробные журналы запусков"
+            hint={
+              'Пишет промпты, заголовки окон и скриншоты в ' +
+              '~/Library/Application Support/Deskhand/agent-runs и agent-dialogs. ' +
+              'Выключено по умолчанию — включай только для отладки.'
+            }
+            checked={draft.agent.saveRunTraces}
+            onChange={(saveRunTraces) => patch({ agent: { ...draft.agent, saveRunTraces } })}
+          />
           <Row
             title="Ключи API"
             hint={encryptionAvailable
