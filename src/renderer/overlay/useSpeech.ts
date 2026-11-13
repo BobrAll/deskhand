@@ -109,6 +109,22 @@ async function synthesize(text: string, localOnly = false): Promise<string | nul
   }
 }
 
+/**
+ * Warms the pronunciation hints for words of a line that is still coming.
+ *
+ * A new English word sounds wrong the first time only because the lookup starts
+ * when the line is already being synthesised. The prompt is known while the
+ * model thinks, so asking then is free; the streamed answer is asked for the
+ * same reason, one sentence before its turn. Nothing waits for the answer.
+ */
+function prefetch(text: string): void {
+  try {
+    window.deskhand?.tts?.prefetch?.(text)
+  } catch {
+    // A hint is a courtesy; a broken bridge must not affect playback.
+  }
+}
+
 /** The voice preferences a turn reads once, and what they mean for playback. */
 interface VoiceSettingsRead {
   voice: VoiceSettings
@@ -333,6 +349,9 @@ export function useSpeech() {
     const token = generation.current
     const cancelled = options.cancelled
     const live = kind === 'manual' || (kind === 'answer' && liveAllowed.current)
+    // A manual replay hands over the whole answer at once; warmer words are
+    // looked up while the first fragment is being synthesised.
+    if (live && kind === 'manual') prefetch(clean)
     const chunks = live ? speechChunks(clean, TTS_MAX_CHARS) : [clean].values()
     const prepare = async (chunk: string): Promise<string> => {
       if (kind === 'cue') return prepareCue(chunk)
@@ -443,6 +462,8 @@ export function useSpeech() {
         liveAllowed.current = read?.voice.answerVoice === 'neural' ||
           (read?.voice.answerVoice === 'off' && requestedReading(prompt))
         localVoice.current = read?.local === true
+        // The model is still thinking, so its likely words can be looked up now.
+        if (liveAllowed.current) prefetch(prompt)
       })
       .catch(() => {
         liveAllowed.current = false
@@ -485,6 +506,8 @@ export function useSpeech() {
     // Only complete sentences can be spoken; keep partial Markdown/code private.
     if (current.buffer.includes('```') || current.buffer.includes('|')) return
     const clean = speechText(current.buffer)
+    // Words of the next sentence are warmed while this one is still speaking.
+    if (liveAllowed.current) prefetch(clean)
     // The last full stop is not always a sentence end: `1.` opens a list and
     // `2.5` is a number, so those candidates are skipped.
     const boundary = sentenceBoundary(clean)

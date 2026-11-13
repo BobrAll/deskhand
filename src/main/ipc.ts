@@ -42,6 +42,7 @@ import {
 } from './settings/secrets'
 import { getSettings, patchSettings } from './settings/store'
 import { ttsStatus, synthesize } from './tts'
+import { prefetchPronunciations } from './tts/pronounce'
 import { installSilero, removeSilero } from './tts/silero'
 import {
   closeOnboardingWindow,
@@ -357,6 +358,9 @@ export function registerIpc(deps: IpcDeps): void {
   ipcMain.handle(CH.tts.speak, (_event, text: unknown, localOnly: unknown) =>
     synthesize(typeof text === 'string' ? text : '', localOnly === true)
   )
+  ipcMain.on(CH.tts.prefetch, (_event, text: unknown) => {
+    if (typeof text === 'string') void prefetchPronunciations(text)
+  })
   ipcMain.handle(CH.tts.status, () => ttsStatus())
   ipcMain.handle(CH.tts.setKey, (_event, key: unknown) => {
     setTtsKey(typeof key === 'string' ? key : '')

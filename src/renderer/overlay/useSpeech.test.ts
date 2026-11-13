@@ -362,8 +362,11 @@ describe('the local engine', () => {
     })
   })
 
-  const tts = (): { speak: typeof window.deskhand.tts.speak; status: typeof window.deskhand.tts.status } =>
-    window.deskhand.tts
+  const tts = (): {
+    speak: typeof window.deskhand.tts.speak
+    status: typeof window.deskhand.tts.status
+    prefetch: typeof window.deskhand.tts.prefetch
+  } => window.deskhand.tts
 
   /** A configured Silero engine: free and offline, so it reads the bank's lines too. */
   function localEngine(): ReturnType<typeof vi.fn> {
@@ -382,6 +385,21 @@ describe('the local engine', () => {
     // «Сейчас посмотрю.» is in the bank; the local voice replaces it, because it
     // is the voice the user picked and it costs nothing to synthesise.
     expect(synth).toHaveBeenCalledWith('Сейчас посмотрю.', true)
+  })
+
+  it('warms pronunciation hints from the prompt and the streamed answer', async () => {
+    localEngine()
+    const warm = vi.fn()
+    tts().prefetch = warm
+    const speech = useSpeech()
+
+    speech.begin('one', 'Расскажи про Figma', true)
+    await flush()
+    expect(warm).toHaveBeenCalledWith('Расскажи про Figma')
+
+    await speech.append('one', 'В Figma есть ')
+    await flush()
+    expect(warm).toHaveBeenLastCalledWith('В Figma есть')
   })
 
   it('falls back to the recorded line when the engine refuses', async () => {

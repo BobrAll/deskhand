@@ -72,6 +72,11 @@ async function resolve(text: string): Promise<Record<string, string>> {
   return module.resolvePronunciations(text)
 }
 
+async function prefetch(text: string): Promise<void> {
+  const module = await import('./pronounce')
+  await module.prefetchPronunciations(text)
+}
+
 beforeEach(() => {
   fake.settings = settings()
   fake.key = 'sk-test'
@@ -315,6 +320,64 @@ describe('resolvePronunciations', () => {
     // The failed retry cached nothing and did not poison the next line.
     await expect(resolvePronunciations('bar')).resolves.toEqual({})
     expect(fake.calls).toHaveLength(3)
+  })
+})
+
+describe('prefetchPronunciations', () => {
+  const target = '/tmp/deskhand-pronounce-test/tts-pronunciation.json'
+
+  it('starts the lookup without waiting for its answer', async () => {
+    let release!: () => void
+    fake.gate = new Promise<void>((resolve) => { release = resolve })
+    fake.reply = JSON.stringify({ localhost: 'локалх+ост' })
+
+    await prefetch('localhost')
+    expect(fake.calls).toHaveLength(1)
+    expect(fake.files.get(target)).toBeUndefined()
+
+    release()
+    await vi.waitFor(() => expect(fake.files.get(target)).toContain('локалх+ост'))
+  })
+
+  it('does not ask for a word the cache already has', async () => {
+    fake.files.set(target, JSON.stringify({ version: 1, words: { bar: 'б+ар' } }))
+
+    await prefetch('bar')
+    expect(fake.calls).toHaveLength(0)
+  })
+
+  it('stays silent without a key, with the lookup off or on a remote engine', async () => {
+    fake.key = null
+    await prefetch('localhost')
+
+    fake.key = 'sk-test'
+    fake.settings = { ...fake.settings, tts: { ...fake.settings.tts, pronunciationLookup: false } }
+    await prefetch('localhost')
+
+    fake.settings = {
+      ...fake.settings,
+      tts: { ...fake.settings.tts, pronunciationLookup: true, engine: 'remote' }
+    }
+    await prefetch('localhost')
+
+    expect(fake.calls).toHaveLength(0)
+  })
+
+  it('queues a word behind the running lookup instead of starting a second one', async () => {
+    let release!: () => void
+    fake.gate = new Promise<void>((resolve) => { release = resolve })
+    fake.reply = JSON.stringify({ foo: 'ф+у', bar: 'б+ар' })
+
+    await prefetch('foo')
+    await vi.waitFor(() => expect(fake.calls).toHaveLength(1))
+
+    await prefetch('bar')
+    expect(fake.calls).toHaveLength(1)
+
+    release()
+    await vi.waitFor(() => expect(fake.calls).toHaveLength(2))
+    expect(fake.calls[1][1].parts[0]).toEqual({ type: 'text', text: '["bar"]' })
+    await vi.waitFor(() => expect(fake.files.get(target)).toContain('б+ар'))
   })
 })
 

@@ -6,7 +6,9 @@
  * finite, and Silero's stress model guesses wrong on foreign words it has never
  * seen. Here the configured text model is asked once per new term, and the
  * answer is cached on disk: the first answer with a new word pays one small
- * request, every later answer is free.
+ * request, every later answer is free. `prefetchPronunciations` lets the card
+ * warm that cache from the prompt and the half-streamed answer, so the word is
+ * often already known by the time it is spoken instead of only on the next one.
  *
  * Failure is not an error the user has to read. No key, no network, a timeout or
  * a malformed reply all return an empty map, and `transliterate` falls back to
@@ -331,32 +333,19 @@ export async function resolvePronunciations(text: string): Promise<Hints> {
     return {}
   }
 
-  const terms = unknownWords(text).slice(0, MAX_TERMS)
-  if (terms.length === 0) return {}
-
-  const words = await loadCache()
-  const hints: Hints = {}
-  const missing: string[] = []
-  for (const term of terms) {
-    const cached = words[term]
-    if (cached) hints[term] = cached
-    else missing.push(term)
-  }
+  const found = await collectHints(text)
+  if (!found) return {}
+  const { cached: hints, missing, words } = found
   if (missing.length === 0) return hints
   if (!lookupAllowed(settings)) return hints
 
   // Streamed sentences are prepared one after another, but a provider that is
   // slow to answer would still see a request per line. One active request is
   // shared by every line that needs its words; the rest are queued behind it.
-  if (activeLookup) {
-    let covered = false
-    for (const term of missing) {
-      if (activeTerms.has(term)) covered = true
-      else pendingTerms.add(term)
-    }
+  if (activeLookup && !queueUncovered(missing)) {
     // The running request carries none of this line's words, so waiting for it
     // cannot help: speak with the rules and let the queued words arrive later.
-    if (!covered) return hints
+    return hints
   }
   const lookup = activeLookup ?? startLookup(missing, settings, words)
 
@@ -374,4 +363,70 @@ export async function resolvePronunciations(text: string): Promise<Hints> {
     if (value) hints[term] = value
   }
   return hints
+}
+
+/**
+ * Warms the cache for words in text the assistant is about to say.
+ *
+ * The prompt is known while the model is still thinking, and the answer is known
+ * a sentence before it is spoken; both are enough time for the lookup to finish
+ * without making the line wait. This is only a bet, so it never waits itself and
+ * never arms the backoff: a lost bet must not change how the next line sounds.
+ */
+export async function prefetchPronunciations(text: string): Promise<void> {
+  const settings = getSettings()
+  if (settings.tts.pronunciationLookup === false) return
+  // Hints are only read by the local engine; a remote or system voice would pay
+  // for a request whose answer never reaches synthesis.
+  if (settings.tts.engine !== 'silero') return
+  if (!lookupAllowed(settings)) return
+
+  const found = await collectHints(text)
+  if (!found || found.missing.length === 0) return
+  if (activeLookup) {
+    queueUncovered(found.missing)
+    return
+  }
+  void startLookup(found.missing, settings, found.words)
+}
+
+/** What the cache already knows for a line, and what it would have to ask for. */
+interface FoundHints {
+  cached: Hints
+  missing: string[]
+  words: Hints
+}
+
+/**
+ * Splits the unknown words of a line into cached hints and terms to look up.
+ *
+ * `null` means the line has no Latin words the dictionary cannot say, which is
+ * the common case and needs neither the cache nor a request.
+ */
+async function collectHints(text: string): Promise<FoundHints | null> {
+  const terms = unknownWords(text).slice(0, MAX_TERMS)
+  if (terms.length === 0) return null
+  const words = await loadCache()
+  const cached: Hints = {}
+  const missing: string[] = []
+  for (const term of terms) {
+    const hint = words[term]
+    if (hint) cached[term] = hint
+    else missing.push(term)
+  }
+  return { cached, missing, words }
+}
+
+/**
+ * Queues terms the running request does not carry; says whether it carries any.
+ *
+ * A covered term means the caller can wait on that request for its own hint.
+ */
+function queueUncovered(terms: string[]): boolean {
+  let covered = false
+  for (const term of terms) {
+    if (activeTerms.has(term)) covered = true
+    else pendingTerms.add(term)
+  }
+  return covered
 }
