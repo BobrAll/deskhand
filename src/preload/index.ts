@@ -129,6 +129,7 @@ const api: DeskhandApi = {
   tts: {
     speak: (text: string, localOnly?: boolean) =>
       ipcRenderer.invoke(CH.tts.speak, text, localOnly === true) as Promise<TtsResult>,
+    prefetch: (text: string) => ipcRenderer.send(CH.tts.prefetch, text),
     status: () => ipcRenderer.invoke(CH.tts.status) as Promise<TtsStatus>,
     setKey: (key: string) => ipcRenderer.invoke(CH.tts.setKey, key) as Promise<TtsStatus>,
     deleteKey: () => ipcRenderer.invoke(CH.tts.deleteKey) as Promise<TtsStatus>,

@@ -157,12 +157,27 @@ export function requestedReading(prompt: string): boolean {
   return /прочитай|зачитай|озвучь|вслух|read aloud/i.test(prompt)
 }
 
+/** Work whose result is reviewed on the card, not listened to. */
+const WRITTEN_WORK = /напиши|перепиши|исправь|переведи|сократи|ответь на|напечатай|вставь|впиши|набери/i
+/** Media that should start quietly. */
+const MEDIA_PLAYBACK = /(?:включи|запусти|воспроизведи|открой).*(?:видео|музык|песн|ролик|подкаст)/i
+
+/**
+ * Whether any part of the answer to this prompt is meant to be heard.
+ *
+ * `automaticSpeech` decides the same thing for the text it receives, but the
+ * prompt is known before the answer exists — which is when a pronunciation hint
+ * is worth prefetching. A task whose answer is silent must not pay for one.
+ */
+export function answerIsSpoken(prompt: string): boolean {
+  return requestedReading(prompt) || !(WRITTEN_WORK.test(prompt) || MEDIA_PLAYBACK.test(prompt))
+}
+
 export function automaticSpeech(prompt: string, answer: string, failed = false): string {
   const clean = speechText(answer)
   if (requestedReading(prompt)) return clean
   // Text creation and editing are reviewed visually. Media should start quietly.
-  if (!failed && /напиши|перепиши|исправь|переведи|сократи|ответь на|напечатай|вставь|впиши|набери/i.test(prompt)) return ''
-  if (!failed && /(?:включи|запусти|воспроизведи|открой).*(?:видео|музык|песн|ролик|подкаст)/i.test(prompt)) return ''
+  if (!failed && (WRITTEN_WORK.test(prompt) || MEDIA_PLAYBACK.test(prompt))) return ''
   if (!failed) return clean || (answer.trim() ? ANSWER_FALLBACK : '')
   const sentences = clean.match(/[^.!?]+(?:[.!?]+|$)/g) ?? []
   let result = ''

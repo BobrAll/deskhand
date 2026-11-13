@@ -13,6 +13,7 @@ import { speechLine, speaksCue } from './speechCues'
 import {
   ANSWER_FALLBACK,
   SPEECH_COOLDOWN_MS,
+  answerIsSpoken,
   automaticSpeech,
   requestedReading,
   speechText
@@ -106,6 +107,22 @@ async function synthesize(text: string, localOnly = false): Promise<string | nul
       : null
   } catch {
     return null
+  }
+}
+
+/**
+ * Warms the pronunciation hints for words of a line that is still coming.
+ *
+ * A new English word sounds wrong the first time only because the lookup starts
+ * when the line is already being synthesised. The prompt is known while the
+ * model thinks, so asking then is free; the streamed answer is asked for the
+ * same reason, one sentence before its turn. Nothing waits for the answer.
+ */
+function prefetch(text: string): void {
+  try {
+    window.deskhand?.tts?.prefetch?.(text)
+  } catch {
+    // A hint is a courtesy; a broken bridge must not affect playback.
   }
 }
 
@@ -333,6 +350,9 @@ export function useSpeech() {
     const token = generation.current
     const cancelled = options.cancelled
     const live = kind === 'manual' || (kind === 'answer' && liveAllowed.current)
+    // A manual replay hands over the whole answer at once, so later fragments
+    // can have their hints before their turn comes.
+    if (live && kind === 'manual') prefetch(clean)
     const chunks = live ? speechChunks(clean, TTS_MAX_CHARS) : [clean].values()
     const prepare = async (chunk: string): Promise<string> => {
       if (kind === 'cue') return prepareCue(chunk)
@@ -443,6 +463,9 @@ export function useSpeech() {
         liveAllowed.current = read?.voice.answerVoice === 'neural' ||
           (read?.voice.answerVoice === 'off' && requestedReading(prompt))
         localVoice.current = read?.local === true
+        // The model is still thinking, so words it is likely to use in the
+        // answer can be looked up now — unless the answer will stay silent.
+        if (liveAllowed.current && answerIsSpoken(prompt)) prefetch(prompt)
       })
       .catch(() => {
         liveAllowed.current = false
@@ -496,6 +519,9 @@ export function useSpeech() {
     if (fresh) {
       clearWaiting()
       enqueue(fresh, 'answer')
+      // The sentence after the one just queued is already partly here: its
+      // words can be looked up while the queued line is being spoken.
+      if (liveAllowed.current) prefetch(clean.slice(boundary + 1).trim())
     }
   }, [enqueue, clearWaiting])
 

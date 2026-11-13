@@ -258,7 +258,8 @@ describe('registerIpc: every channel has exactly one handler', () => {
       CH.permissions.open,
       CH.onboarding.openSettings,
       CH.voice.level,
-      CH.voice.failed
+      CH.voice.failed,
+      CH.tts.prefetch
     ]) {
       expect(electron.ons.has(channel), channel).toBe(true)
       expect(electron.handles.has(channel), channel).toBe(false)

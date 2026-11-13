@@ -44,7 +44,7 @@ beforeEach(() => {
       overlay: { onPreparing: () => vi.fn() },
       // No neural voice in these tests: the system voice is the last fallback,
       // which is what the assertions below can observe.
-      tts: { speak: async () => ({ ok: false, message: 'нет' }) },
+      tts: { speak: async () => ({ ok: false, message: 'нет' }), prefetch: vi.fn() },
       settings: { load: async () => ({ settings: { voice: { answerVoice: 'system' } } }) }
     }
   })
@@ -362,8 +362,11 @@ describe('the local engine', () => {
     })
   })
 
-  const tts = (): { speak: typeof window.deskhand.tts.speak; status: typeof window.deskhand.tts.status } =>
-    window.deskhand.tts
+  const tts = (): {
+    speak: typeof window.deskhand.tts.speak
+    status: typeof window.deskhand.tts.status
+    prefetch: typeof window.deskhand.tts.prefetch
+  } => window.deskhand.tts
 
   /** A configured Silero engine: free and offline, so it reads the bank's lines too. */
   function localEngine(): ReturnType<typeof vi.fn> {
@@ -382,6 +385,45 @@ describe('the local engine', () => {
     // «Сейчас посмотрю.» is in the bank; the local voice replaces it, because it
     // is the voice the user picked and it costs nothing to synthesise.
     expect(synth).toHaveBeenCalledWith('Сейчас посмотрю.', true)
+  })
+
+  it('warms pronunciation hints from the prompt and the tail of the stream', async () => {
+    localEngine()
+    const warm = vi.fn()
+    tts().prefetch = warm
+    const speech = useSpeech()
+
+    speech.begin('one', 'Расскажи про Figma', true)
+    await flush()
+    expect(warm).toHaveBeenCalledWith('Расскажи про Figma')
+
+    // The first sentence is queued; the sentence after it is already partly
+    // streamed, so its words are warmed before their turn.
+    await speech.append('one', 'В Figma есть слои. Открой ')
+    await flush()
+    expect(warm).toHaveBeenLastCalledWith('Открой')
+  })
+
+  it('does not warm hints for an answer that will stay silent', async () => {
+    localEngine()
+    const warm = vi.fn()
+    tts().prefetch = warm
+
+    useSpeech().begin('one', 'Переведи текст про Figma', true)
+    await flush()
+    expect(warm).not.toHaveBeenCalled()
+  })
+
+  it('does not warm hints for the system voice', async () => {
+    window.deskhand.settings.load = vi.fn().mockResolvedValue({
+      settings: { voice: { answerVoice: 'system' } }
+    })
+    const warm = vi.fn()
+    tts().prefetch = warm
+
+    useSpeech().begin('one', 'Расскажи про Figma', true)
+    await flush()
+    expect(warm).not.toHaveBeenCalled()
   })
 
   it('falls back to the recorded line when the engine refuses', async () => {
