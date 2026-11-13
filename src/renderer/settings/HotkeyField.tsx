@@ -1,7 +1,8 @@
 /**
  * Hotkey recorder: captures the next key combination and converts it to an
- * Electron accelerator string. Modifiers alone are ignored, so the user cannot
- * accidentally bind a bare letter — or a bare modifier — to a global shortcut.
+ * Electron accelerator string. A bare letter is always ignored, so ordinary
+ * typing cannot become a shortcut. A hold of two modifiers is accepted only for
+ * the voice fields, where the native tap can watch a modifier pair directly.
  *
  * One thing here is not obvious: the app's own listeners are silenced while the
  * field is armed. Both the card hotkey and the voice tap are global, so the
@@ -52,16 +53,24 @@ function keyFromEvent(event: KeyboardEvent): string | null {
   return CODE_MAP[event.code] ?? null
 }
 
-function toAccelerator(event: KeyboardEvent): string | null {
-  const key = keyFromEvent(event)
-  if (!key) return null
-
+/** The modifiers currently down, in the order the accelerator spells them. */
+function modifierParts(event: KeyboardEvent, includeFn: boolean): string[] {
   const parts: string[] = []
   if (event.metaKey) parts.push('Command')
   if (event.ctrlKey) parts.push('Control')
   if (event.altKey) parts.push('Alt')
   if (event.shiftKey) parts.push('Shift')
+  // Chromium does not always deliver Fn as a key edge, but its modifier state
+  // is still readable on the events it does deliver.
+  if (includeFn && event.getModifierState('Fn')) parts.push('Fn')
+  return parts
+}
 
+function toAccelerator(event: KeyboardEvent, includeFn: boolean): string | null {
+  const key = keyFromEvent(event)
+  if (!key) return null
+
+  const parts = modifierParts(event, includeFn)
   // A global shortcut without any modifier would swallow ordinary typing.
   if (parts.length === 0) return null
   parts.push(key)
@@ -71,9 +80,11 @@ function toAccelerator(event: KeyboardEvent): string | null {
 interface HotkeyFieldProps {
   value: string
   onChange(accelerator: string): void
+  /** Accept a hold of two or more modifiers, e.g. Control+Alt. */
+  allowModifiersOnly?: boolean
 }
 
-export function HotkeyField({ value, onChange }: HotkeyFieldProps) {
+export function HotkeyField({ value, onChange, allowModifiersOnly = false }: HotkeyFieldProps) {
   const [recording, setRecording] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -87,6 +98,11 @@ export function HotkeyField({ value, onChange }: HotkeyFieldProps) {
   useEffect(() => {
     if (!recording) return
 
+    // The full set of modifiers seen while they were down. A modifier-only
+    // combination is committed on release, when the event no longer carries the
+    // key that was just let go.
+    let held: string[] = []
+
     const handler = (event: KeyboardEvent): void => {
       event.preventDefault()
       event.stopPropagation()
@@ -95,9 +111,12 @@ export function HotkeyField({ value, onChange }: HotkeyFieldProps) {
         setError(null)
         return
       }
-      if (MODIFIER_KEYS.has(event.key)) return
+      if (MODIFIER_KEYS.has(event.key)) {
+        if (allowModifiersOnly) held = modifierParts(event, true)
+        return
+      }
 
-      const accelerator = toAccelerator(event)
+      const accelerator = toAccelerator(event, allowModifiersOnly)
       if (!accelerator) {
         setError('Нужна комбинация с ⌘, ⌥, ⌃ или ⇧')
         return
@@ -107,9 +126,30 @@ export function HotkeyField({ value, onChange }: HotkeyFieldProps) {
       onChange(accelerator)
     }
 
+    const release = (event: KeyboardEvent): void => {
+      if (!allowModifiersOnly || !MODIFIER_KEYS.has(event.key)) return
+      event.preventDefault()
+      event.stopPropagation()
+      // Fn may never report its own key-up on macOS; let Ctrl/Alt/⌘/⇧ ending the
+      // hold commit the pair that was down a moment ago.
+      const remaining = modifierParts(event, true).filter((part) => part !== 'Fn')
+      if (remaining.length > 0) return
+      const pressed = held
+      held = []
+      // One modifier is ordinary typing, not a gesture.
+      if (pressed.length < 2) return
+      setArmed(false)
+      setError(null)
+      onChange(pressed.join('+'))
+    }
+
     window.addEventListener('keydown', handler, true)
-    return () => window.removeEventListener('keydown', handler, true)
-  }, [recording, onChange, setArmed])
+    window.addEventListener('keyup', release, true)
+    return () => {
+      window.removeEventListener('keydown', handler, true)
+      window.removeEventListener('keyup', release, true)
+    }
+  }, [recording, onChange, setArmed, allowModifiersOnly])
 
   // Closing the tab or the window while armed must not leave the app deaf.
   const armedRef = useRef(false)

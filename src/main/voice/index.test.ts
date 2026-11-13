@@ -8,6 +8,7 @@ function settings(overrides: Record<string, unknown> = {}): { voice: Record<stri
     voice: {
       enabled: true,
       hotkey: 'Alt+Shift+Space',
+      dictationHotkey: 'Fn+Control',
       model: 'small-q5_1',
       language: 'ru',
       action: 'command',
@@ -26,7 +27,11 @@ const state = vi.hoisted(() => ({
   now: 1_000_000,
   /** What the tap listener does when it starts. */
   startError: null as string | null,
-  listenerOptions: null as Record<string, unknown> | null,
+  listeners: [] as Array<{
+    options: Record<string, unknown>
+    accelerator: string | null
+    stopped: boolean
+  }>,
   stopped: 0,
   warmed: 0,
   warmCancels: 0,
@@ -84,22 +89,29 @@ vi.mock('./listen', () => ({
   VoiceKeyListener: class {
     listening = true
     lastError: string | null = null
+    private readonly entry: {
+      options: Record<string, unknown>
+      accelerator: string | null
+      stopped: boolean
+    }
     constructor(options: Record<string, unknown>) {
-      state.listenerOptions = options
+      this.entry = { options, accelerator: null, stopped: false }
+      state.listeners.push(this.entry)
     }
     start(accelerator: string): string | null {
-      void accelerator
+      this.entry.accelerator = accelerator
       return state.startError
     }
     stop(): void {
+      this.entry.stopped = true
       state.stopped += 1
     }
     emit(event: string): void {
-      const handler = state.listenerOptions?.onEvent as (event: string) => void
+      const handler = this.entry.options.onEvent as (event: string) => void
       handler(event)
     }
     fail(message: string): void {
-      const handler = state.listenerOptions?.onError as (message: string) => void
+      const handler = this.entry.options.onError as (message: string) => void
       handler(message)
     }
   }
@@ -165,7 +177,7 @@ beforeEach(() => {
   state.binary = '/bin/helper'
   state.now = 1_000_000
   state.startError = null
-  state.listenerOptions = null
+  state.listeners = []
   state.stopped = 0
   state.warmed = 0
   state.warmCancels = 0
@@ -365,6 +377,30 @@ describe('createVoiceController: recognition', () => {
     expect(host.hidden).toBeGreaterThan(0)
   })
 
+  it('dictates from its own hotkey even when the main action is command', async () => {
+    const target: ActiveAppInfo = {
+      bundleId: 'com.apple.TextEdit',
+      name: 'TextEdit',
+      pid: 9,
+      windowTitle: null,
+      windowId: null,
+      bounds: null
+    }
+    const host = makeHost()
+    const voice = createVoiceController(host)
+    voice.applySettings()
+    voice.press('dictation')
+    host.targetValue = target
+    state.now += 500
+    voice.release()
+
+    await voice.handleRecording({ wavBase64: 'AAAA', durationMs: 800 })
+
+    expect(state.pasted).toEqual([{ text: 'привет', target }])
+    expect(host.delivered).toEqual([])
+    expect(host.hidden).toBeGreaterThan(0)
+  })
+
   it('refuses a recording that arrives outside `transcribing`', async () => {
     const host = makeHost()
     const voice = createVoiceController(host)
@@ -514,7 +550,7 @@ describe('createVoiceController: cancel and failures', () => {
     const host = makeHost()
     const voice = createVoiceController(host)
     voice.applySettings()
-    const emit = state.listenerOptions?.onEvent as (event: string) => void
+    const emit = state.listeners[0].options.onEvent as (event: string) => void
 
     emit('ready')
     emit('reenabled')
@@ -527,7 +563,7 @@ describe('createVoiceController: cancel and failures', () => {
     const voice = createVoiceController(host)
     voice.applySettings()
 
-    ;(state.listenerOptions?.onError as (message: string) => void)('нет прав')
+    ;(state.listeners[0].options.onError as (message: string) => void)('нет прав')
 
     expect((await voice.status()).listenerError).toBe('нет прав')
   })
@@ -823,18 +859,18 @@ describe('createVoiceController: settings and lifecycle', () => {
 
     voice.applySettings()
 
-    expect(state.listenerOptions).toBeNull()
+    expect(state.listeners).toHaveLength(0)
     expect(host.prewarmed).toBe(0)
   })
 
-  it('stops the listener when voice is switched off', () => {
+  it('stops both listeners when voice is switched off', () => {
     state.settings = settings({ enabled: false })
     const host = makeHost()
     const voice = createVoiceController(host)
 
     voice.applySettings()
 
-    expect(state.stopped).toBe(1)
+    expect(state.stopped).toBe(2)
   })
 
   it('prewarms the card once the tap is up', () => {
@@ -856,15 +892,39 @@ describe('createVoiceController: settings and lifecycle', () => {
     expect(host.prewarmed).toBe(0)
   })
 
-  it('reuses one listener across repeated calls', () => {
+  it('reuses the two listeners across repeated calls', () => {
     const host = makeHost()
     const voice = createVoiceController(host)
 
     voice.applySettings()
-    const first = state.listenerOptions
+    const first = state.listeners.map((entry) => entry.options)
     voice.applySettings()
 
-    expect(state.listenerOptions).toBe(first)
+    expect(state.listeners.map((entry) => entry.options)).toEqual(first)
+    expect(state.listeners).toHaveLength(2)
+  })
+
+  it('binds the main and dictation hotkeys to separate listeners', () => {
+    const host = makeHost()
+    const voice = createVoiceController(host)
+
+    voice.applySettings()
+
+    expect(state.listeners.map((entry) => entry.accelerator)).toEqual([
+      'Alt+Shift+Space',
+      'Fn+Control'
+    ])
+  })
+
+  it('leaves the dictation listener stopped when both hotkeys are the same', () => {
+    state.settings = settings({ hotkey: 'Control+Alt', dictationHotkey: 'Control+Alt' })
+    const host = makeHost()
+    const voice = createVoiceController(host)
+
+    voice.applySettings()
+
+    expect(state.listeners[1].accelerator).toBeNull()
+    expect(state.listeners[1].stopped).toBe(true)
   })
 
   it('reports the mode the overlay needs', () => {
@@ -898,7 +958,7 @@ describe('createVoiceController: settings and lifecycle', () => {
 
     expect(voice.phase()).toBe('idle')
     expect(voice.isBusy()).toBe(false)
-    expect(state.stopped).toBe(1)
+    expect(state.stopped).toBe(2)
   })
 
   it('stop() clears the timers, so nothing fires afterwards', () => {

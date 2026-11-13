@@ -15,7 +15,13 @@
  */
 
 import { CH } from '@shared/ipc'
-import type { TranscribeResult, VoiceErrorCode, VoiceEvent, VoicePhase } from '@shared/types'
+import type {
+  TranscribeResult,
+  VoiceAction,
+  VoiceErrorCode,
+  VoiceEvent,
+  VoicePhase
+} from '@shared/types'
 import { pasteAnswer } from '../paste'
 import { helperBinary } from '../native/helper'
 import { getSettings } from '../settings/store'
@@ -107,8 +113,19 @@ const WARMUP_DELAY_MS = 3_000
 /** A short tap ends without a recognition; try warming again after it. */
 const WARMUP_RETRY_MS = 1_500
 
+/** Which physical hold started the turn: the main hotkey or the dictation one. */
+type VoiceBinding = 'primary' | 'dictation'
+
 export function createVoiceController(host: VoiceHost) {
-  let listener: VoiceKeyListener | null = null
+  let listeners: Record<VoiceBinding, VoiceKeyListener | null> = {
+    primary: null,
+    dictation: null
+  }
+  /** Kept so a `cancel` after a failed start can still explain itself. */
+  const listenerErrors: Record<VoiceBinding, string | null> = {
+    primary: null,
+    dictation: null
+  }
   let phase: VoicePhase = 'idle'
   let startedAt = 0
   let level = 0
@@ -116,8 +133,13 @@ export function createVoiceController(host: VoiceHost) {
   let abort: AbortController | null = null
   /** Set while a transcript is in flight. */
   let busy = false
-  /** Kept so a `cancel` after a failed start can still explain itself. */
-  let listenerError: string | null = null
+  /**
+   * What the turn in flight does with its transcript.
+   *
+   * Read at press time rather than at delivery time: the dictation hotkey means
+   * "always type here", while the main one follows whatever `action` says.
+   */
+  let turnAction: VoiceAction | null = null
   /**
    * Identifies the turn that owns the card right now.
    *
@@ -350,12 +372,14 @@ export function createVoiceController(host: VoiceHost) {
 
   /** Ends the turn: one event carries both the new phase and its explanation. */
   function finishIdle(payload: { text?: string; error?: string; code?: VoiceErrorCode }): void {
+    const action = turnAction ?? getSettings().voice.action
+    turnAction = null
     host.setVoice(false)
     // Dictation never leaves anything on screen: the words went into the user's
     // own app, so a card would have nothing to show and would sit there as an
     // empty rectangle. This also covers the failed turns — a press that heard
     // nothing has no message worth a panel in the middle of the sentence.
-    if (getSettings().voice.action === 'dictate') host.hide()
+    if (action === 'dictate') host.hide()
     setPhase('idle', payload)
     // A tap too short to transcribe never loaded the model; the idle moment after
     // it is the next chance to warm it.
@@ -368,10 +392,10 @@ export function createVoiceController(host: VoiceHost) {
   }
 
   /** Dispatches one tap edge; `ready`/`reenabled` need nothing from the controller. */
-  function handleTapEvent(event: TapEvent): void {
+  function handleTapEvent(event: TapEvent, binding: VoiceBinding): void {
     if (event === 'ready' || event === 'reenabled') return
     if (event === 'press') {
-      void onPress()
+      void onPress(binding)
       return
     }
     if (event === 'release') {
@@ -381,7 +405,7 @@ export function createVoiceController(host: VoiceHost) {
     void onCancel()
   }
 
-  async function onPress(): Promise<void> {
+  async function onPress(binding: VoiceBinding = 'primary'): Promise<void> {
     if (!getSettings().voice.enabled) return
     // The press is followed by a phrase that will load the same model; a warm-up
     // still holding it would only make that phrase wait.
@@ -401,6 +425,7 @@ export function createVoiceController(host: VoiceHost) {
       // `turn` check in `handleRecording`).
       supersede()
     }
+    turnAction = binding === 'dictation' ? 'dictate' : getSettings().voice.action
     // Recording starts *before* the card is prepared. Collecting the context
     // (window, selection, screenshot) takes a moment, and waiting for it would
     // swallow the first syllable — the one thing hold-to-talk must never lose.
@@ -454,7 +479,7 @@ export function createVoiceController(host: VoiceHost) {
     abort?.abort()
     abort = null
     busy = false
-    finishIdle({ error: listenerError ?? undefined })
+    finishIdle({ error: listenerError() ?? undefined })
   }
 
   /** Called by the overlay once the recorder has stopped. */
@@ -536,10 +561,10 @@ export function createVoiceController(host: VoiceHost) {
     }
   }
 
-  /** Routes the transcript according to the configured action. */
+  /** Routes the transcript according to the hold that started the turn. */
   function applyTranscript(text: string): void {
     const settings = getSettings()
-    if (settings.voice.action === 'dictate') {
+    if ((turnAction ?? settings.voice.action) === 'dictate') {
       // Dictation replaces the assistant card: the words belong in the app the
       // user was working in, so the card gets out of the way and types there.
       const target = host.target()
@@ -562,56 +587,75 @@ export function createVoiceController(host: VoiceHost) {
     level = Math.max(0, Math.min(1, value))
   }
 
-  /** (Re)starts the tap from the current settings. Safe to call repeatedly. */
+  function ensureListener(binding: VoiceBinding, binary: string): VoiceKeyListener {
+    const existing = listeners[binding]
+    if (existing) return existing
+    const created = new VoiceKeyListener({
+      binary,
+      swallow: true,
+      onEvent: (event) => handleTapEvent(event, binding),
+      onError: (message) => {
+        listenerErrors[binding] = message
+        console.warn('[voice]', message)
+      }
+    })
+    listeners[binding] = created
+    return created
+  }
+
+  function listenerError(): string | null {
+    return listenerErrors.primary ?? listenerErrors.dictation
+  }
+
+  /** (Re)starts both taps from the current settings. Safe to call repeatedly. */
   function applySettings(): void {
     const settings = getSettings()
     const binary = helperBinary()
     if (!binary) {
-      listenerError = 'Нативный helper не найден — голосовой ввод недоступен.'
+      listenerErrors.primary = 'Нативный helper не найден — голосовой ввод недоступен.'
+      listenerErrors.dictation = null
       return
     }
-    if (!listener) {
-      listener = new VoiceKeyListener({
-        binary,
-        swallow: true,
-        onEvent: (event) => {
-          handleTapEvent(event)
-        },
-        onError: (message) => {
-          listenerError = message
-          console.warn('[voice]', message)
-        }
-      })
-    }
+    const primary = ensureListener('primary', binary)
+    const dictation = ensureListener('dictation', binary)
     // A different model has to be loaded again, and a warm-up for the old one is
     // now wasted work.
     if (warmingModel !== null && warmingModel !== settings.voice.model) stopWarmup()
     if (warmedModel !== null && warmedModel !== settings.voice.model) warmedModel = null
     if (!settings.voice.enabled) {
-      listener.stop()
-      listenerError = null
+      primary.stop()
+      dictation.stop()
+      listenerErrors.primary = null
+      listenerErrors.dictation = null
       scheduleWarmup()
       return
     }
-    const error = listener.start(settings.voice.hotkey)
-    listenerError = error ?? null
-    if (error) {
-      // A tap that did not start has no press to warm for, and loading the model
-      // would only take the machine for a feature that cannot be used.
+    const primaryError = primary.start(settings.voice.hotkey)
+    listenerErrors.primary = primaryError
+    // Two taps on one combination would answer the same press twice. The main
+    // hotkey owns it; the dictation one is simply left stopped.
+    const shared = settings.voice.dictationHotkey === settings.voice.hotkey
+    if (shared) dictation.stop()
+    const dictationError = shared ? null : dictation.start(settings.voice.dictationHotkey)
+    listenerErrors.dictation = dictationError
+    if (primaryError && (shared || dictationError)) {
+      // Neither hold can start a turn, so loading the model would only take the
+      // machine for a feature that cannot be used.
       stopWarmup()
       return
     }
-    // The tap is up and the feature is on: warm the renderer now, not on the
-    // first key press. This covers a voice mode that was enabled in the settings
-    // window during this run as well as the startup path — a window created by
-    // the first press would lose that turn's animation and transcript.
+    // A tap is up and the feature is on: warm the renderer now, not on the first
+    // key press. This covers a voice mode that was enabled in the settings window
+    // during this run as well as the startup path — a window created by the first
+    // press would lose that turn's animation and transcript.
     host.prewarm()
     scheduleWarmup()
   }
 
   function stop(): void {
-    listener?.stop()
-    listener = null
+    listeners.primary?.stop()
+    listeners.dictation?.stop()
+    listeners = { primary: null, dictation: null }
     abort?.abort()
     abort = null
     if (poller) clearInterval(poller)
@@ -624,22 +668,24 @@ export function createVoiceController(host: VoiceHost) {
     warmedModel = null
     phase = 'idle'
     busy = false
+    turnAction = null
   }
 
   /**
-   * Takes the tap down without forgetting the turn.
+   * Takes the taps down without forgetting the turn.
    *
    * The settings window arms a recorder to learn a new combination; while it is
    * armed the tap would swallow the very keys being typed. `applySettings`
    * brings it back with whatever is stored by then.
    */
   function suspend(): void {
-    listener?.stop()
+    listeners.primary?.stop()
+    listeners.dictation?.stop()
   }
 
   async function status() {
     const base = await voiceStatus()
-    return { ...base, listenerError }
+    return { ...base, listenerError: listenerError() }
   }
 
   /** Settings the overlay needs: whether to offer the hold-to-talk hint at all. Tests read it too. */
@@ -675,8 +721,8 @@ export function createVoiceController(host: VoiceHost) {
    * They go through exactly the same path as the tap, so Escape, the watchdog,
    * superseding and the transcript routing apply unchanged.
    */
-  function press(): void {
-    void onPress()
+  function press(binding: VoiceBinding = 'primary'): void {
+    void onPress(binding)
   }
 
   function release(): void {

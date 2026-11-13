@@ -211,12 +211,19 @@ export function isVoiceModelFile(name: string): boolean {
 /** The longest press push-to-talk accepts, in milliseconds. */
 export const MAX_VOICE_DURATION_MS = 10 * 60_000
 
+/** The single voice hold shipped before the dictation one was split off. */
+const LEGACY_VOICE_HOTKEY = 'Alt+Shift+Space'
+
 /** Key held to talk, language and what to do with the transcript. */
 export const DEFAULT_VOICE: VoiceSettings = {
   enabled: true,
-  // Separate from the main hotkey: the push-to-talk combination is swallowed by
-  // the keyboard tap, so it must never be the same as the "type instead" one.
-  hotkey: 'Alt+Shift+Space',
+  // Modifier-only on purpose: the tap watches `flagsChanged`, so no key is
+  // swallowed and the combination is free to be a pair of modifiers. Both voice
+  // combinations stay clear of the chat hotkey, which owns Alt+Space.
+  hotkey: 'Control+Alt',
+  // Always dictates, whatever `action` says; the main hotkey follows the
+  // setting. Fn is a modifier flag on macOS, so this is a hold, not a chord.
+  dictationHotkey: 'Fn+Control',
   model: BUNDLED_VOICE_MODEL.id,
   // `ru` rather than `auto`: detection on a three-word command is the most
   // common source of "он меня не понял" for a Russian-speaking user.
@@ -397,8 +404,8 @@ function sanitizeLanguage(value: unknown): string {
     : DEFAULT_VOICE.language
 }
 
-function sanitizeHotkey(value: unknown): string {
-  return typeof value === 'string' && value.trim() ? value.trim() : DEFAULT_VOICE.hotkey
+function sanitizeHotkey(value: unknown, fallback: string): string {
+  return typeof value === 'string' && value.trim() ? value.trim() : fallback
 }
 
 /** `dictate` is the only second action; anything else sends the transcript to the model. */
@@ -413,9 +420,15 @@ function sanitizeDuration(value: unknown, min: number, max: number, fallback: nu
 
 function sanitizeVoice(input: unknown): VoiceSettings {
   const raw = (typeof input === 'object' && input !== null ? input : {}) as Partial<VoiceSettings> & { dialogue?: unknown }
+  // Settings from before the split have no `dictationHotkey`. When the only
+  // stored hold is the old default, move it to the new pair instead of keeping
+  // the retired combination forever; an explicit choice survives once the new
+  // field exists.
+  const legacyDefault = raw.dictationHotkey === undefined && raw.hotkey === LEGACY_VOICE_HOTKEY
   return {
     enabled: typeof raw.enabled === 'boolean' ? raw.enabled : DEFAULT_VOICE.enabled,
-    hotkey: sanitizeHotkey(raw.hotkey),
+    hotkey: legacyDefault ? DEFAULT_VOICE.hotkey : sanitizeHotkey(raw.hotkey, DEFAULT_VOICE.hotkey),
+    dictationHotkey: sanitizeHotkey(raw.dictationHotkey, DEFAULT_VOICE.dictationHotkey),
     model: sanitizeVoiceModel(raw.model),
     language: sanitizeLanguage(raw.language),
     action: sanitizeVoiceAction(raw.action),

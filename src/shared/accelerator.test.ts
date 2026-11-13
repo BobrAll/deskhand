@@ -19,6 +19,7 @@ describe('prettyAccelerator', () => {
   it('accepts the aliases Electron writes', () => {
     expect(prettyAccelerator('Cmd+Opt+V')).toBe('⌘ ⌥ V')
     expect(prettyAccelerator('Control+Alt')).toBe('⌃ ⌥')
+    expect(prettyAccelerator('Fn+Control')).toBe('fn ⌃')
   })
 
   it('keeps an unknown key as it was written', () => {

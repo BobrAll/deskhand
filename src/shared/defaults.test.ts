@@ -342,6 +342,30 @@ describe('normalizeSettings: voice', () => {
     expect(normalizeSettings({ voice: { hotkey: '  ' } }).voice.hotkey).toBe(DEFAULT_VOICE.hotkey)
     expect(normalizeSettings({ voice: { hotkey: ' Ctrl+1 ' } }).voice.hotkey).toBe('Ctrl+1')
   })
+
+  it('keeps a separate dictation hotkey, falling back on a blank one', () => {
+    const defaults = normalizeSettings({}).voice
+    expect(defaults.hotkey).toBe('Control+Alt')
+    expect(defaults.dictationHotkey).toBe('Fn+Control')
+    expect(normalizeSettings({ voice: { dictationHotkey: '  ' } }).voice.dictationHotkey).toBe(
+      DEFAULT_VOICE.dictationHotkey
+    )
+    expect(normalizeSettings({ voice: { dictationHotkey: ' Cmd+1 ' } }).voice.dictationHotkey).toBe(
+      'Cmd+1'
+    )
+  })
+
+  it('moves the retired default hold to the new pair once', () => {
+    const legacy = normalizeSettings({ voice: { hotkey: 'Alt+Shift+Space' } })
+
+    expect(legacy.voice.hotkey).toBe(DEFAULT_VOICE.hotkey)
+    expect(legacy.voice.dictationHotkey).toBe(DEFAULT_VOICE.dictationHotkey)
+    // A combination chosen after the split is the user's, not a default to move.
+    const chosen = normalizeSettings({
+      voice: { hotkey: 'Alt+Shift+Space', dictationHotkey: 'Fn+Control' }
+    })
+    expect(chosen.voice.hotkey).toBe('Alt+Shift+Space')
+  })
 })
 
 describe('normalizeSettings: agent', () => {

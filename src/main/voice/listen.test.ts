@@ -71,12 +71,13 @@ vi.mock('node:readline', () => ({
   })
 }))
 
-import { VoiceKeyListener, parseAccelerator } from './listen'
+import { MODIFIER_ONLY, VoiceKeyListener, parseAccelerator } from './listen'
 
 const COMMAND = 0x00100000
 const SHIFT = 0x00020000
 const CONTROL = 0x00040000
 const OPTION = 0x00080000
+const FN = 0x00800000
 
 beforeEach(() => {
   state.children = []
@@ -142,8 +143,20 @@ describe('parseAccelerator', () => {
     expect(parseAccelerator('   ')).toBeNull()
   })
 
-  it('rejects a combination of modifiers only', () => {
-    expect(parseAccelerator('Alt+Shift')).toBeNull()
+  it('parses a hold of two or more modifiers without a key', () => {
+    expect(parseAccelerator('Control+Alt')).toEqual({
+      keyCode: MODIFIER_ONLY,
+      flags: CONTROL | OPTION
+    })
+    expect(parseAccelerator('Fn+Control')).toEqual({
+      keyCode: MODIFIER_ONLY,
+      flags: FN | CONTROL
+    })
+  })
+
+  it('rejects a single modifier, which would fire on ordinary typing', () => {
+    expect(parseAccelerator('Alt')).toBeNull()
+    expect(parseAccelerator('Control+Control')).toBeNull()
   })
 
   it('rejects two non-modifier keys', () => {
@@ -181,6 +194,17 @@ describe('VoiceKeyListener: starting', () => {
 
     expect(tap.start('Alt+Space')).toBeNull()
     expect(state.children[0].args).toEqual(['voice', '49', String(OPTION), 'swallow'])
+  })
+
+  it('sends a modifier-only hold without `swallow`', () => {
+    const { listener: tap } = listener()
+
+    expect(tap.start('Control+Alt')).toBeNull()
+    expect(state.children[0].args).toEqual([
+      'voice',
+      String(MODIFIER_ONLY),
+      String(CONTROL | OPTION)
+    ])
   })
 
   it('omits `swallow` when the options say so', () => {

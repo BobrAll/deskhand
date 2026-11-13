@@ -29,14 +29,24 @@ export interface VoiceKeyListenerOptions {
 }
 
 export interface ParsedAccelerator {
+  /** `MODIFIER_ONLY` when the combination has no ordinary key. */
   keyCode: number
   flags: number
 }
 
 /**
- * Converts an Electron accelerator ("Alt+Shift+Space") into the key code and
- * modifier mask the tap needs. Returns null when the combination cannot be
- * tapped, so the caller can say so instead of binding something half-working.
+ * A hold made only of modifiers, e.g. Control+Alt.
+ *
+ * The tap reads it from `flagsChanged` instead of a key edge. Kept as a value
+ * the native side can recognize in the same `voice` command it already takes.
+ */
+export const MODIFIER_ONLY = -1
+
+/**
+ * Converts an accelerator ("Alt+Shift+Space") into the key code and modifier
+ * mask the tap needs. A hold of two or more modifiers is valid too. Returns null
+ * when the combination cannot be tapped, so the caller can say so instead of
+ * binding something half-working.
  */
 export function parseAccelerator(accelerator: string): ParsedAccelerator | null {
   const parts = accelerator
@@ -46,26 +56,33 @@ export function parseAccelerator(accelerator: string): ParsedAccelerator | null 
   if (parts.length < 2) return null
 
   let flags = 0
-  let keyCode: number | null = null
+  const modifiers = new Set<string>()
+  let key: string | null = null
 
   for (const part of parts) {
     const modifier = MODIFIER_FLAGS[part]
     if (modifier !== undefined) {
       flags |= modifier
+      modifiers.add(part)
       continue
     }
-    if (keyCode !== null) return null
-
-    if (VOICE_KEY_CODES[part] !== undefined) {
-      keyCode = VOICE_KEY_CODES[part]
-    } else {
-      const fn = /^f(\d{1,2})$/.exec(part)
-      if (fn) keyCode = FUNCTION_CODES[Number(fn[1])] ?? null
-    }
+    if (key !== null) return null
+    key = part
   }
 
-  if (keyCode === null || flags === 0) return null
-  return { keyCode, flags }
+  if (flags === 0) return null
+  if (key === null) {
+    // One modifier alone would fire on every Ctrl or Shift; a pair is a gesture.
+    return modifiers.size >= 2 ? { keyCode: MODIFIER_ONLY, flags } : null
+  }
+
+  if (VOICE_KEY_CODES[key] !== undefined) return { keyCode: VOICE_KEY_CODES[key], flags }
+  const fn = /^f(\d{1,2})$/.exec(key)
+  if (fn) {
+    const keyCode = FUNCTION_CODES[Number(fn[1])]
+    return keyCode === undefined ? null : { keyCode, flags }
+  }
+  return null
 }
 
 export class VoiceKeyListener extends TapListener<TapEvent> {
@@ -88,7 +105,9 @@ export class VoiceKeyListener extends TapListener<TapEvent> {
     const parsed = this.parsed
     if (!parsed) return []
     const args = ['voice', String(parsed.keyCode), String(parsed.flags)]
-    if (this.options.swallow !== false) args.push('swallow')
+    // A modifier-only hold has no key edge to swallow, and suppressing a bare
+    // modifier would break every ordinary Ctrl or Fn press in the frontmost app.
+    if (parsed.keyCode !== MODIFIER_ONLY && this.options.swallow !== false) args.push('swallow')
     return args
   }
 

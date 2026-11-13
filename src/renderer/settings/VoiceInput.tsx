@@ -56,7 +56,12 @@ function ModelList({ activeModel, installed, progress, deleting, downloadError, 
 export function VoiceInput({
   active, voice, savedVoice, microphoneGranted, onOpenMicrophoneSettings, onVoiceChange
 }: VoiceInputProps) {
-  const { model: savedModel, enabled: savedVoiceEnabled, hotkey: savedHotkey } = savedVoice
+  const {
+    model: savedModel,
+    enabled: savedVoiceEnabled,
+    hotkey: savedHotkey,
+    dictationHotkey: savedDictationHotkey
+  } = savedVoice
 
   const [status, setStatus] = useState<VoiceStatus | null>(null)
 
@@ -76,7 +81,7 @@ export function VoiceInput({
 
   useEffect(() => {
     refreshVoice()
-  }, [refreshVoice, savedModel, savedVoiceEnabled, savedHotkey])
+  }, [refreshVoice, savedModel, savedVoiceEnabled, savedHotkey, savedDictationHotkey])
 
   useEffect(() => window.deskhand.voice.onDownloadProgress((event) => {
     if (event.error) setDownloadError(event.error)
@@ -164,9 +169,23 @@ export function VoiceInput({
           onChange={(enabled) => onVoiceChange({ enabled })}
         />
         <Row title="Клавиша записи" hint="Удерживай её, пока говоришь.">
-          <HotkeyField value={voice.hotkey} onChange={(hotkey) => onVoiceChange({ hotkey })} />
+          <HotkeyField
+            value={voice.hotkey}
+            allowModifiersOnly
+            onChange={(hotkey) => onVoiceChange({ hotkey })}
+          />
         </Row>
-        <Row title="После записи">
+        <Row title="Клавиша вставки" hint="Удерживай, чтобы вставить текст туда, где стоит курсор.">
+          <HotkeyField
+            value={voice.dictationHotkey}
+            allowModifiersOnly
+            onChange={(dictationHotkey) => onVoiceChange({ dictationHotkey })}
+          />
+        </Row>
+        <Row
+          title="После записи"
+          hint="Для клавиши записи. Клавиша вставки всегда вставляет текст."
+        >
           <select
             aria-label="После записи"
             value={voice.action === 'dictate' ? 'dictate' : voice.autoSend ? 'send' : 'review'}

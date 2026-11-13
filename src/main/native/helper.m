@@ -815,7 +815,11 @@ typedef struct {
 } VoiceTapState;
 
 static const CGEventFlags kVoiceModifierMask =
-    kCGEventFlagMaskCommand | kCGEventFlagMaskAlternate | kCGEventFlagMaskControl | kCGEventFlagMaskShift;
+    kCGEventFlagMaskCommand | kCGEventFlagMaskAlternate | kCGEventFlagMaskControl |
+    kCGEventFlagMaskShift | kCGEventFlagMaskSecondaryFn;
+
+// The sentinel `voice/listen.ts` sends for a hold with no ordinary key.
+static const int64_t kVoiceModifierOnly = -1;
 
 static BOOL voiceModifiersMatch(CGEventFlags actual, CGEventFlags required) {
   return (actual & kVoiceModifierMask) == (required & kVoiceModifierMask);
@@ -834,6 +838,22 @@ static CGEventRef voiceTapCallback(CGEventTapProxy proxy, CGEventType type, CGEv
     return event;
   }
 
+  // A modifier-only hold has no key edge: the pair becomes "held" when the last
+  // modifier joins it and "released" when the first one leaves. The events are
+  // passed through — swallowing a bare Ctrl or Fn would break the app behind.
+  if (type == kCGEventFlagsChanged) {
+    if (state->keyCode != kVoiceModifierOnly) return event;
+    BOOL matched = voiceModifiersMatch(CGEventGetFlags(event), state->flags);
+    if (matched && !state->holding) {
+      state->holding = YES;
+      emit(@{@"event" : @"press"});
+    } else if (!matched && state->holding) {
+      state->holding = NO;
+      emit(@{@"event" : @"release"});
+    }
+    return event;
+  }
+
   // The helper is not a GUI app: it cannot see key events it did not tap for,
   // so Escape is handled here to abort a recording without sending it.
   if (type == kCGEventKeyDown) {
@@ -843,6 +863,7 @@ static CGEventRef voiceTapCallback(CGEventTapProxy proxy, CGEventType type, CGEv
       emit(@{@"event" : @"cancel"});
       return event;
     }
+    if (state->keyCode == kVoiceModifierOnly) return event;
     if (code == state->keyCode && voiceModifiersMatch(CGEventGetFlags(event), state->flags)) {
       if (!state->holding) {
         state->holding = YES;
@@ -854,6 +875,7 @@ static CGEventRef voiceTapCallback(CGEventTapProxy proxy, CGEventType type, CGEv
   }
 
   if (type == kCGEventKeyUp) {
+    if (state->keyCode == kVoiceModifierOnly) return event;
     int64_t code = CGEventGetIntegerValueField(event, kCGKeyboardEventKeycode);
     if (code == state->keyCode && state->holding) {
       state->holding = NO;
@@ -871,7 +893,8 @@ static int commandVoice(int64_t keyCode, CGEventFlags flags, BOOL swallow) {
   }
 
   VoiceTapState state = {.keyCode = keyCode, .flags = flags, .holding = NO, .swallow = swallow, .tap = NULL};
-  CGEventMask mask = CGEventMaskBit(kCGEventKeyDown) | CGEventMaskBit(kCGEventKeyUp);
+  CGEventMask mask = CGEventMaskBit(kCGEventKeyDown) | CGEventMaskBit(kCGEventKeyUp) |
+                     CGEventMaskBit(kCGEventFlagsChanged);
   CFMachPortRef tap = CGEventTapCreate(kCGSessionEventTap, kCGHeadInsertEventTap,
                                        kCGEventTapOptionDefault, mask, voiceTapCallback, &state);
   if (!tap) {
@@ -1390,7 +1413,7 @@ int main(int argc, const char *argv[]) {
       return commandLaunch(target);
     }
     if (strcmp(command, "voice") == 0) {
-      // voice <keyCode> <flags> [swallow]
+      // voice <keyCode> <flags> [swallow]; keyCode -1 is a modifier-only hold.
       if (argc < 4) {
         emit(@{@"ok" : @NO, @"error" : @"missing-arguments"});
         return 1;

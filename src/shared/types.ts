@@ -20,8 +20,16 @@ export type VoiceAction = 'command' | 'dictate'
 /** Hold-to-talk input: a local model turns speech into text. */
 export interface VoiceSettings {
   enabled: boolean
-  /** Accelerator held down to talk, e.g. "Alt+Shift+Space". */
+  /** Accelerator held down to talk, e.g. "Control+Alt". */
   hotkey: string
+  /**
+   * Accelerator that always dictates into the frontmost app.
+   *
+   * Separate from `hotkey` because the two are different gestures: the main
+   * combination follows `action`, while this one must never open a question on
+   * the card — the words belong where the cursor is.
+   */
+  dictationHotkey: string
   /** Catalog ID or imported Whisper model filename. */
   model: string
   /** Whisper language code, or `auto` to let the model detect it. */
