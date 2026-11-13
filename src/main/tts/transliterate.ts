@@ -352,7 +352,8 @@ const WORDS: Record<string, string> = {
   old: '+олд',
   next: 'некст',
   back: 'бэк',
-  forward: 'ф+орвард'
+  forward: 'ф+орвард',
+  escape: 'эск+ейп'
 }
 
 /** How a letter is pronounced when an acronym is spelled out. */
@@ -496,6 +497,9 @@ function pluralOf(word: string): string | null {
     ? [word.slice(0, -1), word.slice(0, -2)]
     : [word.slice(0, -1)]
   for (const stem of stems) {
+    // A two-letter stem is a function word (`us`, `it`), not a noun that takes
+    // an English plural; `uses` must not become «асис».
+    if (stem.length < 3) continue
     const singular = WORDS[stem] ?? WORDS[stem.replace(/['’-]/g, '')]
     if (!singular) continue
     const last = singular[singular.length - 1]

@@ -10,6 +10,8 @@ const fake = vi.hoisted(() => ({
   calls: [] as ChatMessage[][],
   reply: '{}',
   fail: false,
+  hang: false,
+  gate: null as Promise<void> | null,
   files: new Map<string, string>()
 }))
 
@@ -37,6 +39,11 @@ vi.mock('../llm', () => ({
     async *stream(messages: ChatMessage[]) {
       fake.calls.push(messages)
       if (fake.fail) throw new Error('provider down')
+      if (fake.hang) {
+        await new Promise(() => {})
+        return
+      }
+      if (fake.gate) await fake.gate
       yield { delta: fake.reply }
     }
   }),
@@ -65,11 +72,14 @@ beforeEach(() => {
   fake.calls = []
   fake.reply = '{}'
   fake.fail = false
+  fake.hang = false
+  fake.gate = null
   fake.files.clear()
   vi.resetModules()
 })
 
 afterEach(() => {
+  vi.useRealTimers()
   vi.restoreAllMocks()
 })
 
@@ -128,6 +138,37 @@ describe('resolvePronunciations', () => {
   it('stays silent when the provider fails', async () => {
     fake.fail = true
     expect(await resolve('localhost')).toEqual({})
+  })
+
+  it('shares one lookup between lines that need the same word', async () => {
+    let release!: () => void
+    fake.gate = new Promise<void>((resolve) => { release = resolve })
+    fake.reply = JSON.stringify({ localhost: 'локалх+ост' })
+    const { resolvePronunciations } = await import('./pronounce')
+
+    const first = resolvePronunciations('localhost')
+    const second = resolvePronunciations('localhost')
+    await vi.waitFor(() => expect(fake.calls).toHaveLength(1))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(fake.calls).toHaveLength(1)
+
+    release()
+    await expect(first).resolves.toEqual({ localhost: 'локалх+ост' })
+    await expect(second).resolves.toEqual({ localhost: 'локалх+ост' })
+  })
+
+  it('does not pay the wait again while a lookup is unresponsive', async () => {
+    let release!: () => void
+    fake.gate = new Promise<void>((resolve) => { release = resolve })
+    const { resolvePronunciations } = await import('./pronounce')
+
+    await expect(resolvePronunciations('localhost')).resolves.toEqual({})
+    const calls = fake.calls.length
+    await expect(resolvePronunciations('localhost')).resolves.toEqual({})
+    expect(fake.calls).toHaveLength(calls)
+
+    release()
+    await new Promise((resolve) => setTimeout(resolve, 0))
   })
 })
 

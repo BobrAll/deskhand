@@ -37,6 +37,14 @@ const LOOKUP_TIMEOUT_MS = 4_000
  * make the first offline line pause for seconds before it says anything.
  */
 const LOOKUP_WAIT_MS = 1_800
+/**
+ * After a lookup that did not answer in time, stop paying the wait on every line.
+ *
+ * A blackholed network or a reasoning model would otherwise add the wait to each
+ * new word and each answer. The running request still finishes in the background
+ * and clears the backoff when it actually produces hints.
+ */
+const LOOKUP_BACKOFF_MS = 30_000
 /** One small request is cheaper than a long tail of one-word lookups. */
 const MAX_TERMS = 40
 const MAX_REPLY_CHARS = 8_000
@@ -59,6 +67,10 @@ type Hints = Record<string, string>
 
 let cache: Hints | null = null
 let loading: Promise<Hints> | null = null
+/** While this is in the future, a miss uses the rules instead of waiting again. */
+let unavailableUntil = 0
+/** One lookup per term, shared by every line that needs it while it runs. */
+const pending = new Map<string, Promise<string | null>>()
 
 function cachePath(): string {
   return join(app.getPath('userData'), 'tts-pronunciation.json')
@@ -212,22 +224,48 @@ export async function resolvePronunciations(text: string): Promise<Hints> {
     else missing.push(term)
   }
   if (missing.length === 0) return hints
+  if (Date.now() < unavailableUntil) return hints
 
-  const lookup = askModel(missing, settings)
-    .catch((): Hints => ({}))
-    .then(async (fetched) => {
-      const accepted: Hints = {}
-      for (const term of missing) {
-        const value = fetched[term]
-        if (value) accepted[term] = value
-      }
-      if (Object.keys(accepted).length > 0) {
-        Object.assign(words, accepted)
-        await saveCache(words)
-      }
-      return accepted
-    })
-  const fetched = await waitFor(lookup, LOOKUP_WAIT_MS)
-  if (!fetched || Object.keys(fetched).length === 0) return hints
-  return { ...hints, ...fetched }
+  // Streamed sentences are prepared together, so the same new word can be asked
+  // about several times before the first answer lands. Share one request per
+  // term instead of paying for the same lookup once per line.
+  const fresh = missing.filter((term) => !pending.has(term))
+  if (fresh.length > 0) {
+    const lookup = askModel(fresh, settings)
+      .catch((): Hints => ({}))
+      .then(async (fetched) => {
+        const accepted: Hints = {}
+        for (const term of fresh) {
+          const value = fetched[term]
+          if (value) accepted[term] = value
+        }
+        if (Object.keys(accepted).length > 0) {
+          unavailableUntil = 0
+          Object.assign(words, accepted)
+          await saveCache(words)
+        }
+        return accepted
+      })
+    for (const term of fresh) {
+      pending.set(term, lookup
+        .then((accepted) => accepted[term] ?? null)
+        .finally(() => { pending.delete(term) }))
+    }
+  }
+
+  const values = await waitFor(
+    Promise.all(missing.map((term) => pending.get(term) ?? Promise.resolve(null))),
+    LOOKUP_WAIT_MS
+  )
+  if (!values) {
+    // The requests keep running and will cache their answers; until then, do not
+    // make the next line wait for the same silence.
+    unavailableUntil = Date.now() + LOOKUP_BACKOFF_MS
+    return hints
+  }
+  missing.forEach((term, index) => {
+    const value = values[index]
+    if (value) hints[term] = value
+  })
+  return hints
 }

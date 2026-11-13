@@ -60,6 +60,12 @@ describe('transliterate', () => {
     expect(unknownWords('Открой README и проверь localhost.')).toEqual(['localhost'])
     expect(unknownWords('Wi-Fi, tokens, URLs, API')).toEqual([])
     expect(unknownWords("don't user's")).toEqual(['don'])
+    expect(unknownWords('нажми Escape')).toEqual([])
+  })
+
+  it('does not inflect a short function word as a noun', () => {
+    expect(transliterate('uses')).toBe('усес')
+    expect(unknownWords('uses')).toEqual(['uses'])
   })
 
   it('uses a model hint for a word the dictionary does not know', () => {

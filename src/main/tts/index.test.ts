@@ -27,6 +27,18 @@ const silero = vi.hoisted(() => ({
   result: { ok: true, audio: '', cached: false, mime: 'audio/wav' } as TtsResult
 }))
 
+const pronounce = vi.hoisted(() => ({
+  hints: {} as Record<string, string>,
+  calls: [] as string[]
+}))
+
+vi.mock('./pronounce', () => ({
+  resolvePronunciations: async (text: string) => {
+    pronounce.calls.push(text)
+    return pronounce.hints
+  }
+}))
+
 vi.mock('./silero', () => ({
   SILERO_CACHE_ID: 'silero-test',
   TRANSLITERATION_VERSION: 1,
@@ -98,6 +110,8 @@ beforeEach(() => {
   silero.models = false
   silero.calls = []
   silero.result = { ok: true, audio: '', cached: false, mime: 'audio/wav' }
+  pronounce.hints = {}
+  pronounce.calls = []
   vi.stubGlobal('fetch', vi.fn(async (url: string, init: RequestInit) => {
     fake.calls.push({ url, body: JSON.parse(String(init.body)) })
     return new Response(new Uint8Array([1, 2, 3]), {
@@ -207,6 +221,20 @@ describe('the Silero engine', () => {
     const again = await synthesize('Готово.')
     expect(again).toMatchObject({ ok: true, cached: true })
     expect(silero.calls).toHaveLength(1)
+  })
+
+  it('does not reuse a clip spoken before a pronunciation hint arrived', async () => {
+    silero.runtime = true
+    silero.models = true
+    fake.settings = SILERO
+
+    const { synthesize } = await load()
+    await synthesize('localhost')
+    expect(silero.calls).toHaveLength(1)
+
+    pronounce.hints = { localhost: 'локалх+ост' }
+    await synthesize('localhost')
+    expect(silero.calls).toHaveLength(2)
   })
 
   it('reports the engine and the installed state to the settings pane', async () => {

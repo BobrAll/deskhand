@@ -16,7 +16,9 @@
  * Three decisions:
  *
  * - **Nothing is installed without a click.** `installSilero` is called from the
- *   settings pane; no start-up path and no synthesis path may reach the network.
+ *   settings pane, and synthesis itself is offline. The one optional request is
+ *   the cached pronunciation hint for a word the seed dictionary does not know;
+ *   `tts.pronunciationLookup` gates it, and no hint is asked without it.
  * - **Every file is checked by SHA-256 before it is used.** The weights come
  *   from GitHub Releases, and a truncated download must read as "not installed",
  *   not as a model that produces silence.
@@ -67,7 +69,7 @@ const MODEL_BYTES = MODEL_FILES.reduce((sum, [, bytes]) => sum + bytes, 0)
 export const SILERO_CACHE_ID = `silero-v5_6_ru-${RUNTIME_VERSION}`
 
 /** Bump when the transliteration dictionary or rules change the spoken text. */
-export const TRANSLITERATION_VERSION = 2
+export const TRANSLITERATION_VERSION = 3
 
 const PIP_TIMEOUT_MS = 5 * 60_000
 const MODEL_TIMEOUT_MS = 10 * 60_000
@@ -345,12 +347,16 @@ async function renderSilero(
  * for one cached hint from the text model; a failed lookup is not an error, it
  * simply leaves the word to the rules.
  */
-export async function synthesizeSilero(text: string, speaker: string): Promise<TtsResult> {
+export async function synthesizeSilero(
+  text: string,
+  speaker: string,
+  hints?: Readonly<Record<string, string>>
+): Promise<TtsResult> {
   if (!sileroRuntimeReady()) return { ok: false, message: 'Silero не установлен.' }
   if (!sileroModelsReady()) return { ok: false, message: 'Нет модели Silero V5.6 RU.' }
 
-  const hints = await resolvePronunciations(text)
-  const spoken = transliterate(text, hints)
+  const pronunciations = hints ?? await resolvePronunciations(text)
+  const spoken = transliterate(text, pronunciations)
   if (!spoken.trim()) return { ok: false, message: 'Нечего произносить.' }
 
   const directory = join(tmpdir(), `deskhand-silero-${process.pid}-${randomUUID()}`)
