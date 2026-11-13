@@ -105,25 +105,6 @@
         "NSMicrophoneUsageDescription": "Deskhand записывает голос, пока ты удерживаешь клавишу, и распознаёт его локально — звук не покидает Mac.",
         "LSApplicationCategoryType": "public.app-category.productivity"
       }
-    },
-    "dmg": {
-      "title": "Deskhand",
-      "window": {
-        "width": 540,
-        "height": 380
-      },
-      "contents": [
-        {
-          "x": 140,
-          "y": 190
-        },
-        {
-          "x": 400,
-          "y": 190,
-          "type": "link",
-          "path": "/Applications"
-        }
-      ]
     }
   },
   "dependencies": {
