@@ -26,7 +26,8 @@
     "agent:report": "node scripts/agent-trace-report.mjs",
     "agent:timeline": "node scripts/agent-trace-report.mjs --timeline",
     "test:native": "node scripts/test-native.mjs",
-    "lint": "eslint src"
+    "lint": "eslint src",
+    "preview:worktree": "node scripts/preview-worktree.mjs"
   },
   "build": {
     "appId": "com.bobr.deskhand",
@@ -68,7 +69,12 @@
       {
         "from": "resources",
         "to": ".",
-        "filter": ["transcribe-cli", "transcribe-licenses/**", "speech/gigaam-v3-e2e-rnnt-Q4_K_M.gguf", "speech/GigaAM-LICENSE.txt"]
+        "filter": [
+          "transcribe-cli",
+          "transcribe-licenses/**",
+          "speech/gigaam-v3-e2e-rnnt-Q4_K_M.gguf",
+          "speech/GigaAM-LICENSE.txt"
+        ]
       },
       {
         "from": "resources/trayTemplate.png",
