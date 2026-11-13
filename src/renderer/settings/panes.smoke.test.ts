@@ -102,8 +102,8 @@ describe('the settings panes', () => {
     expect(provider()).toContain('Подключение')
     expect(provider()).toContain('Скриншот')
     expect(agent()).toContain('Границы')
-    expect(voice()).toContain('Говорить с Deskhand')
-    expect(voice()).toContain('Слышать Deskhand')
+    expect(voice()).toContain('Запись и команды')
+    expect(voice()).toContain('Ответы вслух')
     expect(privacy()).toContain('Исключённые приложения')
   })
 
@@ -116,11 +116,11 @@ describe('the settings panes', () => {
     expect(html).toMatch(/-data" hidden=""><section[^>]*>.*Помнить предыдущую команду/)
   })
 
-  it('waits for the readiness check before reporting whether recognition works', () => {
+  it('offers a microphone check before the recording settings', () => {
     const html = voice()
-    expect(html).toContain('Проверяем…')
-    expect(html).not.toContain('Не готово')
-    expect(html).not.toContain('Всё на месте')
+    expect(html).toMatch(/Проверить микрофон.*Запись и команды/s)
+    expect(html).toContain('Скажи пару слов, чтобы проверить сигнал.')
+    expect(html).not.toContain('Микрофон работает')
   })
 
   it('starts the agent on screen settings and keeps the step limit after the switches', () => {

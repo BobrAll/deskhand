@@ -637,6 +637,10 @@ input[type='range']::-webkit-slider-thumb {
   gap: 22px;
 }
 
+.voice-pane .microphone-level {
+  width: 100%;
+}
+
 .voice-pane .hotkey-field,
 .voice-pane .segmented {
   flex-wrap: wrap;

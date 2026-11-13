@@ -291,26 +291,33 @@ export async function startRecording(maxDurationMs: number): Promise<RecorderHan
   if (warming) await warming
 
   const stream = await navigator.mediaDevices.getUserMedia({ audio: MICROPHONE })
-  const context = audioContext()
-  if (context.state !== 'running') await context.resume()
-
-  // The resampler needs the real input rate; read it once, while the context is
-  // certainly alive. The buffer budget is in input frames too: the processor
-  // delivers at this rate, not at TARGET_RATE, which applies only after
-  // resampling.
-  const inputRate = context.sampleRate
   const chunks: Float32Array[] = []
-  let buffered = 0
-  const limit = Math.floor((inputRate * Math.min(maxDurationMs, MAX_RECORDING_MS)) / 1000)
   let lastLevel = 0
+  let detach: () => void
+  let inputRate: number
+  try {
+    const context = audioContext()
+    if (context.state !== 'running') await context.resume()
 
-  const detach = openGraph(context, stream, (input) => {
-    lastLevel = Math.min(1, rms(input) * LEVEL_GAIN)
-    if (buffered >= limit) return
-    const copy = new Float32Array(input)
-    chunks.push(copy)
-    buffered += copy.length
-  })
+    // The resampler needs the real input rate; read it once, while the context is
+    // certainly alive. The buffer budget is in input frames too: the processor
+    // delivers at this rate, not at TARGET_RATE, which applies only after
+    // resampling.
+    inputRate = context.sampleRate
+    let buffered = 0
+    const limit = Math.floor((inputRate * Math.min(maxDurationMs, MAX_RECORDING_MS)) / 1000)
+
+    detach = openGraph(context, stream, (input) => {
+      lastLevel = Math.min(1, rms(input) * LEVEL_GAIN)
+      if (buffered >= limit) return
+      const copy = new Float32Array(input)
+      chunks.push(copy)
+      buffered += copy.length
+    })
+  } catch (error) {
+    for (const track of stream.getTracks()) track.stop()
+    throw error
+  }
 
   let closed = false
   const teardown = (): void => {

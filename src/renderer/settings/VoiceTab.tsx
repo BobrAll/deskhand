@@ -17,6 +17,9 @@ import { PREVIEW_LINE, SILERO_SPEAKERS, sileroSpeaker } from '@shared/tts'
 import { AnimatedDisclosure, Disclosure, Group, Row, ToggleRow } from './Row'
 import { InstallList } from './InstallList'
 import { HotkeyField } from './HotkeyField'
+import { startRecording } from '../overlay/recorder'
+
+const MICROPHONE_TEST_MS = 3000
 
 /** Chromium lists the macOS voices a frame or two after the first ask. */
 const SYSTEM_VOICE_RETRY_MS = 200
@@ -180,28 +183,8 @@ function TtsSection({
 
   return (
     <>
-      <Group>
+      <Group title="Ответы вслух">
         <Row
-          title="Пример голоса"
-          hint={!usesSystemVoice && applying ? 'Применяем настройки голоса…' : previewHint}
-        >
-          <button
-            disabled={previewing || !readsAnswers || (!usesSystemVoice && (applying || !speech?.configured))}
-            onClick={onPreview}
-          >
-            {previewing ? 'Играет…' : 'Послушать пример'}
-          </button>
-        </Row>
-      </Group>
-      <Group title="Слышать Deskhand">
-        <ToggleRow
-          title="Сообщать о ходе работы"
-          hint="Короткие реплики, пока агент работает."
-          checked={voice.agentFeedback}
-          onChange={(agentFeedback) => onVoiceChange({ agentFeedback })}
-        />
-        <Row
-          stacked
           title="Читать ответы вслух"
           hint={voice.answerVoice === 'neural' && speech && !speech.configured
             ? 'Пока нейроголос не настроен, ответы читает голос macOS.'
@@ -222,6 +205,27 @@ function TtsSection({
             <option value="neural">Нейроголос</option>
           </select>
         </Row>
+        <Row
+          title="Пример голоса"
+          hint={!usesSystemVoice && applying ? 'Применяем настройки голоса…' : previewHint}
+        >
+          <button
+            disabled={previewing || !readsAnswers || (!usesSystemVoice && (applying || !speech?.configured))}
+            onClick={onPreview}
+          >
+            {previewing ? 'Играет…' : 'Послушать пример'}
+          </button>
+        </Row>
+      </Group>
+      <Group title="Ход работы">
+        <ToggleRow
+          title="Сообщать о ходе работы"
+          hint="Короткие реплики, пока агент работает."
+          checked={voice.agentFeedback}
+          onChange={(agentFeedback) => onVoiceChange({ agentFeedback })}
+        />
+      </Group>
+      <Group>
         <AnimatedDisclosure title="Дополнительные настройки озвучки">
           <Group
             title="Синтез речи"
@@ -398,54 +402,41 @@ function TtsSection({
   )
 }
 
-interface ReadinessSectionProps {
-  /** The model the settings point at, and the one the process has loaded. */
-  model: string
-  savedModel: string
-  status: VoiceStatus | null
-  testError: string | null
-  checking: boolean
-  onCheck(): void
-}
+type MicrophoneTest =
+  | { phase: 'idle' | 'starting' }
+  | { phase: 'listening'; level: number }
+  | { phase: 'finished'; heard: boolean }
+  | { phase: 'error'; message: string }
 
-/** Whether the machine can actually record and recognise right now. */
-function ReadinessSection({
-  model,
-  savedModel,
-  status,
-  testError,
-  checking,
-  onCheck
-}: ReadinessSectionProps) {
-  const ready = status?.ready ?? false
+function MicrophoneCheck({
+  test, onCheck, onCancel, onOpenMicrophoneSettings
+}: {
+  test: MicrophoneTest
+  onCheck(): void
+  onCancel(): void
+  onOpenMicrophoneSettings(): void
+}) {
+  const active = test.phase === 'starting' || test.phase === 'listening'
+  let message = 'Скажи пару слов, чтобы проверить сигнал.'
+  if (test.phase === 'starting') message = 'Подключаю микрофон…'
+  if (test.phase === 'listening') message = 'Говори. Проверка займёт три секунды.'
+  if (test.phase === 'finished') {
+    message = test.heard ? 'Микрофон работает. Сигнал есть.' : 'Сигнал слишком тихий. Подойди ближе и попробуй ещё раз.'
+  }
+  if (test.phase === 'error') message = test.message
 
   return (
-    <Group title="Проверка записи">
-      <Row
-        stacked
-        title={status === null ? 'Проверяем…' : ready ? 'Голосовой ввод готов' : 'Голосовой ввод не готов'}
-        hint={
-          model !== savedModel
-            ? 'Применяем модель…'
-            : (status?.detail ?? 'Проверка…')
-        }
-      >
-        <div className="row-actions">
-          {ready && <span className="permission-state ok">● Всё на месте</span>}
-          <button disabled={checking} onClick={onCheck}>
-            {checking ? 'Проверка…' : 'Проверить ввод'}
-          </button>
-        </div>
+    <Group title="Микрофон">
+      <Row title="Проверка микрофона" hint={<span role="status">{message}</span>}>
+        <button type="button" onClick={active ? onCancel : onCheck}>
+          {active ? 'Остановить' : 'Проверить микрофон'}
+        </button>
       </Row>
-      {status?.listenerError && (
-        <Row stacked>
-          <div className="row-hint err">{status.listenerError}</div>
-        </Row>
+      {test.phase === 'listening' && (
+        <Row><meter className="microphone-level" aria-label="Уровень сигнала" min={0} max={1} value={test.level} /></Row>
       )}
-      {testError && (
-        <Row stacked>
-          <div className="row-hint err">{testError}</div>
-        </Row>
+      {test.phase === 'error' && (
+        <Row><button type="button" onClick={onOpenMicrophoneSettings}>Открыть «Приватность»</button></Row>
       )}
     </Group>
   )
@@ -476,8 +467,8 @@ export function VoiceTab({
   const [deleting, setDeleting] = useState<string | null>(null)
   const [progress, setProgress] = useState<DownloadProgress | null>(null)
   const [downloadError, setDownloadError] = useState<string | null>(null)
-  const [testError, setTestError] = useState<string | null>(null)
-  const [checking, setChecking] = useState(false)
+  const [microphoneTest, setMicrophoneTest] = useState<MicrophoneTest>({ phase: 'idle' })
+  const microphoneCheck = useRef<AbortController | null>(null)
   const ttsConfig = JSON.stringify(tts)
   const savedTtsConfig = JSON.stringify(savedTts)
   const ttsApplying = ttsConfig !== savedTtsConfig
@@ -583,18 +574,59 @@ export function VoiceTab({
     }
   }
 
-  const testVoice = useCallback(async () => {
-    setChecking(true)
+  const cancelMicrophoneCheck = useCallback(() => {
+    microphoneCheck.current?.abort()
+    setMicrophoneTest({ phase: 'idle' })
+  }, [])
+
+  useEffect(() => () => microphoneCheck.current?.abort(), [])
+
+  async function checkMicrophone(): Promise<void> {
+    if (microphoneCheck.current) return
+    const controller = new AbortController()
+    microphoneCheck.current = controller
+    const { signal } = controller
+    setMicrophoneTest({ phase: 'starting' })
     try {
-      const result = await window.deskhand.voice.test()
-      setTestError(result.ok ? null : (result.message ?? 'Голосовой ввод не готов.'))
-      refreshVoice()
+      const recording = await startRecording(MICROPHONE_TEST_MS)
+      let peak = 0
+      const sampleLevel = () => {
+        const level = recording.level()
+        peak = Math.max(peak, level)
+        setMicrophoneTest({ phase: 'listening', level })
+      }
+      try {
+        if (signal.aborted) return
+        sampleLevel()
+        await new Promise<void>((resolve) => {
+          const meter = window.setInterval(sampleLevel, 80)
+          const finish = () => {
+            window.clearInterval(meter)
+            window.clearTimeout(timeout)
+            signal.removeEventListener('abort', finish)
+            resolve()
+          }
+          const timeout = window.setTimeout(finish, MICROPHONE_TEST_MS)
+          signal.addEventListener('abort', finish, { once: true })
+        })
+      } finally {
+        await recording.stop(false)
+      }
+      if (!signal.aborted) setMicrophoneTest({ phase: 'finished', heard: peak >= 0.025 })
     } catch (error) {
-      setTestError(error instanceof Error ? error.message : 'Голосовой ввод не готов.')
+      if (!signal.aborted) {
+        const name = error instanceof Error ? error.name : ''
+        const message = name === 'NotAllowedError'
+          ? 'Разреши Deskhand доступ к микрофону в настройках macOS.'
+          : name === 'NotFoundError'
+            ? 'Микрофон не найден. Подключи его и попробуй ещё раз.'
+            : 'Не удалось открыть микрофон. Проверь устройство ввода и попробуй ещё раз.'
+        setMicrophoneTest({ phase: 'error', message })
+      }
     } finally {
-      setChecking(false)
+      if (microphoneCheck.current === controller) microphoneCheck.current = null
     }
-  }, [refreshVoice])
+  }
 
   // Reflect a click on an installed model while its settings are being saved.
   const selectedModel = installed.has(voice.model) ? voice.model : status?.activeModel ?? null
@@ -708,63 +740,60 @@ export function VoiceTab({
             className={section === item ? 'active' : undefined}
             aria-pressed={section === item}
             aria-controls={`${sectionId}-${item}`}
-            onClick={() => setSection(item)}
+            onClick={() => {
+              if (item !== section) cancelMicrophoneCheck()
+              setSection(item)
+            }}
           >
             {item === 'input' ? 'Ввод' : 'Озвучка'}
           </button>
         ))}
       </div>
       <div className="voice-section" id={`${sectionId}-input`} hidden={section !== 'input'}>
-        <ReadinessSection
-          model={voice.model}
-          savedModel={savedModel}
-          status={status}
-          testError={testError}
-          checking={checking}
-          onCheck={() => void testVoice()}
+        <MicrophoneCheck
+          test={microphoneTest}
+          onCheck={() => void checkMicrophone()}
+          onCancel={cancelMicrophoneCheck}
+          onOpenMicrophoneSettings={onOpenMicrophoneSettings}
         />
-        <Group title="Говорить с Deskhand">
+        <Group title="Запись и команды">
           <ToggleRow
             title="Голосовой ввод"
             hint="Удерживай клавишу записи и говори."
             checked={voice.enabled}
             onChange={(enabled) => onVoiceChange({ enabled })}
           />
-          <Row stacked title="Клавиша записи" hint="Речь распознаётся на этом Mac.">
+          <Row title="Клавиша записи">
             <HotkeyField value={voice.hotkey} onChange={(hotkey) => onVoiceChange({ hotkey })} />
           </Row>
-          <Row stacked title="Что делать с речью">
+          <Row title="После записи" hint="Выбери, что делать с распознанной речью.">
             <select
-              aria-label="Что делать с речью"
-              value={voice.action}
+              aria-label="После записи"
+              value={voice.action === 'dictate' ? 'dictate' : voice.autoSend ? 'send' : 'review'}
               onChange={(event) => {
                 const action = event.target.value
-                if (action === 'command' || action === 'dictate') onVoiceChange({ action })
+                onVoiceChange(action === 'dictate'
+                  ? { action: 'dictate' }
+                  : { action: 'command', autoSend: action === 'send' })
               }}
             >
-              <option value="command">{voice.autoSend ? 'Отправить запрос' : 'Подготовить запрос'}</option>
+              <option value="review">Подготовить запрос</option>
+              <option value="send">Отправить запрос сразу</option>
               <option value="dictate">Вставить текст</option>
             </select>
           </Row>
           {voice.enabled && !microphoneGranted && (
-            <Row stacked title="Разреши доступ к микрофону">
+            <Row title="Доступ к микрофону" hint="Разреши доступ, чтобы записывать голосовые команды.">
               <button onClick={onOpenMicrophoneSettings}>Открыть «Приватность»</button>
             </Row>
           )}
-          {voice.enabled && microphoneGranted && status?.listenerError && (
-            <Row hint={status.listenerError} />
+          {voice.enabled && status?.listenerError && (
+            <Row hint={<span className="row-hint err">{status.listenerError}</span>} />
           )}
+        </Group>
+        <Group>
           <AnimatedDisclosure title="Дополнительные настройки ввода">
             <Group title="Распознавание">
-              {voice.action === 'command' && (
-                <ToggleRow
-                  title="Отправлять не дожидаясь Enter"
-                  hint="Ответ начнётся сразу, как только речь распознана."
-                  checked={voice.autoSend}
-                  onChange={(autoSend) => onVoiceChange({ autoSend })}
-                />
-              )}
-
               <Row
                 stacked
                 title="Модель распознавания"
