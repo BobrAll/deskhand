@@ -532,10 +532,12 @@ export interface TranscribeResult {
   ms: number
   message?: string
   /**
-   * True when the recognizer child process actually ran.
+   * True when the recognizer ran to completion and was not cancelled.
    *
    * The warm-up may treat a silent run as proof that the model loaded; a missing
-   * binary, a model that never started or a failed temp-file write must not.
+   * binary, a model that never started, a failed temp-file write or a cancelled
+   * run must not. An empty or unreadable transcript still counts as spawned,
+   * because the model itself did run.
    */
   spawned?: boolean
 }

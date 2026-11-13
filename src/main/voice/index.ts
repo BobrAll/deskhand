@@ -500,8 +500,9 @@ export function createVoiceController(host: VoiceHost) {
     try {
       const wav = Buffer.from(result.wavBase64, 'base64')
       const transcribed = await transcribe({ wav, signal: controller.signal })
-      // Only a process that actually started has loaded the model; a missing
-      // binary, a missing model or a failed temp-file write has not.
+      // Only a run that finished and was not cancelled has loaded the model; a
+      // missing binary, a missing model, a failed temp-file write or an aborted
+      // run has not.
       if (transcribed.spawned === true && getSettings().voice.model === model) warmedModel = model
       // One line per turn: enough to diagnose a complaint, never the transcript
       // itself — what the user said is not log material. Audio length separates

@@ -201,6 +201,121 @@ describe('resolvePronunciations', () => {
     fake.reply = JSON.stringify({ localhost: 'локалх+ост' })
     await expect(resolvePronunciations('localhost')).resolves.toEqual({ localhost: 'локалх+ост' })
   })
+
+  it('starts a fresh request when the key rotates during a stalled lookup', async () => {
+    let releaseFirst!: () => void
+    fake.gate = new Promise<void>((resolve) => { releaseFirst = resolve })
+    const { resolvePronunciations } = await import('./pronounce')
+
+    const first = resolvePronunciations('localhost')
+    await vi.waitFor(() => expect(fake.calls).toHaveLength(1))
+
+    fake.key = 'sk-other'
+    fake.gate = null
+    fake.reply = JSON.stringify({ localhost: 'локалх+ост' })
+    const second = resolvePronunciations('localhost')
+    await vi.waitFor(() => expect(fake.calls).toHaveLength(2))
+    await expect(second).resolves.toEqual({ localhost: 'локалх+ост' })
+
+    releaseFirst()
+    await first
+  })
+
+  it('asks for a word that arrived during another lookup once that lookup settles', async () => {
+    const target = '/tmp/deskhand-pronounce-test/tts-pronunciation.json'
+    let release!: () => void
+    fake.gate = new Promise<void>((resolve) => { release = resolve })
+    fake.reply = JSON.stringify({ foo: 'ф+у', bar: 'б+ар' })
+    const { resolvePronunciations } = await import('./pronounce')
+
+    const first = resolvePronunciations('foo')
+    await vi.waitFor(() => expect(fake.calls).toHaveLength(1))
+
+    // `bar` is not part of the running request, so this line uses the rules at
+    // once instead of attaching itself to a lookup that cannot answer for it.
+    const second = resolvePronunciations('bar')
+    const third = resolvePronunciations('bar')
+    await expect(second).resolves.toEqual({})
+    await expect(third).resolves.toEqual({})
+    expect(fake.calls).toHaveLength(1)
+
+    release()
+    await expect(first).resolves.toEqual({ foo: 'ф+у' })
+
+    // The words queued behind the first lookup are asked for once, together.
+    await vi.waitFor(() => expect(fake.calls).toHaveLength(2))
+    expect(fake.calls[1][1].parts[0]).toEqual({ type: 'text', text: '["bar"]' })
+    await vi.waitFor(() => expect(fake.files.get(target)).toContain('б+ар'))
+
+    // The next line gets the hint from the cache, without a request of its own.
+    await expect(resolvePronunciations('bar')).resolves.toEqual({ bar: 'б+ар' })
+    expect(fake.calls).toHaveLength(2)
+  })
+
+  it('does not queue a word the cache already has', async () => {
+    const target = '/tmp/deskhand-pronounce-test/tts-pronunciation.json'
+    fake.files.set(target, JSON.stringify({ version: 1, words: { bar: 'б+ар' } }))
+    let release!: () => void
+    fake.gate = new Promise<void>((resolve) => { release = resolve })
+    fake.reply = JSON.stringify({ foo: 'ф+у', baz: 'б+аз' })
+    const { resolvePronunciations } = await import('./pronounce')
+
+    const first = resolvePronunciations('foo')
+    await vi.waitFor(() => expect(fake.calls).toHaveLength(1))
+
+    await expect(resolvePronunciations('bar baz')).resolves.toEqual({ bar: 'б+ар' })
+    expect(fake.calls).toHaveLength(1)
+
+    release()
+    await expect(first).resolves.toEqual({ foo: 'ф+у' })
+
+    await vi.waitFor(() => expect(fake.calls).toHaveLength(2))
+    expect(fake.calls[1][1].parts[0]).toEqual({ type: 'text', text: '["baz"]' })
+  })
+
+  it('keeps queued words unasked while the lookup is backing off', async () => {
+    vi.useFakeTimers()
+    let release!: () => void
+    fake.gate = new Promise<void>((resolve) => { release = resolve })
+    fake.reply = '{}'
+    const { resolvePronunciations } = await import('./pronounce')
+
+    const first = resolvePronunciations('foo')
+    await vi.advanceTimersByTimeAsync(0)
+    expect(fake.calls).toHaveLength(1)
+
+    // `bar` is queued behind a request that never answers in time.
+    await expect(resolvePronunciations('bar')).resolves.toEqual({})
+    await vi.advanceTimersByTimeAsync(800)
+    await expect(first).resolves.toEqual({})
+
+    release()
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect(fake.calls).toHaveLength(1)
+    await expect(resolvePronunciations('bar')).resolves.toEqual({})
+    expect(fake.calls).toHaveLength(1)
+  })
+
+  it('survives a background lookup that fails', async () => {
+    let release!: () => void
+    fake.gate = new Promise<void>((resolve) => { release = resolve })
+    fake.reply = JSON.stringify({ foo: 'ф+у', bar: 'б+ар' })
+    const { resolvePronunciations } = await import('./pronounce')
+
+    const first = resolvePronunciations('foo')
+    await vi.waitFor(() => expect(fake.calls).toHaveLength(1))
+    await expect(resolvePronunciations('bar')).resolves.toEqual({})
+
+    fake.fail = true
+    release()
+    await expect(first).resolves.toEqual({ foo: 'ф+у' })
+    await vi.waitFor(() => expect(fake.calls).toHaveLength(2))
+
+    // The failed retry cached nothing and did not poison the next line.
+    await expect(resolvePronunciations('bar')).resolves.toEqual({})
+    expect(fake.calls).toHaveLength(3)
+  })
 })
 
 describe('validPronunciation', () => {

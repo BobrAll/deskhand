@@ -271,10 +271,13 @@ export async function transcribe(options: TranscribeOptions): Promise<Transcribe
     if (options.signal?.aborted) {
       return { ok: false, text: '', ms, message: 'Отменено.', spawned: false }
     }
-    const text = cleanTranscript(
-      engine === 'transcribe' ? await readFile(transcriptPath, 'utf8') : raw
-    )
+    // The process finished and was not cancelled, so the model itself is loaded
+    // even if the transcript cannot be read. A missing file becomes the ordinary
+    // "nothing recognised" sentence instead of a raw Node error in the card.
     spawned = true
+    const text = cleanTranscript(
+      engine === 'transcribe' ? await readFile(transcriptPath, 'utf8').catch(() => '') : raw
+    )
     if (!text) {
       // Silence is not alarming, but it must not look like a successful empty
       // answer either: the card would sit there with nothing in it.
@@ -397,6 +400,9 @@ function runRecognizer(
       signal?.removeEventListener('abort', onAbort)
     }
     signal?.addEventListener('abort', onAbort, { once: true })
+    // The signal can be aborted between the caller's pre-check and this line;
+    // the listener would never fire for an event that already happened.
+    if (signal?.aborted) onAbort()
 
     child.stdout.setEncoding('utf8')
     child.stderr.setEncoding('utf8')

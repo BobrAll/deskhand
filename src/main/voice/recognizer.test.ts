@@ -17,9 +17,13 @@ const state = vi.hoisted(() => ({
   sizes: {} as Record<string, number>,
   settings: { voice: { model: 'small-q5_1', language: 'ru', enabled: true } },
   spawned: [] as Array<{ binary: string; args: string[] }>,
+  /** Runs right after the fake child is created, before the abort listener exists. */
+  onSpawn: null as (() => void) | null,
   /** What the fake whisper process prints and how it ends. */
   whisper: { stdout: '', stderr: '', code: 0 as number | null, emitError: false },
   transcript: '',
+  /** Pretend the GigaAM transcript file cannot be read. */
+  readFails: false,
   written: [] as Array<{ path: string; data: Buffer }>,
   /** Pretend the disk is full before the recognizer can be spawned. */
   writeFails: false,
@@ -49,7 +53,10 @@ vi.mock('node:fs', () => ({
 }))
 
 vi.mock('node:fs/promises', () => ({
-  readFile: async () => state.transcript,
+  readFile: async () => {
+    if (state.readFails) throw new Error('ENOENT: transcript')
+    return state.transcript
+  },
   readdir: async (path: string) => {
     const entries = state.dirs[path]
     if (!entries) throw new Error(`ENOENT: ${path}`)
@@ -87,6 +94,7 @@ vi.mock('node:os', () => ({
 vi.mock('node:child_process', () => ({
   spawn: (binary: string, args: string[]) => {
     state.spawned.push({ binary, args })
+    state.onSpawn?.()
     const handlers = new Map<string, (value: never) => void>()
     const child = {
       stdout: {
@@ -141,8 +149,10 @@ beforeEach(async () => {
   state.sizes = {}
   state.settings = { voice: { model: 'small-q5_1', language: 'ru', enabled: true } }
   state.spawned = []
+  state.onSpawn = null
   state.whisper = { stdout: '', stderr: '', code: 0, emitError: false }
   state.transcript = ''
+  state.readFails = false
   state.written = []
   state.writeFails = false
   state.removed = []
@@ -476,7 +486,21 @@ describe('transcribe', () => {
     expect(await recognizer.transcribe({ wav: WAV })).toMatchObject({
       ok: false,
       text: '',
-      message: 'Речь не распознана — попробуй ещё раз.'
+      message: 'Речь не распознана — попробуй ещё раз.',
+      spawned: true
+    })
+  })
+
+  it('turns an unreadable GigaAM transcript into the same Russian sentence', async () => {
+    state.settings.voice = { ...DEFAULT_VOICE, language: 'ru' }
+    state.existing = new Set(['/app/resources/transcribe-cli', `/app/resources/speech/${GIGAAM_FILE}`])
+    state.readFails = true
+
+    expect(await recognizer.transcribe({ wav: WAV })).toMatchObject({
+      ok: false,
+      text: '',
+      message: 'Речь не распознана — попробуй ещё раз.',
+      spawned: true
     })
   })
 
@@ -526,6 +550,18 @@ describe('transcribe', () => {
 
     expect(result).toMatchObject({ ok: false, text: '', message: 'Отменено.', spawned: false })
     expect(state.removed).toHaveLength(1)
+  })
+
+  it('does not claim a process that was cancelled mid-run', async () => {
+    ready()
+    state.whisper.stdout = 'поздно'
+    const controller = new AbortController()
+    state.onSpawn = () => controller.abort()
+
+    const result = await recognizer.transcribe({ wav: WAV, signal: controller.signal })
+
+    expect(result).toMatchObject({ ok: false, text: '', message: 'Отменено.', spawned: false })
+    expect(state.spawned).toHaveLength(1)
   })
 
   it('reports the elapsed milliseconds', async () => {
