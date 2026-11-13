@@ -127,6 +127,18 @@ describe('manual playback', () => {
     expect(speak.mock.calls[0][0].text).toBe('Ответ.')
   })
 
+  it('keeps manual playback local when the voice settings cannot be read', async () => {
+    window.deskhand.settings.load = vi.fn().mockRejectedValue(new Error('IPC unavailable'))
+    const synth = vi.fn()
+    window.deskhand.tts.speak = synth
+
+    useSpeech().speak('Ответ.')
+    await flush()
+
+    expect(synth).not.toHaveBeenCalled()
+    expect(speak.mock.calls[0][0].text).toBe('Ответ.')
+  })
+
   it('uses the configured synthesizer and plays every fragment of a long answer in order', async () => {
     window.deskhand.settings.load = vi.fn().mockResolvedValue({
       settings: { voice: { answerVoice: 'neural' } }

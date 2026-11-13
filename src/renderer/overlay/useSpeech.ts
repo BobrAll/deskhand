@@ -269,7 +269,7 @@ export function useSpeech() {
   }, [])
 
   /** Prepare the first clip while earlier lines play. Request later clips as playback advances. */
-  const enqueue = useCallback((text: string, kind: 'cue' | 'answer' | 'manual' = 'cue') => {
+  const enqueue = useCallback((text: string, kind: 'cue' | 'answer' | 'manual' | 'system' = 'cue') => {
     setError(null)
     const clean = speechText(text)
     if (!clean) return
@@ -346,7 +346,7 @@ export function useSpeech() {
     const token = generation.current
     void readVoice().then((read) => {
       if (token !== generation.current) return
-      enqueue(text, read?.voice.answerVoice === 'system' ? 'answer' : 'manual')
+      enqueue(text, !read || read.voice.answerVoice === 'system' ? 'system' : 'manual')
     })
   }, [stop, enqueue])
 

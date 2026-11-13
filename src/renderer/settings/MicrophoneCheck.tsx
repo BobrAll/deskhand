@@ -20,14 +20,21 @@ export function MicrophoneCheck({
   const microphoneCheck = useRef<AbortController | null>(null)
 
   const cancelMicrophoneCheck = useCallback(() => {
-    microphoneCheck.current?.abort()
+    const pending = microphoneCheck.current
+    microphoneCheck.current = null
+    pending?.abort()
     setTest({ phase: 'idle' })
   }, [])
 
   useEffect(() => {
     if (!visible) cancelMicrophoneCheck()
-    return () => microphoneCheck.current?.abort()
   }, [visible, cancelMicrophoneCheck])
+
+  useEffect(() => () => {
+    const pending = microphoneCheck.current
+    microphoneCheck.current = null
+    pending?.abort()
+  }, [])
 
   async function checkMicrophone(): Promise<void> {
     if (microphoneCheck.current) return
@@ -36,31 +43,38 @@ export function MicrophoneCheck({
     const { signal } = controller
     setTest({ phase: 'starting' })
     try {
-      const recording = await startRecording(0)
+      const recording = await startRecording(0, signal)
       let peak = 0
-      const sampleLevel = () => {
-        const level = recording.level()
-        peak = Math.max(peak, level)
-        setTest({ phase: 'listening', level })
-      }
       try {
         if (signal.aborted) return
-        sampleLevel()
+        setTest({ phase: 'listening', level: 0 })
         await new Promise<void>((resolve) => {
-          const meter = window.setInterval(sampleLevel, 80)
           const finish = () => {
             window.clearInterval(meter)
             signal.removeEventListener('abort', finish)
             resolve()
           }
+          const meter = window.setInterval(() => {
+            if (!recording.isActive()) {
+              controller.abort('disconnected')
+              return
+            }
+            const level = recording.level()
+            peak = Math.max(peak, level)
+            setTest({ phase: 'listening', level })
+          }, 80)
           signal.addEventListener('abort', finish, { once: true })
         })
       } finally {
         await recording.stop(false)
       }
+      if (microphoneCheck.current !== controller) return
       if (signal.reason === 'finished') setTest({ phase: 'finished', heard: peak >= 0.025 })
+      if (signal.reason === 'disconnected') {
+        setTest({ phase: 'error', message: 'Микрофон отключился. Подключи его и запусти проверку снова.' })
+      }
     } catch (error) {
-      if (!signal.aborted) {
+      if (microphoneCheck.current === controller && !signal.aborted) {
         const name = error instanceof Error ? error.name : ''
         const message = name === 'NotAllowedError'
           ? 'Разреши Deskhand доступ к микрофону в настройках macOS.'

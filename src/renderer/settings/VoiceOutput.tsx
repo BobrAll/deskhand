@@ -67,6 +67,12 @@ export function VoiceOutput({
   active, voice, tts, savedTts, onVoiceChange, onTtsChange
 }: VoiceOutputProps) {
   const [speech, setSpeech] = useState<TtsStatus | null>(null)
+  const [statusFailed, setStatusFailed] = useState(false)
+  const [keyError, setKeyError] = useState<string | null>(null)
+  const [keyBusy, setKeyBusy] = useState(false)
+  const keyPending = useRef(false)
+  const [setupBusy, setSetupBusy] = useState(false)
+  const setupPending = useRef(false)
   const [ttsKey, setTtsKeyInput] = useState('')
   const [previewing, setPreviewing] = useState(false)
   const [previewError, setPreviewError] = useState<string | null>(null)
@@ -80,9 +86,14 @@ export function VoiceOutput({
   const ttsStatusRequest = useRef(0)
   const refreshTts = useCallback(() => {
     const request = ++ttsStatusRequest.current
+    setStatusFailed(false)
     void window.deskhand.tts.status()
       .then((next) => { if (request === ttsStatusRequest.current) setSpeech(next) })
-      .catch(() => { if (request === ttsStatusRequest.current) setSpeech(null) })
+      .catch(() => {
+        if (request !== ttsStatusRequest.current) return
+        setSpeech(null)
+        setStatusFailed(true)
+      })
   }, [])
 
   useEffect(() => {
@@ -92,42 +103,51 @@ export function VoiceOutput({
     setSetupProgress(progress.done ? null : progress)
     if (progress.error) setSetupError(progress.error)
   }), [])
-  /** Stores the synthesis key; the value never comes back from the main process. */
-  const saveTtsKey = useCallback(async () => {
-    if (!ttsKey.trim()) return
-    setSpeech(await window.deskhand.tts.setKey(ttsKey.trim()))
-    setTtsKeyInput('')
-  }, [ttsKey])
-
-  const removeTtsKey = useCallback(async () => {
-    setSpeech(await window.deskhand.tts.deleteKey())
-  }, [])
-
-  /** Downloads or repairs the local Silero runtime; the pane shows each stage. */
-  const installSileroEngine = useCallback(async () => {
-    setSetupError(null)
-    setSetupProgress({ stage: 'python', received: 0, total: 0, done: false })
+  async function changeTtsKey(action: 'save' | 'remove'): Promise<void> {
+    const key = ttsKey.trim()
+    if (keyPending.current || (action === 'save' && !key)) return
+    keyPending.current = true
+    setKeyBusy(true)
+    setKeyError(null)
     try {
-      const result = await window.deskhand.tts.installSilero()
-      setSpeech(result.status)
-      if (result.error) setSetupError(result.error)
-    } catch (error) {
-      setSetupError(error instanceof Error ? error.message : 'Не удалось установить Silero. Попробуй ещё раз.')
+      if (action === 'save') {
+        await window.deskhand.tts.setKey(key)
+        setTtsKeyInput('')
+      } else {
+        await window.deskhand.tts.deleteKey()
+      }
+      refreshTts()
+    } catch {
+      setKeyError(action === 'save' ? 'Не удалось сохранить ключ. Попробуй ещё раз.' : 'Не удалось удалить ключ. Попробуй ещё раз.')
     } finally {
+      keyPending.current = false
+      setKeyBusy(false)
+    }
+  }
+
+  async function changeSilero(action: 'install' | 'remove'): Promise<void> {
+    if (setupPending.current) return
+    if (action === 'remove' && !window.confirm('Удалить Silero и скачанные файлы с этого Mac?')) return
+    setupPending.current = true
+    setSetupBusy(true)
+    setSetupError(null)
+    if (action === 'install') setSetupProgress({ stage: 'python', received: 0, total: 0, done: false })
+    try {
+      if (action === 'install') {
+        const result = await window.deskhand.tts.installSilero()
+        if (result.error) setSetupError(result.error)
+      } else {
+        await window.deskhand.tts.removeSilero()
+      }
+    } catch {
+      setSetupError(action === 'install' ? 'Не удалось установить Silero. Попробуй ещё раз.' : 'Не удалось удалить Silero. Попробуй ещё раз.')
+    } finally {
+      setupPending.current = false
+      setSetupBusy(false)
       setSetupProgress(null)
       refreshTts()
     }
-  }, [refreshTts])
-
-  const removeSileroEngine = useCallback(async () => {
-    if (!window.confirm('Удалить Silero и скачанные файлы с этого Mac?')) return
-    setSetupError(null)
-    try {
-      setSpeech(await window.deskhand.tts.removeSilero())
-    } catch {
-      setSetupError('Не удалось удалить Silero. Попробуй ещё раз.')
-    }
-  }, [])
+  }
 
   /** Plays one fixed line in the selected voice, so the choice can be judged. */
   const previewVoice = useCallback(async () => {
@@ -196,7 +216,8 @@ export function VoiceOutput({
   const previewReady = mode === 'system' || (neural && matchingStatus?.configured === true)
   let previewHint = 'Короткий пример голосом macOS.'
   if (neural) {
-    if (!matchingStatus) previewHint = 'Проверяю настройки нейроголоса…'
+    if (statusFailed) previewHint = 'Не удалось проверить настройки нейроголоса.'
+    else if (!matchingStatus) previewHint = 'Проверяю настройки нейроголоса…'
     else if (!matchingStatus.configured) {
       previewHint = mode === 'silero'
         ? 'До настройки Silero ответы читает голос macOS.'
@@ -229,9 +250,12 @@ export function VoiceOutput({
         </Row>
         {mode !== 'off' && (
           <Row title="Пример голоса" hint={<span role="status">{previewError ?? previewHint}</span>}>
-            <button disabled={previewing || !previewReady} onClick={() => void previewVoice()}>
-              {previewing ? 'Играет…' : 'Послушать пример'}
-            </button>
+            {neural && statusFailed
+              ? <button onClick={refreshTts}>Повторить проверку</button>
+              : <button disabled={previewing || !previewReady || (neural && (setupBusy || keyBusy))}
+                  onClick={() => void previewVoice()}>
+                  {previewing ? 'Играет…' : 'Послушать пример'}
+                </button>}
           </Row>
         )}
       </Group>
@@ -259,14 +283,15 @@ export function VoiceOutput({
                 ? <span role="status">{setupProgressText(setupProgress)}</span>
                 : sileroInstalled
                   ? 'Работает без интернета.'
-                  : sileroInstalled === false ? 'Скачай один раз. Нужно около 300 МБ и Python 3.12+.' : 'Проверяю установку…'}
+                  : sileroInstalled === false ? 'Скачай один раз. Нужно около 300 МБ и Python 3.12+.'
+                    : statusFailed ? 'Статус установки недоступен.' : 'Проверяю установку…'}
           >
             {sileroInstalled === true && (
-              <button className="ghost" disabled={setupProgress !== null} onClick={() => void removeSileroEngine()}>Удалить модель</button>
+              <button className="ghost" disabled={setupBusy} onClick={() => void changeSilero('remove')}>Удалить модель</button>
             )}
             {sileroInstalled === false && (
-              <button disabled={setupProgress !== null} onClick={() => void installSileroEngine()}>
-                {setupProgress ? 'Установка…' : 'Скачать модель'}
+              <button disabled={setupBusy} onClick={() => void changeSilero('install')}>
+                {setupBusy ? 'Установка…' : 'Скачать модель'}
               </button>
             )}
           </Row>
@@ -293,15 +318,17 @@ export function VoiceOutput({
               onChange={(event) => onTtsChange({ voice: event.target.value })} />
           </Row>
           <Row title={speech?.keyConfigured ? 'Ключ API' : <label htmlFor="voice-api-key">Ключ API</label>}
-            hint={speech?.keyConfigured ? 'Сохранён в Keychain.' : undefined}>
+            hint={keyError
+              ? <span className="row-hint err" role="alert">{keyError}</span>
+              : speech?.keyConfigured ? 'Сохранён в Keychain.' : undefined}>
             {speech?.keyConfigured ? (
-              <button className="ghost" onClick={() => void removeTtsKey()}>Удалить ключ</button>
+              <button className="ghost" disabled={keyBusy} onClick={() => void changeTtsKey('remove')}>Удалить ключ</button>
             ) : (
               <div className="row-actions">
-                <input id="voice-api-key" type="password" value={ttsKey} placeholder="Ключ сервиса"
+                <input id="voice-api-key" type="password" disabled={keyBusy} value={ttsKey} placeholder="Ключ сервиса"
                   onChange={(event) => setTtsKeyInput(event.target.value)}
-                  onKeyDown={(event) => { if (event.key === 'Enter') void saveTtsKey() }} />
-                <button disabled={!ttsKey.trim()} onClick={() => void saveTtsKey()}>Сохранить</button>
+                  onKeyDown={(event) => { if (event.key === 'Enter') void changeTtsKey('save') }} />
+                <button disabled={keyBusy || !ttsKey.trim()} onClick={() => void changeTtsKey('save')}>Сохранить</button>
               </div>
             )}
           </Row>
