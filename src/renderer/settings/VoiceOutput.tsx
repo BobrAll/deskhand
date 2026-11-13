@@ -282,7 +282,7 @@ export function VoiceOutput({
               : setupProgress
                 ? <span role="status">{setupProgressText(setupProgress)}</span>
                 : sileroInstalled
-                  ? 'Работает без интернета.'
+                  ? 'Скачанные веса работают офлайн.'
                   : sileroInstalled === false ? 'Скачай один раз. Нужно около 300 МБ и Python 3.12+.'
                     : statusFailed ? 'Статус установки недоступен.' : 'Проверяю установку…'}
           >
@@ -295,6 +295,12 @@ export function VoiceOutput({
               </button>
             )}
           </Row>
+          <ToggleRow
+            title="Уточнять произношение"
+            hint="Незнакомые английские слова уточняются у текстовой модели один раз и кэшируются. Выключи, если Silero должен работать полностью офлайн."
+            checked={tts.pronunciationLookup}
+            onChange={(pronunciationLookup) => onTtsChange({ pronunciationLookup })}
+          />
           {sileroInstalled && !tts.enabled && (
             <Row title="Нейроголос выключен">
               <button onClick={() => onTtsChange({ enabled: true })}>Включить Silero</button>

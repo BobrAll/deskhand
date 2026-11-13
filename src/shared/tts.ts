@@ -41,10 +41,12 @@ export function sileroSpeaker(voice: string): string {
  * What the settings pane plays when the user asks to hear the voice.
  *
  * A fixed line, not user text: it has to be short enough to judge a voice by and
- * stable enough to be cached. The neural engine and the macOS voice read the
- * same sentence, so the two choices can be compared on equal terms.
+ * stable enough to be cached. It contains English terms because answers do, and
+ * a voice that reads them badly is not the voice the user wants. The neural
+ * engine and the macOS voice read the same sentence, so the two choices can be
+ * compared on equal terms.
  */
-export const PREVIEW_LINE = 'Так, посмотрим. Сейчас разберусь и всё сделаю.'
+export const PREVIEW_LINE = 'Так, посмотрим. Проверю README и pull request — сейчас разберусь.'
 
 export type TtsResult =
   /** `mime` is what the clip actually is; the remote engine returns MP3, the local one a WAV. */

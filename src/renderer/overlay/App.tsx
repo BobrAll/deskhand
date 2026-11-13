@@ -441,7 +441,7 @@ export function App() {
     // focus is taken in `reset`, once the session it belongs to exists.
     void window.deskhand.overlay.getState().then((next) => {
       if (next) applyState(next)
-    })
+    }).catch(() => undefined)
 
     const offState = window.deskhand.overlay.onState(applyState)
     const offPreparing = window.deskhand.overlay.onPreparing(() => {

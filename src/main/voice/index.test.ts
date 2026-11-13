@@ -28,6 +28,12 @@ const state = vi.hoisted(() => ({
   startError: null as string | null,
   listenerOptions: null as Record<string, unknown> | null,
   stopped: 0,
+  warmed: 0,
+  warmCancels: 0,
+  /** When set, the warm-up waits for it instead of reporting success at once. */
+  warmGate: null as Promise<boolean> | null,
+  /** Whether `voiceStatus()` reports an installed model and binary. */
+  ready: true,
   pasted: [] as Array<{ text: string; target: ActiveAppInfo | null }>,
   transcribed: null as
     | null
@@ -48,8 +54,17 @@ vi.mock('../paste', () => ({
 vi.mock('./recognizer', () => ({
   transcribe: (options: { wav: Buffer }) =>
     state.transcribed?.(options) ?? Promise.resolve({ ok: true, text: 'привет', ms: 5 }),
+  warmRecognizer: () => {
+    state.warmed += 1
+    const gate = state.warmGate
+    state.warmGate = null
+    return gate ?? Promise.resolve(true)
+  },
+  cancelWarmRecognizer: () => {
+    state.warmCancels += 1
+  },
   voiceStatus: async () => ({
-    ready: true,
+    ready: state.ready,
     detail: null,
     modelPath: '/m',
     binaryPath: '/b',
@@ -146,6 +161,10 @@ beforeEach(() => {
   state.startError = null
   state.listenerOptions = null
   state.stopped = 0
+  state.warmed = 0
+  state.warmCancels = 0
+  state.warmGate = null
+  state.ready = true
   state.pasted = []
   state.transcribed = null
   vi.spyOn(Date, 'now').mockImplementation(() => state.now)
@@ -550,6 +569,140 @@ describe('createVoiceController: the level meter', () => {
 
     expect(host.emitted.length).toBeGreaterThan(before + 1)
     expect(phases(host).every((phase) => phase === 'listening')).toBe(true)
+  })
+})
+
+describe('createVoiceController: recognizer warm-up', () => {
+  it('loads the recognizer after the launch has settled, once per model', async () => {
+    const voice = createVoiceController(makeHost())
+    voice.applySettings()
+
+    expect(state.warmed).toBe(0)
+    await vi.advanceTimersByTimeAsync(3_000)
+    expect(state.warmed).toBe(1)
+
+    voice.applySettings()
+    await vi.advanceTimersByTimeAsync(3_000)
+    expect(state.warmed).toBe(1)
+  })
+
+  it('cancels the warm-up when the key goes down', async () => {
+    const voice = createVoiceController(makeHost())
+    voice.applySettings()
+
+    voice.press()
+    await vi.advanceTimersByTimeAsync(3_000)
+
+    expect(state.warmed).toBe(0)
+    expect(state.warmCancels).toBeGreaterThan(0)
+  })
+
+  it('warms the model that replaced the previous one', async () => {
+    const voice = createVoiceController(makeHost())
+    voice.applySettings()
+    await vi.advanceTimersByTimeAsync(3_000)
+
+    state.settings = settings({ model: 'base' })
+    voice.applySettings()
+    await vi.advanceTimersByTimeAsync(3_000)
+
+    expect(state.warmed).toBe(2)
+  })
+
+  it('tries again after a tap too short to recognise', async () => {
+    const voice = createVoiceController(makeHost())
+    voice.applySettings()
+    voice.press()
+    state.now += 100
+    voice.release()
+
+    await vi.advanceTimersByTimeAsync(1_500)
+
+    expect(state.warmed).toBe(1)
+  })
+
+  it('does not warm anything while voice is disabled', async () => {
+    state.settings = settings({ enabled: false })
+    const voice = createVoiceController(makeHost())
+    voice.applySettings()
+
+    await vi.advanceTimersByTimeAsync(3_000)
+
+    expect(state.warmed).toBe(0)
+  })
+
+  it('counts a real recognition as having loaded the model', async () => {
+    const host = makeHost()
+    const voice = createVoiceController(host)
+    voice.applySettings()
+    voice.press()
+    state.now += 500
+    voice.release()
+
+    await voice.handleRecording({ wavBase64: 'AAAA', durationMs: 800 })
+    await vi.advanceTimersByTimeAsync(3_000)
+
+    expect(state.warmed).toBe(0)
+  })
+
+  it('tries again after a warm-up that was cancelled mid-load', async () => {
+    const voice = createVoiceController(makeHost())
+    voice.applySettings()
+    let finishWarm: (loaded: boolean) => void = () => undefined
+    state.warmGate = new Promise<boolean>((resolve) => {
+      finishWarm = resolve
+    })
+    await vi.advanceTimersByTimeAsync(3_000)
+    expect(state.warmed).toBe(1)
+
+    // The key goes down while the model is still loading: the warm-up is
+    // cancelled, and the interrupted load must not count as warm.
+    voice.press()
+    finishWarm(false)
+    await vi.advanceTimersByTimeAsync(0)
+
+    // A tap too short to recognise ends the turn and schedules the next warm-up.
+    state.now += 100
+    voice.release()
+    await vi.advanceTimersByTimeAsync(1_500)
+
+    expect(state.warmed).toBe(2)
+  })
+
+  it('marks the model warm only when the warm-up reports a real load', async () => {
+    const voice = createVoiceController(makeHost())
+    state.warmGate = Promise.resolve(false)
+    voice.applySettings()
+    await vi.advanceTimersByTimeAsync(3_000)
+    expect(state.warmed).toBe(1)
+
+    // Nothing was loaded, so the next idle moment has to try again.
+    voice.press()
+    state.now += 100
+    voice.release()
+    await vi.advanceTimersByTimeAsync(1_500)
+
+    expect(state.warmed).toBe(2)
+  })
+
+  it('does not start a warm-up when the tap did not start', async () => {
+    state.startError = 'Комбинация «space» не подходит для удержания.'
+    const voice = createVoiceController(makeHost())
+    voice.applySettings()
+
+    await vi.advanceTimersByTimeAsync(3_000)
+
+    expect(state.warmed).toBe(0)
+  })
+
+  it('does not warm a model that is not installed', async () => {
+    state.ready = false
+    const voice = createVoiceController(makeHost())
+    voice.applySettings()
+
+    await vi.advanceTimersByTimeAsync(3_000)
+
+    expect(state.warmed).toBe(0)
   })
 })
 

@@ -247,7 +247,8 @@ export const DEFAULT_TTS: TtsSettings = {
   model: '',
   voice: '',
   style: '',
-  sileroVoice: SILERO_DEFAULT_SPEAKER
+  sileroVoice: SILERO_DEFAULT_SPEAKER,
+  pronunciationLookup: true
 }
 
 export const WHISPER_LANGUAGES: Array<{ id: string; label: string }> = [
@@ -460,7 +461,8 @@ function sanitizeTts(input: unknown): TtsSettings {
     model: text(raw.model).slice(0, 120),
     voice: legacySpeaker ? '' : voice,
     style: text(raw.style).slice(0, 300),
-    sileroVoice: explicitSpeaker ? sileroSpeaker(explicitSpeaker) : legacySpeaker ? voice : SILERO_DEFAULT_SPEAKER
+    sileroVoice: explicitSpeaker ? sileroSpeaker(explicitSpeaker) : legacySpeaker ? voice : SILERO_DEFAULT_SPEAKER,
+    pronunciationLookup: raw.pronunciationLookup !== false
   }
 }
 

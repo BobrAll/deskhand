@@ -27,6 +27,7 @@ import type { AppSettings, TtsSettings, TtsStatus } from '@shared/types'
 import { RECORDED, TTS_MAX_CHARS, sileroSpeaker, type TtsResult } from '@shared/tts'
 import { getTtsKey } from '../settings/secrets'
 import { getSettings } from '../settings/store'
+import { resolvePronunciations } from './pronounce'
 import {
   SILERO_CACHE_ID,
   sileroModelsReady,
@@ -64,12 +65,26 @@ const CACHE_KEY_SEPARATOR = '\u0000'
  * to another never plays the previous voice's file. The key is deliberately not
  * part of it — rotating a key does not change the voice.
  */
-function cacheKey(settings: TtsSettings, text: string): string {
+function cacheKey(
+  settings: TtsSettings,
+  text: string,
+  hints: Readonly<Record<string, string>> = {}
+): string {
   let identity: Array<string | number> = [settings.baseUrl, settings.model, settings.voice, settings.style]
   if (settings.engine === 'silero') {
     // The weights come from a pinned release, so the version and the speaker are
-    // the whole identity; hashing 300 MB on every line would be absurd.
-    identity = [SILERO_CACHE_ID, sileroSpeaker(settings.sileroVoice), TRANSLITERATION_VERSION]
+    // the whole identity; hashing 300 MB on every line would be absurd. The hints
+    // are part of it because a line first spoken before a hint arrived must not
+    // keep the rule-based pronunciation forever.
+    identity = [
+      SILERO_CACHE_ID,
+      sileroSpeaker(settings.sileroVoice),
+      TRANSLITERATION_VERSION,
+      Object.entries(hints)
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([word, pronunciation]) => `${word}=${pronunciation}`)
+        .join(CACHE_KEY_SEPARATOR)
+    ]
   }
   return createHash('sha256')
     .update([...identity, text].join(CACHE_KEY_SEPARATOR))
@@ -207,7 +222,8 @@ export async function synthesize(text: string, localOnly = false): Promise<TtsRe
   const blocked = ttsBlockReason(settings)
   if (blocked) return { ok: false, message: blocked }
 
-  const key = cacheKey(settings.tts, line)
+  const hints = settings.tts.engine === 'silero' ? await resolvePronunciations(line) : {}
+  const key = cacheKey(settings.tts, line, hints)
   const extension = cacheExtension(settings.tts)
   const running = inFlight.get(key)
   if (running) return running
@@ -218,7 +234,7 @@ export async function synthesize(text: string, localOnly = false): Promise<TtsRe
   if (cached) return cached
 
   const job = (settings.tts.engine === 'silero'
-    ? synthesizeSilero(line, sileroSpeaker(settings.tts.sileroVoice))
+    ? synthesizeSilero(line, sileroSpeaker(settings.tts.sileroVoice), hints)
     : requestSynthesis(line, settings.tts))
     .then(async (result): Promise<TtsResult> => {
       if (result.ok) {

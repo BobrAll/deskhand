@@ -55,9 +55,9 @@ const WORDS: Record<string, string> = {
   cut: 'кат',
   undo: 'анд+у',
   redo: 'рид+у',
-  note: 'ноут',
+  note: 'н+оут',
   list: 'лист',
-  item: 'айтем',
+  item: '+айтем',
   name: 'нейм',
   text: 'текст',
   line: 'лайн',
@@ -65,16 +65,56 @@ const WORDS: Record<string, string> = {
   number: 'н+амбер',
   value: 'в+элью',
   data: 'д+ейта',
-  image: 'имидж',
+  image: '+имидж',
   media: 'м+едиа',
   video: 'в+идео',
   audio: '+аудио',
   voice: 'войс',
-  sound: 'саунд',
+  sound: 'с+аунд',
   speech: 'спич',
   language: 'л+энгвидж',
-  english: 'инглиш',
+  english: '+инглиш',
   russian: 'р+ашен',
+
+  // Abbreviations are spelled out, not read as a word
+  api: 'эй пи ай',
+  url: 'ю ар эл',
+  uri: 'ю ар ай',
+  id: 'ай ди',
+  ui: 'ю ай',
+  ai: 'эй ай',
+  os: 'о эс',
+  db: 'ди би',
+  http: 'эйч ти ти пи',
+  https: 'эйч ти ти пи эс',
+  html: 'эйч ти эм эл',
+  css: 'си эс эс',
+  json: 'дж+ейсон',
+  yaml: 'й+амл',
+  toml: 'т+омл',
+  xml: 'экс эм эл',
+  sdk: 'эс ди кей',
+  cli: 'си эл ай',
+  ide: 'ай ди и',
+  pr: 'пи ар',
+  ci: 'си ай',
+  ssh: 'эс эс эйч',
+  ftp: 'эф ти пи',
+  dns: 'ди эн эс',
+  ip: 'ай пи',
+  vpn: 'ви пи эн',
+  cpu: 'си пи ю',
+  gpu: 'джи пи ю',
+  ram: 'рам',
+  usb: 'ю эс би',
+  pdf: 'пи ди эф',
+  png: 'пи эн джи',
+  jpg: 'джей пи джи',
+  gif: 'гиф',
+  svg: 'эс ви джи',
+  csv: 'си эс ви',
+  sql: 'эс кью эл',
+  llm: 'эл эл эм',
 
   // The assistant itself
   agent: '+ейджент',
@@ -92,7 +132,7 @@ const WORDS: Record<string, string> = {
   command: 'ком+анд',
   request: 'рикв+ест',
   response: 'рисп+онс',
-  endpoint: 'эндпоинт',
+  endpoint: 'эндп+оинт',
   service: 'с+ервис',
   provider: 'пров+айдер',
   version: 'в+ерсия',
@@ -116,15 +156,15 @@ const WORDS: Record<string, string> = {
   push: 'пуш',
   repo: 'р+епо',
   repository: 'рипозит+ори',
-  github: 'г+итхаб',
+  github: 'гитх+аб',
   git: 'гит',
   npm: 'эн пи эм',
   python: 'п+айтон',
-  javascript: 'дж+аваскрипт',
-  typescript: 'т+айпскрипт',
+  javascript: 'джаваскр+ипт',
+  typescript: 'тайпскр+ипт',
   react: 'ри+акт',
-  node: 'ноуд',
-  electron: 'эл+ектрон',
+  node: 'н+оуд',
+  electron: 'электр+он',
   swift: 'свифт',
   linux: 'л+инукс',
   windows: 'у+индоуз',
@@ -134,12 +174,12 @@ const WORDS: Record<string, string> = {
   wifi: 'в+ай фай',
   google: 'г+угл',
   apple: '+эпл',
-  microsoft: 'м+айкрософт',
+  microsoft: 'майкрос+офт',
   openai: '+опен эй ай',
   chatgpt: 'чат джи пи ти',
 
   // Requests and states
-  email: 'имейл',
+  email: 'им+ейл',
   internet: 'интерн+ет',
   website: 'в+ебсайт',
   web: 'веб',
@@ -159,7 +199,7 @@ const WORDS: Record<string, string> = {
   chat: 'чат',
   user: '+юзер',
   password: 'п+асворд',
-  login: 'лог+ин',
+  login: 'л+огин',
   account: 'акк+аунт',
   network: 'н+етворк',
   class: 'класс',
@@ -179,6 +219,24 @@ const WORDS: Record<string, string> = {
   a: 'э',
   an: 'эн',
   i: 'ай',
+  he: 'хи',
+  she: 'ши',
+  me: 'ми',
+  us: 'ас',
+  him: 'хим',
+  his: 'хиз',
+  her: 'хёр',
+  them: 'зем',
+  their: 'зэр',
+  our: '+ауэр',
+  as: 'эз',
+  because: 'бик+оз',
+  about: 'аб+аут',
+  into: '+инту',
+  over: '+овер',
+  under: '+андер',
+  again: 'аг+ейн',
+  maybe: 'м+ейби',
   of: 'оф',
   to: 'ту',
   in: 'ин',
@@ -211,31 +269,31 @@ const WORDS: Record<string, string> = {
   can: 'кэн',
   will: 'вил',
   but: 'бат',
-  so: 'соу',
+  so: 'с+оу',
   if: 'иф',
   then: 'зэн',
   than: 'зэн',
   there: 'зэр',
   here: 'хир',
-  what: 'уот',
-  when: 'уэн',
-  where: 'уэр',
-  why: 'уай',
-  how: 'хау',
+  what: 'у+от',
+  when: 'у+эн',
+  where: 'у+эр',
+  why: 'у+ай',
+  how: 'х+ау',
   who: 'ху',
   all: 'ол',
   some: 'сам',
-  any: 'эни',
+  any: '+эни',
   more: 'мор',
-  most: 'моуст',
+  most: 'м+оуст',
   just: 'джаст',
-  only: 'онли',
-  also: 'олсоу',
-  very: 'вери',
-  now: 'нау',
-  today: 'тудэй',
-  tomorrow: 'тумороу',
-  yesterday: 'естердэй',
+  only: '+онли',
+  also: '+олсоу',
+  very: 'в+ери',
+  now: 'н+ау',
+  today: 'туд+эй',
+  tomorrow: 'тум+ороу',
+  yesterday: 'естерд+эй',
 
   // Common nouns outside a codebase
   computer: 'компь+ютер',
@@ -255,11 +313,11 @@ const WORDS: Record<string, string> = {
   time: 'тайм',
   date: 'дейт',
   day: 'дэй',
-  week: 'уик',
+  week: 'у+ик',
   month: 'манс',
   year: 'йир',
   work: 'ворк',
-  home: 'хоум',
+  home: 'х+оум',
   city: 'с+ити',
   school: 'скул',
   money: 'м+ани',
@@ -269,7 +327,7 @@ const WORDS: Record<string, string> = {
   support: 'сапп+орт',
   team: 'тим',
   news: 'ньюс',
-  article: 'артикл',
+  article: '+артикл',
   post: 'пост',
   comment: 'комм+ент',
   share: 'шер',
@@ -287,14 +345,15 @@ const WORDS: Record<string, string> = {
   hi: 'хай',
   world: 'у+орлд',
   yes: 'йес',
-  no: 'ноу',
+  no: 'н+оу',
   good: 'гуд',
   bad: 'бэд',
   new: 'нью',
   old: '+олд',
   next: 'некст',
   back: 'бэк',
-  forward: 'ф+орвард'
+  forward: 'ф+орвард',
+  escape: 'эск+ейп'
 }
 
 /** How a letter is pronounced when an acronym is spelled out. */
@@ -425,10 +484,74 @@ function ruleTransliterate(input: string): string {
   return out
 }
 
-function transliterateWord(word: string): string {
+/**
+ * A known singular with an English plural ending.
+ *
+ * The rules lose the stem's stress mark and read a silent `e` as a vowel, so
+ * `updates` becomes «упдатес» instead of «апд+ейтс». Reusing the dictionary form
+ * keeps both the sound and the stress of the word the user already knows.
+ */
+function pluralOf(word: string): string | null {
+  if (!word.endsWith('s')) return null
+  const stems = word.endsWith('es')
+    ? [word.slice(0, -1), word.slice(0, -2)]
+    : [word.slice(0, -1)]
+  for (const stem of stems) {
+    // A two-letter stem is a function word (`us`, `it`), not a noun that takes
+    // an English plural; `uses` must not become «асис».
+    if (stem.length < 3) continue
+    const singular = WORDS[stem] ?? WORDS[stem.replace(/['’-]/g, '')]
+    if (!singular) continue
+    const last = singular[singular.length - 1]
+    // A russified word ending in `а`/`е`/`я` adds the English plural differently
+    // (`фича` + `с` is not `features`); let the letter rules handle those.
+    if ('аеёяэ'.includes(last)) continue
+    if ('шжчщсзц'.includes(last)) return `${singular}ис`
+    if (last === 'ь') return `${singular.slice(0, -1)}с`
+    return `${singular}с`
+  }
+  return null
+}
+
+/** Whether the dictionary, the plural rule or the acronym rules can say this word. */
+function needsPronunciation(word: string): boolean {
+  const lower = word.toLowerCase()
+  if (WORDS[lower] ?? WORDS[lower.replace(/['’-]/g, '')]) return false
+  if (/^([A-Z]{2,6})s$/.test(word)) return false
+  if (pluralOf(lower)) return false
+  return !looksLikeAcronym(word)
+}
+
+/**
+ * Latin words that need a pronunciation hint, without duplicates.
+ *
+ * The whole token is checked first so «Wi-Fi» stays in the dictionary instead of
+ * being split into two unknown words. A token that is not known is split at its
+ * hyphens and apostrophes, exactly as `transliterate` will split it.
+ */
+export function unknownWords(text: string): string[] {
+  const words = new Set<string>()
+  for (const token of text.match(/\p{Script=Latin}+(?:['’-]\p{Script=Latin}+)*/gu) ?? []) {
+    const lower = token.toLowerCase()
+    if (WORDS[lower] ?? WORDS[lower.replace(/['’-]/g, '')]) continue
+    for (const part of token.split(/['’-]/).filter(Boolean)) {
+      if (part.length < 2) continue
+      if (needsPronunciation(part)) words.add(part.toLowerCase())
+    }
+  }
+  return [...words]
+}
+
+function transliterateWord(word: string, pronunciations: Readonly<Record<string, string>>): string {
   const lower = word.toLowerCase()
   const known = WORDS[lower] ?? WORDS[lower.replace(/['’-]/g, '')]
   if (known) return known
+  const acronymPlural = /^([A-Z]{2,6})s$/.exec(word)
+  if (acronymPlural) return `${spellAcronym(acronymPlural[1])}с`
+  const plural = pluralOf(lower)
+  if (plural) return plural
+  const hint = pronunciations[lower]
+  if (hint) return hint
   if (looksLikeAcronym(word)) return spellAcronym(word)
   return ruleTransliterate(word)
 }
@@ -437,11 +560,16 @@ function transliterateWord(word: string): string {
  * Replaces every Latin word in a line, leaving Cyrillic, numbers and
  * punctuation exactly where they were.
  *
- * Hyphens and apostrophes inside a Latin token become a space: «Wi-Fi» is two
- * Russian words, «don't» is one. A hyphen between a Latin and a Cyrillic word
- * is left alone.
+ * A hyphen inside a Latin token becomes a space: «Wi-Fi» is two Russian words.
+ * An apostrophe does not: «don't» and «user's» are one spoken word.
+ *
+ * `pronunciations` carries the model's hints for words the dictionary does not
+ * know; only the string sent to synthesis is affected.
  */
-export function transliterate(text: string): string {
+export function transliterate(
+  text: string,
+  pronunciations: Readonly<Record<string, string>> = {}
+): string {
   return text.replace(/\p{Script=Latin}+(?:['’-]\p{Script=Latin}+)*/gu, (token) => {
     const lower = token.toLowerCase()
     const whole = WORDS[lower] ?? WORDS[lower.replace(/['’-]/g, '')]
@@ -449,7 +577,7 @@ export function transliterate(text: string): string {
     return token
       .split(/['’-]/)
       .filter(Boolean)
-      .map(transliterateWord)
-      .join(' ')
+      .map((part) => transliterateWord(part, pronunciations))
+      .join(token.includes('-') ? ' ' : '')
   })
 }

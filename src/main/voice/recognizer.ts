@@ -285,6 +285,90 @@ export async function transcribe(options: TranscribeOptions): Promise<Transcribe
   }
 }
 
+/** Long enough for the recognizer to start, load its model and take one pass. */
+const WARMUP_WAV_MS = 160
+const WARMUP_RATE = 16_000
+
+/** A short silent 16 kHz mono WAV: the input a warm-up turn discards. */
+function silentWav(ms: number): Buffer {
+  const samples = Math.max(1, Math.round((WARMUP_RATE * ms) / 1000))
+  const wav = Buffer.alloc(44 + samples * 2)
+  wav.write('RIFF', 0)
+  wav.writeUInt32LE(36 + samples * 2, 4)
+  wav.write('WAVE', 8)
+  wav.write('fmt ', 12)
+  wav.writeUInt32LE(16, 16)
+  wav.writeUInt16LE(1, 20)
+  wav.writeUInt16LE(1, 22)
+  wav.writeUInt32LE(WARMUP_RATE, 24)
+  wav.writeUInt32LE(WARMUP_RATE * 2, 28)
+  wav.writeUInt16LE(2, 32)
+  wav.writeUInt16LE(16, 34)
+  wav.write('data', 36)
+  wav.writeUInt32LE(samples * 2, 40)
+  return wav
+}
+
+/**
+ * The warm-up running right now, so two callers share one child process.
+ *
+ * A warm-up is a real recognizer invocation with silence: the binary, the model
+ * and the compute backend are paged in exactly as they will be for a phrase. The
+ * first process after launch pays for that cold start (measured at ~0.5 s against
+ * ~0.1 s once warm on Apple Silicon); doing it ahead of the first press keeps the
+ * cost out of the transcript the user is waiting for.
+ */
+let warmup: { controller: AbortController; done: Promise<boolean> } | null = null
+
+function startWarmup(): Promise<boolean> {
+  const controller = new AbortController()
+  const done = transcribe({ wav: silentWav(WARMUP_WAV_MS), signal: controller.signal })
+    .then((result) => {
+      // A cancelled warm-up reports the time it ran before the kill; saying it
+      // warmed anything would be wrong.
+      if (controller.signal.aborted) return false
+      if (result.ms <= 0) {
+        // `transcribe` returns before it starts a process when the binary or the
+        // model is missing. Nothing ran, so nothing is warm; the settings window
+        // already tells the user what to install.
+        console.warn('[voice] recognizer warm-up did not start:', result.message)
+        return false
+      }
+      console.log(`[voice] recognizer warmed in ${result.ms} мс`)
+      return true
+    })
+    .catch((error: unknown) => {
+      console.warn('[voice] recognizer warm-up failed:', error)
+      return false
+    })
+    .finally(() => {
+      if (warmup?.controller === controller) warmup = null
+    })
+  warmup = { controller, done }
+  return done
+}
+
+/**
+ * Loads the recognizer and its model before the first phrase needs them.
+ *
+ * Resolves `true` only when the recognizer really ran: a cancelled warm-up, a
+ * missing binary or a missing model all resolve `false`, and the caller must not
+ * treat that as "the model is loaded".
+ */
+export function warmRecognizer(): Promise<boolean> {
+  return warmup?.done ?? startWarmup()
+}
+
+/**
+ * Stops a warm-up that would otherwise compete with a real phrase for the same
+ * model and the same CPU. Safe to call when nothing is warming.
+ */
+export function cancelWarmRecognizer(): void {
+  const running = warmup
+  warmup = null
+  running?.controller.abort()
+}
+
 function runRecognizer(
   binary: string,
   args: string[],
