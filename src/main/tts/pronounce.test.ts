@@ -103,13 +103,14 @@ describe('resolvePronunciations', () => {
     expect([...fake.files.values()].join('')).not.toContain('unrelated')
   })
 
-  it('writes the hint to the cache and uses it on the next call', async () => {
+  it('writes the hint to the cache and uses it on the next call, even without a key', async () => {
     fake.reply = JSON.stringify({ localhost: 'локалх+ост' })
     await resolve('localhost')
     expect(fake.calls).toHaveLength(1)
 
     vi.resetModules()
     fake.calls = []
+    fake.key = null
     const hints = await resolve('localhost')
 
     expect(hints).toEqual({ localhost: 'локалх+ост' })
@@ -172,7 +173,6 @@ describe('resolvePronunciations', () => {
     const first = resolvePronunciations('localhost')
     const second = resolvePronunciations('localhost')
     await vi.waitFor(() => expect(fake.calls).toHaveLength(1))
-    await new Promise((resolve) => setTimeout(resolve, 0))
     expect(fake.calls).toHaveLength(1)
 
     release()
@@ -180,18 +180,26 @@ describe('resolvePronunciations', () => {
     await expect(second).resolves.toEqual({ localhost: 'локалх+ост' })
   })
 
-  it('does not pay the wait again while a lookup is unresponsive', async () => {
+  it('does not pay the wait again while a lookup is unresponsive, until the provider changes', async () => {
+    vi.useFakeTimers()
     let release!: () => void
     fake.gate = new Promise<void>((resolve) => { release = resolve })
     const { resolvePronunciations } = await import('./pronounce')
 
-    await expect(resolvePronunciations('localhost')).resolves.toEqual({})
+    const first = resolvePronunciations('localhost')
+    await vi.advanceTimersByTimeAsync(800)
+    await expect(first).resolves.toEqual({})
     const calls = fake.calls.length
     await expect(resolvePronunciations('localhost')).resolves.toEqual({})
     expect(fake.calls).toHaveLength(calls)
 
     release()
-    await new Promise((resolve) => setTimeout(resolve, 0))
+    await vi.advanceTimersByTimeAsync(0)
+
+    // A configuration change resets the backoff immediately.
+    fake.model = 'faster-model'
+    fake.reply = JSON.stringify({ localhost: 'локалх+ост' })
+    await expect(resolvePronunciations('localhost')).resolves.toEqual({ localhost: 'локалх+ост' })
   })
 })
 

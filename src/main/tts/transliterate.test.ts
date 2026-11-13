@@ -39,8 +39,10 @@ describe('transliterate', () => {
 
   it('reads an all-caps product name as a word, not as letters', () => {
     expect(transliterate('KAFKA')).toBe('кафка')
-    expect(unknownWords('KAFKA')).toEqual(['kafka'])
-    expect(unknownWords('JWT')).toEqual([])
+    expect(transliterate('KAFKAs')).toBe('кафкас')
+    expect(transliterate('JWTs')).toBe('джей дабл ю тис')
+    expect(unknownWords('KAFKA KAFKAs')).toEqual(['kafka', 'kafkas'])
+    expect(unknownWords('JWT JWTs')).toEqual([])
   })
 
   it('recognises lowercase abbreviations that the letter rules would mangle', () => {

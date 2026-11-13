@@ -524,7 +524,7 @@ describe('transcribe', () => {
 
     const result = await recognizer.transcribe({ wav: WAV, signal: controller.signal })
 
-    expect(result).toMatchObject({ ok: false, text: '', message: 'Отменено.' })
+    expect(result).toMatchObject({ ok: false, text: '', message: 'Отменено.', spawned: false })
     expect(state.removed).toHaveLength(1)
   })
 

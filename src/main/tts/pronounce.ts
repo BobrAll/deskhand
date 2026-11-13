@@ -229,15 +229,6 @@ export async function resolvePronunciations(text: string): Promise<Hints> {
   const settings = getSettings()
   if (settings.tts.pronunciationLookup === false) return {}
 
-  // Switching to a faster provider or model is a reason to try again now, not
-  // to serve the rest of the old backoff window.
-  const config = [settings.provider, resolveChatModel(settings),
-    settings.baseUrls[settings.provider] ?? '', settings.tts.pronunciationLookup].join('\u0000')
-  if (config !== unavailableFor) {
-    unavailableFor = config
-    unavailableUntil = 0
-  }
-
   const terms = unknownWords(text).slice(0, MAX_TERMS)
   if (terms.length === 0) return {}
 
@@ -250,6 +241,17 @@ export async function resolvePronunciations(text: string): Promise<Hints> {
     else missing.push(term)
   }
   if (missing.length === 0) return hints
+  // Switching to a faster provider or model, or rotating the key, is a reason
+  // to try again now, not to serve the rest of the old backoff window.
+  const model = resolveChatModel(settings)
+  const apiKey = getApiKey(settings.provider)
+  if (!model || !apiKey) return hints
+  const config = [settings.provider, model,
+    settings.baseUrls[settings.provider] ?? '', apiKey].join('\u0000')
+  if (config !== unavailableFor) {
+    unavailableFor = config
+    unavailableUntil = 0
+  }
   if (Date.now() < unavailableUntil) return hints
 
   // Streamed sentences are prepared one after another, but a provider that is

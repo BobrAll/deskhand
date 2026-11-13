@@ -69,7 +69,7 @@ const MODEL_BYTES = MODEL_FILES.reduce((sum, [, bytes]) => sum + bytes, 0)
 export const SILERO_CACHE_ID = `silero-v5_6_ru-${RUNTIME_VERSION}`
 
 /** Bump when the transliteration dictionary or rules change the spoken text. */
-export const TRANSLITERATION_VERSION = 3
+export const TRANSLITERATION_VERSION = 4
 
 const PIP_TIMEOUT_MS = 5 * 60_000
 const MODEL_TIMEOUT_MS = 10 * 60_000

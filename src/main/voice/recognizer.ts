@@ -267,14 +267,14 @@ export async function transcribe(options: TranscribeOptions): Promise<Transcribe
       return { ok: false, text: '', ms: 0, message: 'Отменено.', spawned: false }
     }
     const raw = await runRecognizer(binary, args, engine, options.signal)
-    spawned = true
     const ms = Date.now() - startedAt
     if (options.signal?.aborted) {
-      return { ok: false, text: '', ms, message: 'Отменено.', spawned }
+      return { ok: false, text: '', ms, message: 'Отменено.', spawned: false }
     }
     const text = cleanTranscript(
       engine === 'transcribe' ? await readFile(transcriptPath, 'utf8') : raw
     )
+    spawned = true
     if (!text) {
       // Silence is not alarming, but it must not look like a successful empty
       // answer either: the card would sit there with nothing in it.

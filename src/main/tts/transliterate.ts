@@ -517,11 +517,21 @@ function pluralOf(word: string): string | null {
   return null
 }
 
+function acronymPluralOf(word: string): string | null {
+  const match = /^([A-Z]{2,6})s$/.exec(word)
+  if (!match) return null
+  const stem = match[1]
+  const lower = stem.toLowerCase()
+  const known = WORDS[lower]
+  if (known && known.includes(' ')) return `${known}с`
+  return looksLikeAcronym(stem) ? `${spellAcronym(stem)}с` : null
+}
+
 /** Whether the dictionary, the plural rule or the acronym rules can say this word. */
 function needsPronunciation(word: string): boolean {
   const lower = word.toLowerCase()
   if (WORDS[lower] ?? WORDS[lower.replace(/['’-]/g, '')]) return false
-  if (/^([A-Z]{2,6})s$/.test(word)) return false
+  if (acronymPluralOf(word)) return false
   if (pluralOf(lower)) return false
   return !looksLikeAcronym(word)
 }
@@ -550,8 +560,8 @@ function transliterateWord(word: string, pronunciations: Readonly<Record<string,
   const lower = word.toLowerCase()
   const known = WORDS[lower] ?? WORDS[lower.replace(/['’-]/g, '')]
   if (known) return known
-  const acronymPlural = /^([A-Z]{2,6})s$/.exec(word)
-  if (acronymPlural) return `${spellAcronym(acronymPlural[1])}с`
+  const acronymPlural = acronymPluralOf(word)
+  if (acronymPlural) return acronymPlural
   const plural = pluralOf(lower)
   if (plural) return plural
   const hint = pronunciations[lower]
