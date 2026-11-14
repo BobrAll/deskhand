@@ -84,7 +84,7 @@ public struct OpenAICompatibleProvider: StreamingChatProvider {
             throw LLMError.transport("no HTTP response")
         }
         guard (200..<300).contains(http.statusCode) else {
-            let body = await collect(bytes, limit: 4096)
+            let body = await bytes.prefixData(limit: 4096)
             exchange?.response(body, status: http.statusCode)
             // A gateway that does not implement SSE is still a working
             // chat-completions endpoint. Nothing has been shown yet, so falling
@@ -104,7 +104,7 @@ public struct OpenAICompatibleProvider: StreamingChatProvider {
         // body on an SSE parser that will find no `data:` lines in it.
         if let contentType = http.value(forHTTPHeaderField: "Content-Type"),
            contentType.lowercased().contains("application/json") {
-            let body = await collect(bytes, limit: 16 * 1024 * 1024)
+            let body = await bytes.prefixData(limit: 16 * 1024 * 1024)
             exchange?.response(body, status: http.statusCode)
             return try decode(body)
         }
@@ -246,20 +246,6 @@ public struct OpenAICompatibleProvider: StreamingChatProvider {
         }
 
         return Completion(text: text, toolCalls: calls, stopReason: stopReason, usage: usage)
-    }
-
-    private func collect(_ bytes: URLSession.AsyncBytes, limit: Int) async -> Data {
-        var data = Data()
-        do {
-            for try await byte in bytes {
-                data.append(byte)
-                if data.count >= limit { break }
-            }
-        } catch {
-            // The body is only used for the error message; a broken read must not
-            // replace the HTTP error with a transport one.
-        }
-        return data
     }
 
     func encodeMessages(_ messages: [ChatMessage], systemPrompt: String) -> [JSONValue] {

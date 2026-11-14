@@ -83,7 +83,7 @@ public struct AnthropicProvider: StreamingChatProvider {
             throw LLMError.transport("no HTTP response")
         }
         guard (200..<300).contains(http.statusCode) else {
-            let body = await collect(bytes, limit: 4096)
+            let body = await bytes.prefixData(limit: 4096)
             exchange?.response(body, status: http.statusCode)
             // Same fallback as the OpenAI wire: a proxy that refuses `stream`
             // can still answer in one piece, and nothing has been shown yet.
@@ -98,7 +98,7 @@ public struct AnthropicProvider: StreamingChatProvider {
 
         if let contentType = http.value(forHTTPHeaderField: "Content-Type"),
            contentType.lowercased().contains("application/json") {
-            let body = await collect(bytes, limit: 16 * 1024 * 1024)
+            let body = await bytes.prefixData(limit: 16 * 1024 * 1024)
             exchange?.response(body, status: http.statusCode)
             return try decode(body)
         }
@@ -257,19 +257,6 @@ public struct AnthropicProvider: StreamingChatProvider {
             ? nil
             : TokenUsage(inputTokens: inputTokens ?? 0, outputTokens: outputTokens ?? 0)
         return Completion(text: text, toolCalls: calls, stopReason: stopReason, usage: usage)
-    }
-
-    private func collect(_ bytes: URLSession.AsyncBytes, limit: Int) async -> Data {
-        var data = Data()
-        do {
-            for try await byte in bytes {
-                data.append(byte)
-                if data.count >= limit { break }
-            }
-        } catch {
-            // Only the error message needs the body.
-        }
-        return data
     }
 
     /// Anthropic requires tool results to be `user` messages containing
