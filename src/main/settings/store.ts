@@ -10,6 +10,7 @@
 
 import Store from 'electron-store'
 import { DEFAULT_SETTINGS, normalizeSettings } from '@shared/defaults'
+import { openRecoverableStore } from './recoverableStore'
 import type { AppSettings } from '@shared/types'
 
 interface StoreShape {
@@ -24,43 +25,24 @@ let writeFailed = false
 /** Used when the file cannot be written: the newest value wins for this run. */
 let memoryFallback: AppSettings | null = null
 
-function openStore(clearInvalidConfig: boolean): Store<StoreShape> {
-  return new Store<StoreShape>({
-    name: 'deskhand',
-    defaults: { settings: DEFAULT_SETTINGS },
-    ...(clearInvalidConfig ? { clearInvalidConfig: true } : {})
-  })
-}
-
 function db(): Store<StoreShape> | null {
-  if (store) return store
-  try {
-    const first = openStore(false)
-    // `conf` may parse the file in its constructor or lazily on the first read,
-    // depending on the version, and `clearInvalidConfig` is honoured in the
-    // getter either way. Probing here makes the corrupt-file case reachable no
-    // matter which one it is, instead of trusting a constructor that can succeed
-    // on a file every later read then throws on.
-    first.get('settings')
-    store = first
-    return store
-  } catch (error) {
-    console.warn('[store] settings file is unreadable:', error)
-  }
-  try {
-    // `clearInvalidConfig` makes the broken content count as empty instead of
-    // throwing; the store then writes the defaults back over the file. The rest
-    // of the Electron profile (caches, window state) is untouched.
-    const reset = openStore(true)
-    reset.get('settings')
-    store = reset
-    storeRecovered = true
-    return store
-  } catch (error) {
-    console.error('[store] unable to reset the settings file:', error)
-    storeRecovered = true
-    return null
-  }
+  store ??= openRecoverableStore({
+    create: (clearInvalidConfig) =>
+      new Store<StoreShape>({
+        name: 'deskhand',
+        defaults: { settings: DEFAULT_SETTINGS },
+        ...(clearInvalidConfig ? { clearInvalidConfig: true } : {})
+      }),
+    probe: 'settings',
+    onCorrupt: () => {
+      storeRecovered = true
+    },
+    messages: {
+      unreadable: '[store] settings file is unreadable:',
+      resetFailed: '[store] unable to reset the settings file:'
+    }
+  })
+  return store
 }
 
 export function getSettings(): AppSettings {
@@ -80,7 +62,13 @@ export function getSettings(): AppSettings {
   }
 }
 
-/** Persists a patch and returns the normalised result. */
+/**
+ * Persists a patch and returns the normalised result.
+ *
+ * A write that cannot reach the disk is kept in memory for the rest of the run
+ * and reported through `settingsWriteFailed`, so the caller's value survives
+ * even though a restart would lose it.
+ */
 export function patchSettings(patch: Partial<AppSettings>): AppSettings {
   const next = normalizeSettings({ ...getSettings(), ...patch })
   const opened = db()

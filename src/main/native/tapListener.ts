@@ -49,11 +49,58 @@ const MAX_FAILURES = 6
  */
 const HEALTHY_RUN_MS = 60_000
 
+/**
+ * How many restarts the listener has used, and whether the current child has
+ * been up long enough for its death to count as an ordinary one.
+ *
+ * `ready()` starts the clock; `exited()` forgives the earlier failures after a
+ * run that lasted past `HEALTHY_RUN_MS`. Keeping the count out of the child's
+ * scope is the point: a helper that reports `ready` and dies a second later is
+ * still part of the same crash loop.
+ */
+class RestartPolicy {
+  private failures = 0
+  /** When the current child said `ready`, or 0 before it did. */
+  private readySince = 0
+
+  /** A child is being spawned: its healthy-run clock starts over. */
+  starting(): void {
+    this.readySince = 0
+  }
+
+  /** The current child reported `ready`. */
+  ready(): void {
+    this.readySince = Date.now()
+  }
+
+  /** The current child exited; a long enough run erases the earlier failures. */
+  exited(): void {
+    if (this.readySince > 0 && Date.now() - this.readySince >= HEALTHY_RUN_MS) this.failures = 0
+  }
+
+  /** An explicit `start()`: the user asked, so the crash loop is over. */
+  forget(): void {
+    this.failures = 0
+  }
+
+  /**
+   * Counts one failure and returns the delay before the next spawn, or null
+   * when the listener has failed too many times in a row.
+   */
+  nextDelay(): number | null {
+    this.failures += 1
+    if (this.failures > MAX_FAILURES) return null
+    // 1s, 2s, 4s… capped at 30s: long enough not to spin, short enough that a
+    // permission granted mid-session revives the listener without a restart.
+    return Math.min(30_000, 1000 * 2 ** (this.failures - 1))
+  }
+}
+
 export abstract class TapListener<Event extends string> {
   private child: ChildProcess | null = null
   private stopped = true
   private restartTimer: NodeJS.Timeout | null = null
-  private failures = 0
+  private readonly restarts = new RestartPolicy()
   /** Set when the listener could not start; surfaced in the settings window. */
   lastError: string | null = null
 
@@ -98,7 +145,7 @@ export abstract class TapListener<Event extends string> {
   /** Clears the restart bookkeeping and marks the listener as wanted. */
   protected startTap(): void {
     this.stopped = false
-    this.failures = 0
+    this.restarts.forget()
     this.launch()
   }
 
@@ -116,11 +163,10 @@ export abstract class TapListener<Event extends string> {
       return
     }
     this.child = child
+    this.restarts.starting()
 
     const reader = createInterface({ input: child.stdout! })
     let reportedReady = false
-    /** When this child last said `ready`; the clock for the healthy-run rule. */
-    let readySince = 0
 
     reader.on('line', (line) => {
       const text = line.trim()
@@ -138,7 +184,7 @@ export abstract class TapListener<Event extends string> {
       }
       if (payload.event === 'ready') {
         reportedReady = true
-        readySince = Date.now()
+        this.restarts.ready()
         // `lastError` is about the current process; the failure count is not.
         // Clearing it here would also clear the reason a restarted helper is
         // being retried with a longer delay (see `scheduleRestart`).
@@ -169,7 +215,7 @@ export abstract class TapListener<Event extends string> {
       // A helper that stayed up is not part of a crash loop: a death after a
       // long run says nothing about the failures it accumulated before it, and
       // carrying them over would eventually stop restarting a healthy listener.
-      if (Date.now() - readySince >= HEALTHY_RUN_MS) this.failures = 0
+      this.restarts.exited()
       console.warn(`[${this.tag}] listener exited with ${code}; restarting`)
       this.scheduleRestart()
     })
@@ -186,16 +232,13 @@ export abstract class TapListener<Event extends string> {
 
   private scheduleRestart(): void {
     if (this.stopped || this.restartTimer) return
-    this.failures += 1
-    if (this.failures > MAX_FAILURES) {
+    const delayMs = this.restarts.nextDelay()
+    if (delayMs === null) {
       console.warn(
         `[${this.tag}] listener died ${MAX_FAILURES} times without a healthy run; not restarting until it is started again`
       )
       return
     }
-    // 1s, 2s, 4s… capped at 30s: long enough not to spin, short enough that a
-    // permission granted mid-session revives the listener without a restart.
-    const delayMs = Math.min(30_000, 1000 * 2 ** (this.failures - 1))
     this.restartTimer = setTimeout(() => {
       this.restartTimer = null
       if (!this.stopped) this.launch()
