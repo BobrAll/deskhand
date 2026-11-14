@@ -4,6 +4,7 @@
  */
 
 import { useCallback, useEffect, useState } from 'react'
+import type { ReactNode } from 'react'
 import type { PermissionState, ProviderId } from '@shared/types'
 import { PROVIDERS, normalizeBaseUrl, providerInfo } from '@shared/defaults'
 import type { SettingsBundle } from '@shared/api'
@@ -16,6 +17,40 @@ const STEPS = ['Разрешения', 'Подключение', 'Готово']
 
 /** How often the permission state is re-read while this window is open. */
 const PERMISSION_POLL_MS = 1500
+
+/** One macOS permission: what it is for, and the one way to ask for it. */
+function PermissionItem({
+  title,
+  hint,
+  granted,
+  actionLabel,
+  primary = false,
+  onRequest
+}: {
+  title: string
+  hint: ReactNode
+  granted: boolean
+  actionLabel: string
+  /** The grant without which the assistant cannot work at all. */
+  primary?: boolean
+  onRequest(): void
+}) {
+  return (
+    <div className="perm">
+      <div>
+        <div className="perm-title">
+          {title} {granted ? <span className="ok">✓</span> : null}
+        </div>
+        <div className="hint">{hint}</div>
+      </div>
+      {!granted && (
+        <button className={primary ? 'primary' : undefined} onClick={onRequest}>
+          {actionLabel}
+        </button>
+      )}
+    </div>
+  )
+}
 
 export function App() {
   const [step, setStep] = useState<Step>(0)
@@ -129,46 +164,30 @@ export function App() {
           </p>
 
           <div className="permission-list">
-            <div className="perm">
-              <div>
-                <div className="perm-title">
-                  Универсальный доступ {permissions.accessibility ? <span className="ok">✓</span> : null}
-                </div>
-                <div className="hint">Выделение текста и автоматическая вставка (⌘C / ⌘V).</div>
-              </div>
-              {!permissions.accessibility && (
-                <button className="primary" onClick={() => void requestPermissions()}>
-                  Открыть запрос
-                </button>
-              )}
-            </div>
+            <PermissionItem
+              title="Универсальный доступ"
+              hint="Выделение текста и автоматическая вставка (⌘C / ⌘V)."
+              granted={permissions.accessibility}
+              actionLabel="Открыть запрос"
+              primary
+              onRequest={() => void requestPermissions()}
+            />
 
-            <div className="perm">
-              <div>
-                <div className="perm-title">
-                  Запись экрана {permissions.screenRecording ? <span className="ok">✓</span> : null}
-                </div>
-                <div className="hint">Скриншот активного окна, когда текст не выделен.</div>
-              </div>
-              {!permissions.screenRecording && (
-                <button onClick={() => void requestPermissions()}>Запросить доступ</button>
-              )}
-            </div>
+            <PermissionItem
+              title="Запись экрана"
+              hint="Скриншот активного окна, когда текст не выделен."
+              granted={permissions.screenRecording}
+              actionLabel="Запросить доступ"
+              onRequest={() => void requestPermissions()}
+            />
 
-            <div className="perm">
-              <div>
-                <div className="perm-title">
-                  Микрофон {permissions.microphone ? <span className="ok">✓</span> : null}
-                </div>
-                <div className="hint">
-                  Голосовой ввод: удерживай хоткей или три пальца на трекпаде и говори.
-                  Необязательно — без него всё работает с клавиатуры.
-                </div>
-              </div>
-              {!permissions.microphone && (
-                <button onClick={() => void requestMicrophone()}>Разрешить</button>
-              )}
-            </div>
+            <PermissionItem
+              title="Микрофон"
+              hint="Голосовой ввод: удерживай хоткей или три пальца на трекпаде и говори. Необязательно — без него всё работает с клавиатуры."
+              granted={permissions.microphone}
+              actionLabel="Разрешить"
+              onRequest={() => void requestMicrophone()}
+            />
           </div>
 
           <div className="hint">

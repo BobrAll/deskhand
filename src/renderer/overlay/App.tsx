@@ -27,21 +27,10 @@ import type {
   ResponseMode,
   StreamEvent
 } from '@shared/types'
-import { CARD_NARROW_WIDTH, CARD_WIDTH } from '@shared/metrics'
+import { CARD_WIDTH } from '@shared/metrics'
 import { looksLikeAction } from '@shared/intent'
-import {
-  ANSWER_CHROME,
-  ACTIONS_CHROME,
-  ACTIONS_FONT,
-  AGENT_FONT,
-  AGENT_ROW_CHROME,
-  AGENT_STATUS_INSET,
-  CARET_SLACK,
-  CHROME_WIDTH,
-  FIELD_FONT,
-  STOP_CHROME,
-  clamp
-} from './cardMetrics'
+import { FIELD_FONT } from './cardMetrics'
+import { layoutCard } from './cardLayout'
 import { REFINE_HINT, REFINE_LABEL } from './copy'
 import { useSpeech } from './useSpeech'
 import { useWaiting } from './useWaiting'
@@ -52,7 +41,7 @@ import { keyPolicy, type KeyAction } from './keyPolicy'
 import { routeStream } from './streamRouting'
 import { Markdown } from './markdownText'
 import { LiveThumb } from './LiveThumb'
-import { draggedWidth, expandedWidth, resolveWidth } from './cardWidth'
+import { draggedWidth, expandedWidth } from './cardWidth'
 
 interface Failure {
   message: string
@@ -75,32 +64,6 @@ const AGENT_PROGRESS_MS = 45_000
 
 function newRequestId(): string {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
-}
-
-/** One measuring context for the whole window: creating one is not free. */
-let ruler: CanvasRenderingContext2D | null = null
-
-/**
- * The width of the widest line of `text`, in the font the field renders in.
- *
- * Measured, never guessed from the character count: «ш» and «i» are not the same
- * letter, and a card that widens by a different step than the typing does reads
- * as a glitch rather than as the card making room. A canvas 2D context is the
- * cheapest shaper that agrees with the textarea — no extra element whose layout
- * could lag the keystroke being measured.
- */
-function measureLine(text: string, font: string): number {
-  if (!text) return 0
-  if (!ruler) ruler = document.createElement('canvas').getContext('2d')
-  if (!ruler) return 0
-  if (ruler.font !== font) ruler.font = font
-  let widest = 0
-  // Only an explicit newline is another row; a soft wrap is a consequence of the
-  // width this measurement is about to decide and must not feed back into it.
-  for (const line of text.split('\n')) {
-    widest = Math.max(widest, ruler.measureText(line).width)
-  }
-  return widest
 }
 
 export function App() {
@@ -348,6 +311,39 @@ export function App() {
   )
 
   /**
+   * What the voice says when a run ends.
+   *
+   * Two shapes, and they are not the same sentence. An answer with text in it is
+   * read (and a failed run is read as a failure). A run that ended without a
+   * textual answer says how it ended from the recorded bank instead — a stop the
+   * user asked for is not news, they pressed Escape and are looking at the card,
+   * so that one is silent.
+   */
+  const finishTurnSpeech = useCallback(
+    (requestId: string, text: string, result: AgentEvent | null) => {
+      const speech = speechRef.current
+      if (!result) {
+        void speech.finish(requestId, text, false)
+        return
+      }
+      if (text.trim()) {
+        void speech.finish(requestId, text, result.phase === 'error' || result.completed === false)
+        return
+      }
+      void speech.finish(requestId, '')
+      if (result.phase === 'aborted' && stoppedByUserRef.current) return
+      // The line comes from the bank rather than from a literal, so it rotates and
+      // so a run that ended without an answer is not read as «Готово» by a
+      // different voice.
+      const cue = result.phase === 'aborted' ? 'stopped'
+        : result.phase === 'error' ? 'failed'
+        : result.completed ? 'done' : 'incomplete'
+      speech.say(cue, turnKindRef.current)
+    },
+    []
+  )
+
+  /**
    * Reacts to stream events. `done` is the authoritative final text; a rewrite in
    * flight keeps the previous answer visible until the first chunk arrives.
    */
@@ -386,36 +382,7 @@ export function App() {
     replaceOnChunkRef.current = false
     setBusy(false)
     if (action.kind === 'done') {
-      const result = agentRef.current
-      if (result) {
-        // An agent turn: the answer is read when there is one, and the recorded
-        // line says how the run ended when there is not. The line comes from the
-        // bank rather than from a literal, so it rotates and so a run that ended
-        // without an answer is not read as «Готово» by a different voice.
-        if (action.text.trim()) {
-          if (speechCurrent) {
-            void speechRef.current.finish(
-              event.requestId,
-              action.text,
-              result.phase === 'error' || result.completed === false
-            )
-          }
-        } else {
-          if (speechCurrent) {
-            void speechRef.current.finish(event.requestId, '')
-            // A stop the user asked for is not news: they pressed Escape or the
-            // stop button and are looking at the card.
-            if (!(result.phase === 'aborted' && stoppedByUserRef.current)) {
-              const cue = result.phase === 'aborted' ? 'stopped'
-                : result.phase === 'error' ? 'failed'
-                : result.completed ? 'done' : 'incomplete'
-              speechRef.current.say(cue, turnKindRef.current)
-            }
-          }
-        }
-      } else if (speechCurrent) {
-        void speechRef.current.finish(event.requestId, action.text, false)
-      }
+      if (speechCurrent) finishTurnSpeech(event.requestId, action.text, agentRef.current)
       setAnswer(action.text)
     } else {
       if (speechCurrent) {
@@ -431,7 +398,7 @@ export function App() {
       }
       setFailure({ message: action.message, retryable: action.retryable })
     }
-  }, [])
+  }, [finishTurnSpeech])
 
   useEffect(() => {
     // No session yet means the card is the empty one drawn while the context is
@@ -550,9 +517,6 @@ export function App() {
    */
   const hasAnswer = answer.trim().length > 0
 
-  /** How wide the text in the field is, measured in the field's own font. */
-  const textWidth = prompt ? measureLine(prompt, fontRef.current) : 0
-
   // Drawers and confirmations need room for controls. Progress and answers
   // size to their content.
   const waiting = useWaiting(requestIdRef.current, busy && !failure && !listening)
@@ -582,81 +546,32 @@ export function App() {
     agent?.phase === 'asking' || showWaiting
 
   /**
-   * Everything on the line that is not the question, in points.
+   * The width the card takes, and whether the question wraps in it.
    *
-   * The card's padding and edge, the gap and the chevron —
-   * plus the stop button, which is on screen exactly while a request is running.
+   * The composition lives in `cardLayout.ts`, where it can be checked without a
+   * card. The one input that is not state is the field's font: it has to be the
+   * live element's own computed style, because macOS may resolve the family
+   * differently from what the stylesheet names.
    */
-  const chromeWidth = CHROME_WIDTH + (busy ? STOP_CHROME : 0)
-
-  /**
-   * The line the field wants, in whole points.
-   *
-   * Rounded once and used for both decisions — how wide the card opens and
-   * whether the question wraps — because two roundings of the same measurement
-   * disagree at the boundary: a line that exactly fills the card would wrap
-   * while the width said it fits.
-   */
-  const wantedLineWidth = Math.ceil(textWidth) + chromeWidth + CARET_SLACK
-
-  /**
-   * The width the card needs for the question being written.
-   *
-   * Nothing is added for empty space: the field gets as many points as the
-   * sentence takes, so every keystroke widens the card by exactly one glyph and
-   * the card only starts wrapping once it has reached `CARD_WIDTH`. That is the
-   * difference between a card that grows under your hands and one that snaps
-   * open to a panel the moment you start typing — the latter is loud in precisely
-   * the moment a person is still deciding whether they want to say anything.
-   */
-  const composedWidth = clamp(wantedLineWidth, CARD_NARROW_WIDTH, CARD_WIDTH)
-
-  // Recompute from current content so a shorter answer shrinks the card again.
-  const answerWidth = hasAnswer
-    ? Math.ceil(measureLine(answer, fontRef.current)) + ANSWER_CHROME + CARET_SLACK
-    : 0
-  const actionsWidth = hasAnswer
-    ? Math.ceil(measureLine(
-        // The widest the strip can get, measured once so the card does not grow
-        // when the answer finishes and the remaining buttons appear. «Вернуть» is
-        // the longer of the two width labels, so it is the one measured.
-        `${speech.speaking ? 'Остановить озвучку' : 'Прослушать'} Вернуть Скопировать`,
-        ACTIONS_FONT
-      )) + ACTIONS_CHROME
-    : 0
-  const agentWidth = agentStatus
-    ? Math.ceil(measureLine(agentStatus, AGENT_FONT)) +
-      AGENT_ROW_CHROME + (agentRunning ? 0 : AGENT_STATUS_INSET) + CARET_SLACK
-    : 0
-  const inputWidth = agentRunning ? CARD_NARROW_WIDTH : composedWidth
-  /**
-   * What the content would like, before any cap.
-   *
-   * Kept unclamped because «Шире» has to know how much room the answer actually
-   * wants: the capped number is always `CARD_WIDTH` once the answer is long, and
-   * a button that opens the card to the same width for every long reply is the
-   * bug it was reported as.
-   */
-  const naturalWidth = Math.max(inputWidth, answerWidth, actionsWidth, agentWidth)
-  const contentWidth = clamp(naturalWidth, CARD_NARROW_WIDTH, CARD_WIDTH)
-  // While a drag runs the width lives in a ref, because updating state a hundred
-  // times a second re-renders the answer for nothing. But a render can still
-  // happen mid-drag — the next chunk of a streaming answer is exactly that — and
-  // React would then write its own width over the dragged one. Reading the live
-  // value here makes such a render agree with the edge instead of fighting it.
-  const cardWidth = resolveWidth({
-    showingVoiceBars: listening,
+  const { width: cardWidth, wrapped, naturalWidth } = layoutCard({
+    prompt,
+    font: fontRef.current,
+    answer,
+    hasAnswer,
+    busy,
+    speaking: speech.speaking,
+    agentStatus,
+    agentRunning,
+    listening,
     wantsWide,
-    contentWidth,
+    // While a drag runs the width lives in a ref, because updating state a hundred
+    // times a second re-renders the answer for nothing. But a render can still
+    // happen mid-drag — the next chunk of a streaming answer is exactly that — and
+    // React would then write its own width over the dragged one. Reading the live
+    // value here makes such a render agree with the edge instead of fighting it.
     userWidth: dragRef.current?.width ?? userWidth,
     availWidth: window.screen.availWidth
   })
-
-  // Keep a single line throughout the sideways motion. Wrapping before there is
-  // room would briefly add rows that disappear as the window catches up. The
-  // question wraps at the card's own width, so a card the user widened holds a
-  // longer line and one they narrowed wraps sooner.
-  const wrapped = wantedLineWidth > cardWidth
 
   // Measure layout, not the entrance transform. getBoundingClientRect includes
   // the appear animation's scale, which used to feed false heights back to macOS.

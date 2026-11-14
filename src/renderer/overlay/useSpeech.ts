@@ -10,6 +10,7 @@ import {
   TTS_MAX_CHARS
 } from '@shared/tts'
 import { speechLine, speaksCue } from './speechCues'
+import { SPEECH_CHUNK_CHARS, sentenceBoundary, speechChunks } from './speechChunks'
 import {
   ANSWER_FALLBACK,
   SPEECH_COOLDOWN_MS,
@@ -37,63 +38,8 @@ import { phraseAudio } from './speechAudio'
  * finish.
  */
 
-/** The system voice is fed the answer in chunks of at most this many characters. */
-const SPEECH_CHUNK_CHARS = 220
-
-function* speechChunks(text: string, limit: number): Generator<string> {
-  let remaining = text
-  while (remaining.length > limit) {
-    // A boundary at a sentence end sounds like a pause; one at a space in the
-    // middle of a sentence resets the intonation of a half-spoken thought.
-    const window = remaining.slice(0, limit + 1)
-    const sentence = Math.max(
-      window.lastIndexOf('. '),
-      window.lastIndexOf('! '),
-      window.lastIndexOf('? '),
-      window.lastIndexOf('… ')
-    )
-    let end = sentence > 0 ? sentence + 1 : window.lastIndexOf(' ')
-    if (end < 1) {
-      end = limit
-      const next = remaining.charCodeAt(end)
-      if (next >= 0xdc00 && next <= 0xdfff) end--
-    }
-    yield remaining.slice(0, end)
-    remaining = remaining.slice(end).trimStart()
-  }
-  if (remaining) yield remaining
-}
-
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
-}
-
-/** `1.` / `2)` at the start of a block is a list marker, not a sentence end. */
-const LIST_MARKER_AT_END = /(?:^|\s)\d{1,9}[.)]$/
-
-/**
- * The last punctuation mark that really ends a sentence.
- *
- * `speechText` keeps an ordered-list number as text, so `1. Первый шаг` ends
- * with a full stop that is not a pause, and `2.5` is a decimal rather than two
- * sentences. A candidate at either of those places is skipped instead of
- * speaking a bare number or cutting a number in half.
- */
-function sentenceBoundary(text: string): number {
-  for (let at = text.length - 1; at >= 0; at -= 1) {
-    const char = text[at]
-    if (char !== '.' && char !== '!' && char !== '?') continue
-    if (char === '.' && isNotSentenceEnd(text, at)) continue
-    return at
-  }
-  return -1
-}
-
-function isNotSentenceEnd(text: string, at: number): boolean {
-  // Between digits: `2.5` is one number.
-  if (/\d/.test(text[at - 1] ?? '') && /\d/.test(text[at + 1] ?? '')) return true
-  // The end of a list marker: `1.` counts as number, not as a sentence.
-  return LIST_MARKER_AT_END.test(text.slice(0, at + 1))
 }
 
 /** A synthesised line, or null when the live engine is unavailable. */

@@ -12,7 +12,16 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { AppSettings, KeyStatus, PermissionState, ProviderId } from '@shared/types'
+import type {
+  AgentAvailability,
+  AgentSettings,
+  AppSettings,
+  KeyStatus,
+  PermissionState,
+  ProviderId,
+  TtsSettings,
+  VoiceSettings
+} from '@shared/types'
 import { PROVIDERS } from '@shared/defaults'
 import type { AppPickResult, RunningAppInfo, SettingsBundle } from '@shared/api'
 import { WindowBrand } from '../styles/WindowBrand'
@@ -205,6 +214,43 @@ export function App() {
 
   const patch = useCallback((changes: Partial<AppSettings>) => {
     setDraft((prev) => (prev ? { ...prev, ...changes } : prev))
+  }, [])
+
+  /** A change inside the voice block, merged into the draft the same way. */
+  const patchVoice = useCallback((changes: Partial<VoiceSettings>) => {
+    setDraft((prev) => (prev ? { ...prev, voice: { ...prev.voice, ...changes } } : prev))
+  }, [])
+
+  /** A change inside the synthesis block. */
+  const patchTts = useCallback((changes: Partial<TtsSettings>) => {
+    setDraft((prev) => (prev ? { ...prev, tts: { ...prev.tts, ...changes } } : prev))
+  }, [])
+
+  /** A change inside the agent block. */
+  const patchAgent = useCallback((changes: Partial<AgentSettings>) => {
+    setDraft((prev) => (prev ? { ...prev, agent: { ...prev.agent, ...changes } } : prev))
+  }, [])
+
+  /**
+   * The agent's master switch, written through its own channel.
+   *
+   * Every other value on that tab can wait for the autosave, but this one decides
+   * whether the assistant can act at all, and it has to be on disk before the
+   * answer that arrives a second later. The debounced autosave would also get
+   * there, one debounce too late.
+   *
+   * The bundle is the "saved" side of the auto-apply comparison, so it is synced
+   * too: the footer must not announce a pending write for a value that is already
+   * on disk.
+   */
+  const setAgentEnabled = useCallback(async (enabled: boolean): Promise<AgentAvailability> => {
+    const availability = await window.deskhand.agent.setEnabled(enabled)
+    setBundle((prev) =>
+      prev
+        ? { ...prev, settings: { ...prev.settings, agent: { ...prev.settings.agent, enabled } } }
+        : prev
+    )
+    return availability
   }, [])
 
   const invalidBaseUrls = useMemo(
@@ -534,35 +580,16 @@ export function App() {
               tts={draft.tts}
               savedVoice={bundle.settings.voice}
               savedTts={bundle.settings.tts}
-              onVoiceChange={(changes) => setDraft((current) => current
-                ? { ...current, voice: { ...current.voice, ...changes } }
-                : current)}
-              onTtsChange={(changes) => setDraft((current) => current
-                ? { ...current, tts: { ...current.tts, ...changes } }
-                : current)}
+              onVoiceChange={patchVoice}
+              onTtsChange={patchTts}
             />
           )}
 
           {tab === 'agent' && (
             <AgentTab
               agent={draft.agent}
-              onChange={(changes) => patch({ agent: { ...draft.agent, ...changes } })}
-              onEnabledChange={async (enabled) => {
-                // Written through the dedicated channel, not the draft: this switch
-                // decides whether the assistant can act at all, and it has to be on
-                // disk before the answer that arrives a second later. The debounced
-                // autosave would also get there, one debounce too late.
-                const availability = await window.deskhand.agent.setEnabled(enabled)
-                // The bundle is the "saved" side of the auto-apply comparison;
-                // syncing it keeps the footer from announcing a pending write for a
-                // value that is already on disk.
-                setBundle((prev) =>
-                  prev
-                    ? { ...prev, settings: { ...prev.settings, agent: { ...prev.settings.agent, enabled } } }
-                    : prev
-                )
-                return availability
-              }}
+              onChange={patchAgent}
+              onEnabledChange={setAgentEnabled}
             />
           )}
 
