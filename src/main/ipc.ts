@@ -223,7 +223,6 @@ function registerOverlayHandlers(overlay: OverlayController): void {
       return { ok: false, message: 'Не удалось скопировать ответ.' }
     }
   })
-  ipcMain.handle(CH.overlay.paste, (_event, text: string) => overlay.paste(text))
 }
 
 // ---- the settings window -------------------------------------------------

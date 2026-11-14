@@ -82,6 +82,10 @@ function holdCloseUntilWritesLand(win: BrowserWindow): void {
     if (closing || !settingsHeld) return
     event.preventDefault()
     closing = true
+    // A window that is waiting for a write must not sit in front of the user and
+    // flash back when another window activates the app. The renderer is still
+    // alive while hidden; the write and the real close continue underneath.
+    win.hide()
     // Polled rather than a fixed wait: a write usually lands in a few
     // milliseconds, and making the user watch a 1.2 s pause for it would be its
     // own small bug. The ceiling only exists so a wedged renderer cannot make the

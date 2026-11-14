@@ -2,7 +2,7 @@
  * The overlay session: everything between "hotkey pressed" and "overlay hidden".
  *
  * Flow (ТЗ §4): remember the frontmost app -> collect context -> show the
- * overlay next to the cursor -> stream the answer -> paste / copy / retry / close.
+ * overlay next to the cursor -> stream the answer -> copy / retry / close.
  */
 
 import { createHash, randomUUID } from 'node:crypto'
@@ -20,7 +20,6 @@ import type {
   ContextFlags,
   ContextSnapshot,
   OverlayState,
-  PasteResult,
   ScreenshotInfo,
   ScreenRect,
   SendRequest,
@@ -39,7 +38,7 @@ import { getProvider, resolveChatModel } from '../llm'
 import { ProviderError, type ChatMessage } from '../llm/provider'
 import { searchWeb } from '../llm/webSearch'
 import { CARD_FOLDED_HEIGHT } from '../card'
-import { copyText, pasteAnswer } from '../paste'
+import { copyText } from '../paste'
 import { hideAnnotations, showAnnotations } from '../drawing'
 import { buildTurnRequest, type Exchange, type TurnRequest } from './request'
 import { captureTargetFor } from './captureTarget'
@@ -690,7 +689,7 @@ export function createOverlayController(host: OverlayHost) {
         stopLive(target)
         return
       }
-      // The card is hidden (closed, or hidden for a paste): nothing to preview and
+      // The card is hidden: nothing to preview and
       // nothing that could be asked about, so idle instead of capturing the screen
       // every couple of seconds in the background.
       const win = host.window()
@@ -1625,27 +1624,6 @@ export function createOverlayController(host: OverlayHost) {
     return { ok: true }
   }
 
-  async function paste(text: string): Promise<PasteResult> {
-    const target = session?.target ?? null
-    const startedIn = generation
-    // The card stays on screen until the paste has actually landed. Hiding it
-    // first meant a failure was reported into an invisible window: the answer
-    // was in the clipboard, but the person saw only that nothing happened.
-    const result = await pasteAnswer(text, target)
-    // The card can be closed while the target app is taking its time. Bringing
-    // it back with a failure notice would undo the user's dismissal.
-    if (startedIn !== generation) return result
-    if (!result.ok) {
-      host.show(INITIAL_HEIGHT)
-      return result
-    }
-    // The drawing pointed at something the user has now acted on: leaving it up
-    // would cover the very text we are pasting.
-    discardAnnotations()
-    host.hide()
-    return result
-  }
-
   /**
    * Puts recognised speech into the card.
    *
@@ -1679,7 +1657,6 @@ export function createOverlayController(host: OverlayHost) {
     send,
     cancel,
     copy,
-    paste,
     deliver,
     emit: sendToWindow,
     agentAvailability: () => agent.availability(),

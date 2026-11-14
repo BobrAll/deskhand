@@ -5,6 +5,7 @@ interface WindowDouble {
   destroyed: boolean
   show: ReturnType<typeof vi.fn>
   focus: ReturnType<typeof vi.fn>
+  hide: ReturnType<typeof vi.fn>
   close(): void
   emit(event: string): boolean
 }
@@ -16,6 +17,7 @@ vi.mock('electron', async () => {
     destroyed = false
     show = vi.fn()
     focus = vi.fn()
+    hide = vi.fn()
     webContents = { setWindowOpenHandler: vi.fn() }
     constructor(readonly options: Record<string, unknown>) {
       super()
@@ -74,6 +76,7 @@ describe('settings window lifecycle', () => {
     api.openSettingsWindow()
     api.setSettingsHeld(true)
     api.closeSettingsWindow()
+    expect(state.windows[0].hide).toHaveBeenCalledOnce()
     vi.advanceTimersByTime(80)
     expect(state.windows[0].destroyed).toBe(false)
     api.setSettingsHeld(false)

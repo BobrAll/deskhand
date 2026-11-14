@@ -486,10 +486,12 @@ export const overlayHost: OverlayHost = {
 export function showActiveWindow(): void {
   const candidates = [overlayWindow, ...openAppWindows()]
   for (const win of candidates) {
-    if (win && !win.isDestroyed() && win.isVisible()) {
-      win.show()
-      win.focus()
-      return
-    }
+    if (!win || win.isDestroyed() || !win.isVisible()) continue
+    // A minimized settings window is not a window the user lost; restoring it
+    // whenever the card activates the app reads as a flash of the wrong window.
+    if (win !== overlayWindow && win.isMinimized()) continue
+    win.show()
+    win.focus()
+    return
   }
 }

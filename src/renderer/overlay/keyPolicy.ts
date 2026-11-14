@@ -28,7 +28,6 @@ export type KeyAction =
   | 'approve'
   | 'approveAlways'
   | 'deny'
-  | 'paste'
   | 'copy'
   | 'send'
   /** The key is not ours; leave the event alone. */
@@ -96,9 +95,6 @@ export function keyPolicy(input: KeyInput): KeyAction {
     if (input.tagName === 'BUTTON' || input.tagName === 'TEXTAREA') return null
     return 'approve'
   }
-
-  // ⌘⏎ pastes the answer — the same thing the «Вставить» button does.
-  if (meta && input.key === 'Enter') return 'paste'
 
   // ⌘C copies the answer, but only when there is nothing selected: a real
   // selection is the user copying text out of the card themselves, and taking

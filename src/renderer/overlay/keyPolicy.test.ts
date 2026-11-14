@@ -86,16 +86,6 @@ describe('keyPolicy: the question in the card', () => {
   })
 })
 
-describe('keyPolicy: ⌘⏎', () => {
-  it('pastes the answer', () => {
-    expect(keyPolicy(key({ key: 'Enter', meta: true }))).toBe('paste')
-  })
-
-  it('does not paste without the modifier', () => {
-    expect(keyPolicy(key({ key: 'Enter', meta: false }))).toBe('send')
-  })
-})
-
 describe('keyPolicy: ⌘C', () => {
   it('copies the answer when nothing is selected', () => {
     expect(keyPolicy(key({ key: 'c', meta: true, hasSelection: false }))).toBe('copy')
@@ -136,9 +126,6 @@ describe('keyPolicy: Enter', () => {
     expect(keyPolicy(key({ key: 'Enter', shift: true }))).toBeNull()
   })
 
-  it('lets Ctrl+Enter reach the paste branch instead of sending', () => {
-    expect(keyPolicy(key({ key: 'Enter', meta: true, shift: false }))).toBe('paste')
-  })
 })
 
 describe('keyPolicy: everything else', () => {

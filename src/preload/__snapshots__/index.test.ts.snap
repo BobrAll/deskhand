@@ -23,7 +23,6 @@ exports[`preload: the exposed bridge > matches the snapshot of the method set 1`
   "overlay.onPreparing",
   "overlay.onState",
   "overlay.onStream",
-  "overlay.paste",
   "overlay.resize",
   "overlay.send",
   "overlay.setFlags",

@@ -15,7 +15,6 @@ import type {
   FieldHighlightEvent,
   KeyStatus,
   OverlayState,
-  PasteResult,
   PermissionState,
   SystemPermissionRequest,
   DrawingPayload,
@@ -92,7 +91,6 @@ export interface DeskhandApi {
     send(request: SendRequest): void
     cancel(requestId: string): void
     copy(text: string): Promise<ActionResult>
-    paste(text: string): Promise<PasteResult>
     /** Removes the drawings without closing the card. */
     clearDrawing(): void
     /**

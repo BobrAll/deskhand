@@ -144,7 +144,6 @@ function fakeDeps(): IpcDeps {
       resize: vi.fn(),
       close: vi.fn(),
       copy: vi.fn(async () => undefined),
-      paste: vi.fn(async () => ({ ok: true, method: 'paste' })),
       agentAvailability: vi.fn(() => ({ enabled: false, ready: false, reason: null })),
       setAgentEnabled: vi.fn(() => ({ enabled: true, ready: false, reason: null })),
       stopAgent: vi.fn(),
@@ -239,7 +238,6 @@ describe('registerIpc: every channel has exactly one handler', () => {
     for (const channel of [
       CH.overlay.getState,
       CH.overlay.copy,
-      CH.overlay.paste,
       CH.settings.load,
       CH.settings.save,
       CH.permissions.status,

@@ -57,7 +57,6 @@ const api: DeskhandApi = {
     send: (request: SendRequest) => ipcRenderer.send(CH.overlay.send, request),
     cancel: (requestId: string) => ipcRenderer.send(CH.overlay.cancel, requestId),
     copy: (text: string) => ipcRenderer.invoke(CH.overlay.copy, text),
-    paste: (text: string) => ipcRenderer.invoke(CH.overlay.paste, text),
     clearDrawing: () => ipcRenderer.send(CH.overlay.clearDrawing),
     setTyping: (typing: boolean) => ipcRenderer.send(CH.overlay.typing, typing),
     close: () => ipcRenderer.send(CH.overlay.close),

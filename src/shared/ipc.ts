@@ -29,7 +29,6 @@ export const CH = {
     setFlags: 'overlay:set-flags',
     resize: 'overlay:resize',
     copy: 'overlay:copy',
-    paste: 'overlay:paste',
     /** Removes the drawings from the screen without closing the card. */
     clearDrawing: 'overlay:clear-drawing',
     /**

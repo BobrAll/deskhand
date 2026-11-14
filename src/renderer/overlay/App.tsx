@@ -4,11 +4,11 @@
  * A card, not a window: one line for the question, the answer printed directly
  * underneath it. It appears next to the cursor (the main process owns the
  * placement) as *only* that line plus one small chevron; context tags and the answer's secondary commands stay folded behind the chevron, so
- * the common case — ask, read, paste — is a small rectangle that never covers the
+ * the common case — ask, read, copy — is a small rectangle that never covers the
  * screen.
  *
- * Keyboard: Enter sends, Cmd/Ctrl+Enter pastes, Esc closes, Cmd/Ctrl+C copies the
- * answer when nothing is selected.
+ * Keyboard: Enter sends, Esc closes, Cmd/Ctrl+C copies the answer when nothing
+ * is selected.
  *
  * Width is the one thing the card lets a person overrule. It sizes itself to its
  * content up to `CARD_WIDTH`, which is right for a sentence and wrong for a table;
@@ -69,9 +69,6 @@ const AGENT_PROGRESS_MS = 45_000
 /** The one notice that has a retry attached to it. */
 const AGENT_ENABLED_NOTICE = 'Управление включено. Повтори просьбу — теперь я её выполню.'
 
-/** Once per install: the paste shortcut is taught, not repeated. */
-const PASTE_HINT_KEY = 'deskhand.pasteHintSeen'
-
 function newRequestId(): string {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
 }
@@ -91,16 +88,8 @@ export function App() {
   const copiedTimerRef = useRef<number | null>(null)
   /** The answer has new text below the reader's position. */
   const [newText, setNewText] = useState(false)
-  /** The reader is still at the bottom of the answer. */
-  const followAnswerRef = useRef(true)
-  /** `new` until it has been shown once; `visible` while it is on screen. */
-  const [pasteHint, setPasteHint] = useState<'new' | 'visible' | 'done'>(() => {
-    try {
-      return localStorage.getItem(PASTE_HINT_KEY) === '1' ? 'done' : 'new'
-    } catch {
-      return 'done'
-    }
-  })
+  /** The reader asked to follow the bottom; a new answer starts at the top. */
+  const followAnswerRef = useRef(false)
   /** How many shapes are painted on the screen right now. */
   const [drawn, setDrawn] = useState(0)
   /**
@@ -131,7 +120,7 @@ export function App() {
   /**
    * The card opens as a single small field. Everything else — context tags,
    * status rows and the answer's action strip — lives behind the
-   * small chevron, so the common "ask and paste" case stays one line tall.
+   * small chevron, so the common "ask and read" case stays one line tall.
    */
   const [expanded, setExpanded] = useState(false)
   /**
@@ -291,8 +280,7 @@ export function App() {
     setNotice(null)
     setCopied(false)
     setNewText(false)
-    followAnswerRef.current = true
-    setPasteHint((hint) => (hint === 'visible' ? 'done' : hint))
+    followAnswerRef.current = false
     if (copiedTimerRef.current !== null) {
       window.clearTimeout(copiedTimerRef.current)
       copiedTimerRef.current = null
@@ -711,7 +699,9 @@ export function App() {
       node.scrollTop = node.scrollHeight
       setNewText(false)
     } else if (busy) {
-      setNewText(true)
+      // The answer starts at its beginning; the pill appears only when there is
+      // actually something below the fold.
+      setNewText(node.scrollHeight > node.clientHeight + 1)
     }
   }, [answer, busy])
 
@@ -720,25 +710,6 @@ export function App() {
   useEffect(() => {
     if (failure || state?.setupNotice) setExpanded(true)
   }, [failure, state?.setupNotice])
-
-  /**
-   * Teach the paste shortcut once, under the first answer.
-   *
-   * It is a memory aid, not a button: the action itself stays on ⌘⏎, because a
-   * paste button in the corner has fired by accident before. Showing it once is
-   * enough — a line that follows every answer becomes furniture.
-   */
-  useEffect(() => {
-    if (pasteHint !== 'new') return
-    if (!hasAnswer || busy || agent || !last || last.refine) return
-    if (!state?.context.activeApp) return
-    try {
-      localStorage.setItem(PASTE_HINT_KEY, '1')
-    } catch {
-      /* a renderer without storage simply shows it every time */
-    }
-    setPasteHint('visible')
-  }, [pasteHint, hasAnswer, busy, agent, last, state?.context.activeApp])
 
   const send = useCallback((text: string, sendMode?: ResponseMode, spoken = false) => {
     const value = text.trim()
@@ -764,8 +735,7 @@ export function App() {
     setAnswer('')
     setFailure(null)
     setNotice(null)
-    setPasteHint((hint) => (hint === 'visible' ? 'done' : hint))
-    followAnswerRef.current = true
+    followAnswerRef.current = false
     setNewText(false)
     // A new question is a new card: a width chosen while reading the previous
     // answer must not decide how wide this one opens.
@@ -826,8 +796,7 @@ export function App() {
       setBusy(true)
       setFailure(null)
       setNotice(null)
-      setPasteHint((hint) => (hint === 'visible' ? 'done' : hint))
-      followAnswerRef.current = true
+      followAnswerRef.current = false
       setNewText(false)
       setLast({
         prompt: last?.prompt ?? '',
@@ -954,21 +923,6 @@ export function App() {
       }
     })
     return off
-  }, [])
-
-  const dismissPasteHint = useCallback(() => setPasteHint('done'), [])
-
-  const paste = useCallback(async () => {
-    const text = answerTextRef.current
-    if (!text.trim()) return
-    setPasteHint('done')
-    const sessionId = stateRef.current?.sessionId
-    const result = await window.deskhand.overlay.paste(text)
-    // The card can be closed (or replaced) while the paste is still waiting for
-    // the target app. A notice about the previous card must not land in the next
-    // one — or in a card the user already dismissed.
-    if (stateRef.current?.sessionId !== sessionId) return
-    if (!result.ok && result.message) setNotice(result.message)
   }, [])
 
   /**
@@ -1146,17 +1100,13 @@ export function App() {
         if (request) void answerAgent(request, action !== 'deny', action === 'approveAlways')
         return
       }
-      if (action === 'paste') {
-        void paste()
-        return
-      }
       if (action === 'copy') {
         void copy()
         return
       }
       send(promptRef.current)
     },
-    [answerAgent, cancelRequest, closeCard, copy, paste, send]
+    [answerAgent, cancelRequest, closeCard, copy, send]
   )
 
   useEffect(() => {
@@ -1247,11 +1197,6 @@ export function App() {
   const blockedAction = Boolean(
     agentBlocked && promptLooksLikeAction && hasAnswer && !blocked && !busy && !agentRunning
   )
-  const canPasteHint = Boolean(
-    pasteHint === 'visible' && hasAnswer && !busy && !agent && last && !last.refine &&
-    state?.context.activeApp
-  )
-
   /**
    * The field is shared by the provisional and ready card.
    *
@@ -1663,16 +1608,6 @@ export function App() {
               ↓ Новый текст
             </button>
           )}
-        </div>
-      )}
-
-      {canPasteHint && (
-        <div className="inline-hint">
-          <kbd>⌘</kbd><kbd>⏎</kbd>
-          <span className="text">вставить в {state.context.activeApp?.name}</span>
-          <button className="hint-x" aria-label="Скрыть подсказку" onClick={dismissPasteHint}>
-            ×
-          </button>
         </div>
       )}
 
