@@ -10,6 +10,7 @@ import { describe, expect, it } from 'vitest'
 import { CARD_MAX_WIDTH, CARD_NARROW_WIDTH, CARD_VOICE_WIDTH, CARD_WIDTH } from '@shared/metrics'
 import { draggedWidth, expandedWidth, userWidthCeiling, resolveWidth } from './cardWidth'
 import type { WidthInputs } from './cardWidth'
+import { STRUCTURED_WIDTH } from './cardLayout'
 
 const SCREEN = 1440
 
@@ -36,6 +37,13 @@ describe('resolveWidth: content', () => {
 
   it('gives the drawer the full width', () => {
     expect(width({ wantsWide: true, contentWidth: 120 })).toBe(CARD_WIDTH)
+  })
+
+  it('lets structured content use its wider cap', () => {
+    expect(width({
+      contentWidth: STRUCTURED_WIDTH,
+      contentMax: STRUCTURED_WIDTH
+    })).toBe(STRUCTURED_WIDTH)
   })
 })
 

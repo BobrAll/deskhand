@@ -54,6 +54,39 @@ function measureLine(text: string, font: string): number {
   return widest
 }
 
+/**
+ * A table or a fenced block is not prose: 360 points turns it into a puzzle.
+ * These answers may open this much wider before the user asks for «Шире».
+ */
+export const STRUCTURED_WIDTH = 520
+
+/**
+ * Whether the answer contains something that needs a wider column than prose.
+ *
+ * Deliberately cheap: this runs on every streamed chunk. A fenced block counts;
+ * a table is a line with at least two cells followed by a delimiter row or
+ * another line with the same cell count, which is the same loose shape the
+ * Markdown reader accepts.
+ */
+export function structuredAnswer(text: string): boolean {
+  if (text.includes('```')) return true
+  const lines = text.split('\n')
+  const cellsOn = (line: string): number => {
+    const row = line.trim().replace(/^\|/, '').replace(/\|$/, '')
+    return row.split('|').length
+  }
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i]
+    if (!line.includes('|')) continue
+    const cells = cellsOn(line)
+    if (cells < 2) continue
+    const next = lines[i + 1]
+    if (!next?.includes('|')) continue
+    if (cellsOn(next) === cells) return true
+  }
+  return false
+}
+
 /** Everything the width of the card depends on. */
 export interface CardLayoutInput {
   /** The question as it stands in the field; empty while it is. */
@@ -64,6 +97,8 @@ export interface CardLayoutInput {
   answer: string
   /** There is real text in the answer — whitespace is not an answer. */
   hasAnswer: boolean
+  /** The answer contains a table or a fenced block. */
+  structured: boolean
   /** A request is in flight, so the stop button is on the line too. */
   busy: boolean
   /** Manual playback is running, so the strip's label is the longer one. */
@@ -144,11 +179,13 @@ export function layoutCard(input: CardLayoutInput): CardLayout {
 
   const inputWidth = input.agentRunning ? CARD_NARROW_WIDTH : composedWidth
   const naturalWidth = Math.max(inputWidth, answerWidth, actionsWidth, agentWidth)
-  const contentWidth = clamp(naturalWidth, CARD_NARROW_WIDTH, CARD_WIDTH)
+  const contentMax = input.structured ? STRUCTURED_WIDTH : CARD_WIDTH
+  const contentWidth = clamp(naturalWidth, CARD_NARROW_WIDTH, contentMax)
   const width = resolveWidth({
     showingVoiceBars: input.listening,
     wantsWide: input.wantsWide,
     contentWidth,
+    contentMax,
     userWidth: input.userWidth,
     availWidth: input.availWidth
   })

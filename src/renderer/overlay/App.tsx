@@ -17,7 +17,11 @@
  */
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
-import type { CSSProperties, PointerEvent as ReactPointerEvent } from 'react'
+import type {
+  CSSProperties,
+  PointerEvent as ReactPointerEvent,
+  UIEvent as ReactUIEvent
+} from 'react'
 import type {
   AgentEvent,
   AgentToolRequest,
@@ -30,7 +34,7 @@ import type {
 import { CARD_WIDTH } from '@shared/metrics'
 import { looksLikeAction } from '@shared/intent'
 import { FIELD_FONT } from './cardMetrics'
-import { layoutCard } from './cardLayout'
+import { layoutCard, structuredAnswer } from './cardLayout'
 import { REFINE_HINT, REFINE_LABEL } from './copy'
 import { useSpeech } from './useSpeech'
 import { useWaiting } from './useWaiting'
@@ -62,6 +66,12 @@ const VOICE_AMP_PER_LEVEL = 0.55
  */
 const AGENT_PROGRESS_MS = 45_000
 
+/** The one notice that has a retry attached to it. */
+const AGENT_ENABLED_NOTICE = 'Управление включено. Повтори просьбу — теперь я её выполню.'
+
+/** Once per install: the paste shortcut is taught, not repeated. */
+const PASTE_HINT_KEY = 'deskhand.pasteHintSeen'
+
 function newRequestId(): string {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
 }
@@ -79,6 +89,18 @@ export function App() {
   /** The copy button says it worked, then goes back to being a command. */
   const [copied, setCopied] = useState(false)
   const copiedTimerRef = useRef<number | null>(null)
+  /** The answer has new text below the reader's position. */
+  const [newText, setNewText] = useState(false)
+  /** The reader is still at the bottom of the answer. */
+  const followAnswerRef = useRef(true)
+  /** `new` until it has been shown once; `visible` while it is on screen. */
+  const [pasteHint, setPasteHint] = useState<'new' | 'visible' | 'done'>(() => {
+    try {
+      return localStorage.getItem(PASTE_HINT_KEY) === '1' ? 'done' : 'new'
+    } catch {
+      return 'done'
+    }
+  })
   /** How many shapes are painted on the screen right now. */
   const [drawn, setDrawn] = useState(0)
   /**
@@ -268,6 +290,9 @@ export function App() {
     setFailure(null)
     setNotice(null)
     setCopied(false)
+    setNewText(false)
+    followAnswerRef.current = true
+    setPasteHint((hint) => (hint === 'visible' ? 'done' : hint))
     if (copiedTimerRef.current !== null) {
       window.clearTimeout(copiedTimerRef.current)
       copiedTimerRef.current = null
@@ -611,6 +636,7 @@ export function App() {
     font: fontRef.current,
     answer,
     hasAnswer,
+    structured: structuredAnswer(answer),
     busy,
     speaking: speech.speaking,
     agentStatus,
@@ -670,14 +696,39 @@ export function App() {
 
   useEffect(() => {
     const node = answerRef.current
-    if (node) node.scrollTop = node.scrollHeight
-  }, [answer])
+    if (!node) return
+    if (followAnswerRef.current) {
+      node.scrollTop = node.scrollHeight
+      setNewText(false)
+    } else if (busy) {
+      setNewText(true)
+    }
+  }, [answer, busy])
 
   // A setup problem or a failed request is not a detail: the card unfolds, so
   // the reason (and the way out of it) is never hidden behind a chevron.
   useEffect(() => {
     if (failure || state?.setupNotice) setExpanded(true)
   }, [failure, state?.setupNotice])
+
+  /**
+   * Teach the paste shortcut once, under the first answer.
+   *
+   * It is a memory aid, not a button: the action itself stays on ⌘⏎, because a
+   * paste button in the corner has fired by accident before. Showing it once is
+   * enough — a line that follows every answer becomes furniture.
+   */
+  useEffect(() => {
+    if (pasteHint !== 'new') return
+    if (!hasAnswer || busy || agent || !last || last.refine) return
+    if (!state?.context.activeApp) return
+    try {
+      localStorage.setItem(PASTE_HINT_KEY, '1')
+    } catch {
+      /* a renderer without storage simply shows it every time */
+    }
+    setPasteHint('visible')
+  }, [pasteHint, hasAnswer, busy, agent, last, state?.context.activeApp])
 
   const send = useCallback((text: string, sendMode?: ResponseMode, spoken = false) => {
     const value = text.trim()
@@ -703,6 +754,9 @@ export function App() {
     setAnswer('')
     setFailure(null)
     setNotice(null)
+    setPasteHint((hint) => (hint === 'visible' ? 'done' : hint))
+    followAnswerRef.current = true
+    setNewText(false)
     // A new question is a new card: a width chosen while reading the previous
     // answer must not decide how wide this one opens.
     setUserWidth(null)
@@ -762,6 +816,9 @@ export function App() {
       setBusy(true)
       setFailure(null)
       setNotice(null)
+      setPasteHint((hint) => (hint === 'visible' ? 'done' : hint))
+      followAnswerRef.current = true
+      setNewText(false)
       setLast({
         prompt: last?.prompt ?? '',
         mode: last?.mode ?? 'insert',
@@ -780,6 +837,13 @@ export function App() {
     },
     [answer, last]
   )
+
+  /** Repeats whatever the last turn was: a question, or a rewrite and its base. */
+  const retryLast = useCallback(() => {
+    if (!last) return
+    if (last.refine) refine(last.refine, last.base)
+    else send(last.prompt, last.mode, last.spoken)
+  }, [last, refine, send])
 
   /**
    * The screenshot tag also arms the drawing tool: with an image the assistant
@@ -825,7 +889,7 @@ export function App() {
       // cannot retroactively become an action. Saying that out loud is the
       // difference between "включил и ничего не изменилось" and a user who
       // presses «Повторить».
-      setNotice('Управление включено. Повтори просьбу — теперь я её выполню.')
+      setNotice(AGENT_ENABLED_NOTICE)
     }
   }, [])
 
@@ -882,9 +946,12 @@ export function App() {
     return off
   }, [])
 
+  const dismissPasteHint = useCallback(() => setPasteHint('done'), [])
+
   const paste = useCallback(async () => {
     const text = answerTextRef.current
     if (!text.trim()) return
+    setPasteHint('done')
     const sessionId = stateRef.current?.sessionId
     const result = await window.deskhand.overlay.paste(text)
     // The card can be closed (or replaced) while the paste is still waiting for
@@ -892,6 +959,27 @@ export function App() {
     // one — or in a card the user already dismissed.
     if (stateRef.current?.sessionId !== sessionId) return
     if (!result.ok && result.message) setNotice(result.message)
+  }, [])
+
+  /**
+   * Follow the stream only while the reader is at its bottom.
+   *
+   * Scrolling up is a request to read the beginning; the next token must not
+   * undo it. The threshold leaves a few points for the last line's descenders.
+   */
+  const onAnswerScroll = useCallback((event: ReactUIEvent<HTMLDivElement>) => {
+    const node = event.currentTarget
+    const atBottom = node.scrollHeight - node.scrollTop - node.clientHeight < 24
+    followAnswerRef.current = atBottom
+    if (atBottom) setNewText(false)
+  }, [])
+
+  const jumpToNewText = useCallback(() => {
+    const node = answerRef.current
+    if (!node) return
+    followAnswerRef.current = true
+    node.scrollTop = node.scrollHeight
+    setNewText(false)
   }, [])
 
   const copy = useCallback(async () => {
@@ -1145,6 +1233,14 @@ export function App() {
     last
   })
   const showingTranscript = busy && last?.spoken && Boolean(prompt)
+  /** An action that produced an answer because the agent is blocked, not refused. */
+  const blockedAction = Boolean(
+    agentBlocked && promptLooksLikeAction && hasAnswer && !blocked && !busy && !agentRunning
+  )
+  const canPasteHint = Boolean(
+    pasteHint === 'visible' && hasAnswer && !busy && !agent && last && !last.refine &&
+    state?.context.activeApp
+  )
 
   /**
    * The field is shared by the provisional and ready card.
@@ -1306,6 +1402,29 @@ export function App() {
         </div>
       )}
 
+      {/*
+        An action request that fell back to a text answer because the agent is
+        enabled but blocked. The reason belongs on the folded card: the chevron
+        turning accent is not an explanation.
+      */}
+      {blockedAction && !agentRunning && (
+        <div className="line" data-tone="warn">
+          <span>{state.agent.reason ?? hint ?? 'Агент сейчас не может действовать.'}</span>
+          {state.agent.needsAccessibility ? (
+            <button
+              className="tag"
+              onClick={() => window.deskhand.permissions.open('accessibility')}
+            >
+              Открыть доступ
+            </button>
+          ) : (
+            <button className="tag" onClick={() => window.deskhand.settings.open()}>
+              Настройки
+            </button>
+          )}
+        </div>
+      )}
+
       {showMeta && !agentRunning && (
         <div className="drawer">
           <div className="meta">
@@ -1367,7 +1486,7 @@ export function App() {
         </div>
       )}
 
-      {expanded && hint && !blocked && <div className="line">{hint}</div>}
+      {expanded && hint && !blocked && !blockedAction && <div className="line">{hint}</div>}
 
       {/*
         An offer, not a complaint: the mode is off, so the assistant can only
@@ -1394,7 +1513,7 @@ export function App() {
         reason already arrived through `hint`; this adds the way out of it, since
         "нужен доступ" without a button is a dead end in a card this small.
       */}
-      {expanded && agentBlocked && !blocked && !busy && (
+      {expanded && agentBlocked && !blocked && !busy && !blockedAction && (
         <div className="line">
           <button
             className="tag"
@@ -1482,15 +1601,11 @@ export function App() {
           <div className="line" data-tone="err">
             <span>{failure.message}</span>
             {failure.retryable && last && (
-              <button
-                className="tag"
-                onClick={() =>
-                  last.refine
-                    ? refine(last.refine, last.base)
-                    : send(last.prompt, last.mode, last.spoken)
-                }
-              >
-                Повторить
+              <button className="tag" onClick={retryLast}>Повторить</button>
+            )}
+            {!failure.retryable && !state.setupNotice && (
+              <button className="tag" onClick={() => window.deskhand.settings.open()}>
+                Настройки
               </button>
             )}
           </div>
@@ -1502,8 +1617,25 @@ export function App() {
         field is what made a voice action look like it had answered something.
       */}
       {hasAnswer && (
-        <div ref={answerRef} className="answer">
-          <Markdown text={answer} streaming={busy} caret={busy} />
+        <div className="answer-wrap">
+          <div ref={answerRef} className="answer" onScroll={onAnswerScroll}>
+            <Markdown text={answer} streaming={busy} caret={busy} />
+          </div>
+          {newText && (
+            <button className="new-text" onClick={jumpToNewText}>
+              ↓ Новый текст
+            </button>
+          )}
+        </div>
+      )}
+
+      {canPasteHint && (
+        <div className="inline-hint">
+          <kbd>⌘</kbd><kbd>⏎</kbd>
+          <span className="text">вставить в {state.context.activeApp?.name}</span>
+          <button className="hint-x" aria-label="Скрыть подсказку" onClick={dismissPasteHint}>
+            ×
+          </button>
         </div>
       )}
 
@@ -1576,7 +1708,14 @@ export function App() {
         </div>
       )}
 
-      {notice && <div className="line">{notice}</div>}
+      {notice && (
+        <div className="line">
+          <span>{notice}</span>
+          {notice === AGENT_ENABLED_NOTICE && last && !busy && (
+            <button className="tag" onClick={retryLast}>Повторить</button>
+          )}
+        </div>
+      )}
 
       {/*
         The resize edge. It sits on the card's outermost right column, over the

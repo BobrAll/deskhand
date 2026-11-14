@@ -592,6 +592,85 @@ button.tag.clear {
 
 /* ------------------------------------------------------------------ the answer */
 
+/* The answer scrolls; the "new text" pill belongs to the frame, not to the
+   text, so it stays in place while the reader is above the bottom. */
+.answer-wrap {
+  position: relative;
+}
+
+.new-text {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  padding: 3px 8px;
+  border: 1px solid color-mix(in srgb, var(--accent) 38%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--panel) 96%, transparent);
+  color: var(--accent);
+  font-size: 10.5px;
+  line-height: 1.2;
+  box-shadow: 0 4px 12px rgb(0 0 0 / 0.24);
+}
+
+.new-text:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--text);
+}
+
+/* The one-time paste lesson: keys, target app and a way to dismiss it. */
+.inline-hint {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin: 2px 0 0 12px;
+  color: var(--text-faint);
+  font-size: 10.5px;
+  line-height: 1.3;
+}
+
+.inline-hint .text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.inline-hint kbd {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  min-width: 17px;
+  height: 16px;
+  padding: 0 4px;
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  background: var(--surface);
+  color: var(--text-dim);
+  font-family: var(--font);
+  font-size: 10px;
+  line-height: 1;
+}
+
+.hint-x {
+  flex: none;
+  width: 15px;
+  height: 15px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-faint);
+  font-size: 12px;
+  line-height: 1;
+}
+
+.hint-x:hover:not(:disabled) {
+  background: var(--surface);
+  border: none;
+  color: var(--text);
+}
+
 .answer {
   font-size: 13px;
   line-height: 1.58;

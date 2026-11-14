@@ -19,7 +19,7 @@ import {
   CHROME_WIDTH,
   STOP_CHROME
 } from './cardMetrics'
-import { layoutCard, type CardLayoutInput } from './cardLayout'
+import { layoutCard, structuredAnswer, STRUCTURED_WIDTH, type CardLayoutInput } from './cardLayout'
 
 /** Ten points per character, so a measured line is its own length times ten. */
 const POINTS_PER_CHAR = 10
@@ -42,6 +42,7 @@ function input(overrides: Partial<CardLayoutInput> = {}): CardLayoutInput {
     font: '13px test',
     answer: '',
     hasAnswer: false,
+    structured: false,
     busy: false,
     speaking: false,
     agentStatus: null,
@@ -119,6 +120,21 @@ describe('layoutCard: the answer', () => {
     const blank = layoutCard(input({ answer: '   ', hasAnswer: false }))
 
     expect(blank.naturalWidth).toBe(CARD_NARROW_WIDTH)
+  })
+
+  it('opens a structured answer wider than prose, up to its own cap', () => {
+    const answer = 'я'.repeat(100)
+    const prose = layoutCard(input({ answer, hasAnswer: true }))
+    const table = layoutCard(input({ answer, hasAnswer: true, structured: true }))
+
+    expect(prose.width).toBe(CARD_WIDTH)
+    expect(table.width).toBe(STRUCTURED_WIDTH)
+  })
+
+  it('recognises a table and a fenced block, not ordinary prose', () => {
+    expect(structuredAnswer('Город | Пн | Ср\nМосква | +3 | +5')).toBe(true)
+    expect(structuredAnswer('```ts\nconst a = 1\n```')).toBe(true)
+    expect(structuredAnswer('Просто предложение с одной | чертой.')).toBe(false)
   })
 })
 
