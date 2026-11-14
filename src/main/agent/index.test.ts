@@ -625,7 +625,7 @@ describe('the question in the card', () => {
     state.emit({ kind: 'approval', request: call() })
     h.controller.answer('call-1', false, false)
 
-    expect(state.approvals).toEqual([{ id: 'call-1', allow: false, reason: 'Пользователь отклонил действие.' }])
+    expect(state.approvals).toEqual([{ id: 'call-1', allow: false, reason: 'The user declined the action.' }])
     // The agent turns the refusal into a failed call and takes another step, so
     // the run is not over: a terminal phase here said «остановлено» over a run
     // that was still working, and left the card in front of the window the next
@@ -656,9 +656,10 @@ describe('the question in the card', () => {
     }
 
     // The agent receives the refusal and keeps going; the card must not stay
-    // clickable-free until the next answered question.
+    // clickable-free until the next answered question. The reason is the tool
+    // result the model reads, so it is English; the card's sentence is Russian.
     expect(state.approvals).toEqual([
-      { id: 'call-1', allow: false, reason: 'Подтверждение не получено.' }
+      { id: 'call-1', allow: false, reason: 'The action was not confirmed by the user.' }
     ])
     expect(h.passthrough).toEqual([true, false, true])
     expect(h.last()).toMatchObject({
