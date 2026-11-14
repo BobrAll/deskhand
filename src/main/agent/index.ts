@@ -104,6 +104,15 @@ const IDLE_EVENT: AgentEvent = { phase: 'idle', step: 0, total: 0, label: '' }
 const APPROVAL_TIMEOUT_MS = 5 * 60_000
 
 /**
+ * What the card says when the user refuses the call the agent is blocked on.
+ *
+ * Not a stop: the agent receives the refusal as a failed call and takes another
+ * step, so the run is still alive. The sentence names the one thing that
+ * happened instead of claiming the whole run ended.
+ */
+const REFUSED_LABEL = 'Действие отклонено.'
+
+/**
  * Milliseconds, at one decimal.
  *
  * Not integers: most tool calls take a fraction of a millisecond, and rounding
@@ -493,10 +502,15 @@ export function createAgentController(host: AgentHost) {
       // The same for a start that failed after the stop: the card already says
       // what happened, and a second verdict would replace the user's message.
       if (token === generation) {
+        const message =
+          error instanceof Error ? error.message : 'Не удалось запустить агента.'
+        // A start that failed has no further event to come: leaving the card on
+        // `arming` would show «Подготовка» for a run that is already over.
+        publish({ phase: 'error', step: 0, total: 0, label: '', message, code: 'blocked' })
         settleRun({
           answer: '',
           actions: actionRows(),
-          message: error instanceof Error ? error.message : 'Не удалось запустить агента.',
+          message,
           blocked: true
         })
       }
@@ -602,7 +616,9 @@ export function createAgentController(host: AgentHost) {
             phase: lastPublished.phase === 'asking' ? 'acting' : lastPublished.phase,
             step: active.step,
             total: active.total,
-            label: event.text.trim(),
+            // The same ceiling as the streamed path: a narration can be a
+            // paragraph, and a paragraph in the status row would widen the card.
+            label: caption(event.text),
             actions: actionRows()
           })
         }
@@ -814,18 +830,23 @@ export function createAgentController(host: AgentHost) {
         allow,
         allow ? undefined : (reason ?? 'Пользователь отклонил действие.')
       )
+      // The panel had the mouse and the focus for a moment; the agent's next
+      // click must not land on it. That is true of a refusal as much as of an
+      // allow: the agent turns the refusal into a failed call and takes another
+      // step, so the run — and its clicks — continue either way.
+      host.setPassthrough(true)
       if (allow) {
-        // The panel had the mouse and the focus for a moment; the agent's next
-        // click must not land on it.
-        host.setPassthrough(true)
         publish({ phase: 'acting', approval: null, actions: actionRows() })
       } else {
+        // Not `aborted`: nothing stopped. The run goes on, and a terminal phase
+        // here would say "stopped" over work that is still happening — until
+        // the next question lifted the click-through again, leaving the card
+        // over the window the agent was about to press.
         publish({
-          phase: 'aborted',
-          label: '',
+          phase: 'acting',
           approval: null,
-          actions: actionRows(),
-          message: 'Действие отклонено.'
+          label: reason ?? REFUSED_LABEL,
+          actions: actionRows()
         })
       }
     }
