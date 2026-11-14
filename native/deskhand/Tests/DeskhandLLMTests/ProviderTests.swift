@@ -605,6 +605,29 @@ final class StreamingProviderTests: XCTestCase {
         }
     }
 
+    func testAnthropicAcceptsDoneInsteadOfMessageStop() async throws {
+        // Anthropic-compatible proxies often end the stream with the OpenAI
+        // marker. It is a terminal event, so the stricter cut-stream check must
+        // not reject an answer that finished normally.
+        StreamingURLProtocol.responses = [(200, """
+            event: content_block_delta
+            data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Готово"}}
+
+            data: [DONE]
+
+            """)]
+        let provider = AnthropicProvider(
+            config: ProviderConfig(wire: .anthropic, apiKey: "x", maxTokens: 64),
+            session: session()
+        )
+        let completion = try await provider.complete(
+            messages: [ChatMessage(role: .user, text: "go")],
+            tools: [],
+            systemPrompt: "sys"
+        ) { _ in }
+        XCTAssertEqual(completion.text, "Готово")
+    }
+
     // MARK: - Malformed tool arguments
 
     func testOpenAIReportsUnparseableToolArgumentsInsteadOfAnEmptyObject() async throws {

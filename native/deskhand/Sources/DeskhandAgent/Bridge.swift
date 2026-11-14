@@ -27,8 +27,19 @@ final class Bridge: @unchecked Sendable {
 
     /// The run in flight, if any. One at a time: two agents driving the same
     /// pointer would interleave clicks, and the second would be acting on a
-    /// screen the first had already changed.
-    private var activeRun: CancelToken?
+    /// screen the first had already changed. A cancelled run keeps the slot
+    /// until it has actually unwound — a drag, a scroll or a `type_text` is
+    /// already in the window server when the token is raised.
+    private var activeRun: ActiveRun?
+
+    /// A run and the signal that it has let go of the machine.
+    ///
+    /// The token stops the loop; the semaphore tells the next `run` when the
+    /// stopped task has finished its last call and released the slot.
+    private struct ActiveRun {
+        let token: CancelToken
+        let finished: DispatchSemaphore
+    }
 
     /// Approvals waiting for the app's answer, keyed by request id.
     private var pendingApprovals: [String: ApprovalWait] = [:]
@@ -38,6 +49,22 @@ final class Bridge: @unchecked Sendable {
     private static let approvalTimeout: TimeInterval = 600
     /// How often the wait wakes up, so a cancel lands while a question is open.
     private static let approvalPollInterval: TimeInterval = 0.1
+
+    /// How long a new run waits for a cancelled one to finish its last call.
+    ///
+    /// The loop checks the token between steps and tool calls, so a cancel can
+    /// land in the middle of a drag, a scroll or a `type_text` that is already
+    /// inside the window server. The wait only has to cover one such call; if
+    /// it expires, the new run is rejected as before, which is safer than two
+    /// agents on one pointer. Five seconds stays well inside the host's own
+    /// ten-second wait for `started`.
+    private static let runUnwindTimeout: TimeInterval = 5
+
+    /// What a run request is told when another run still owns the machine.
+    ///
+    /// Reached only for a genuinely concurrent run, or when a stopped one took
+    /// longer than `runUnwindTimeout` to let go.
+    private static let runBusyMessage = "a run is already in progress"
 
     /// The model-facing refusal when the user stops the run.
     ///
@@ -138,13 +165,24 @@ final class Bridge: @unchecked Sendable {
         }
 
         lock.lock()
+        // Escape stopped the previous run, but its task may still be inside a
+        // tool call. Wait for it to let go of the pointer instead of rejecting
+        // a run the user just asked for with a message they cannot act on.
+        if let running = activeRun, running.token.isCancelled {
+            lock.unlock()
+            if running.finished.wait(timeout: .now() + Self.runUnwindTimeout) == .timedOut {
+                respond(id: id, error: Self.runBusyMessage)
+                return
+            }
+            lock.lock()
+        }
         if activeRun != nil {
             lock.unlock()
-            respond(id: id, error: "a run is already in progress")
+            respond(id: id, error: Self.runBusyMessage)
             return
         }
         let handle = CancelToken()
-        activeRun = handle
+        activeRun = ActiveRun(token: handle, finished: DispatchSemaphore(value: 0))
         lock.unlock()
 
         let config: ProviderConfig
@@ -259,28 +297,32 @@ final class Bridge: @unchecked Sendable {
         // Only the run that still owns the slot may clear it, and only it may
         // close the questions: a cancelled run unwinds asynchronously, and by
         // then the user may already have started another one.
-        let ownsSlot = activeRun === handle
-        if ownsSlot { activeRun = nil }
+        let ownsSlot = activeRun?.token === handle
+        var finished: DispatchSemaphore?
+        if ownsSlot {
+            finished = activeRun?.finished
+            activeRun = nil
+        }
         let waits = ownsSlot ? pendingApprovals : [:]
         if ownsSlot { pendingApprovals.removeAll() }
         lock.unlock()
         // A run that ended while a question was open must not leave the app
         // waiting for an answer that will never come.
         for (_, wait) in waits { wait.resolve(.deny("The run ended.")) }
+        // Wakes a `run` that is waiting for this one to let go of the machine.
+        // Signalled outside the lock: the waiter takes the same lock next.
+        finished?.signal()
     }
 
-    /// Stops the run and frees the slot in the same breath.
+    /// Stops the run.
     ///
-    /// The run itself unwinds a moment later, and a `run` that arrives in that
-    /// window used to be rejected with "a run is already in progress" — an
-    /// English protocol message shown on the card right after the user pressed
-    /// Escape. The slot is released here instead; `finishRun` only clears the
-    /// slot it owns, so the cancelled task cannot take a newer run's state down
-    /// with it.
+    /// The slot stays with the cancelled run until its task has actually
+    /// unwound: the loop checks the token between steps and calls, so a drag,
+    /// a scroll or a `type_text` can still be in flight. `startRun` waits that
+    /// out (bounded) rather than pointing a second agent at the same pointer.
     private func cancelRun() {
         lock.lock()
-        let running = activeRun
-        activeRun = nil
+        let running = activeRun?.token
         lock.unlock()
         running?.cancel()
         resolveAllApprovals(.deny(Self.cancelledMessage))
