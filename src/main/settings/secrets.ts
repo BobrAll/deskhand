@@ -15,11 +15,68 @@ interface SecretsSchema {
 
 let store: Store<SecretsSchema> | null = null
 
-function db(): Store<SecretsSchema> {
-  if (!store) {
-    store = new Store<SecretsSchema>({ name: 'deskhand-secrets', defaults: { secrets: {} } })
+/**
+ * Opens the secrets file, replacing it when it cannot be parsed.
+ *
+ * `conf` parses the file on the first read, and only there does
+ * `clearInvalidConfig` apply; without it a corrupt `deskhand-secrets.json`
+ * makes every read throw, which turns `keyStatuses()` and the whole settings
+ * bundle into a rejected promise and leaves the settings window on «Не удалось
+ * загрузить настройки». The first store is opened without the flag so the
+ * corruption is seen and logged instead of being repaired silently.
+ */
+function db(): Store<SecretsSchema> | null {
+  if (store) return store
+  try {
+    const first = new Store<SecretsSchema>({
+      name: 'deskhand-secrets',
+      defaults: { secrets: {} }
+    })
+    first.get('secrets')
+    store = first
+    return store
+  } catch (error) {
+    console.warn('[secrets] secrets file is unreadable; the stored keys are lost:', error)
   }
-  return store
+  try {
+    store = openStore(true)
+    store.get('secrets')
+    return store
+  } catch (error) {
+    console.error('[secrets] unable to reset the secrets file:', error)
+    store = null
+    return null
+  }
+}
+
+function openStore(clearInvalidConfig: boolean): Store<SecretsSchema> {
+  return new Store<SecretsSchema>({
+    name: 'deskhand-secrets',
+    defaults: { secrets: {} },
+    ...(clearInvalidConfig ? { clearInvalidConfig: true } : {})
+  })
+}
+
+/** The stored slots as they are on disk; a corrupted one may not be a string. */
+function readSecrets(): Record<string, unknown> {
+  const opened = db()
+  if (!opened) return {}
+  try {
+    const secrets: unknown = opened.get('secrets')
+    return typeof secrets === 'object' && secrets !== null
+      ? (secrets as Record<string, unknown>)
+      : {}
+  } catch (error) {
+    console.warn('[secrets] unable to read the secrets file:', error)
+    return {}
+  }
+}
+
+/** The slots a key can be read from, ready to be written back. */
+function storedSlots(): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(readSecrets()).filter(([, value]) => typeof value === 'string')
+  ) as Record<string, string>
 }
 
 /** safeStorage is only usable after `app.ready`. */
@@ -32,10 +89,17 @@ export function encryptionAvailable(): boolean {
   }
 }
 
+/** True for a slot that holds something a key can be read from. */
+function hasSlot(raw: unknown): raw is string {
+  return typeof raw === 'string' && raw.length > 0
+}
+
 /** Reads and decrypts the key in one secrets slot. */
 function readSlot(slot: string): string | null {
-  const raw = db().get('secrets')[slot]
-  if (!raw) return null
+  const raw = readSecrets()[slot]
+  // A hand-edited file or a slot another build left behind is not necessarily a
+  // string; splitting or decrypting it would throw where "no key" is the answer.
+  if (!hasSlot(raw)) return null
   const [scheme, payload] = raw.split(':', 2)
   if (!payload) return null
   if (scheme === 'plain') return Buffer.from(payload, 'base64').toString('utf8')
@@ -62,17 +126,32 @@ function writeSlot(slot: string, key: string): void {
     deleteSlot(slot)
     return
   }
+  const opened = db()
+  if (!opened) {
+    console.warn(`[secrets] cannot save the key for "${slot}": the secrets file is unreadable`)
+    return
+  }
   const encoded = encryptionAvailable()
     ? `enc:${safeStorage.encryptString(trimmed).toString('base64')}`
     : // Should not happen on macOS; kept so the app still works if Keychain is locked.
       `plain:${Buffer.from(trimmed, 'utf8').toString('base64')}`
-  db().set('secrets', { ...db().get('secrets'), [slot]: encoded })
+  try {
+    opened.set('secrets', { ...storedSlots(), [slot]: encoded })
+  } catch (error) {
+    console.warn(`[secrets] unable to save the key for "${slot}"`, error)
+  }
 }
 
 function deleteSlot(slot: string): void {
-  const secrets = { ...db().get('secrets') }
+  const opened = db()
+  if (!opened) return
+  const secrets = storedSlots()
   delete secrets[slot]
-  db().set('secrets', secrets)
+  try {
+    opened.set('secrets', secrets)
+  } catch (error) {
+    console.warn(`[secrets] unable to delete the key for "${slot}"`, error)
+  }
 }
 
 export function getApiKey(provider: ProviderId): string | null {
@@ -109,10 +188,10 @@ export function deleteTtsKey(): void {
 }
 
 export function keyStatuses(): KeyStatus[] {
-  const secrets = db().get('secrets')
+  const secrets = readSecrets()
   return PROVIDERS.map((provider) => ({
     provider: provider.id,
-    configured: Boolean(secrets[provider.id]),
+    configured: hasSlot(secrets[provider.id]),
     encryptionAvailable: encryptionAvailable()
   }))
 }

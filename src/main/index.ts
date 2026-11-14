@@ -6,7 +6,7 @@
  * hotkey must be registered only after `app.whenReady()`.
  */
 
-import { app, Menu, nativeTheme } from 'electron'
+import { app, nativeTheme } from 'electron'
 import { createOverlayController } from './overlay'
 import { createVoiceController } from './voice'
 import { createRecordingMode } from './recording'
@@ -25,11 +25,11 @@ import {
   setSettingsWindowClosedHandler,
   showActiveWindow
 } from './windows'
+import { buildApplicationMenu } from './windows/menu'
 import { getSettings, patchSettings } from './settings/store'
 import { readPermissions } from './permissions'
 import { shutdownSilero } from './tts/silero'
 import { encryptionAvailable } from './settings/secrets'
-import { QUIT_LABEL, SETTINGS_ACCELERATOR, SETTINGS_LABEL } from './menus'
 import { DEFAULT_SETTINGS } from '@shared/defaults'
 import type { AppSettings } from '@shared/types'
 
@@ -133,39 +133,6 @@ function handleSignal(signal: NodeJS.Signals): void {
 
 process.on('SIGTERM', handleSignal)
 process.on('SIGINT', handleSignal)
-
-/** The application menu: the same Settings and Quit entries the tray offers. */
-function buildApplicationMenu(): void {
-  Menu.setApplicationMenu(
-    Menu.buildFromTemplate([
-      {
-        label: app.name,
-        submenu: [
-          { role: 'about', label: 'О Deskhand' },
-          { type: 'separator' },
-          { label: SETTINGS_LABEL, accelerator: SETTINGS_ACCELERATOR, click: () => openSettingsWindow() },
-          { type: 'separator' },
-          { role: 'hide', label: 'Скрыть' },
-          { role: 'hideOthers', label: 'Скрыть остальные' },
-          { type: 'separator' },
-          { role: 'quit', label: QUIT_LABEL }
-        ]
-      },
-      {
-        label: 'Правка',
-        submenu: [
-          { role: 'undo', label: 'Отменить' },
-          { role: 'redo', label: 'Повторить' },
-          { type: 'separator' },
-          { role: 'cut', label: 'Вырезать' },
-          { role: 'copy', label: 'Копировать' },
-          { role: 'paste', label: 'Вставить' },
-          { role: 'selectAll', label: 'Выделить всё' }
-        ]
-      }
-    ])
-  )
-}
 
 /**
  * Logs what the first turn will be missing.

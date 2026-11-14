@@ -45,6 +45,10 @@ export function setSettingsWindowClosedHandler(handler: () => void): void {
  *
  * Only the fields a caller passes are set, so the settings window keeps its
  * minimum size and the onboarding window keeps `resizable: false`.
+ *
+ * Every app window gets the link guard here rather than at each caller: the
+ * onboarding wizard renders the provider's key page as a link, and a window
+ * created without the guard opens a chromeless child window on that site.
  */
 function openAppWindow(options: AppWindowOptions): BrowserWindow {
   const win = new BrowserWindow({
@@ -61,6 +65,7 @@ function openAppWindow(options: AppWindowOptions): BrowserWindow {
       /* ignore */
     }
   })
+  denyExternalLinks(win)
   loadPage(win, options.page)
   return win
 }
@@ -121,7 +126,6 @@ export function openSettingsWindow(): BrowserWindow {
     settingsHeld = false
     settingsClosedHandler?.()
   })
-  denyExternalLinks(win)
   return win
 }
 

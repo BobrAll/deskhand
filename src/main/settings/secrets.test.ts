@@ -1,10 +1,21 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+interface CtorOptions {
+  name: string
+  defaults: Record<string, unknown>
+  clearInvalidConfig?: boolean
+}
+
 const fake = vi.hoisted(() => ({
   ready: true,
   encryptionAvailable: true,
   encryptionCheckThrows: false,
   decryptThrows: false,
+  /** The file on disk cannot be parsed. */
+  corrupt: false,
+  getThrows: false,
+  setThrows: false,
+  ctorOptions: [] as CtorOptions[],
   data: {} as Record<string, unknown>
 }))
 
@@ -27,18 +38,42 @@ vi.mock('electron', () => ({
 
 vi.mock('electron-store', () => {
   class FakeStore {
-    constructor(options: { defaults: Record<string, unknown> }) {
+    private parsed = false
+
+    constructor(private readonly options: CtorOptions) {
+      fake.ctorOptions.push(options)
       for (const [key, value] of Object.entries(options.defaults)) {
         if (!(key in fake.data)) fake.data[key] = value
       }
     }
+
     get(key: string): unknown {
+      this.parse()
+      if (fake.getThrows) throw new Error('unreadable')
       return fake.data[key]
     }
+
     set(key: string, value: unknown): void {
+      this.parse()
+      if (fake.setThrows) throw new Error('read-only')
       fake.data[key] = value
     }
+
+    /**
+     * `conf` reads the file on the first access in the shape this fake models,
+     * and `clearInvalidConfig` is honoured there: the broken file is replaced
+     * with an empty one.
+     */
+    private parse(): void {
+      if (this.parsed) return
+      this.parsed = true
+      if (!fake.corrupt) return
+      if (!this.options.clearInvalidConfig) throw new Error('SyntaxError: Unexpected token')
+      fake.corrupt = false
+      fake.data = { secrets: {} }
+    }
   }
+
   return { default: FakeStore }
 })
 
@@ -54,6 +89,10 @@ beforeEach(() => {
   fake.encryptionAvailable = true
   fake.encryptionCheckThrows = false
   fake.decryptThrows = false
+  fake.corrupt = false
+  fake.getThrows = false
+  fake.setThrows = false
+  fake.ctorOptions = []
   fake.data = {}
 })
 
@@ -134,6 +173,67 @@ describe('secrets: getApiKey', () => {
     const secrets = await loadSecrets()
     expect(secrets.getApiKey('openai')).toBeNull()
   })
+
+  it('treats a slot that is not a string as no key', async () => {
+    fake.data.secrets = { openai: 42, openrouter: { enc: 'x' }, anthropic: null }
+    const secrets = await loadSecrets()
+
+    expect(secrets.getApiKey('openai')).toBeNull()
+    expect(secrets.getApiKey('openrouter')).toBeNull()
+    expect(secrets.getApiKey('anthropic')).toBeNull()
+  })
+})
+
+describe('secrets: a corrupt or unreadable file', () => {
+  it('recreates a file that cannot be parsed instead of rejecting', async () => {
+    fake.corrupt = true
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const secrets = await loadSecrets()
+
+    expect(() => secrets.keyStatuses()).not.toThrow()
+    expect(secrets.keyStatuses().every((status) => !status.configured)).toBe(true)
+    expect(fake.ctorOptions[0].clearInvalidConfig).toBeUndefined()
+    expect(fake.ctorOptions[1].clearInvalidConfig).toBe(true)
+    expect(warn).toHaveBeenCalled()
+    warn.mockRestore()
+  })
+
+  it('keeps saving keys after the file was recreated', async () => {
+    fake.corrupt = true
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const secrets = await loadSecrets()
+
+    secrets.setApiKey('openai', 'sk-new')
+
+    expect(secrets.getApiKey('openai')).toBe('sk-new')
+    expect(warn).toHaveBeenCalled()
+    warn.mockRestore()
+  })
+
+  it('reads an unreadable file as "no keys"', async () => {
+    fake.getThrows = true
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const secrets = await loadSecrets()
+
+    expect(secrets.keyStatuses().every((status) => !status.configured)).toBe(true)
+    expect(secrets.getApiKey('openai')).toBeNull()
+    expect(warn).toHaveBeenCalled()
+    expect(error).toHaveBeenCalled()
+    warn.mockRestore()
+    error.mockRestore()
+  })
+
+  it('drops a write it cannot save instead of throwing at the settings window', async () => {
+    fake.setThrows = true
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const secrets = await loadSecrets()
+
+    expect(() => secrets.setApiKey('openai', 'sk-lost')).not.toThrow()
+    expect(() => secrets.deleteApiKey('openai')).not.toThrow()
+    expect(warn).toHaveBeenCalled()
+    warn.mockRestore()
+  })
 })
 
 describe('secrets: setApiKey', () => {
@@ -195,6 +295,13 @@ describe('secrets: keyStatuses', () => {
       { provider: 'openrouter', configured: false, encryptionAvailable: true },
       { provider: 'anthropic', configured: false, encryptionAvailable: true }
     ])
+  })
+
+  it('does not report a non-string slot as configured', async () => {
+    fake.data.secrets = { openai: 42 }
+    const secrets = await loadSecrets()
+
+    expect(secrets.keyStatuses()[0]).toMatchObject({ provider: 'openai', configured: false })
   })
 
   it('reports encryption as unavailable when the Keychain is locked', async () => {

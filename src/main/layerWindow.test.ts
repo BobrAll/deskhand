@@ -27,6 +27,7 @@ vi.mock('electron', () => {
       ): void => {
         state.handlers.push(handler)
       },
+      on: (): void => undefined,
       once: (): void => undefined
     }
 
