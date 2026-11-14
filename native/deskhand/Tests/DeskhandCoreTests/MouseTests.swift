@@ -15,22 +15,11 @@ final class MouseTests: XCTestCase {
         XCTAssertEqual(Mouse.clampedClickCount(10_000), 3)
     }
 
-    func testCancelledScrollReturnsWithoutEmittingItsChunks() {
-        // A scroll is wheel chunks 20 ms apart, so cancelling only between tool
-        // calls meant Escape did not stop a long scroll. A pre-cancelled token
-        // must return before the first chunk: 10 000 pages is otherwise minutes
-        // of events.
-        let token = CancelToken()
-        token.cancel()
-
-        let clock = Date()
-        Mouse.scroll(
-            at: CGPoint(x: 10, y: 10),
-            direction: .down,
-            pages: 10_000,
-            cancel: token)
-        XCTAssertLessThan(
-            Date().timeIntervalSince(clock), 1.0,
-            "a cancelled scroll must not keep emitting wheel events")
+    func testScrollGestureIsBoundedAtTheSharedMaximum() {
+        // The tool surface clamps too; the bound is repeated at this layer so
+        // no direct caller can turn one call into minutes of wheel events.
+        XCTAssertEqual(Mouse.maxScrollPages, 20)
+        XCTAssertEqual(ToolExecutor.effectiveScrollPages(Mouse.maxScrollPages), Mouse.maxScrollPages)
+        XCTAssertEqual(ToolExecutor.effectiveScrollPages(Mouse.maxScrollPages * 100), Mouse.maxScrollPages)
     }
 }

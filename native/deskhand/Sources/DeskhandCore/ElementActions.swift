@@ -106,7 +106,7 @@ public enum ElementActions {
     /// the model on a long detour of clicks and retries through a field that
     /// one extra call fills.
     public static func setValue(_ element: AXElement, text: String, pid: pid_t? = nil) throws {
-        let isTextEntry = TextEntryRole.isTextEntry(element.role)
+        let isTextEntry = ValueRole.isTextEntry(element.role)
         if !element.isSettable(kAXValueAttribute), isTextEntry {
             // Focusing can flip the settability, so re-check rather than
             // assume the first answer was final.

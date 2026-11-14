@@ -480,8 +480,10 @@ public final class ToolExecutor: @unchecked Sendable {
     /// Whether an app is on the user's exclusion list.
     ///
     /// Shared by the tool gate and the policy/presentation lookup so the two
-    /// cannot disagree about which app is off limits.
-    private func isExcluded(_ handle: AppHandle) -> Bool {
+    /// cannot disagree about which app is off limits. Internal so the gate's
+    /// path fallback can be exercised against a bundle-less handle without
+    /// launching anything.
+    func isExcluded(_ handle: AppHandle) -> Bool {
         if let bundle = handle.bundleIdentifier {
             return excludedBundleIds.contains(bundle)
         }
@@ -550,7 +552,7 @@ public final class ToolExecutor: @unchecked Sendable {
         context.role = node.role
         context.title = node.title
         context.label = node.label
-        context.isTextField = TextEntryRole.isTextEntry(node.role)
+        context.isTextField = ValueRole.isTextEntry(node.role)
         return context
     }
 
@@ -754,6 +756,40 @@ public final class ToolExecutor: @unchecked Sendable {
         return .text("Brought \(session.app.name) to the front.")
     }
 
+    /// The gesture a click call really performs.
+    ///
+    /// Clamping and the plain-click decision are made once here, so the
+    /// accessibility press path, the mouse event and the result message cannot
+    /// disagree: `click_count: 5` is three clicks and is not the single click
+    /// that an accessibility press may stand in for, and `0` is one click and
+    /// is.
+    struct ClickPlan: Equatable {
+        var button: Mouse.Button
+        var count: Int
+        var modifiers: CGEventFlags
+        var isPlainLeftClick: Bool
+    }
+
+    static func clickPlan(
+        buttonName: String?,
+        clickCount: Int?,
+        modifiers: CGEventFlags
+    ) -> ClickPlan {
+        let button = Mouse.Button(rawValue: buttonName ?? "left") ?? .left
+        let count = Mouse.clampedClickCount(clickCount ?? 1)
+        // A single, unmodified left click on a pressable element is the case
+        // where the accessibility action is strictly better than a mouse event:
+        // it works when the element is occluded or off-screen, and it cannot
+        // land on the wrong pixel. Anything else (right click, double click,
+        // modifier-held click) must be a real mouse event, because those carry
+        // semantics the AX press action cannot express.
+        return ClickPlan(
+            button: button,
+            count: count,
+            modifiers: modifiers,
+            isPlainLeftClick: button == .left && count == 1 && modifiers.isEmpty)
+    }
+
     private func click(_ args: JSONValue, verify: Bool) async throws -> ToolResult {
         let appQuery = try requireApp(args)
         // Read once: the index decides which branch of the click runs, whether
@@ -777,25 +813,19 @@ public final class ToolExecutor: @unchecked Sendable {
             await session.refresh()
         }
 
-        let button = Mouse.Button(rawValue: args["button"]?.stringValue ?? "left") ?? .left
-        // Clamp before the plain-click decision and the result message, so both
-        // describe the gesture `Mouse.click` actually sends: `click_count: 5`
-        // is three clicks, not five, and `0` is one, not zero.
-        let count = Mouse.clampedClickCount(args["click_count"]?.intValue ?? 1)
-        let modifiers = parseModifiers(args["modifiers"])
-
-        // A single, unmodified left click on a pressable element is the case
-        // where the accessibility action is strictly better than a mouse event:
-        // it works when the element is occluded or off-screen, and it cannot
-        // land on the wrong pixel. Anything else (right click, double click,
-        // modifier-held click) must be a real mouse event, because those carry
-        // semantics the AX press action cannot express.
-        let isPlainLeftClick = button == .left && count == 1 && modifiers.isEmpty
+        let plan = Self.clickPlan(
+            buttonName: args["button"]?.stringValue,
+            clickCount: args["click_count"]?.intValue,
+            modifiers: parseModifiers(args["modifiers"]))
+        let button = plan.button
+        let count = plan.count
+        let modifiers = plan.modifiers
+        let isPlainLeftClick = plan.isPlainLeftClick
 
         let point: CGPoint
         if let index = elementIndex {
             let node = try session.node(at: index)
-            // A text field is clicked to put the caret in it, not to press it.
+            // A field is clicked to put the caret in it, not to press it.
             // Reaching it through accessibility works whether or not the window
             // is in front; a pixel click only focuses it when the app is
             // frontmost *and* the point is not covered by another window, which
@@ -803,7 +833,7 @@ public final class ToolExecutor: @unchecked Sendable {
             // a pixel click on a background search field left the app's focus
             // where it was, so the following type_text went into the message
             // box instead.
-            if isPlainLeftClick, node.role == kAXTextFieldRole || node.role == kAXComboBoxRole {
+            if isPlainLeftClick, ValueRole.isTextEntry(node.role) {
                 if ElementActions.focus(try session.element(at: index)) {
                     return finish(
                         "Focused element \(index) (\(describe(node))), so typing now goes there.",
@@ -884,7 +914,7 @@ public final class ToolExecutor: @unchecked Sendable {
 
         let element = try session.element(at: index)
         let role = element.role
-        let isTextField = TextEntryRole.isTextEntry(role)
+        let isTextField = ValueRole.isTextEntry(role)
         var message: String
         do {
             try ElementActions.setValue(element, text: value, pid: session.pid)
@@ -988,10 +1018,8 @@ public final class ToolExecutor: @unchecked Sendable {
     /// a malformed request rather than a small scroll.
     static func effectiveScrollPages(_ requested: Double) -> Double? {
         guard requested.isFinite, requested > 0 else { return nil }
-        return min(requested, maxScrollPages)
+        return min(requested, Mouse.maxScrollPages)
     }
-
-    private static let maxScrollPages = 20.0
 
     private func drag(_ args: JSONValue, verify: Bool) async throws -> ToolResult {
         let appQuery = try requireApp(args)

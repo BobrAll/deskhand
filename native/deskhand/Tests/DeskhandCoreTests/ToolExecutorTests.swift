@@ -196,40 +196,73 @@ final class ToolExecutorTests: XCTestCase {
         }
     }
 
-    func testTextEntryRolesIncludeTextAreas() {
+    func testClickPlanClampsCountBeforeDecidingAndReporting() {
+        // This is the path `click` runs: the plan feeds the accessibility-press
+        // branch, the mouse gesture and the result message, so its count is
+        // what "Clicked … x5" may no longer claim when the mouse can send three.
+        let five = ToolExecutor.clickPlan(buttonName: "left", clickCount: 5, modifiers: [])
+        XCTAssertEqual(five.count, 3)
+        XCTAssertEqual(five.button, .left)
+        XCTAssertFalse(
+            five.isPlainLeftClick,
+            "a capped multi-click must not take the single-click accessibility branch")
+
+        let zero = ToolExecutor.clickPlan(buttonName: "left", clickCount: 0, modifiers: [])
+        XCTAssertEqual(zero.count, 1)
+        XCTAssertTrue(zero.isPlainLeftClick, "zero becomes the one plain click the mouse sends")
+
+        let doubleClick = ToolExecutor.clickPlan(buttonName: "left", clickCount: 2, modifiers: [])
+        XCTAssertEqual(doubleClick.count, 2)
+        XCTAssertFalse(doubleClick.isPlainLeftClick)
+    }
+
+    func testValueRolesIncludeTextAreasAndExcludeState() {
         // A text area is a text field for every decision that matters: its
         // value is editable text, so typing into it commits nothing, `submit`
         // applies to it, and an app that refuses AXValue gets the typing
         // fallback. The executor used to test only AXTextField and AXComboBox.
-        XCTAssertTrue(TextEntryRole.isTextEntry(kAXTextFieldRole))
-        XCTAssertTrue(TextEntryRole.isTextEntry(kAXTextAreaRole))
-        XCTAssertTrue(TextEntryRole.isTextEntry(kAXComboBoxRole))
-        XCTAssertFalse(TextEntryRole.isTextEntry(kAXButtonRole))
-        XCTAssertFalse(TextEntryRole.isTextEntry(kAXStaticTextRole))
+        XCTAssertTrue(ValueRole.isTextEntry(kAXTextFieldRole))
+        XCTAssertTrue(ValueRole.isTextEntry(kAXTextAreaRole))
+        XCTAssertTrue(ValueRole.isTextEntry(kAXComboBoxRole))
+        XCTAssertFalse(ValueRole.isTextEntry(kAXButtonRole))
+        XCTAssertFalse(ValueRole.isTextEntry(kAXStaticTextRole))
+
+        // A value that names a row is identity; a value that is state is not.
+        XCTAssertTrue(ValueRole.isIdentity(kAXStaticTextRole))
+        XCTAssertTrue(ValueRole.isIdentity(kAXCellRole))
+        XCTAssertTrue(ValueRole.isIdentity(kAXRowRole))
+        XCTAssertTrue(ValueRole.isIdentity(kAXMenuItemRole))
+        XCTAssertFalse(ValueRole.isIdentity(kAXCheckBoxRole))
+        XCTAssertFalse(ValueRole.isIdentity(kAXRadioButtonRole))
+        XCTAssertFalse(ValueRole.isIdentity(kAXSliderRole))
+        XCTAssertFalse(ValueRole.isIdentity(kAXScrollBarRole))
+        XCTAssertFalse(ValueRole.isIdentity(kAXIncrementorRole))
+        XCTAssertFalse(ValueRole.isIdentity(kAXPopUpButtonRole))
+        XCTAssertFalse(ValueRole.isIdentity(kAXMenuButtonRole))
+        XCTAssertFalse(ValueRole.isIdentity(kAXProgressIndicatorRole))
+        XCTAssertFalse(ValueRole.isIdentity(kAXDisclosureTriangleRole))
+        XCTAssertFalse(ValueRole.isTextEntry(kAXCheckBoxRole))
     }
 
-    func testBundleLessAppIsStillExcludedByItsPath() throws {
+    func testBundleLessAppIsExcludedByTheGate() throws {
         // The exclusion list names bundle identifiers. An app resolved by path
         // that cannot read its bundle reports none, and used to pass the gate
         // untouched; resolving the excluded identifiers to paths closes that.
+        // Exercise the gate itself, not only the path helper.
         let target = try resolvableApp()
         let bundle = try XCTUnwrap(target.bundleIdentifier)
         let path = try XCTUnwrap(target.path)
-
-        XCTAssertTrue(ToolExecutor.matchesExcludedPath(
-            path, excludedBundleIds: [bundle], knownApps: [target]))
-        XCTAssertFalse(ToolExecutor.matchesExcludedPath(
-            path, excludedBundleIds: ["com.example.not-\(bundle)"], knownApps: [target]))
-        XCTAssertFalse(ToolExecutor.matchesExcludedPath(
-            "/Applications/NotTheSame.app",
-            excludedBundleIds: [bundle],
-            knownApps: [target]))
-
         let bundleless = AppHandle(
-            pid: target.pid, name: target.name, bundleIdentifier: nil, path: target.path)
-        XCTAssertTrue(
-            bundleless.bundleIdentifier == nil && bundleless.path == target.path,
-            "the handle under test must be the bundle-less case")
+            pid: target.pid, name: target.name, bundleIdentifier: nil, path: path)
+
+        let excluded = ToolExecutor(excludedBundleIds: [bundle])
+        XCTAssertTrue(excluded.isExcluded(bundleless), "the gate must hold a bundle-less app")
+
+        let allowed = ToolExecutor(excludedBundleIds: ["com.example.not-\(bundle)"])
+        XCTAssertFalse(allowed.isExcluded(bundleless))
+
+        let noPath = AppHandle(pid: 0, name: "Unreadable", bundleIdentifier: nil, path: nil)
+        XCTAssertFalse(excluded.isExcluded(noPath), "no identifier and no path is nothing to match")
     }
 
     func testExcludedAppIsRefusedBeforeItCanRun() async throws {
