@@ -60,6 +60,7 @@ exports[`preload: the exposed bridge > matches the snapshot of the method set 1`
   "voice.level",
   "voice.onDownloadProgress",
   "voice.onEvent",
+  "voice.onFieldHighlight",
   "voice.onRecord",
   "voice.onStop",
   "voice.onTranscript",

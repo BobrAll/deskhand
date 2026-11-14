@@ -27,7 +27,7 @@ export {
   helperWindow
 } from './apps'
 export type { RawFrontApp, RunningApp } from './apps'
-export { helperProbe } from './ax'
+export { helperFocused, helperProbe } from './ax'
 export { helperSendKey } from './input'
 
 /**

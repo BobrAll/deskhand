@@ -27,7 +27,12 @@ import { captureScreenshot } from '../context/screenshot'
 import type { CaptureTarget } from '../context/screenshot'
 import { getProvider } from '../llm'
 import { searchWeb } from '../llm/webSearch'
-import { helperActivate, helperFrontApplication, helperVisibleBundleIds } from '../native/helper'
+import {
+  helperActivate,
+  helperFocused,
+  helperFrontApplication,
+  helperVisibleBundleIds
+} from '../native/helper'
 import type { RawFrontApp } from '../native/helper'
 import { buildTurnRequest } from './request'
 import { applyHistorySettings } from './history'
@@ -74,6 +79,7 @@ vi.mock('../native/helper', () => ({
   helperBinary: () => '/tmp/helper',
   helperFrontWindow: vi.fn(),
   helperFrontApplication: vi.fn(),
+  helperFocused: vi.fn(),
   helperActivate: vi.fn(),
   helperVisibleBundleIds: vi.fn(async () => null),
   helperWindow: vi.fn(),
@@ -176,6 +182,7 @@ beforeEach(() => {
   state.collectGate = null
   applyHistorySettings(false, [])
   vi.mocked(helperVisibleBundleIds).mockReset().mockResolvedValue(null)
+  vi.mocked(helperFocused).mockReset().mockResolvedValue(null)
 })
 
 async function harness(openCard = true) {
@@ -189,7 +196,8 @@ async function harness(openCard = true) {
     prewarm: vi.fn(), show: vi.fn(() => { visible = true }),
     showInactive: vi.fn(() => { visible = true }),
     hide: vi.fn(() => { visible = false }), window: () => win,
-    resize: vi.fn(), setDrawing: vi.fn(), setVoice: vi.fn(), setPassthrough: vi.fn()
+    resize: vi.fn(), setDrawing: vi.fn(), setVoice: vi.fn(), setPassthrough: vi.fn(),
+    showField: vi.fn(), hideField: vi.fn()
   }
   const controller = createOverlayController(host)
   if (openCard) await controller.open()
@@ -792,6 +800,42 @@ describe('dictation without the card', () => {
     expect(h.visible()).toBe(false)
   })
 
+  it('marks the editable field that will receive the dictation', async () => {
+    vi.mocked(helperFrontApplication).mockResolvedValue(front('com.apple.TextEdit', 900))
+    vi.mocked(helperFocused).mockResolvedValue({
+      role: 'AXTextArea',
+      frame: { x: 10, y: 20, width: 300, height: 24 },
+      pressable: false,
+      editable: true
+    })
+    const h = await harness(false)
+
+    await h.controller.beginDictation()
+
+    expect(helperFocused).toHaveBeenCalledWith(900)
+    await vi.waitFor(() => expect(h.host.showField).toHaveBeenCalledWith({
+      x: 10,
+      y: 20,
+      width: 300,
+      height: 24
+    }))
+  })
+
+  it('does not mark a focused element that cannot take text', async () => {
+    vi.mocked(helperFrontApplication).mockResolvedValue(front('com.apple.TextEdit', 900))
+    vi.mocked(helperFocused).mockResolvedValue({
+      role: 'AXButton',
+      frame: { x: 10, y: 20, width: 300, height: 24 },
+      pressable: true,
+      editable: false
+    })
+    const h = await harness(false)
+
+    await h.controller.beginDictation()
+
+    await vi.waitFor(() => expect(h.host.showField).toHaveBeenCalledWith(null))
+  })
+
   it('uses the app behind a frontmost card', async () => {
     state.activeApp = textEdit
     const h = await harness()
@@ -823,6 +867,16 @@ describe('dictation without the card', () => {
     expect(h.host.hide).toHaveBeenCalled()
     expect(h.controller.target()).toBeNull()
     expect(helperActivate).not.toHaveBeenCalled()
+  })
+
+  it('removes the field mark when the hold ends', async () => {
+    vi.mocked(helperFrontApplication).mockResolvedValue(front('com.apple.TextEdit', 900))
+    const h = await harness(false)
+    await h.controller.beginDictation()
+
+    h.controller.endDictation()
+
+    expect(h.host.hideField).toHaveBeenCalled()
   })
 
   it('closes a card that owned the keyboard and gives focus back to its app', async () => {

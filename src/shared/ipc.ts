@@ -133,6 +133,8 @@ export const CH = {
   voice: {
     /** main -> renderer: phase changed (listening / transcribing / idle). */
     event: 'voice:event',
+    /** main -> the transparent layer: the target field is or is no longer marked. */
+    fieldHighlight: 'voice:field-highlight',
     /** main -> renderer: start capturing from the microphone. */
     record: 'voice:record',
     /**

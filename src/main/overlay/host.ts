@@ -11,6 +11,7 @@
  */
 
 import type { BrowserWindow } from 'electron'
+import type { ScreenRect } from '@shared/types'
 
 export interface OverlayHost {
   /** Creates the window off-screen ahead of the first key press. */
@@ -41,6 +42,15 @@ export interface OverlayHost {
   setDrawing(active: boolean): void
   /** Drops the window's blur while a voice turn shows bare bars. */
   setVoice(active: boolean): void
+  /**
+   * Marks the field a dictation will fill, or clears the mark with null.
+   *
+   * This is a separate transparent layer, not the overlay itself: the card sits
+   * at the cursor, while the border has to sit on the user's own field.
+   */
+  showField(frame: ScreenRect | null): void
+  /** Removes the field mark, if one is on screen. */
+  hideField(): void
   /**
    * Makes the card transparent to the mouse and gives up focus, so a synthetic
    * click lands on the app the plan is about instead of on our own panel.

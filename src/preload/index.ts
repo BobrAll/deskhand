@@ -16,6 +16,7 @@ import type {
   ContextFlags,
   ContextSnapshot,
   DownloadProgress,
+  FieldHighlightEvent,
   OverlayState,
   DrawingPayload,
   ProviderId,
@@ -111,6 +112,7 @@ const api: DeskhandApi = {
   },
   voice: {
     onEvent: (handler) => subscribe<VoiceEvent>(CH.voice.event, handler),
+    onFieldHighlight: (handler) => subscribe<FieldHighlightEvent>(CH.voice.fieldHighlight, handler),
     onRecord: (handler) => subscribe<{ maxDurationMs: number }>(CH.voice.record, handler),
     onStop: (handler) => subscribe<{ transcribe: boolean }>(CH.voice.stop, handler),
     attach: () => ipcRenderer.invoke(CH.voice.attach),

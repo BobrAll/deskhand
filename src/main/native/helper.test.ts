@@ -487,6 +487,43 @@ describe('helperProbe', () => {
   })
 })
 
+describe('helperFocused', () => {
+  const focusedPayload = {
+    ok: true,
+    pid: 42,
+    focused: {
+      role: 'AXTextArea',
+      editable: 1,
+      pressable: 0,
+      frame: { x: 10, y: 20, width: 300, height: 24 }
+    }
+  }
+
+  it('asks for the focused element with the pid and a short timeout', async () => {
+    answerWith({ focused: { stdout: JSON.stringify(focusedPayload) } })
+
+    const focused = await helper.helperFocused(42)
+
+    expect(helperCalls()[0].args).toEqual(['focused', '42'])
+    expect(helperCalls()[0].options.timeout).toBe(1500)
+    expect(focused).toMatchObject({
+      role: 'AXTextArea',
+      editable: true,
+      frame: { x: 10, y: 20, width: 300, height: 24 }
+    })
+  })
+
+  it('returns null when there is no focused element or the helper refuses', async () => {
+    answerWith({
+      focused: { stdout: JSON.stringify({ ok: true, pid: 42 }) }
+    })
+    expect(await helper.helperFocused(42)).toBeNull()
+
+    answerWith({ focused: { stdout: '{"ok":false}' } })
+    expect(await helper.helperFocused(42)).toBeNull()
+  })
+})
+
 describe('watchForAbort: the long-lived watcher', () => {
   it('spawns the helper in key mode', async () => {
     const spawn = vi.spyOn(await import('node:child_process'), 'spawn')

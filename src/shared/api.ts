@@ -12,6 +12,7 @@ import type {
   ContextFlags,
   ContextSnapshot,
   DownloadProgress,
+  FieldHighlightEvent,
   KeyStatus,
   OverlayState,
   PasteResult,
@@ -214,6 +215,8 @@ export interface DeskhandApi {
    */
   voice: {
     onEvent(handler: (event: VoiceEvent) => void): Unsubscribe
+    /** The transparent layer's border around the field a dictation will fill. */
+    onFieldHighlight(handler: (event: FieldHighlightEvent) => void): Unsubscribe
     /** Start capturing; `maxDurationMs` bounds a key that gets stuck. */
     onRecord(handler: (request: { maxDurationMs: number }) => void): Unsubscribe
     /** Stop capturing; `transcribe: false` throws the audio away (Escape). */

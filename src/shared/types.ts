@@ -449,6 +449,11 @@ export interface VoiceEvent {
   code?: VoiceErrorCode
 }
 
+/** Main -> the transparent field layer: draw or drop the insertion border. */
+export interface FieldHighlightEvent {
+  visible: boolean
+}
+
 export interface VoiceStatus {
   /** Everything needed for a turn is in place. */
   ready: boolean

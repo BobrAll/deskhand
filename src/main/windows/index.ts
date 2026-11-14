@@ -13,6 +13,7 @@ import {
   CARD_VOICE_WIDTH,
   CARD_WIDTH
 } from '@shared/metrics'
+import type { ScreenRect } from '@shared/types'
 import type { OverlayHost } from '../overlay/host'
 import {
   boundsFor,
@@ -21,6 +22,7 @@ import {
   resizeAnchor,
   type CardAnchor
 } from '../card'
+import { hideFieldHighlight, showFieldHighlight } from '../fieldHighlight'
 import { clamp } from '../util'
 import { denyExternalLinks } from '../denyExternalLinks'
 import { loadPage } from '../pageLoad'
@@ -377,6 +379,15 @@ export const overlayHost: OverlayHost = {
       voiceActive = active
       applyWindowChrome()
     }
+  },
+
+  /** Paints the insertion-field border on its own transparent layer. */
+  showField(frame: ScreenRect | null): void {
+    void showFieldHighlight(frame)
+  },
+
+  hideField(): void {
+    hideFieldHighlight()
   },
 
   /**

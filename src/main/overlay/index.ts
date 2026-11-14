@@ -50,7 +50,15 @@ import { groundAnnotation } from '../annotationGrounding'
 import type { OverlayHost } from './host'
 import { consumeTurnStream } from '../turnStream'
 import { sameObservedWindow } from '../agent/observation'
-import { helperActivate, helperFrontApplication, helperFrontWindow, helperVisibleBundleIds, helperWindow, type RawFrontApp } from '../native/helper'
+import {
+  helperActivate,
+  helperFocused,
+  helperFrontApplication,
+  helperFrontWindow,
+  helperVisibleBundleIds,
+  helperWindow,
+  type RawFrontApp
+} from '../native/helper'
 import { getApiKey } from '../settings/secrets'
 import { getSettings, patchSettings } from '../settings/store'
 import { sameScreenRect } from '../layerWindow'
@@ -311,18 +319,40 @@ export function createOverlayController(host: OverlayHost) {
       // came from. Without a visible card (settings is frontmost) there is no
       // field behind us worth typing into.
       dictationTarget = cardVisible ? session?.target ?? null : null
+    } else {
+      dictationTarget = front && front.pid > 0
+        ? {
+            bundleId: front.bundleId,
+            name: front.name,
+            pid: front.pid,
+            windowTitle: front.windowTitle,
+            windowId: front.windowId,
+            bounds: front.bounds
+          }
+        : null
+    }
+    if (!dictationTarget) {
+      host.showField(null)
       return
     }
-    dictationTarget = front && front.pid > 0
-      ? {
-          bundleId: front.bundleId,
-          name: front.name,
-          pid: front.pid,
-          windowTitle: front.windowTitle,
-          windowId: front.windowId,
-          bounds: front.bounds
-        }
-      : null
+    // The field itself, not just the app: the border has to sit on the control
+    // the keyboard is in. The read is deliberately not awaited — the bars must
+    // appear at once, and a slow Accessibility tree may only cost the border.
+    void markDictationField(dictationTarget, mine)
+  }
+
+  /**
+   * Finds the focused control and draws its border, if it can take text.
+   *
+   * A non-editable focused element (a button, a web view that does not expose
+   * its editor) gets no border rather than a misleading rectangle around the
+   * whole window. The token check drops a late answer from a hold that has
+   * already ended.
+   */
+  async function markDictationField(target: ActiveAppInfo, mine: number): Promise<void> {
+    const focused = await helperFocused(target.pid).catch(() => null)
+    if (mine !== dictationRead) return
+    host.showField(focused?.editable && focused.frame ? focused.frame : null)
   }
 
   /**
@@ -338,6 +368,7 @@ export function createOverlayController(host: OverlayHost) {
     dictationRead += 1
     dictationTarget = null
     dictationOwnsCard = false
+    host.hideField()
     if (ownsCard) {
       close()
       return

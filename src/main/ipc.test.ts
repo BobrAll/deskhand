@@ -192,6 +192,7 @@ const MAIN_TO_RENDERER = new Set<string>([
   CH.agent.cursor,
   CH.agent.presentation,
   CH.voice.event,
+  CH.voice.fieldHighlight,
   CH.voice.record,
   CH.voice.stop,
   CH.voice.transcript,

@@ -11,6 +11,8 @@ import { flag, mapBounds, numberOf, runHelper } from './process'
 
 /** The native walk has its own 600 ms budget; this only covers a target that stops answering. */
 const PROBE_TIMEOUT_MS = 3000
+/** A focused-element read is one round trip; a slow app must not delay the bars. */
+const FOCUSED_TIMEOUT_MS = 1500
 
 function mapAxElement(raw: unknown): AxElementInfo | null {
   if (typeof raw !== 'object' || raw === null) return null
@@ -68,4 +70,18 @@ export async function helperProbe(pid: number | null): Promise<AxProbe | null> {
     targets: list(payload.targets),
     elapsedMs: numberOf(payload.elapsedMs) ?? 0
   }
+}
+
+/**
+ * The element that has the keyboard in `pid`, without walking the whole tree.
+ *
+ * Dictation uses this to place a border around the field it is about to type
+ * into. `editable` is the signal that the frame is a text field and not a
+ * focused button or a whole web view; a caller that gets a non-editable element
+ * should not draw anything.
+ */
+export async function helperFocused(pid: number): Promise<AxElementInfo | null> {
+  const payload = await runHelper(['focused', String(Math.round(pid))], FOCUSED_TIMEOUT_MS)
+  if (!payload?.ok) return null
+  return mapAxElement(payload.focused)
 }
