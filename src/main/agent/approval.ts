@@ -187,6 +187,23 @@ function confirmationSubject(request: AgentToolRequest): string {
 }
 
 /**
+ * Whether a keystroke itself commits something.
+ *
+ * A key is judged by what it sends, not by what it is called: Return submits
+ * only behind a command modifier, on a recognised message field, or on an
+ * element the labels already call critical. ⌘⌫ deletes only in Finder, and a
+ * plain character never commits at all, whatever the narration says.
+ */
+function keyCommits(context: string, request: AgentToolRequest): boolean {
+  const key = text(request.arguments.key)
+  const submit = SUBMIT_KEY.test(key)
+  const command = COMMAND_MODIFIER.test(key)
+  return (submit && COMMITTING_ACTION.test(context)) ||
+    (submit && (command || MESSAGE_FIELD.test(context))) ||
+    (request.bundleId === FINDER_BUNDLE_ID && command && FINDER_DELETE_KEY.test(key))
+}
+
+/**
  * Decides whether one call needs the user.
  *
  * `rememberedKeys` holds the digests of the fingerprints the user already allowed
@@ -212,15 +229,9 @@ export function classifyCall(request: AgentToolRequest, rememberedKeys: string[]
   if (request.tool === 'type_text' || request.tool === 'set_value') return { kind: 'allow' }
   if (request.tool === 'click' && request.textField) return { kind: 'allow' }
 
-  let critical = COMMITTING_ACTION.test(context)
-  if (request.tool === 'press_key') {
-    const key = text(request.arguments.key)
-    const submit = SUBMIT_KEY.test(key)
-    const command = COMMAND_MODIFIER.test(key)
-    critical = (submit && critical) ||
-      (submit && (command || MESSAGE_FIELD.test(context))) ||
-      (request.bundleId === FINDER_BUNDLE_ID && command && FINDER_DELETE_KEY.test(key))
-  }
+  const critical = request.tool === 'press_key'
+    ? keyCommits(context, request)
+    : COMMITTING_ACTION.test(context)
   if (!critical) return { kind: 'allow' }
 
   const subject = confirmationSubject(request)
