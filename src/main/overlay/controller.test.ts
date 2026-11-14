@@ -21,7 +21,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { BrowserWindow } from 'electron'
 import { DEFAULT_SETTINGS } from '@shared/defaults'
-import type { ActiveAppInfo, AgentRunResult, AppSettings, SendRequest } from '@shared/types'
+import { CH } from '@shared/ipc'
+import type { ActiveAppInfo, AgentRunResult, Annotation, AppSettings, ScreenshotInfo, SendRequest } from '@shared/types'
 import { beginAgentTurn, endAgentTurn } from '../agent/cursor'
 import { captureScreenshot } from '../context/screenshot'
 import type { CaptureTarget } from '../context/screenshot'
@@ -64,11 +65,21 @@ const state = vi.hoisted(() => ({
   streams: 0,
   /** What the agent reports as a warning it worked around. */
   agentNotice: undefined as string | undefined,
+  /** Shapes the mocked writer paints during a turn. */
+  annotations: [] as Annotation[],
   /** Holds context collection so a test can inspect an open that is in flight. */
-  collectGate: null as Promise<void> | null
+  collectGate: null as Promise<void> | null,
+  /** One gate per `collectContext` call, for tests that run two opens at once. */
+  collectGates: [] as Promise<void>[],
+  /** `app.hide()` from the mocked Electron module. */
+  hideApp: vi.fn()
 }))
 
-vi.mock('electron', () => ({ app: {}, BrowserWindow: {}, systemPreferences: { isTrustedAccessibilityClient: () => true } }))
+vi.mock('electron', () => ({
+  app: { hide: state.hideApp },
+  BrowserWindow: { getAllWindows: () => [] },
+  systemPreferences: { isTrustedAccessibilityClient: () => true }
+}))
 vi.mock('electron-store', () => ({ default: class { store = {} } }))
 vi.mock('../settings/store', () => ({
   getSettings: () => state.settings,
@@ -122,6 +133,8 @@ vi.mock('../agent', () => ({
 }))
 vi.mock('../context/collect', () => ({
   collectContext: async () => {
+    const queued = state.collectGates.shift()
+    if (queued) await queued
     if (state.collectGate) await state.collectGate
     return {
       snapshot: {
@@ -146,12 +159,16 @@ vi.mock('./request', () => ({
 vi.mock('../turnStream', async () => {
   const { ProviderError } = await import('../llm/provider')
   return {
-    consumeTurnStream: vi.fn(async (options: { onText: (text: string) => void }) => {
+    consumeTurnStream: vi.fn(async (options: {
+      onText: (text: string) => void
+      onAnnotations?: (annotations: Annotation[]) => void
+    }) => {
       state.streams += 1
       if (state.imageRefusedOnce && state.streams === 1) {
         throw new ProviderError('Модель не принимает изображения', true, 400, true)
       }
       if (state.fail) throw new Error('Request failed')
+      if (state.annotations.length > 0) options.onAnnotations?.(state.annotations)
       if (state.stream) { options.onText(state.text); state.afterChunk() }
       return { text: state.text, webLookup: state.webLookup }
     })
@@ -179,7 +196,10 @@ beforeEach(() => {
   state.imageRefusedOnce = false
   state.streams = 0
   state.agentNotice = undefined
+  state.annotations = []
   state.collectGate = null
+  state.collectGates = []
+  state.hideApp.mockClear()
   applyHistorySettings(false, [])
   vi.mocked(helperVisibleBundleIds).mockReset().mockResolvedValue(null)
   vi.mocked(helperFocused).mockReset().mockResolvedValue(null)
@@ -190,7 +210,7 @@ async function harness(openCard = true) {
   let visible = false
   const send = vi.fn()
   const win = {
-    isVisible: () => visible, isDestroyed: () => false, setContentProtection: vi.fn(), webContents: { send }
+    isVisible: () => visible, isDestroyed: () => false, setContentProtection: vi.fn(), focus: vi.fn(), webContents: { send }
   } as unknown as BrowserWindow
   const host: OverlayHost = {
     prewarm: vi.fn(), show: vi.fn(() => { visible = true }),
@@ -215,6 +235,16 @@ function gate(): { wait: Promise<void>; release: () => void } {
   let release!: () => void
   const wait = new Promise<void>((resolve) => { release = resolve })
   return { wait, release }
+}
+
+/** The app the capture tests photograph. */
+const noteApp: ActiveAppInfo = {
+  bundleId: 'com.apple.TextEdit',
+  name: 'TextEdit',
+  pid: 900,
+  windowTitle: 'Заметка',
+  windowId: 5,
+  bounds: { x: 0, y: 0, width: 800, height: 600 }
 }
 
 describe('routing: the agent or the writer', () => {
@@ -1034,5 +1064,251 @@ describe('feedback before request preparation', () => {
     expect(h.send).toHaveBeenCalledWith('overlay:stream', expect.objectContaining({
       type: 'done', text: 'Context unavailable'
     }))
+  })
+})
+
+describe('a press that follows Escape', () => {
+  it('starts a fresh open instead of joining the one the close doomed', async () => {
+    const doomed = gate()
+    const fresh = gate()
+    state.collectGates = [doomed.wait, fresh.wait]
+    const h = await harness(false)
+
+    const first = h.controller.open()
+    await vi.waitFor(() => expect(state.collectGates).toHaveLength(1))
+
+    h.controller.close()
+    vi.mocked(h.host.hide).mockClear()
+    const second = h.controller.open()
+
+    // The fresh open wins the screen first, then the doomed one settles. It must
+    // not take down the card the press after Escape just put up.
+    fresh.release()
+    doomed.release()
+    await Promise.all([first, second])
+
+    expect(h.controller.isOpen()).toBe(true)
+    expect(h.controller.state()).not.toBeNull()
+    expect(h.host.hide).not.toHaveBeenCalled()
+  })
+
+  it('shares one context collection between two presses of the same card', async () => {
+    const only = gate()
+    state.collectGates = [only.wait]
+    const h = await harness(false)
+
+    const first = h.controller.open()
+    const second = h.controller.open()
+    expect(second).toBe(first)
+
+    only.release()
+    await first
+
+    expect(h.controller.isOpen()).toBe(true)
+  })
+})
+
+describe('a transcript with no card', () => {
+  it('drops the words when the card was dismissed before they arrived', async () => {
+    const h = await harness()
+    h.controller.close()
+    h.send.mockClear()
+
+    h.controller.deliver('привет', { submit: true })
+
+    // Escape ended the turn; recognition keeps running and its result belongs
+    // to nobody. Typing it into the hidden renderer would bring the card back
+    // with an answer to the phrase the user just closed.
+    expect(h.send).not.toHaveBeenCalledWith('voice:transcript', expect.anything())
+  })
+
+  it('drops the words when the open it waited for was doomed', async () => {
+    const pending = gate()
+    state.collectGates = [pending.wait]
+    const h = await harness(false)
+    const opening = h.controller.open()
+    h.controller.deliver('привет', { submit: true })
+
+    h.controller.close()
+    vi.mocked(h.host.hide).mockClear()
+    pending.release()
+    await opening
+
+    expect(h.send).not.toHaveBeenCalledWith('voice:transcript', expect.anything())
+  })
+
+  it('still types the words into a card that is on screen', async () => {
+    const h = await harness()
+
+    h.controller.deliver('привет', { submit: false })
+
+    expect(h.send).toHaveBeenCalledWith('voice:transcript', { text: 'привет', send: false })
+  })
+})
+
+describe('a capture that no longer represents the screen', () => {
+  /** A frame old enough that the next request has to take a new one. */
+  const staleShot = (): ScreenshotInfo => ({
+    dataUrl: 'data:image/jpeg;base64,b2xk',
+    width: 800,
+    height: 600,
+    bytes: 3,
+    capturedAt: Date.now() - 5_000,
+    area: { x: 0, y: 0, width: 800, height: 600 },
+    fullScreen: true
+  })
+
+  /** Swaps the built request for one that reports what the refresh returned. */
+  function readFreshScreenshot(): () => ScreenshotInfo | null | undefined {
+    let fresh: ScreenshotInfo | null | undefined
+    vi.mocked(buildTurnRequest).mockImplementationOnce(async ({ ensureFreshScreenshot }) => {
+      fresh = await ensureFreshScreenshot()
+      return {
+        messages: [],
+        maxTokens: 1024,
+        area: null,
+        canDraw: false,
+        useImage: false,
+        screenshot: null,
+        abandoned: false
+      }
+    })
+    return () => fresh
+  }
+
+  beforeEach(() => {
+    vi.mocked(captureScreenshot).mockReset()
+    vi.mocked(buildTurnRequest).mockClear()
+  })
+
+  it('sends no image at all when the refresh fails', async () => {
+    state.activeApp = noteApp
+    vi.mocked(captureScreenshot).mockResolvedValueOnce(staleShot()).mockResolvedValue(null)
+    const h = await harness()
+
+    // The first turn is the one that puts a frame in the session.
+    const saved = readFreshScreenshot()
+    await h.controller.send({ ...h.request, includeScreenshot: true })
+    expect(saved()?.dataUrl).toBe(staleShot().dataUrl)
+    expect(h.controller.state()?.context.screenshot).toEqual(saved())
+
+    // The next capture fails (Screen Recording, a closed window): the session
+    // keeps the old frame in the preview, but the turn must not be told it is
+    // the screen as it is now.
+    const fresh = readFreshScreenshot()
+    await h.controller.send({ ...h.request, requestId: 'r2', includeScreenshot: true })
+
+    expect(captureScreenshot).toHaveBeenCalledTimes(2)
+    expect(fresh()).toBeNull()
+  })
+
+  it('tells the card when the capture target is refused', async () => {
+    vi.useFakeTimers()
+    try {
+      state.activeApp = noteApp
+      vi.mocked(captureScreenshot).mockResolvedValueOnce(staleShot())
+      const h = await harness()
+      const lastUpdate = (): { screenshot: ScreenshotInfo | null } | undefined =>
+        h.send.mock.calls
+          .filter(([channel]) => channel === CH.overlay.contextUpdate)
+          .at(-1)?.[1] as { screenshot: ScreenshotInfo | null } | undefined
+
+      h.controller.setFlags({ includeSelection: false, includeScreenshot: true })
+      await vi.waitFor(() => expect(lastUpdate()?.screenshot?.dataUrl).toBe(staleShot().dataUrl))
+
+      // The app moves onto the exclusion list, so nothing may be photographed any
+      // more. The live refresh has to tell the card that the frame it shows is
+      // gone, or the thumbnail keeps promising a screenshot the session lost.
+      state.settings.excludedApps = [noteApp.bundleId]
+      h.send.mockClear()
+      await vi.advanceTimersByTimeAsync(2_000)
+
+      expect(lastUpdate()?.screenshot).toBeNull()
+      expect(h.controller.state()?.context.screenshot).toBeNull()
+      h.controller.close()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('drops the shapes together with a refused frame', async () => {
+    state.activeApp = noteApp
+    state.annotations = [{ kind: 'circle', from: { x: 0.1, y: 0.2 }, to: { x: 0.3, y: 0.4 } }]
+    vi.mocked(captureScreenshot).mockResolvedValueOnce(staleShot())
+    vi.mocked(buildTurnRequest).mockImplementationOnce(async ({ ensureFreshScreenshot }) => {
+      await ensureFreshScreenshot()
+      return {
+        messages: [],
+        maxTokens: 1024,
+        area: staleShot().area,
+        canDraw: true,
+        useImage: true,
+        screenshot: null,
+        abandoned: false
+      }
+    })
+    const h = await harness()
+    const lastUpdate = (): { screenshot: ScreenshotInfo | null } | undefined =>
+      h.send.mock.calls
+        .filter(([channel]) => channel === CH.overlay.contextUpdate)
+        .at(-1)?.[1] as { screenshot: ScreenshotInfo | null } | undefined
+    const drawn = (): number | undefined =>
+      (h.send.mock.calls
+        .filter(([channel]) => channel === CH.overlay.annotations)
+        .at(-1)?.[1] as { count: number } | undefined)?.count
+
+    // A turn leaves one shape on the screen next to the frame it was measured
+    // against.
+    await h.controller.send({ ...h.request, includeScreenshot: true })
+    expect(drawn()).toBe(1)
+
+    // The app moves onto the exclusion list, so the refresh cannot photograph it:
+    // the frame goes, and the shape has no meaning without it.
+    state.settings.excludedApps = [noteApp.bundleId]
+    vi.mocked(helperFrontApplication).mockResolvedValue({
+      bundleId: 'com.bobr.deskhand',
+      name: 'Deskhand',
+      pid: process.pid,
+      windowId: null,
+      windowTitle: null,
+      bounds: null,
+      accessibility: true
+    })
+    h.send.mockClear()
+    await h.controller.open()
+
+    await vi.waitFor(() => expect(lastUpdate()?.screenshot).toBeNull())
+    expect(drawn()).toBe(0)
+    // One publish for the cleared state: the shape and the frame go together.
+    expect(h.send.mock.calls.filter(([channel]) => channel === CH.overlay.contextUpdate)).toHaveLength(1)
+    expect(h.controller.state()?.context.screenshot).toBeNull()
+    h.controller.close()
+  })
+})
+
+describe('focus on the way back', () => {
+  beforeEach(() => {
+    vi.mocked(helperActivate).mockReset()
+  })
+
+  it('does not hide a card that opened while focus was going back', async () => {
+    state.activeApp = noteApp
+    let release!: () => void
+    const activation = new Promise<boolean>((resolve) => { release = () => resolve(false) })
+    vi.mocked(helperActivate).mockReturnValueOnce(activation)
+    const h = await harness()
+
+    h.controller.close()
+    expect(helperActivate).toHaveBeenCalledTimes(1)
+    // The press lands while the helper is still loading the app to activate.
+    await h.controller.open()
+    release()
+    // Let the hand-back finish before asking whether it touched the screen.
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    // Focus already went to the new card: hiding ourselves now would make the
+    // fresh press look like it did nothing.
+    expect(h.controller.isOpen()).toBe(true)
+    expect(state.hideApp).not.toHaveBeenCalled()
   })
 })

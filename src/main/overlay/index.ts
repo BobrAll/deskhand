@@ -228,23 +228,33 @@ export function createOverlayController(host: OverlayHost) {
   /** Whether the user is writing in the card right now (see `syncDrawing`). */
   let typing = false
   /**
-   * Bumped by every `close()`. `open()` takes a long time (app, selection and
-   * screenshot) and the user can finish speaking, and release the key, while it
-   * is still collecting; without this the card would appear *after* the turn was
-   * already closed — an empty panel left floating at the pointer with nothing
-   * ever going to fill it.
+   * Which card owns the screen, as a counter.
+   *
+   * Bumped by every `close()` and by every fresh `open()`. `open()` takes a long
+   * time (app, selection and screenshot) and the user can finish speaking, and
+   * release the key, while it is still collecting; without this the card would
+   * appear *after* the turn was already closed — an empty panel left floating at
+   * the pointer with nothing ever going to fill it. The same number is what
+   * tells a slow follow-up (a focus hand-back, a doomed collection) that a newer
+   * card has taken over.
    */
   let generation = 0
 
   /**
-   * The `open()` currently collecting context, if any.
+   * The `open()` currently collecting context, if any, with the generation it
+   * was started in.
    *
    * A voice transcript can be ready before the card is: the window is shown
    * immediately on the key press, but the app and the selection still have to be
    * read. Delivering into that gap would put the phrase into the *previous*
    * session (or into no session at all), so `deliver` waits for this to settle.
+   *
+   * The generation travels with the record because a `close()` during collection
+   * dooms the open that is already running: joining it on the next press would
+   * hand that press a card which is about to be taken down by its own generation
+   * check. Only an open from the current generation can be shared.
    */
-  let opening: Promise<void> | null = null
+  let opening: { generation: number; promise: Promise<void> } | null = null
   /**
    * The spoken turn still in flight.
    *
@@ -462,6 +472,12 @@ export function createOverlayController(host: OverlayHost) {
     win.webContents.send(channel, payload)
   }
 
+  /** Whether the card is on screen right now, session and window together. */
+  function cardOnScreen(): boolean {
+    const win = host.window()
+    return Boolean(session && win && !win.isDestroyed() && win.isVisible())
+  }
+
   function publishState(): void {
     const next = overlayState()
     if (next) sendToWindow(CH.overlay.state, next)
@@ -626,7 +642,15 @@ export function createOverlayController(host: OverlayHost) {
         visibleBundleIds
       })
       if (!capture) {
+        // Nothing may be photographed, so the session has no picture any more.
+        // The card is still showing the last one and has to be told, or its
+        // thumbnail keeps promising a frame the model will never receive.
         target.snapshot.screenshot = null
+        target.snapshot.screenshotPending = false
+        // The shapes were measured against that frame: keeping them would leave
+        // an arrow pointing at a screen that is no longer shown.
+        if (session === target) discardAnnotations()
+        publishContext(target)
         return null
       }
       const shot = await timed('screen.capture', () => captureScreenshot(
@@ -658,6 +682,11 @@ export function createOverlayController(host: OverlayHost) {
    * instant as a live tick does not pay for a second capture; anything older is
    * re-taken, because the whole point is that the model sees the screen as it is
    * now and not as it was when the overlay opened.
+   *
+   * A refresh that fails yields `null`, never the previous frame: after a Screen
+   * Recording refusal the old picture would be presented as the current screen
+   * and the prompt would describe it as such, so the model would confidently
+   * answer about a minutes-old one. The turn knows how to go on without an image.
    */
   async function ensureFreshScreenshot(target: Session, requireObserved = false): Promise<ScreenshotInfo | null> {
     const current = target.snapshot.screenshot
@@ -673,12 +702,10 @@ export function createOverlayController(host: OverlayHost) {
       target.snapshot.screenshotPending = true
       publishContext(target)
     }
-    const shot = await captureFor(target)
-    if (session === target && (showPending || !shot)) {
-      target.snapshot.screenshotPending = false
-      publishContext(target)
-    }
-    return shot ?? (requireObserved ? null : target.snapshot.screenshot)
+    // `captureFor` publishes the settled context itself, including the cleared
+    // state when nothing may be photographed. Sending it again here would make
+    // the card redraw the same frame twice.
+    return captureFor(target)
   }
 
   /** Re-captures on a timer while the card is on screen. */
@@ -729,18 +756,30 @@ export function createOverlayController(host: OverlayHost) {
    *
    * The hotkey, push-to-talk and the tray all want the same card; running
    * `collectContext` twice at once would show the second session over the first.
+   *
+   * Sharing is limited to an open of the *current* generation. An open that was
+   * already running when the user closed the card is doomed — it will hit its
+   * own generation check and hide the window — so a press after Escape starts a
+   * fresh collection instead of inheriting that one. The doomed task is left to
+   * settle on its own; it can no longer clear `opening`, which now belongs to
+   * the newer open.
    */
   function open(): Promise<void> {
-    if (opening) {
+    if (opening && opening.generation === generation) {
       // A second press joining an open that is still collecting still gets the
       // card on screen immediately: the session can arrive later.
       host.showInactive(INITIAL_HEIGHT)
-      return opening
+      return opening.promise
     }
-    const task = openInternal()
-    opening = task
+    // A fresh open starts a new card on the screen. Its own generation is what
+    // tells a close from the previous one (a focus hand-back still in flight,
+    // for instance) that its work is no longer current.
+    generation += 1
+    const startedIn = generation
+    const task = openInternal(startedIn)
+    opening = { generation: startedIn, promise: task }
     const done = (): void => {
-      if (opening === task) opening = null
+      if (opening?.promise === task) opening = null
     }
     void task.then(done, done)
     return task
@@ -807,8 +846,7 @@ export function createOverlayController(host: OverlayHost) {
    * window. So the card is shown with `showInactive`, the context is read from the
    * app behind it, and only then does the window take the keyboard.
    */
-  async function openInternal(): Promise<void> {
-    const startedIn = generation
+  async function openInternal(startedIn: number): Promise<void> {
     const win = host.window()
     if (session && win?.isVisible()) {
       await refreshOpenCard(startedIn, win)
@@ -852,7 +890,10 @@ export function createOverlayController(host: OverlayHost) {
     // dictation is the one case that hides nothing — the same window is already
     // showing its bars.
     if (startedIn !== generation || dictating) {
-      if (!dictating) host.hide()
+      // A newer open may already own the window (the press that followed the
+      // close that doomed this one): hiding it here would take down the card
+      // that press just put up. Only the newest open may hide what it showed.
+      if (!dictating && opening?.generation === startedIn) host.hide()
       return
     }
 
@@ -909,6 +950,7 @@ export function createOverlayController(host: OverlayHost) {
 
   function close(): void {
     generation += 1
+    const closedIn = generation
     // Remembered before the session is torn down: this is the app the keyboard
     // has to go back to (see `returnFocusTo`). The flag matters because `close()`
     // is also called for a card that was never open (a voice turn that ends in
@@ -938,7 +980,7 @@ export function createOverlayController(host: OverlayHost) {
     // with an application that no longer has a window, so the user types into
     // nothing. Escape means "done, back to my work", not "the assistant is in the
     // way" — so focus is handed back explicitly.
-    void returnFocusTo(target)
+    void returnFocusTo(target, closedIn)
   }
 
   /**
@@ -955,8 +997,15 @@ export function createOverlayController(host: OverlayHost) {
    *   `app.hide()` is skipped while another of our windows is visible, because it
    *   hides those too — and a settings window the user opened on purpose is not
    *   something to close on their behalf.
+   *
+   * `closedIn` is the generation of the close that asked for this, because both
+   * moves outlive it: the helper activation is a process round trip, and the
+   * press that reopens the card can land inside that window. The new card took
+   * the keyboard on purpose, so raising the old app over it — or hiding the
+   * window it is in — would swallow the press.
    */
-  async function returnFocusTo(target: ActiveAppInfo | null): Promise<void> {
+  async function returnFocusTo(target: ActiveAppInfo | null, closedIn: number): Promise<void> {
+    if (closedIn !== generation) return
     if (target && (target.bundleId || target.pid > 0)) {
       try {
         if (await helperActivate({ bundleId: target.bundleId, pid: target.pid })) return
@@ -964,6 +1013,8 @@ export function createOverlayController(host: OverlayHost) {
         /* fall through to hiding ourselves */
       }
     }
+    // A reopen moved the generation while the helper was loading the app.
+    if (closedIn !== generation) return
     const overlay = host.window()
     const others = BrowserWindow.getAllWindows().some(
       (win) => win !== overlay && !win.isDestroyed() && win.isVisible()
@@ -1641,11 +1692,22 @@ export function createOverlayController(host: OverlayHost) {
    * once its state is ready — that wiring lives in the voice controller's host.
    * If the open is still collecting context, the transcript waits for it: the
    * renderer would otherwise ask the *previous* session (or no session at all).
+   *
+   * A phrase whose card is gone by the time it is recognised is dropped. Escape
+   * closes the card without cancelling recognition (the native tap reports a
+   * cancel only while the key is held), so the transcript arrives after the user
+   * already dismissed the question: typing it into the hidden renderer would
+   * bring the card back with an answer to the phrase they just closed.
    */
   function deliver(text: string, { submit }: { submit: boolean }): void {
-    const push = (): void => sendToWindow(CH.voice.transcript, { text, send: submit })
-    if (opening) {
-      void opening.then(push, push)
+    const push = (): void => {
+      // A close while the open was still collecting dooms it: the wait ends with
+      // no card on screen, and the text has nowhere honest to go.
+      if (!cardOnScreen()) return
+      sendToWindow(CH.voice.transcript, { text, send: submit })
+    }
+    if (opening && opening.generation === generation) {
+      void opening.promise.then(push, push)
       return
     }
     push()
@@ -1687,7 +1749,7 @@ export function createOverlayController(host: OverlayHost) {
     // paste into the app a previous card happened to belong to.
     target: (): ActiveAppInfo | null =>
       dictating ? dictationTarget : session?.target ?? null,
-    isOpen: (): boolean => Boolean(session && host.window()?.isVisible())
+    isOpen: (): boolean => cardOnScreen()
   }
 }
 
