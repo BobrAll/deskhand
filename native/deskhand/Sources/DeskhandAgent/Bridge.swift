@@ -182,20 +182,28 @@ final class Bridge: @unchecked Sendable {
         // deliver their replies to it, and parking the main thread turns every
         // activation into a one-second timeout.
         let traceRunID = params["options"]?["trace_run_id"]?.stringValue
-        let record: (@Sendable (String, [String: JSONValue]) -> Void)?
-        if traceRunID != nil {
-            record = { [weak self] event, fields in
-                self?.emit(["event": .string(event), "params": .object(fields)])
-            }
-        } else {
-            record = nil
-        }
+        let record = modelTraceRecorder(runID: traceRunID)
         Task.detached { [weak self] in
             await Self.$traceRunID.withValue(traceRunID) {
                 await ModelTrace.$record.withValue(record) {
                     await self?.executeRun(loop: loop, executor: executor, handle: handle, task: task)
                 }
             }
+        }
+    }
+
+    /// Where the providers report what they sent and received, or nil when the
+    /// host did not ask for a per-run trace.
+    ///
+    /// The recorder is the same event pipe as everything else, so the trace
+    /// arrives with the run's own `trace_run_id` and the host can file it in the
+    /// right run without a second protocol.
+    private func modelTraceRecorder(
+        runID: String?
+    ) -> (@Sendable (String, [String: JSONValue]) -> Void)? {
+        guard runID != nil else { return nil }
+        return { [weak self] event, fields in
+            self?.emit(["event": .string(event), "params": .object(fields)])
         }
     }
 
@@ -265,28 +273,12 @@ final class Bridge: @unchecked Sendable {
         cancel: CancelToken
     ) -> ToolPolicyDecision {
         let id = nextApprovalId()
-        var params: [String: JSONValue] = [
-            "id": .string(id),
-            "tool": .string(context.tool),
-            "arguments": context.arguments,
-            "fingerprint": .string(context.fingerprint),
-        ]
-        if let app = context.appName { params["app"] = .string(app) }
-        if let bundle = context.bundleIdentifier { params["bundle_id"] = .string(bundle) }
-        if let role = context.role { params["role"] = .string(role) }
-        if let title = context.title { params["title"] = .string(title) }
-        if let label = context.label { params["label"] = .string(label) }
-        if context.isTextField { params["text_field"] = .bool(true) }
-        if let narration = context.narration, !narration.isEmpty {
-            params["narration"] = .string(narration)
-        }
-
         let wait = ApprovalWait()
         lock.lock()
         pendingApprovals[id] = wait
         lock.unlock()
 
-        emit(["event": .string("approval"), "params": .object(params)])
+        emit(["event": .string("approval"), "params": .object(approvalParams(context, id: id))])
 
         // A question nobody answers must not hang the run forever: the app is
         // the only one who can answer it, and if it stopped, so did the reason
@@ -310,6 +302,30 @@ final class Bridge: @unchecked Sendable {
         lock.lock()
         pendingApprovals.removeValue(forKey: id)
         lock.unlock()
+    }
+
+    /// What the card needs to ask the question, in the field names
+    /// `AgentToolRequest` reads on the other side of the pipe.
+    ///
+    /// A field is present only when the tool resolved it: an absent `role` means
+    /// "the call was not about an element", which is different from an empty one.
+    private func approvalParams(_ context: ToolCallContext, id: String) -> [String: JSONValue] {
+        var params: [String: JSONValue] = [
+            "id": .string(id),
+            "tool": .string(context.tool),
+            "arguments": context.arguments,
+            "fingerprint": .string(context.fingerprint),
+        ]
+        if let app = context.appName { params["app"] = .string(app) }
+        if let bundle = context.bundleIdentifier { params["bundle_id"] = .string(bundle) }
+        if let role = context.role { params["role"] = .string(role) }
+        if let title = context.title { params["title"] = .string(title) }
+        if let label = context.label { params["label"] = .string(label) }
+        if context.isTextField { params["text_field"] = .bool(true) }
+        if let narration = context.narration, !narration.isEmpty {
+            params["narration"] = .string(narration)
+        }
+        return params
     }
 
     private func resolveApproval(params: JSONValue) {
