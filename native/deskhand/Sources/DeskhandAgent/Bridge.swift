@@ -39,6 +39,11 @@ final class Bridge: @unchecked Sendable {
     private struct ActiveRun {
         let token: CancelToken
         let finished: DispatchSemaphore
+
+        /// Waits, bounded, for the run's task to let go of the machine.
+        func waitUntilUnwound() -> Bool {
+            finished.wait(timeout: .now() + Bridge.runUnwindTimeout) == .success
+        }
     }
 
     /// Approvals waiting for the app's answer, keyed by request id.
@@ -164,26 +169,11 @@ final class Bridge: @unchecked Sendable {
             return
         }
 
-        lock.lock()
-        // Escape stopped the previous run, but its task may still be inside a
-        // tool call. Wait for it to let go of the pointer instead of rejecting
-        // a run the user just asked for with a message they cannot act on.
-        if let running = activeRun, running.token.isCancelled {
-            lock.unlock()
-            if running.finished.wait(timeout: .now() + Self.runUnwindTimeout) == .timedOut {
-                respond(id: id, error: Self.runBusyMessage)
-                return
-            }
-            lock.lock()
-        }
-        if activeRun != nil {
-            lock.unlock()
+        guard let run = claimRunSlot() else {
             respond(id: id, error: Self.runBusyMessage)
             return
         }
-        let handle = CancelToken()
-        activeRun = ActiveRun(token: handle, finished: DispatchSemaphore(value: 0))
-        lock.unlock()
+        let handle = run.token
 
         let config: ProviderConfig
         do {
@@ -292,19 +282,41 @@ final class Bridge: @unchecked Sendable {
         }
     }
 
+    /// Takes the run slot, or returns nil when another run still owns it.
+    ///
+    /// A cancelled run keeps the slot until its task has actually unwound: the
+    /// loop checks the token between steps and calls, so a drag, a scroll or a
+    /// `type_text` can still be in flight. Waiting that out is what lets the
+    /// user start a new run right after Escape.
+    private func claimRunSlot() -> ActiveRun? {
+        lock.lock()
+        if let running = activeRun, running.token.isCancelled {
+            lock.unlock()
+            guard running.waitUntilUnwound() else { return nil }
+            lock.lock()
+        }
+        defer { lock.unlock() }
+        guard activeRun == nil else { return nil }
+        let claimed = ActiveRun(token: CancelToken(), finished: DispatchSemaphore(value: 0))
+        activeRun = claimed
+        return claimed
+    }
+
+    /// Releases the slot, but only for the run that still owns it.
+    ///
+    /// A cancelled run unwinds asynchronously, so by the time it finishes the
+    /// user may already have started another one; clearing the slot then would
+    /// hand the machine to two runs.
     private func finishRun(_ handle: CancelToken) {
         lock.lock()
-        // Only the run that still owns the slot may clear it, and only it may
-        // close the questions: a cancelled run unwinds asynchronously, and by
-        // then the user may already have started another one.
-        let ownsSlot = activeRun?.token === handle
-        var finished: DispatchSemaphore?
-        if ownsSlot {
-            finished = activeRun?.finished
-            activeRun = nil
+        guard activeRun?.token === handle else {
+            lock.unlock()
+            return
         }
-        let waits = ownsSlot ? pendingApprovals : [:]
-        if ownsSlot { pendingApprovals.removeAll() }
+        let finished = activeRun?.finished
+        activeRun = nil
+        let waits = pendingApprovals
+        pendingApprovals.removeAll()
         lock.unlock()
         // A run that ended while a question was open must not leave the app
         // waiting for an answer that will never come.
@@ -314,6 +326,13 @@ final class Bridge: @unchecked Sendable {
         finished?.signal()
     }
 
+    /// The token of the run in flight, if any.
+    private func activeToken() -> CancelToken? {
+        lock.lock()
+        defer { lock.unlock() }
+        return activeRun?.token
+    }
+
     /// Stops the run.
     ///
     /// The slot stays with the cancelled run until its task has actually
@@ -321,10 +340,7 @@ final class Bridge: @unchecked Sendable {
     /// a scroll or a `type_text` can still be in flight. `startRun` waits that
     /// out (bounded) rather than pointing a second agent at the same pointer.
     private func cancelRun() {
-        lock.lock()
-        let running = activeRun?.token
-        lock.unlock()
-        running?.cancel()
+        activeToken()?.cancel()
         resolveAllApprovals(.deny(Self.cancelledMessage))
     }
 

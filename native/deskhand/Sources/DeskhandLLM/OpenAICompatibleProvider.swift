@@ -183,7 +183,7 @@ public struct OpenAICompatibleProvider: StreamingChatProvider {
         var builders: [Int: ToolCallBuilder] = [:]
         var stopReason: String?
         var usage: TokenUsage?
-        var sawDone = false
+        var sawTerminalEvent = false
 
         var lines: [JSONValue] = []
         defer { exchange?.stream(lines, status: status) }
@@ -192,8 +192,8 @@ public struct OpenAICompatibleProvider: StreamingChatProvider {
             let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
             guard trimmed.hasPrefix("data:") else { continue }
             let raw = trimmed.dropFirst(5).trimmingCharacters(in: .whitespaces)
-            if raw == "[DONE]" {
-                sawDone = true
+            if raw == streamDoneMarker {
+                sawTerminalEvent = true
                 break
             }
             guard let value = try? JSONValue.parse(raw) else { continue }
@@ -233,12 +233,7 @@ public struct OpenAICompatibleProvider: StreamingChatProvider {
             }
         }
 
-        // A stream that ends without a terminal event was cut, whatever text
-        // arrived before the cut. Accepting it returns half an answer with no
-        // stop reason, and the loop draws a checkmark over it.
-        guard stopReason != nil || sawDone else {
-            throw LLMError.transport("the response stream ended before the model finished")
-        }
+        try requireStreamFinished(stopReason: stopReason, sawTerminalEvent: sawTerminalEvent)
 
         let calls = builders.keys.sorted().map { index -> ToolCall in
             let builder = builders[index]!
