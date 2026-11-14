@@ -3,12 +3,13 @@
  */
 
 import { traceModelUsage } from '../agent/trace'
-import { disabledReasoning } from './reasoning'
+import { disabledReasoning, isReasoningModel } from './reasoning'
 import { ProviderError, type ChatMessage, type ContentPart, type LlmProvider, type StreamChunk, type StreamEnd, type StreamOptions } from './provider'
 import {
   apiEndpoint,
   apiRoot,
-  readSse,
+  providerErrorMessage,
+  readProviderSse,
   toProviderError,
   toTransportError,
   type HttpErrorBody
@@ -83,19 +84,20 @@ export class OpenAIProvider implements LlmProvider {
   ): AsyncGenerator<StreamChunk, StreamEnd> {
     const body = await this.openStream(messages, apiKey, options)
     let end: StreamEnd = 'incomplete'
-    let malformed = false
-    for await (const event of readSse(body, false)) {
-      if (event.data === '[DONE]') return malformed ? 'incomplete' : end
+    for await (const event of readProviderSse(body, options.signal)) {
+      // Termination comes from `[DONE]` and `finish_reason` only: an event this
+      // decoder skips must not decide that an otherwise finished turn is broken.
+      if (event.data === '[DONE]') return end
       let parsed: unknown
       try {
         parsed = JSON.parse(event.data)
       } catch {
-        malformed = true
         continue
       }
+      if (!parsed || typeof parsed !== 'object') continue
       const payload = parsed as OpenAiChunk
-      if (payload.error?.message) {
-        throw new ProviderError(`Ошибка модели: ${payload.error.message}`, true)
+      if (payload.error) {
+        throw new ProviderError(`Ошибка модели: ${providerErrorMessage(payload.error)}`, true)
       }
       if (payload.usage) traceModelUsage(payload.usage.prompt_tokens, payload.usage.completion_tokens)
       const reason = payload.choices?.[0]?.finish_reason
@@ -107,13 +109,20 @@ export class OpenAIProvider implements LlmProvider {
   }
 
   private payload(messages: ChatMessage[], options: StreamOptions): object {
+    // Reasoning models reject `max_tokens` and a non-default temperature; their
+    // limit travels as `max_completion_tokens` instead.
+    const reasoning = isReasoningModel(options.model)
     return {
       model: options.model,
-      temperature: options.temperature,
-      max_tokens: options.maxTokens,
+      ...(reasoning
+        ? { max_completion_tokens: options.maxTokens }
+        : { temperature: options.temperature, max_tokens: options.maxTokens }),
       ...disabledReasoning(apiRoot(options, this.baseUrl), options.model),
       ...options.extraBody,
       stream: true,
+      // Without this the stream carries no usage at all, and `traceModelUsage`
+      // never sees a token count on the OpenAI wire.
+      stream_options: { include_usage: true },
       messages: messages.map((message): OpenAiMessage => ({
         role: message.role,
         content: encodeBlocks(message.parts)
