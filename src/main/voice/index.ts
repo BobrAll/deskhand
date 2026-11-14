@@ -25,7 +25,7 @@ import type {
 import { pasteAnswer } from '../paste'
 import { helperBinary } from '../native/helper'
 import { getSettings } from '../settings/store'
-import { VoiceKeyListener, type TapEvent } from './listen'
+import { parseAccelerator, VoiceKeyListener, type TapEvent } from './listen'
 import { cancelWarmRecognizer, transcribe, voiceStatus, warmRecognizer } from './recognizer'
 
 /** What happens to a recognised transcript once it lands in the card. */
@@ -64,12 +64,13 @@ export interface VoiceHost {
   /** Puts recognised text into an open card. */
   deliver(text: string, options: DeliverOptions): void
   /**
-   * Ends a dictation hold and puts the screen back the way it was.
+   * Ends a dictation turn and puts the screen back the way it was.
    *
-   * Hides the non-activating bars, or closes a card that owned the keyboard
-   * when the hold began so focus returns to the app the card belongs to.
+   * `closeCard` is true for the primary hotkey configured to dictate: that path
+   * opened and focused the card, so hiding the window is not enough — the card
+   * has to be closed and focus returned to the app behind it.
    */
-  endDictation(): void
+  endDictation(closeCard?: boolean): void
   /** Raw channel emit; the controller owns the voice protocol. */
   emit(channel: string, payload: unknown): void
   /**
@@ -156,6 +157,14 @@ export function createVoiceController(host: VoiceHost) {
    * "always type here", while the main one follows whatever `action` says.
    */
   let turnAction: VoiceAction | null = null
+  /**
+   * Which hold started the turn.
+   *
+   * The primary hotkey can also be configured to dictate. That path opens and
+   * focuses the card, so it must end through `close()` — unlike the dedicated
+   * dictation hold, which never opened one.
+   */
+  let turnBinding: VoiceBinding | null = null
   /**
    * Identifies the turn that owns the card right now.
    *
@@ -389,13 +398,17 @@ export function createVoiceController(host: VoiceHost) {
   /** Ends the turn: one event carries both the new phase and its explanation. */
   function finishIdle(payload: { text?: string; error?: string; code?: VoiceErrorCode }): void {
     const action = turnAction ?? getSettings().voice.action
+    const binding = turnBinding
     turnAction = null
+    turnBinding = null
     host.setVoice(false)
     // Dictation never leaves anything on screen: the words went into the user's
     // own app, so a card would have nothing to show and would sit there as an
     // empty rectangle. This also covers the failed turns — a press that heard
-    // nothing has no message worth a panel in the middle of the sentence.
-    if (action === 'dictate') host.endDictation()
+    // nothing has no message worth a panel in the middle of the sentence. The
+    // primary hotkey can dictate too, and it *did* open the card: that one has
+    // to be closed, not just hidden.
+    if (action === 'dictate') host.endDictation(binding === 'primary')
     setPhase('idle', payload)
     // A tap too short to transcribe never loaded the model; the idle moment after
     // it is the next chance to warm it.
@@ -440,12 +453,14 @@ export function createVoiceController(host: VoiceHost) {
       // the card, and the old result is discarded when it returns (see the
       // `turn` check in `handleRecording`).
       supersede()
-      // A superseded dictation still owns the non-activating surface. The new
-      // turn has to be free to open the card or show its own bars, so the old
-      // hold ends here rather than at a `finishIdle` that will never run.
-      if (turnAction === 'dictate') host.endDictation()
+      // A superseded dictation still owns the surface. The new turn has to be
+      // free to open the card or show its own bars, so the old hold ends here
+      // rather than at a `finishIdle` that will never run. A primary dictate
+      // also opened the card and must close it, not merely hide it.
+      if (turnAction === 'dictate') host.endDictation(turnBinding === 'primary')
     }
     turnAction = binding === 'dictation' ? 'dictate' : getSettings().voice.action
+    turnBinding = binding
     // Recording starts *before* the card is prepared. Collecting the context
     // (window, selection, screenshot) takes a moment, and waiting for it would
     // swallow the first syllable — the one thing hold-to-talk must never lose.
@@ -674,6 +689,9 @@ export function createVoiceController(host: VoiceHost) {
     if (warmingModel !== null && warmingModel !== settings.voice.model) stopWarmup()
     if (warmedModel !== null && warmedModel !== settings.voice.model) warmedModel = null
     if (!settings.voice.enabled) {
+      // Switching the feature off while the key is down must end the turn, or
+      // the field strip and the remembered target stay on screen forever.
+      if (phase !== 'idle' || turnAction !== null) void onCancel()
       primary.stop()
       dictation.stop()
       listenerErrors.primary = null
@@ -683,9 +701,17 @@ export function createVoiceController(host: VoiceHost) {
     }
     const primaryError = primary.start(settings.voice.hotkey)
     listenerErrors.primary = primaryError
-    // Two taps on one combination would answer the same press twice. The main
-    // hotkey owns it; the dictation one is simply left stopped.
-    const shared = settings.voice.dictationHotkey === settings.voice.hotkey
+    // Two taps on one combination would answer the same press twice. Spellings
+    // such as `Control+Alt` and `Alt+Control` are the same chord, so compare the
+    // parsed key code and modifier mask, not the raw strings.
+    const primaryParsed = parseAccelerator(settings.voice.hotkey)
+    const dictationParsed = parseAccelerator(settings.voice.dictationHotkey)
+    const shared = Boolean(
+      primaryParsed &&
+        dictationParsed &&
+        primaryParsed.keyCode === dictationParsed.keyCode &&
+        primaryParsed.flags === dictationParsed.flags
+    )
     if (shared) dictation.stop()
     const dictationError = shared ? null : dictation.start(settings.voice.dictationHotkey)
     listenerErrors.dictation = dictationError
@@ -704,6 +730,11 @@ export function createVoiceController(host: VoiceHost) {
   }
 
   function stop(): void {
+    // App shutdown or a full voice stop can land mid-hold; the surface must not
+    // outlive the controller's state.
+    if (turnAction === 'dictate' || turnBinding === 'dictation') {
+      host.endDictation(turnBinding === 'primary')
+    }
     listeners.primary?.stop()
     listeners.dictation?.stop()
     listeners = { primary: null, dictation: null }
@@ -720,6 +751,7 @@ export function createVoiceController(host: VoiceHost) {
     phase = 'idle'
     busy = false
     turnAction = null
+    turnBinding = null
   }
 
   /**

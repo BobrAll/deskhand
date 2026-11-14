@@ -15,6 +15,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { prettyAccelerator } from '@shared/accelerator'
+import { modifierHold } from './modifierHold'
 
 const MODIFIER_KEYS = new Set(['Meta', 'Control', 'Alt', 'Shift', 'CapsLock', 'Fn'])
 
@@ -118,7 +119,7 @@ export function HotkeyField({ value, onChange, allowModifiersOnly = false }: Hot
 
       const accelerator = toAccelerator(event, allowModifiersOnly)
       if (!accelerator) {
-        setError('Нужна комбинация с ⌘, ⌥, ⌃ или ⇧')
+        setError('Нужна комбинация с ⌘, ⌥, ⌃, ⇧ или fn')
         return
       }
       setArmed(false)
@@ -132,15 +133,18 @@ export function HotkeyField({ value, onChange, allowModifiersOnly = false }: Hot
       event.stopPropagation()
       // Fn may never report its own key-up on macOS; let Ctrl/Alt/⌘/⇧ ending the
       // hold commit the pair that was down a moment ago.
-      const remaining = modifierParts(event, true).filter((part) => part !== 'Fn')
+      const current = modifierParts(event, true)
+      const remaining = current.filter((part) => part !== 'Fn')
       if (remaining.length > 0) return
-      const pressed = held
+      // Ctrl may have gone down before Fn, and Fn may never have produced a
+      // keydown of its own. The keyup still carries its modifier state, so the
+      // union is what the user was actually holding.
+      const accelerator = modifierHold(held, current)
       held = []
-      // One modifier is ordinary typing, not a gesture.
-      if (pressed.length < 2) return
+      if (!accelerator) return
       setArmed(false)
       setError(null)
-      onChange(pressed.join('+'))
+      onChange(accelerator)
     }
 
     window.addEventListener('keydown', handler, true)

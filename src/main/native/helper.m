@@ -843,11 +843,18 @@ static CGEventRef voiceTapCallback(CGEventTapProxy proxy, CGEventType type, CGEv
   // passed through — swallowing a bare Ctrl or Fn would break the app behind.
   if (type == kCGEventFlagsChanged) {
     if (state->keyCode != kVoiceModifierOnly) return event;
-    BOOL matched = voiceModifiersMatch(CGEventGetFlags(event), state->flags);
-    if (matched && !state->holding) {
-      state->holding = YES;
-      emit(@{@"event" : @"press"});
-    } else if (!matched && state->holding) {
+    CGEventFlags actual = CGEventGetFlags(event);
+    // Press needs the exact pair. Release only needs the required pair to still
+    // be down: adding and removing an extra modifier (Shift, Fn) must not turn
+    // one hold into a release followed by a second press.
+    BOOL stillHeld =
+        (actual & state->flags & kVoiceModifierMask) == (state->flags & kVoiceModifierMask);
+    if (!state->holding) {
+      if (voiceModifiersMatch(actual, state->flags)) {
+        state->holding = YES;
+        emit(@{@"event" : @"press"});
+      }
+    } else if (!stillHeld) {
       state->holding = NO;
       emit(@{@"event" : @"release"});
     }

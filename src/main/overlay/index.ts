@@ -352,7 +352,11 @@ export function createOverlayController(host: OverlayHost) {
   async function markDictationField(target: ActiveAppInfo, mine: number): Promise<void> {
     const focused = await helperFocused(target.pid).catch(() => null)
     if (mine !== dictationRead) return
-    host.showField(focused?.editable && focused.frame ? focused.frame : null)
+    // The system-wide answer can belong to the card itself when the card was in
+    // front at press time while the target is the app behind it. That is our
+    // own input, not the field the words will go into.
+    const ownElement = focused?.pid === process.pid
+    host.showField(!ownElement && focused?.editable && focused.frame ? focused.frame : null)
   }
 
   /**
@@ -362,14 +366,17 @@ export function createOverlayController(host: OverlayHost) {
    * is by then, and a stale target would paste one sentence into the window
    * before.
    */
-  function endDictation(): void {
-    const ownsCard = dictationOwnsCard
+  function endDictation(closeCard = false): void {
+    const ownsCard = closeCard || dictationOwnsCard
     dictating = false
     dictationRead += 1
     dictationTarget = null
     dictationOwnsCard = false
     host.hideField()
     if (ownsCard) {
+      // `close()` bumps the generation, so an in-flight `openInternal` cannot
+      // focus an empty card after the key is already up. That is also what
+      // returns focus to the app behind a primary-hotkey dictation turn.
       close()
       return
     }

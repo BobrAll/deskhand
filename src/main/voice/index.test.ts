@@ -85,37 +85,41 @@ vi.mock('./recognizer', () => ({
   })
 }))
 
-vi.mock('./listen', () => ({
-  VoiceKeyListener: class {
-    listening = true
-    lastError: string | null = null
-    private readonly entry: {
-      options: Record<string, unknown>
-      accelerator: string | null
-      stopped: boolean
-    }
-    constructor(options: Record<string, unknown>) {
-      this.entry = { options, accelerator: null, stopped: false }
-      state.listeners.push(this.entry)
-    }
-    start(accelerator: string): string | null {
-      this.entry.accelerator = accelerator
-      return state.startError
-    }
-    stop(): void {
-      this.entry.stopped = true
-      state.stopped += 1
-    }
-    emit(event: string): void {
-      const handler = this.entry.options.onEvent as (event: string) => void
-      handler(event)
-    }
-    fail(message: string): void {
-      const handler = this.entry.options.onError as (message: string) => void
-      handler(message)
+vi.mock('./listen', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./listen')>()
+  return {
+    ...actual,
+    VoiceKeyListener: class {
+      listening = true
+      lastError: string | null = null
+      private readonly entry: {
+        options: Record<string, unknown>
+        accelerator: string | null
+        stopped: boolean
+      }
+      constructor(options: Record<string, unknown>) {
+        this.entry = { options, accelerator: null, stopped: false }
+        state.listeners.push(this.entry)
+      }
+      start(accelerator: string): string | null {
+        this.entry.accelerator = accelerator
+        return state.startError
+      }
+      stop(): void {
+        this.entry.stopped = true
+        state.stopped += 1
+      }
+      emit(event: string): void {
+        const handler = this.entry.options.onEvent as (event: string) => void
+        handler(event)
+      }
+      fail(message: string): void {
+        const handler = this.entry.options.onError as (message: string) => void
+        handler(message)
+      }
     }
   }
-}))
+})
 
 import { createVoiceController } from './index'
 
@@ -128,6 +132,7 @@ function makeHost() {
     delivered: [] as Array<{ text: string; submit: boolean }>,
     dictationsBegun: 0,
     dictationsEnded: 0,
+    dictationCloseCards: [] as boolean[],
     targetValue: null as ActiveAppInfo | null,
     prewarmed: 0,
     indicators: 0,
@@ -152,8 +157,9 @@ function makeHost() {
     deliver: (text: string, options: { submit: boolean }) => {
       host.delivered.push({ text, submit: options.submit })
     },
-    endDictation: () => {
+    endDictation: (closeCard = false) => {
       host.dictationsEnded += 1
+      host.dictationCloseCards.push(closeCard)
     },
     emit: (channel: string, payload: unknown) => {
       host.emitted.push({ channel, payload })
@@ -485,6 +491,8 @@ describe('createVoiceController: recognition', () => {
     expect(state.pasted).toEqual([{ text: 'привет', target }])
     expect(host.delivered).toEqual([])
     expect(host.dictationsEnded).toBeGreaterThan(0)
+    // The primary hotkey opened the card; dictation must close it, not hide it.
+    expect(host.dictationCloseCards).toEqual([true])
   })
 
   it('dictates from its own hotkey even when the main action is command', async () => {
@@ -511,6 +519,8 @@ describe('createVoiceController: recognition', () => {
     expect(host.opened).toBe(0)
     expect(host.dictationsBegun).toBe(1)
     expect(host.dictationsEnded).toBeGreaterThan(0)
+    // The dedicated hold never opened a card, so it only hides the bars.
+    expect(host.dictationCloseCards).toEqual([false])
   })
 
   it('refuses a recording that arrives outside `transcribing`', async () => {
@@ -987,6 +997,20 @@ describe('createVoiceController: settings and lifecycle', () => {
     expect(state.stopped).toBe(2)
   })
 
+  it('ends an active dictation when voice is switched off mid-hold', async () => {
+    const host = makeHost()
+    const voice = createVoiceController(host)
+    voice.applySettings()
+    voice.press('dictation')
+
+    state.settings = settings({ enabled: false })
+    voice.applySettings()
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect(host.dictationsEnded).toBeGreaterThan(0)
+    expect(voice.phase()).toBe('idle')
+  })
+
   it('prewarms the card once the tap is up', () => {
     const host = makeHost()
     const voice = createVoiceController(host)
@@ -1032,6 +1056,17 @@ describe('createVoiceController: settings and lifecycle', () => {
 
   it('leaves the dictation listener stopped when both hotkeys are the same', () => {
     state.settings = settings({ hotkey: 'Control+Alt', dictationHotkey: 'Control+Alt' })
+    const host = makeHost()
+    const voice = createVoiceController(host)
+
+    voice.applySettings()
+
+    expect(state.listeners[1].accelerator).toBeNull()
+    expect(state.listeners[1].stopped).toBe(true)
+  })
+
+  it('treats different spellings of the same chord as shared', () => {
+    state.settings = settings({ hotkey: 'Control+Alt', dictationHotkey: 'Alt+Control' })
     const host = makeHost()
     const voice = createVoiceController(host)
 

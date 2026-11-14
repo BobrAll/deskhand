@@ -836,6 +836,22 @@ describe('dictation without the card', () => {
     await vi.waitFor(() => expect(h.host.showField).toHaveBeenCalledWith(null))
   })
 
+  it('ignores a focused element owned by the card itself', async () => {
+    vi.mocked(helperFrontApplication).mockResolvedValue(front('com.apple.TextEdit', 900))
+    vi.mocked(helperFocused).mockResolvedValue({
+      role: 'AXTextArea',
+      frame: { x: 10, y: 20, width: 300, height: 24 },
+      pressable: false,
+      editable: true,
+      pid: process.pid
+    })
+    const h = await harness(false)
+
+    await h.controller.beginDictation()
+
+    await vi.waitFor(() => expect(h.host.showField).toHaveBeenCalledWith(null))
+  })
+
   it('uses the app behind a frontmost card', async () => {
     state.activeApp = textEdit
     const h = await harness()
@@ -877,6 +893,20 @@ describe('dictation without the card', () => {
     h.controller.endDictation()
 
     expect(h.host.hideField).toHaveBeenCalled()
+  })
+
+  it('closes and returns focus for a primary dictation that opened the card', async () => {
+    state.activeApp = textEdit
+    const h = await harness()
+    expect(h.visible()).toBe(true)
+
+    h.controller.endDictation(true)
+
+    expect(h.visible()).toBe(false)
+    await vi.waitFor(() => expect(helperActivate).toHaveBeenCalledWith({
+      bundleId: 'com.apple.TextEdit',
+      pid: 900
+    }))
   })
 
   it('closes a card that owned the keyboard and gives focus back to its app', async () => {
