@@ -112,11 +112,27 @@ const WATCHDOG_MS = 250
  */
 const RECORDING_TIMEOUT_MS = 5_000
 /**
- * Ceiling for one recognition. The WAV is local and whisper runs on this machine,
- * so this only fires when the child process hangs or never reports back — a few
- * minutes of audio still takes seconds, not tens of seconds.
+ * Floor for one recognition. The WAV is local and whisper runs on this machine,
+ * so this only fires when the child process hangs or never reports back.
+ *
+ * It is a floor, not the whole budget: a flat ceiling aborted a long dictation
+ * mid-recognition and threw the audio away, so the budget grows with the
+ * recording (see `transcribeBudget`).
  */
 const TRANSCRIBE_TIMEOUT_MS = 30_000
+
+/**
+ * How long one recognition may take, given how much audio it was handed.
+ *
+ * Twice the recording is generous for a local model that runs faster than real
+ * time, and it still bounds a recognizer that never answers. Anything that is
+ * not a plausible duration falls back to the floor.
+ */
+function transcribeBudget(durationMs: number): number {
+  if (!Number.isFinite(durationMs) || durationMs <= 0) return TRANSCRIBE_TIMEOUT_MS
+  return Math.max(TRANSCRIBE_TIMEOUT_MS, Math.round(durationMs * 2))
+}
+
 /**
  * How long after the tap comes up the recognizer is loaded in the background.
  *
@@ -155,6 +171,13 @@ export function createVoiceController(host: VoiceHost) {
   let abort: AbortController | null = null
   /** Set while a transcript is in flight. */
   let busy = false
+  /**
+   * How long the recognition in flight may take.
+   *
+   * Scaled from the recording that started it: a ten-second command and a
+   * four-minute dictation must not share one ceiling.
+   */
+  let transcribeBudgetMs = TRANSCRIBE_TIMEOUT_MS
   /**
    * What the turn in flight does with its transcript.
    *
@@ -358,7 +381,7 @@ export function createVoiceController(host: VoiceHost) {
     // a long phrase). `busy` says which half this is — it is set the moment the
     // recording arrives, and this function runs again at that point.
     const mine = turn
-    const limit = busy ? TRANSCRIBE_TIMEOUT_MS : RECORDING_TIMEOUT_MS
+    const limit = busy ? transcribeBudgetMs : RECORDING_TIMEOUT_MS
     recordingTimer = setTimeout(() => {
       if (mine !== turn) return
       abortTurnWithError(
@@ -431,11 +454,13 @@ export function createVoiceController(host: VoiceHost) {
       void onPress(binding)
       return
     }
+    // The edge carries the hold that produced it: with both hotkeys down, the
+    // release or cancel of the other one must not end this turn.
     if (event === 'release') {
-      void onRelease()
+      void onRelease(binding)
       return
     }
-    void onCancel()
+    void onCancel(binding)
   }
 
   async function onPress(binding: VoiceBinding = 'primary'): Promise<void> {
@@ -495,14 +520,16 @@ export function createVoiceController(host: VoiceHost) {
     // feedback the user gets while speaking, and waiting for a selection read
     // (which can take a few hundred milliseconds) would delay them.
     if (!host.isOpen()) {
-      void host.open().then(() => {
-        // The card refused to open (the app is on the exclusion list, or the
-        // context is unusable). Recording into a card that will never exist
-        // would leave the microphone open with nowhere to put the words.
+      // The card refused to open (the app is on the exclusion list, or the
+      // context is unusable), or it threw before it ever could. Recording into a
+      // card that will never exist would leave the microphone open with nowhere
+      // to put the words, so both endings stop the recorder and close the turn.
+      const stopWithoutCard = (): void => {
         if (host.isOpen() || phase !== 'listening' || mine !== turn) return
         host.emit(CH.voice.stop, { transcribe: false })
         finishIdle({})
-      })
+      }
+      void host.open().then(stopWithoutCard, stopWithoutCard)
     }
     // Do this after open has chosen between a fresh and an existing session:
     // making the old window visible first would resurrect a closed session.
@@ -525,8 +552,15 @@ export function createVoiceController(host: VoiceHost) {
     host.showIndicator()
   }
 
-  async function onRelease(): Promise<void> {
+  /**
+   * Ends the turn, if the edge belongs to the hold that started it.
+   *
+   * An omitted binding means "the turn that is running", which is what the
+   * programmatic `release()` helper means. The tap always names its hold.
+   */
+  async function onRelease(binding?: VoiceBinding): Promise<void> {
     if (phase !== 'listening') return
+    if (binding && binding !== turnBinding) return
     if (!longEnough()) {
       // A tap on a hold-to-talk key is almost always a mistake; transcribing a
       // 40 ms blip would answer with "речь не распознана", which is worse.
@@ -541,8 +575,17 @@ export function createVoiceController(host: VoiceHost) {
     host.emit(CH.voice.stop, { transcribe: true })
   }
 
-  async function onCancel(): Promise<void> {
-    // Escape while talking, or the tap was disabled by macOS.
+  async function onCancel(binding?: VoiceBinding): Promise<void> {
+    // Escape while talking, or the tap was disabled by macOS. An edge with no
+    // turn behind it must not touch the card: finishing an idle turn again would
+    // erase the error the last one left there.
+    if (phase === 'idle' && turnAction === null) return
+    // The cancel must come from the hold that owns the card, or a stray edge of
+    // the other one would abort a turn it never started.
+    if (binding && binding !== turnBinding) return
+    // Recognition is a child process that can still answer; bumping the turn is
+    // what stops its result from finishing this turn a second time.
+    turn += 1
     if (phase === 'listening') host.emit(CH.voice.stop, { transcribe: false })
     abortRecognition()
     finishIdle({ error: listenerError() ?? undefined })
@@ -598,6 +641,10 @@ export function createVoiceController(host: VoiceHost) {
     }
 
     busy = true
+    // The budget the watchdog will use is the audio's, not a flat ceiling: a
+    // four-minute dictation takes longer than a command and was being aborted
+    // mid-recognition with the recording already gone.
+    transcribeBudgetMs = transcribeBudget(result.durationMs)
     // This turn is about to load the model itself; a warm-up would be a second
     // copy of the same work. Cancel first: stopping drops the mark of the load it
     // interrupts, and this turn takes over from there.
@@ -826,18 +873,19 @@ export function createVoiceController(host: VoiceHost) {
    * drives the state machine without a physical key.
    *
    * They go through exactly the same path as the tap, so Escape, the watchdog,
-   * superseding and the transcript routing apply unchanged.
+   * superseding and the transcript routing apply unchanged. Release and cancel
+   * take the binding too; omitting it means "the turn that is running".
    */
   function press(binding: VoiceBinding = 'primary'): void {
     void onPress(binding)
   }
 
-  function release(): void {
-    void onRelease()
+  function release(binding?: VoiceBinding): void {
+    void onRelease(binding)
   }
 
-  function cancel(): void {
-    void onCancel()
+  function cancel(binding?: VoiceBinding): void {
+    void onCancel(binding)
   }
 
   return {

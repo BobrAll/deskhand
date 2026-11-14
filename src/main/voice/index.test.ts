@@ -269,6 +269,25 @@ describe('createVoiceController: press and release', () => {
     expect(voice.phase()).toBe('idle')
   })
 
+  it('stops the recorder when the card throws instead of opening', async () => {
+    const host = makeHost()
+    host.openResult = false
+    host.open = async () => {
+      host.opened += 1
+      throw new Error('renderer died')
+    }
+    const voice = createVoiceController(host)
+    voice.applySettings()
+
+    voice.press()
+    await vi.advanceTimersByTimeAsync(0)
+
+    // A rejected open used to leave the turn `listening` with the microphone
+    // live until maxDurationMs, plus an unhandled rejection.
+    expect(host.emitted).toContainEqual({ channel: 'voice:stop', payload: { transcribe: false } })
+    expect(voice.phase()).toBe('idle')
+  })
+
   it('starts a dictation hold without opening the card', async () => {
     const host = makeHost()
     host.openResult = false
@@ -416,6 +435,42 @@ describe('createVoiceController: press and release', () => {
 
     expect(voice.phase()).toBe('transcribing')
     expect(host.emitted).toContainEqual({ channel: 'voice:stop', payload: { transcribe: true } })
+  })
+
+  it('ignores a release from the hold that did not start the turn', () => {
+    const host = makeHost()
+    const voice = createVoiceController(host)
+    voice.applySettings()
+    const primary = state.listeners[0].options.onEvent as (event: string) => void
+    const dictation = state.listeners[1].options.onEvent as (event: string) => void
+
+    primary('press')
+    state.now += 500
+
+    // Both holds can be down at once; the dictation chord coming up says
+    // nothing about the primary one that is recording.
+    dictation('release')
+    expect(voice.phase()).toBe('listening')
+
+    primary('release')
+    expect(voice.phase()).toBe('transcribing')
+  })
+
+  it('ignores a cancel from the hold that did not start the turn', () => {
+    const host = makeHost()
+    const voice = createVoiceController(host)
+    voice.applySettings()
+    const primary = state.listeners[0].options.onEvent as (event: string) => void
+    const dictation = state.listeners[1].options.onEvent as (event: string) => void
+
+    primary('press')
+    dictation('cancel')
+
+    expect(voice.phase()).toBe('listening')
+    expect(host.emitted).not.toContainEqual({
+      channel: 'voice:stop',
+      payload: { transcribe: false }
+    })
   })
 
   it('reads minDurationMs at release time, not at press time', () => {
@@ -645,11 +700,64 @@ describe('createVoiceController: cancel and failures', () => {
     expect(voice.phase()).toBe('idle')
   })
 
+  it('does not finish the same turn twice when it is cancelled during recognition', async () => {
+    let finishRecognition = (): void => undefined
+    const gate = new Promise<void>((resolve) => {
+      finishRecognition = resolve
+    })
+    state.transcribed = async () => {
+      await gate
+      return { ok: true, text: 'старая фраза', ms: 1 }
+    }
+    state.settings = settings({ action: 'dictate' })
+    const host = makeHost()
+    const voice = createVoiceController(host)
+    voice.applySettings()
+    voice.press()
+    state.now += 500
+    voice.release()
+
+    const pending = voice.handleRecording({ wavBase64: 'AAAA', durationMs: 800 })
+    await vi.advanceTimersByTimeAsync(0)
+    voice.cancel()
+    const afterCancel = host.emitted.length
+    expect(host.dictationsEnded).toBe(1)
+
+    finishRecognition()
+    await pending
+
+    // The answer belongs to a turn that no longer exists: applying it ended the
+    // idle card a second time and closed the dictation twice.
+    expect(host.emitted).toHaveLength(afterCancel)
+    expect(host.dictationsEnded).toBe(1)
+    expect(host.delivered).toEqual([])
+  })
+
+  it('leaves the last error on the card when a cancel arrives with nothing in flight', async () => {
+    state.transcribed = async () => ({ ok: false, text: '', ms: 3, message: 'Речь не распознана.' })
+    const host = makeHost()
+    const voice = createVoiceController(host)
+    voice.applySettings()
+    voice.press()
+    state.now += 500
+    voice.release()
+    await voice.handleRecording({ wavBase64: 'AAAA', durationMs: 800 })
+    const afterTurn = host.emitted.length
+
+    voice.cancel()
+
+    // A stray cancel must not answer for a turn that is already over: it would
+    // push an idle event that clears the error and code the turn left behind.
+    expect(host.emitted).toHaveLength(afterTurn)
+    expect(lastEvent(host).error).toBe('Речь не распознана.')
+  })
+
   it('reports the listener error on cancel', () => {
     const host = makeHost()
     state.startError = 'Комбинация «x» не подходит для удержания.'
     const voice = createVoiceController(host)
     voice.applySettings()
+    voice.press()
 
     voice.cancel()
 
@@ -955,6 +1063,27 @@ describe('createVoiceController: the watchdogs', () => {
 
     void voice.handleRecording({ wavBase64: 'AAAA', durationMs: 800 })
     await vi.advanceTimersByTimeAsync(30_000)
+
+    expect(voice.phase()).toBe('idle')
+    expect(lastEvent(host).error).toBe('Распознавание не ответило — попробуй ещё раз.')
+  })
+
+  it('scales the recognition budget with the length of the recording', async () => {
+    state.transcribed = () => new Promise(() => undefined)
+    const host = makeHost()
+    const voice = createVoiceController(host)
+    voice.applySettings()
+    voice.press()
+    state.now += 500
+    voice.release()
+
+    // Four minutes of audio: the flat 30 s ceiling aborted this turn in the
+    // middle of recognition and discarded the recording.
+    void voice.handleRecording({ wavBase64: 'AAAA', durationMs: 240_000 })
+    await vi.advanceTimersByTimeAsync(30_000)
+    expect(voice.phase()).toBe('transcribing')
+
+    await vi.advanceTimersByTimeAsync(450_000)
 
     expect(voice.phase()).toBe('idle')
     expect(lastEvent(host).error).toBe('Распознавание не ответило — попробуй ещё раз.')

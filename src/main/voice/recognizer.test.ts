@@ -28,6 +28,8 @@ const state = vi.hoisted(() => ({
   /** Pretend the disk is full before the recognizer can be spawned. */
   writeFails: false,
   removed: [] as string[],
+  /** Pretend the temp directory cannot be removed. */
+  rmFails: false,
   renamed: [] as Array<[string, string]>,
   copied: [] as Array<[string, string]>,
   madeDirs: [] as string[],
@@ -75,6 +77,7 @@ vi.mock('node:fs/promises', () => ({
     state.written.push({ path, data })
   },
   rm: async (path: string) => {
+    if (state.rmFails) throw new Error('EBUSY: directory')
     state.removed.push(path)
   },
   rename: async (from: string, to: string) => {
@@ -156,6 +159,7 @@ beforeEach(async () => {
   state.written = []
   state.writeFails = false
   state.removed = []
+  state.rmFails = false
   state.renamed = []
   state.copied = []
   state.madeDirs = []
@@ -571,6 +575,26 @@ describe('transcribe', () => {
     const result = await recognizer.transcribe({ wav: WAV })
 
     expect(result.ms).toBeGreaterThanOrEqual(0)
+  })
+
+  it('still answers when the temp directory cannot be removed', async () => {
+    ready()
+    state.whisper.stdout = 'текст'
+    state.rmFails = true
+    const unhandled = vi.fn()
+    process.on('unhandledRejection', unhandled)
+    try {
+      await expect(recognizer.transcribe({ wav: WAV })).resolves.toMatchObject({
+        ok: true,
+        text: 'текст'
+      })
+      // Give the removal's promise time to settle: without a handler of its own
+      // it surfaced as an unhandled rejection in the main process.
+      await new Promise((resolve) => setImmediate(resolve))
+      expect(unhandled).not.toHaveBeenCalled()
+    } finally {
+      process.off('unhandledRejection', unhandled)
+    }
   })
 })
 
