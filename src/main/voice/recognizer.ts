@@ -19,7 +19,13 @@ import { cpus, homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pipeline } from 'node:stream/promises'
 import { app } from 'electron'
-import { BUNDLED_VOICE_MODEL, isVoiceModelFile, voiceModel, WHISPER_MODELS } from '@shared/defaults'
+import {
+  BUNDLED_VOICE_MODEL,
+  isVoiceModelFile,
+  voiceModel,
+  WHISPER_MODELS,
+  type VoiceModelMeta
+} from '@shared/defaults'
 import { resourceCandidates } from '../paths'
 import type { DownloadProgress, TranscribeResult, VoiceStatus } from '@shared/types'
 import { getSettings } from '../settings/store'
@@ -163,6 +169,18 @@ export async function resolveVoiceModel(id = getSettings().voice.model): Promise
   return { path, auto: true, id: path ? modelIdFor(path) : null }
 }
 
+/**
+ * Why there is no model to run.
+ *
+ * "Выбери её" is useless advice for someone who already chose a model and only
+ * lost the file, so a configured selection is named.
+ */
+function missingModelDetail(configured: VoiceModelMeta | undefined): string {
+  if (configured?.id === BUNDLED_VOICE_MODEL.id) return MISSING_BUNDLED_MODEL
+  if (configured) return `Модель «${configured.label}» не скачана — скачай её в настройках.`
+  return 'Не скачана модель распознавания — выбери её в настройках.'
+}
+
 export async function voiceStatus(): Promise<VoiceStatus> {
   const voice = getSettings().voice
   const configured = voiceModel(voice.model)
@@ -176,13 +194,7 @@ export async function voiceStatus(): Promise<VoiceStatus> {
         ? 'В приложении нет движка GigaAM. Переустанови Deskhand.'
         : 'Не найден whisper-cli — пересобери приложение (npm run build:whisper).'
   } else if (!model.path) {
-    // Say which model is missing when the settings point at one: "выбери её"
-    // is useless advice if the user already chose it and only the file is gone.
-    detail = configured?.id === BUNDLED_VOICE_MODEL.id
-      ? MISSING_BUNDLED_MODEL
-      : configured
-        ? `Модель «${configured.label}» не скачана — скачай её в настройках.`
-        : 'Не скачана модель распознавания — выбери её в настройках.'
+    detail = missingModelDetail(configured)
   }
   return {
     ready: Boolean(binary && model.path),
@@ -225,6 +237,16 @@ export interface TranscribeOptions {
   signal?: AbortSignal
 }
 
+/** A run that never started: no binary, no model, or a cancel before the spawn. */
+function notStarted(message: string): TranscribeResult {
+  return { ok: false, text: '', ms: 0, message, spawned: false }
+}
+
+/** A run the caller cancelled; `ms` is how long it lasted before the kill. */
+function cancelled(ms: number): TranscribeResult {
+  return { ok: false, text: '', ms, message: 'Отменено.', spawned: false }
+}
+
 /**
  * Runs the selected recognizer on one recording.
  *
@@ -239,15 +261,13 @@ export async function transcribe(options: TranscribeOptions): Promise<Transcribe
   const selected = voiceModel(model.id ?? voice.model)
   const engine = selected?.engine ?? 'whisper'
   const binary = resolveBinary(engine)
-  if (!binary) {
-    return { ok: false, text: '', ms: 0, message: `Не найден ${binaryName(engine)}.`, spawned: false }
-  }
+  if (!binary) return notStarted(`Не найден ${binaryName(engine)}.`)
 
   if (!model.path) {
     const message = selected?.id === BUNDLED_VOICE_MODEL.id
       ? MISSING_BUNDLED_MODEL
       : 'Не скачана модель распознавания.'
-    return { ok: false, text: '', ms: 0, message, spawned: false }
+    return notStarted(message)
   }
 
   const dir = join(tmpdir(), `deskhand-voice-${randomUUID()}`)
@@ -263,14 +283,10 @@ export async function transcribe(options: TranscribeOptions): Promise<Transcribe
       engine === 'transcribe'
         ? ['-m', model.path, '-l', language, '--timestamps', 'none', '-o', transcriptPath, wavPath]
         : ['-m', model.path, '-f', wavPath, '-l', language, '-nt', '-np', '-t', threads]
-    if (options.signal?.aborted) {
-      return { ok: false, text: '', ms: 0, message: 'Отменено.', spawned: false }
-    }
+    if (options.signal?.aborted) return cancelled(0)
     const raw = await runRecognizer(binary, args, engine, options.signal)
     const ms = Date.now() - startedAt
-    if (options.signal?.aborted) {
-      return { ok: false, text: '', ms, message: 'Отменено.', spawned: false }
-    }
+    if (options.signal?.aborted) return cancelled(ms)
     // The process finished and was not cancelled, so the model itself is loaded
     // even if the transcript cannot be read. A missing file becomes the ordinary
     // "nothing recognised" sentence instead of a raw Node error in the card.
