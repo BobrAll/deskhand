@@ -238,6 +238,47 @@ final class AXSnapshotDiffTests: XCTestCase {
         XCTAssertTrue(diff.text().contains("тест"))
     }
 
+    func testRowsDifferingOnlyInValueKeepTheirIdentitiesWhenOneIsInserted() {
+        // A chat, table or log row is named by its text and nothing else. With
+        // only role and title in the identity, two such rows were told apart by
+        // an occurrence counter, which is positional: inserting a row above
+        // shifted every number below it, and a remembered click landed on a
+        // different row without any error.
+        let first = AXNode(index: 0, depth: 1, role: "AXStaticText", value: "первое")
+        let second = AXNode(index: 1, depth: 1, role: "AXStaticText", value: "второе")
+        let inserted = AXNode(index: 0, depth: 1, role: "AXStaticText", value: "новое")
+
+        let book = IndexBook()
+        let beforeNumbers = AXSnapshot.identityKeys(of: [first, second]).map {
+            book.number(for: $0)
+        }
+        let afterNumbers = AXSnapshot.identityKeys(of: [inserted, first, second]).map {
+            book.number(for: $0)
+        }
+
+        XCTAssertEqual(afterNumbers[1], beforeNumbers[0], "the first row kept its number")
+        XCTAssertEqual(afterNumbers[2], beforeNumbers[1], "the second row kept its number")
+        XCTAssertFalse(
+            beforeNumbers.contains(afterNumbers[0]),
+            "the inserted row got a number of its own")
+
+        let diff = snapshot([inserted, first, second]).diff(from: snapshot([first, second]))
+        XCTAssertEqual(diff.added.count, 1, "the inserted row is the only new node")
+        XCTAssertTrue(diff.removed.isEmpty, "the rows below it were not replaced")
+    }
+
+    func testTextFieldKeepsItsIdentityAcrossAValueEdit() {
+        // The editable exception to value-based identity: changing what a field
+        // holds must not turn it into a different control.
+        let before = AXSnapshot.identityKeys(of: [
+            AXNode(index: 0, depth: 1, role: "AXTextField", value: ""),
+        ])
+        let after = AXSnapshot.identityKeys(of: [
+            AXNode(index: 0, depth: 1, role: "AXTextField", value: "тест"),
+        ])
+        XCTAssertEqual(before, after)
+    }
+
     func testNewNodeIsReportedAsAdded() {
         let before = [AXNode(index: 0, depth: 0, role: "AXWindow", title: "Inbox")]
         let after = [

@@ -74,6 +74,16 @@ public enum Mouse {
         event.post(tap: .cghidEventTap)
     }
 
+    /// The number of clicks a mouse event can carry.
+    ///
+    /// macOS encodes a multiple click as a count of 1...3, and a value outside
+    /// that range is not a gesture it can express. Callers clamp once through
+    /// this and report the same number they sent, so a model's `click_count: 5`
+    /// is honestly described as a triple click rather than as five clicks.
+    static func clampedClickCount(_ count: Int) -> Int {
+        max(1, min(count, 3))
+    }
+
     public static func click(
         at point: CGPoint,
         button: Button = .left,
@@ -81,7 +91,7 @@ public enum Mouse {
         modifiers: CGEventFlags = []
     ) {
         WindowServer.prepare()
-        let clicks = max(1, min(count, 3))
+        let clicks = clampedClickCount(count)
         move(to: point)
         // A short settle lets hover/focus handlers run before the press.
         Thread.sleep(forTimeInterval: Pace.hoverSettle)
@@ -172,11 +182,18 @@ public enum Mouse {
     /// Scrolls at a point. `pages` is a scroll wheel unit count where 1 page
     /// equals a full viewport; we approximate that with a line count that feels
     /// right for AppKit and web content alike.
+    ///
+    /// The gesture is emitted as wheel chunks 20 ms apart, so a large page count
+    /// is many seconds of events. `cancel` is checked before the first chunk and
+    /// between all the others: Escape must stop a scroll as promptly as it stops
+    /// the run that asked for it.
     public static func scroll(
         at point: CGPoint,
         direction: ScrollDirection,
-        pages: Double
+        pages: Double,
+        cancel: CancelToken? = nil
     ) {
+        guard cancel?.isCancelled != true else { return }
         move(to: point)
         Thread.sleep(forTimeInterval: Pace.scrollSettle)
 
@@ -187,6 +204,7 @@ public enum Mouse {
         let sign: Double = total >= 0 ? 1 : -1
 
         while remaining > 0 {
+            guard cancel?.isCancelled != true else { return }
             let step = min(chunk, remaining)
             remaining -= step
             let (dy, dx) = direction.delta(amount: step * sign)

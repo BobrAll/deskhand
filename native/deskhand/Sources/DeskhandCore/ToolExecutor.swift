@@ -482,8 +482,43 @@ public final class ToolExecutor: @unchecked Sendable {
     /// Shared by the tool gate and the policy/presentation lookup so the two
     /// cannot disagree about which app is off limits.
     private func isExcluded(_ handle: AppHandle) -> Bool {
-        guard let bundle = handle.bundleIdentifier else { return false }
-        return excludedBundleIds.contains(bundle)
+        if let bundle = handle.bundleIdentifier {
+            return excludedBundleIds.contains(bundle)
+        }
+        // An app resolved by path can report no bundle identifier. The
+        // exclusion list names apps by identifier, so the identifier is missing
+        // on our side, not on the list's: resolve the entries to the apps they
+        // name and compare paths instead of letting the app through.
+        guard let path = handle.path else { return false }
+        return Self.matchesExcludedPath(
+            path,
+            excludedBundleIds: excludedBundleIds,
+            knownApps: AppCatalog.runningApps() + AppCatalog.installedApps()
+        )
+    }
+
+    /// Whether a bundle-less app at `path` is one the exclusion list names.
+    ///
+    /// Pure, so the path comparison behind the gate can be tested without an
+    /// app whose bundle is unreadable. Paths are standardised before they are
+    /// compared, so the same bundle named with a trailing slash or a `./` still
+    /// matches.
+    static func matchesExcludedPath(
+        _ path: String,
+        excludedBundleIds: Set<String>,
+        knownApps: [AppHandle]
+    ) -> Bool {
+        let target = canonicalPath(path)
+        return knownApps.contains { app in
+            guard let bundle = app.bundleIdentifier, excludedBundleIds.contains(bundle),
+                  let appPath = app.path
+            else { return false }
+            return canonicalPath(appPath) == target
+        }
+    }
+
+    private static func canonicalPath(_ path: String) -> String {
+        URL(fileURLWithPath: path).standardizedFileURL.path
     }
 
     /// Everything the policy needs to judge a call, resolved from the same state
@@ -515,9 +550,7 @@ public final class ToolExecutor: @unchecked Sendable {
         context.role = node.role
         context.title = node.title
         context.label = node.label
-        context.isTextField = node.role == kAXTextFieldRole
-            || node.role == kAXComboBoxRole
-            || node.role == kAXTextAreaRole
+        context.isTextField = TextEntryRole.isTextEntry(node.role)
         return context
     }
 
@@ -745,7 +778,10 @@ public final class ToolExecutor: @unchecked Sendable {
         }
 
         let button = Mouse.Button(rawValue: args["button"]?.stringValue ?? "left") ?? .left
-        let count = args["click_count"]?.intValue ?? 1
+        // Clamp before the plain-click decision and the result message, so both
+        // describe the gesture `Mouse.click` actually sends: `click_count: 5`
+        // is three clicks, not five, and `0` is one, not zero.
+        let count = Mouse.clampedClickCount(args["click_count"]?.intValue ?? 1)
         let modifiers = parseModifiers(args["modifiers"])
 
         // A single, unmodified left click on a pressable element is the case
@@ -848,7 +884,7 @@ public final class ToolExecutor: @unchecked Sendable {
 
         let element = try session.element(at: index)
         let role = element.role
-        let isTextField = role == kAXTextFieldRole || role == kAXComboBoxRole
+        let isTextField = TextEntryRole.isTextEntry(role)
         var message: String
         do {
             try ElementActions.setValue(element, text: value, pid: session.pid)
@@ -910,7 +946,12 @@ public final class ToolExecutor: @unchecked Sendable {
         guard let direction = Mouse.ScrollDirection(rawValue: directionName.lowercased()) else {
             throw ToolError.message("invalid scroll direction \"\(directionName)\"; use up, down, left or right")
         }
-        let pages = optionalDouble(args, "pages") ?? 1
+        let requestedPages = optionalDouble(args, "pages") ?? 1
+        guard let pages = Self.effectiveScrollPages(requestedPages) else {
+            throw ToolError.message(
+                "pages must be greater than 0; got \(requestedPages). Use a positive number of"
+                    + " pages, or 1 when unsure.")
+        }
         let session = try resolveSession(appQuery: appQuery)
         if session.snapshot == nil { await session.refresh() }
 
@@ -925,11 +966,32 @@ public final class ToolExecutor: @unchecked Sendable {
 
         bringToFront(session)
         Mouse.scroll(at: point, direction: direction, pages: pages)
+        var message = "Scrolled \(direction.rawValue) \(pages) page(s) at "
+            + "\(integerText(point.x)),\(integerText(point.y))."
+        if pages < requestedPages {
+            // A model that asked for 10 000 pages would otherwise believe it
+            // moved the whole document when the cap stopped it at 20.
+            message += " The requested \(requestedPages) page(s) were capped at \(pages);"
+                + " repeat the scroll if the content is still not where you need it."
+        }
         return finish(
-            "Scrolled \(direction.rawValue) \(pages) page(s) at "
-                + "\(integerText(point.x)),\(integerText(point.y)).",
+            message,
             session: session, actionLabel: "the scroll", verify: verify)
     }
+
+    /// The page count a scroll may actually move.
+    ///
+    /// A page is 12 wheel lines emitted in chunks 20 ms apart, so a page count
+    /// from the model is a duration as much as a distance: `pages: 10000` is
+    /// 120 000 chunks and roughly 13 minutes on a tool the host treats as
+    /// harmless. The cap bounds that, and a non-positive or non-finite count is
+    /// a malformed request rather than a small scroll.
+    static func effectiveScrollPages(_ requested: Double) -> Double? {
+        guard requested.isFinite, requested > 0 else { return nil }
+        return min(requested, maxScrollPages)
+    }
+
+    private static let maxScrollPages = 20.0
 
     private func drag(_ args: JSONValue, verify: Bool) async throws -> ToolResult {
         let appQuery = try requireApp(args)

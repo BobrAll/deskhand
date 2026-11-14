@@ -1,4 +1,5 @@
 import XCTest
+import ApplicationServices
 @testable import DeskhandCore
 
 /// Records what the executor offered the policy before a mutating call.
@@ -163,6 +164,72 @@ final class ToolExecutorTests: XCTestCase {
             result.plainText.contains("invalid scroll direction")
                 || result.plainText.contains("no running or installed app")
         )
+    }
+
+    func testScrollPagesAreCappedAndNonPositiveRejected() {
+        // Pages are 12 wheel lines each, emitted in chunks 20 ms apart, so an
+        // uncapped 10 000 is minutes on a tool the host treats as harmless.
+        XCTAssertEqual(ToolExecutor.effectiveScrollPages(0.5), 0.5)
+        XCTAssertEqual(ToolExecutor.effectiveScrollPages(1), 1)
+        XCTAssertEqual(ToolExecutor.effectiveScrollPages(20), 20)
+        XCTAssertEqual(ToolExecutor.effectiveScrollPages(10_000), 20)
+        XCTAssertNil(ToolExecutor.effectiveScrollPages(0))
+        XCTAssertNil(ToolExecutor.effectiveScrollPages(-3))
+        XCTAssertNil(ToolExecutor.effectiveScrollPages(.nan))
+        XCTAssertNil(ToolExecutor.effectiveScrollPages(.infinity))
+    }
+
+    func testScrollRejectsNonPositivePagesBeforeTouchingTheApp() async {
+        for pages in [0.0, -1.0] {
+            let executor = ToolExecutor()
+            let result = await executor.call(
+                name: "scroll",
+                arguments: .object([
+                    "app": .string("Finder"),
+                    "direction": .string("down"),
+                    "pages": .number(pages),
+                ]))
+            XCTAssertTrue(result.isError)
+            XCTAssertTrue(
+                result.plainText.contains("pages must be greater than 0"),
+                "got: \(result.plainText)")
+        }
+    }
+
+    func testTextEntryRolesIncludeTextAreas() {
+        // A text area is a text field for every decision that matters: its
+        // value is editable text, so typing into it commits nothing, `submit`
+        // applies to it, and an app that refuses AXValue gets the typing
+        // fallback. The executor used to test only AXTextField and AXComboBox.
+        XCTAssertTrue(TextEntryRole.isTextEntry(kAXTextFieldRole))
+        XCTAssertTrue(TextEntryRole.isTextEntry(kAXTextAreaRole))
+        XCTAssertTrue(TextEntryRole.isTextEntry(kAXComboBoxRole))
+        XCTAssertFalse(TextEntryRole.isTextEntry(kAXButtonRole))
+        XCTAssertFalse(TextEntryRole.isTextEntry(kAXStaticTextRole))
+    }
+
+    func testBundleLessAppIsStillExcludedByItsPath() throws {
+        // The exclusion list names bundle identifiers. An app resolved by path
+        // that cannot read its bundle reports none, and used to pass the gate
+        // untouched; resolving the excluded identifiers to paths closes that.
+        let target = try resolvableApp()
+        let bundle = try XCTUnwrap(target.bundleIdentifier)
+        let path = try XCTUnwrap(target.path)
+
+        XCTAssertTrue(ToolExecutor.matchesExcludedPath(
+            path, excludedBundleIds: [bundle], knownApps: [target]))
+        XCTAssertFalse(ToolExecutor.matchesExcludedPath(
+            path, excludedBundleIds: ["com.example.not-\(bundle)"], knownApps: [target]))
+        XCTAssertFalse(ToolExecutor.matchesExcludedPath(
+            "/Applications/NotTheSame.app",
+            excludedBundleIds: [bundle],
+            knownApps: [target]))
+
+        let bundleless = AppHandle(
+            pid: target.pid, name: target.name, bundleIdentifier: nil, path: target.path)
+        XCTAssertTrue(
+            bundleless.bundleIdentifier == nil && bundleless.path == target.path,
+            "the handle under test must be the bundle-less case")
     }
 
     func testExcludedAppIsRefusedBeforeItCanRun() async throws {
@@ -340,5 +407,28 @@ final class ElementTextSelectionTests: XCTestCase {
             ElementActions.locate("world", in: text, prefix: nil, suffix: nil))
         let range = ElementActions.utf16Range(characters, in: text)
         XCTAssertEqual(range, NSRange(location: 6, length: 5))
+    }
+
+    func testCursorAfterStartsPastTheTarget() {
+        // On an element without `AXSelectedTextRange` the keyboard fallback
+        // started at `lowerBound` with length 0 for both caret modes, so
+        // `cursor_after` behaved exactly like `cursor_before`. The caret after
+        // the target means walking to the target's end, and the 400-character
+        // cap then counts the text before the caret, including the target.
+        let fallback = ElementActions.keyboardFallback(for: 10..<15, mode: .cursorAfter)
+        XCTAssertEqual(fallback.start, 15)
+        XCTAssertEqual(fallback.length, 0)
+    }
+
+    func testCursorBeforeStartsAtTheTarget() {
+        let fallback = ElementActions.keyboardFallback(for: 10..<15, mode: .cursorBefore)
+        XCTAssertEqual(fallback.start, 10)
+        XCTAssertEqual(fallback.length, 0)
+    }
+
+    func testTextModeWalksFromTheTargetOverItsLength() {
+        let fallback = ElementActions.keyboardFallback(for: 10..<15, mode: .text)
+        XCTAssertEqual(fallback.start, 10)
+        XCTAssertEqual(fallback.length, 5)
     }
 }

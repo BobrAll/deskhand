@@ -138,7 +138,8 @@ public enum ToolSurface {
                         "Element to scroll. Defaults to the window."),
                     "direction": enumProperty(
                         ["up", "down", "left", "right"], description: "Scroll direction."),
-                    "pages": numberProperty("Number of pages. Defaults to 1."),
+                    "pages": numberProperty(
+                        "Number of pages, greater than 0 and at most 20. Defaults to 1."),
                 ], required: ["app", "direction"])
             ),
             ToolDefinition(

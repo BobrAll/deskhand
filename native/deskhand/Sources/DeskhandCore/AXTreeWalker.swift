@@ -36,14 +36,33 @@ public struct AXSnapshot: Sendable {
     static func identityKeys(of nodes: [AXNode]) -> [String] {
         var seen: [String: Int] = [:]
         return nodes.map { node in
-            let base = [
-                node.role, node.subrole ?? "", node.identifier ?? "",
-                node.title ?? "", node.label ?? "",
-            ].joined(separator: "|")
+            let base = identityBase(of: node)
             let occurrence = seen[base, default: 0]
             seen[base] = occurrence + 1
             return "\(base)|\(occurrence)"
         }
+    }
+
+    /// What a node is, without the occurrence counter that separates identical
+    /// siblings.
+    ///
+    /// For anything that is not a text field the value is part of the answer,
+    /// because for a chat, table or log row the text *is* the only thing that
+    /// names it: rows with the same role and no title are indistinguishable
+    /// without their text, and the counter then hands out positional identities
+    /// that move as soon as a row is inserted above. An editable field is the
+    /// exception: its value is what the user is changing, and including it
+    /// would report every edit as the old field disappearing and a new one
+    /// appearing.
+    static func identityBase(of node: AXNode) -> String {
+        var parts = [
+            node.role, node.subrole ?? "", node.identifier ?? "",
+            node.title ?? "", node.label ?? "",
+        ]
+        if !TextEntryRole.isTextEntry(node.role) {
+            parts.append(node.value ?? "")
+        }
+        return parts.joined(separator: "|")
     }
 
     /// The smallest node whose frame contains a point, in screen coordinates.
