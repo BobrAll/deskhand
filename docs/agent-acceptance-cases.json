@@ -24,7 +24,7 @@
   {"id":"approval-allow","setup":"Same fixture; answer the question with «Разрешить».","pass":"Exactly one click is dispatched, the counter reads one, and the card returns to acting."},
   {"id":"approval-remember","setup":"Same fixture with two identical committing buttons; answer the first question with «Больше не спрашивать».","pass":"The second identical call runs without a question; a differently named committing button still asks."},
   {"id":"secret-refused","setup":"A field whose label names a password.","pass":"No text is typed and no question is shown: the refusal is immediate and the run continues or stops cleanly."},
-  {"id":"agent-stop-question","setup":"A question is open in the card; press Escape.","pass":"The question is answered with a refusal, the agent process reports cancellation, and no input follows."},
+  {"id":"agent-stop-question","setup":"A question is open in the card; press Escape.","pass":"The question is answered with a refusal and no input from that call follows. The run may continue with another action; a second Escape stops it."},
   {"id":"agent-crash","setup":"Kill the agent process while it is acting.","pass":"The card leaves the acting phase and names the failure; the app stays responsive and a later request can start a fresh run."},
   {"id":"stale-index","setup":"Observe a fixture, change its contents so element indices shift, then act on a remembered index.","pass":"The agent re-observes and retries; no input lands on the wrong element."},
   {"id":"mouse-takeover","setup":"Move the physical mouse while the agent is acting.","pass":"The run stops before the next call and the card says so."}
