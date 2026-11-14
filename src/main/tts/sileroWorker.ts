@@ -365,19 +365,34 @@ export class SileroWorker {
     this.failPending(error)
   }
 
-  private resetChild(signal: NodeJS.Signals, escalate = false): void {
+  /**
+   * Drops the child and signals it.
+   *
+   * Returns the child when the signal was delivered, so a caller can wait out a
+   * grace period on a process that may ignore it.
+   */
+  private resetChild(signal: NodeJS.Signals): SileroWorkerChild | null {
     this.clearIdle()
     this.buffer = ''
     const child = this.child
     this.child = null
-    if (!child) return
+    if (!child) return null
     try {
       child.kill(signal)
     } catch {
       // Already gone; the pending request, if any, is rejected by the caller.
-      return
+      return null
     }
-    if (escalate) this.escalateToKill(child)
+    return child
+  }
+
+  /** SIGKILL, ignoring a child that exited on its own. */
+  private killNow(child: SileroWorkerChild): void {
+    try {
+      child.kill('SIGKILL')
+    } catch {
+      // It exited during the grace period.
+    }
   }
 
   /**
@@ -390,11 +405,7 @@ export class SileroWorker {
   private escalateToKill(child: SileroWorkerChild): void {
     const timer = setTimeout(() => {
       this.escalations.delete(child)
-      try {
-        child.kill('SIGKILL')
-      } catch {
-        // It exited during the grace period.
-      }
+      this.killNow(child)
     }, this.killGraceMs)
     timer.unref()
     this.escalations.set(child, timer)
@@ -411,11 +422,7 @@ export class SileroWorker {
   private finishEscalations(): void {
     for (const [child, timer] of this.escalations) {
       clearTimeout(timer)
-      try {
-        child.kill('SIGKILL')
-      } catch {
-        // It exited during the grace period.
-      }
+      this.killNow(child)
     }
     this.escalations.clear()
   }
@@ -428,7 +435,8 @@ export class SileroWorker {
       if (this.busy || this.queue.length > 0) return
       // SIGTERM lets Python free the model; a child that ignores it must not
       // become an untracked process once the reference is dropped.
-      this.resetChild('SIGTERM', true)
+      const child = this.resetChild('SIGTERM')
+      if (child) this.escalateToKill(child)
     }, this.idleTimeoutMs)
     this.idleTimer.unref()
   }

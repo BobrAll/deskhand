@@ -93,6 +93,9 @@ const FOLDED_LETTERS: Record<string, string> = {
   'đ': 'd', 'ð': 'd', 'þ': 'th', 'ı': 'i'
 }
 
+/** One pattern for the same letters, so the map and the match cannot drift apart. */
+const FOLDED_PATTERN = new RegExp(`[${Object.keys(FOLDED_LETTERS).join('')}]`, 'gi')
+
 /**
  * A Latin word written with the base letters of its alphabet.
  *
@@ -103,7 +106,7 @@ function foldLatin(word: string): string {
   return word
     .normalize('NFD')
     .replace(/\p{M}/gu, '')
-    .replace(/[ßæœøłđðþı]/gi, (letter) => FOLDED_LETTERS[letter.toLowerCase()])
+    .replace(FOLDED_PATTERN, (letter) => FOLDED_LETTERS[letter.toLowerCase()])
 }
 
 /** The placeholder stands in for the long vowel produced by a silent final `e`. */
@@ -125,6 +128,16 @@ function looksLikeAcronym(word: string): boolean {
 }
 
 /**
+ * The marker for a `g` or `c` that the letter rules must read soft, and the
+ * letter itself for everything else.
+ */
+function softConsonant(letter: string): string {
+  if (letter === 'g') return SOFT_G
+  if (letter === 'c') return SOFT_C
+  return letter
+}
+
+/**
  * Applies a silent final `e` to the word the letter rules are about to read.
  *
  * `file` becomes a long `i` and a plain `l`; `slice` a long `i` and a soft `c`;
@@ -134,17 +147,13 @@ function looksLikeAcronym(word: string): boolean {
 function applyFinalE(word: string): { marked: string; longVowel: string } {
   const magic = /^(.*?)([aeiou])([^aeiou])e$/.exec(word)
   if (magic) {
-    const consonant = magic[3]
-    const soft = consonant === 'g' ? SOFT_G : consonant === 'c' ? SOFT_C : consonant
-    return { marked: `${magic[1]}${LONG_MARK}${soft}`, longVowel: magic[2] }
+    return { marked: `${magic[1]}${LONG_MARK}${softConsonant(magic[3])}`, longVowel: magic[2] }
   }
   if (word.length > 2 && word.endsWith('e') && !/[aeiou]$/.test(word.slice(0, -1))) {
     // The `e` is silent, but a `g` or `c` before it is still soft: `edge` must
     // not become «едг» and `large` not «ларг».
-    const stem = word.slice(0, -1)
-    const last = stem[stem.length - 1]
-    const soft = last === 'g' ? SOFT_G : last === 'c' ? SOFT_C : last
-    return { marked: `${stem.slice(0, -1)}${soft}`, longVowel: '' }
+    const head = word.slice(0, -2)
+    return { marked: `${head}${softConsonant(word[word.length - 2])}`, longVowel: '' }
   }
   return { marked: word, longVowel: '' }
 }
