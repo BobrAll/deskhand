@@ -41,7 +41,7 @@ import { searchWeb } from '../llm/webSearch'
 import { CARD_FOLDED_HEIGHT } from '../card'
 import { copyText, pasteAnswer } from '../paste'
 import { hideAnnotations, showAnnotations } from '../drawing'
-import { buildTurnRequest, type Exchange } from './request'
+import { buildTurnRequest, type Exchange, type TurnRequest } from './request'
 import { captureTargetFor } from './captureTarget'
 import { readPreviousCommand, saveCommand } from './history'
 import { timed, trace, traceTurn } from '../agent/trace'
@@ -582,73 +582,74 @@ export function createOverlayController(host: OverlayHost) {
       return captureInFlight.promise.then(next, next)
     }
 
-    const run = (async (): Promise<ScreenshotInfo | null> => {
-      const win = host.window()
-      const visible = Boolean(win && !win.isDestroyed() && win.isVisible())
-      const settings = getSettings()
-      try {
-        if (visible && win) {
-          win.setContentProtection(true)
-          await delay(CONTENT_PROTECTION_SETTLE_MS)
-        }
-        // The front window is read even when the agent is off if exclusions are
-        // configured: otherwise a window the user switched to could never be
-        // checked against the list before the shutter opens. The visible apps are
-        // read in parallel and only when exclusions exist: with none configured
-        // the whole display is always safe, so that call would be pure cost.
-        const excludedApps = settings.excludedApps
-        const [front, visibleBundleIds] = await Promise.all([
-          settings.agent.enabled || excludedApps.length > 0
-            ? helperFrontWindow()
-            : Promise.resolve(null),
-          excludedApps.length > 0 ? helperVisibleBundleIds() : Promise.resolve(null)
-        ])
-        const underOverlay = front?.pid === process.pid
-        // Under our own card the frontmost window is not the one being acted on:
-        // read the remembered target's window instead.
-        const observed = underOverlay
-          ? (target.target ? await helperWindow(target.target.pid) : null)
-          : front
-        const capture = captureTargetFor({
-          observed,
-          remembered: target.target,
-          excludedApps,
-          visibleBundleIds
-        })
-        if (!capture) {
-          target.snapshot.screenshot = null
-          return null
-        }
-        const shot = await timed('screen.capture', () => captureScreenshot(
-          capture,
-          { maxSide: settings.screenshotMaxSide, quality: settings.screenshotQuality }
-        ))
-        if (shot && observed) {
-          if (await windowStillMatches(observed)) {
-            observedApps.set(shot, observed)
-          }
-          // The comparison above already recorded which field disagreed; this
-          // line records only that the shot was dropped, without the window text.
-          else trace('screen.observationRejected', { reason: 'window-changed-during-capture' })
-        }
-        if (session === target) {
-          if (shot) target.snapshot.screenshot = shot
-          target.snapshot.screenshotPending = false
-          publishContext(target)
-        }
-        return shot
-      } finally {
-        if (visible && win && !win.isDestroyed()) win.setContentProtection(false)
-      }
-    })()
-
-    const entry = { sessionId: target.id, promise: run }
+    const entry = { sessionId: target.id, promise: captureNow(target) }
     captureInFlight = entry
     const clear = (): void => {
       if (captureInFlight === entry) captureInFlight = null
     }
-    void run.then(clear, clear)
-    return run
+    void entry.promise.then(clear, clear)
+    return entry.promise
+  }
+
+  /** One capture: shutter, observation check, and the session's new picture. */
+  async function captureNow(target: Session): Promise<ScreenshotInfo | null> {
+    const win = host.window()
+    const visible = Boolean(win && !win.isDestroyed() && win.isVisible())
+    const settings = getSettings()
+    try {
+      if (visible && win) {
+        win.setContentProtection(true)
+        await delay(CONTENT_PROTECTION_SETTLE_MS)
+      }
+      // The front window is read even when the agent is off if exclusions are
+      // configured: otherwise a window the user switched to could never be
+      // checked against the list before the shutter opens. The visible apps are
+      // read in parallel and only when exclusions exist: with none configured
+      // the whole display is always safe, so that call would be pure cost.
+      const excludedApps = settings.excludedApps
+      const [front, visibleBundleIds] = await Promise.all([
+        settings.agent.enabled || excludedApps.length > 0
+          ? helperFrontWindow()
+          : Promise.resolve(null),
+        excludedApps.length > 0 ? helperVisibleBundleIds() : Promise.resolve(null)
+      ])
+      const underOverlay = front?.pid === process.pid
+      // Under our own card the frontmost window is not the one being acted on:
+      // read the remembered target's window instead.
+      const observed = underOverlay
+        ? (target.target ? await helperWindow(target.target.pid) : null)
+        : front
+      const capture = captureTargetFor({
+        observed,
+        remembered: target.target,
+        excludedApps,
+        visibleBundleIds
+      })
+      if (!capture) {
+        target.snapshot.screenshot = null
+        return null
+      }
+      const shot = await timed('screen.capture', () => captureScreenshot(
+        capture,
+        { maxSide: settings.screenshotMaxSide, quality: settings.screenshotQuality }
+      ))
+      if (shot && observed) {
+        if (await windowStillMatches(observed)) {
+          observedApps.set(shot, observed)
+        }
+        // The comparison above already recorded which field disagreed; this
+        // line records only that the shot was dropped, without the window text.
+        else trace('screen.observationRejected', { reason: 'window-changed-during-capture' })
+      }
+      if (session === target) {
+        if (shot) target.snapshot.screenshot = shot
+        target.snapshot.screenshotPending = false
+        publishContext(target)
+      }
+      return shot
+    } finally {
+      if (visible && win && !win.isDestroyed()) win.setContentProtection(false)
+    }
   }
 
   /**
@@ -746,6 +747,49 @@ export function createOverlayController(host: OverlayHost) {
   }
 
   /**
+   * Brings an already open card up to date and gives it the keyboard.
+   *
+   * The picture is refreshed, and so is *the app the card is about*: while the
+   * card sat on screen the user moved to another window, and the question they
+   * are about to type is about that one. Keeping the app from the first open is
+   * how a plan ends up clicking in the window the user left — `agent.execute`
+   * brings the target to the front before the first step, so a stale target does
+   * not just mislabel the answer, it physically raises the wrong window over the
+   * one on screen.
+   *
+   * The context has to be read before the focus is taken: our own card is what
+   * the frontmost app becomes a moment later.
+   */
+  async function refreshOpenCard(startedIn: number, win: BrowserWindow): Promise<void> {
+    const front = await helperFrontApplication()
+    const elsewhere = front && front.pid > 0 && front.pid !== process.pid
+    if (elsewhere) {
+      const settings = getSettings()
+      const { snapshot, flags } = await collectContext({
+        excludedApps: settings.excludedApps,
+        wantsScreenshot: settings.captureScreenshotByDefault
+      })
+      if (startedIn === generation && session && snapshot.excluded) {
+        session.target = null
+        close()
+        return
+      }
+      if (startedIn === generation && session) {
+        session.snapshot = snapshot
+        session.target = snapshot.activeApp
+        session.flags = flags
+        // The drawing belonged to the previous screen.
+        discardAnnotations()
+      }
+    } else if (session && session.snapshot.activeApp) {
+      void ensureFreshScreenshot(session)
+    }
+    if (startedIn !== generation || dictating || !session) return
+    win.focus()
+    startLive(session)
+  }
+
+  /**
    * Opens the card, then collects the context into it.
    *
    * The order is the whole point. Collecting means reading the frontmost app and,
@@ -767,44 +811,7 @@ export function createOverlayController(host: OverlayHost) {
     const startedIn = generation
     const win = host.window()
     if (session && win?.isVisible()) {
-      // Coming back to an already open card. The picture is refreshed, and so is
-      // *the app the card is about*: while the card sat on screen the user moved
-      // to another window, and the question they are about to type is about that
-      // one. Keeping the app from the first open is how a plan ends up clicking
-      // in the window the user left — `agent.execute` brings the target to the
-      // front before the first step, so a stale target does not just mislabel
-      // the answer, it physically raises the wrong window over the one on screen.
-      //
-      // The context has to be read before the focus is taken: our own card is
-      // what the frontmost app becomes a moment later.
-      const front = await helperFrontApplication()
-      const elsewhere = front && front.pid > 0 && front.pid !== process.pid
-      if (elsewhere) {
-        const settings = getSettings()
-        const { snapshot, flags } = await collectContext({
-          excludedApps: settings.excludedApps,
-          wantsScreenshot: settings.captureScreenshotByDefault
-        })
-        if (startedIn === generation && session && snapshot.excluded) {
-          session.target = null
-          close()
-          return
-        }
-        if (startedIn === generation && session) {
-          session.snapshot = snapshot
-          session.target = snapshot.activeApp
-          session.flags = flags
-          // The drawing belonged to the previous screen.
-          hideAnnotations()
-          session.annotations = []
-          emitAnnotations()
-        }
-      } else if (session.snapshot.activeApp) {
-        void ensureFreshScreenshot(session)
-      }
-      if (startedIn !== generation || dictating) return
-      win.focus()
-      startLive(session)
+      await refreshOpenCard(startedIn, win)
       return
     }
 
@@ -974,12 +981,22 @@ export function createOverlayController(host: OverlayHost) {
     sendToWindow(CH.overlay.annotations, { count })
   }
 
+  /**
+   * Takes the shapes off the screen and out of the session.
+   *
+   * The two always move together: a shape the display still paints after the
+   * session forgot it would outlive the answer it was drawn for.
+   */
+  function discardAnnotations(): void {
+    if (session) session.annotations = []
+    hideAnnotations()
+    emitAnnotations()
+  }
+
   /** Removes the drawings but keeps the card and the answer. */
   function clearAnnotations(): void {
     if (!session) return
-    session.annotations = []
-    hideAnnotations()
-    emitAnnotations()
+    discardAnnotations()
   }
 
   function setFlags(flags: ContextFlags): void {
@@ -1002,9 +1019,7 @@ export function createOverlayController(host: OverlayHost) {
       // No image means no drawing tool: the model cannot point at a screen it was
       // never shown, and a stale arrow must not outlive the image behind it.
       stopLive(session)
-      session.annotations = []
-      hideAnnotations()
-      emitAnnotations()
+      discardAnnotations()
     }
   }
 
@@ -1201,19 +1216,15 @@ export function createOverlayController(host: OverlayHost) {
       // instead of the card sitting still for two seconds first.
       deadline = setTimeout(() => abort.abort('deadline'), TURN_DEADLINE_MS)
       const bundleId = turnSession.target?.bundleId || null
-      const currentSettings = getSettings()
-      if (isExcluded(turnSession.target, currentSettings.excludedApps)) {
-        outcome = 'blocked'
-        reason = 'excluded-app'
-        fail(EXCLUDED_APP, false)
-        return
-      }
-      const useHistory = settings.rememberConversation && currentSettings.rememberConversation
+      // The exclusion list was already checked before the turn was registered,
+      // and nothing has been awaited since: the same `settings` still describe
+      // this turn.
+      const useHistory = settings.rememberConversation
       const history = turnSession.history.filter(
-        (entry) => !entry.bundleId || !currentSettings.excludedApps.includes(entry.bundleId)
+        (entry) => !entry.bundleId || !settings.excludedApps.includes(entry.bundleId)
       )
       const previousCommand = useHistory && !refine && turnSession.history.length === 0
-        ? readPreviousCommand(currentSettings.excludedApps)
+        ? readPreviousCommand(settings.excludedApps)
         : undefined
 
       if (request.voice && !isActionRequest) {
@@ -1236,11 +1247,7 @@ export function createOverlayController(host: OverlayHost) {
       // replaces that answer, so old arrows must not stay behind as if they
       // explained the new one. A rewrite ("короче") keeps them — it is the same
       // answer in other words.
-      if (!refine) {
-        session.annotations = []
-        hideAnnotations()
-        emitAnnotations()
-      }
+      if (!refine) discardAnnotations()
 
       const turn: TurnContext = {
         request,
@@ -1257,11 +1264,13 @@ export function createOverlayController(host: OverlayHost) {
       const result = isActionRequest ? await runAgentTurn(turn) : await runWriterTurn(turn)
       if (!result) return
 
-      session.answer = result.answer
+      // The turn's own session, not the module-level one: the runner returned
+      // only because both still point at the same card.
+      turnSession.answer = result.answer
       outcome = result.outcome
       reason = result.reason
 
-      const entry = remember(turnSession, request, result.acknowledged ? 'Готово.' : session.answer, bundleId)
+      const entry = remember(turnSession, request, result.acknowledged ? 'Готово.' : result.answer, bundleId)
       const latestSettings = getSettings()
       if (entry && !refine && useHistory && latestSettings.rememberConversation) {
         saveCommand(entry.question, bundleId, latestSettings.excludedApps)
@@ -1270,11 +1279,11 @@ export function createOverlayController(host: OverlayHost) {
       const done: StreamEvent = {
         type: 'done',
         requestId: request.requestId,
-        text: session.answer,
-        annotations: session.annotations.length
+        text: result.answer,
+        annotations: turnSession.annotations.length
       }
       sendToWindow(CH.overlay.stream, done)
-      if (result.acknowledged || session.answer.trim()) {
+      if (result.acknowledged || result.answer.trim()) {
         // A voice turn, an agent turn and a card that was hidden while it waited
         // all end with the answer arriving rather than streaming: the card has to
         // be brought back to show it.
@@ -1437,6 +1446,29 @@ export function createOverlayController(host: OverlayHost) {
       return false
     }
 
+    /**
+     * One model round for a request built here.
+     *
+     * The two rounds of a turn differ only in their frame: the retry after a
+     * refused image has neither a picture nor the names measured against one.
+     * Everything that identifies the turn — its id, its abort signal, whether the
+     * text is spoken — stays the same, so it is passed once.
+     */
+    const streamBuilt = (
+      turnRequest: TurnRequest,
+      frame: { canDraw: boolean; area: ScreenRect | null; drawingTargets: AxElementInfo[] }
+    ): Promise<{ text: string; webLookup?: boolean }> => streamRound({
+      messages: turnRequest.messages,
+      requestId: request.requestId,
+      maxTokens: turnRequest.maxTokens,
+      signal: abort.signal,
+      canDraw: frame.canDraw,
+      area: frame.area,
+      apiKey,
+      drawingTargets: frame.drawingTargets,
+      revealText: request.voice
+    })
+
     const built = await buildTurnRequest({
       request,
       session: turnSession,
@@ -1468,16 +1500,10 @@ export function createOverlayController(host: OverlayHost) {
 
     let round: { text: string; webLookup?: boolean }
     try {
-      round = await streamRound({
-        messages: built.messages,
-        requestId: request.requestId,
-        maxTokens: built.maxTokens,
-        signal: abort.signal,
+      round = await streamBuilt(built, {
         canDraw: built.canDraw,
         area: built.area,
-        apiKey,
-        drawingTargets,
-        revealText: request.voice
+        drawingTargets
       })
     } catch (error) {
       // The provider refused the picture. Whether a model takes images is not
@@ -1504,17 +1530,7 @@ export function createOverlayController(host: OverlayHost) {
       })
       if (retried.abandoned || abort.signal.aborted || session !== turnSession) return null
       drawingTargets = []
-      round = await streamRound({
-        messages: retried.messages,
-        requestId: request.requestId,
-        maxTokens: retried.maxTokens,
-        signal: abort.signal,
-        canDraw: false,
-        area: null,
-        apiKey,
-        drawingTargets,
-        revealText: request.voice
-      })
+      round = await streamBuilt(retried, { canDraw: false, area: null, drawingTargets })
     }
     if (abort.signal.aborted || session !== turnSession) return null
 
@@ -1612,9 +1628,7 @@ export function createOverlayController(host: OverlayHost) {
     const target = session?.target ?? null
     // The drawing pointed at something the user has now acted on: leaving it up
     // would cover the very text we are pasting.
-    if (session) session.annotations = []
-    hideAnnotations()
-    emitAnnotations()
+    discardAnnotations()
     host.hide()
     return pasteAnswer(text, target)
   }
