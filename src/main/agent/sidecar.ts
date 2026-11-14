@@ -208,6 +208,11 @@ interface PendingRequest {
   reject(error: Error): void
 }
 
+/** One newline-delimited request, ready for the pipe. */
+function requestLine(id: number, method: string, params: Record<string, unknown>): string {
+  return `${JSON.stringify({ id, method, params })}\n`
+}
+
 export interface Message {
   trace_run_id?: string
   id?: number
@@ -354,7 +359,7 @@ export class AgentSidecar {
           reject(error)
         }
       })
-      child.stdin.write(`${JSON.stringify({ id, method, params })}\n`)
+      child.stdin.write(requestLine(id, method, params))
     })
   }
 
@@ -397,18 +402,18 @@ export class AgentSidecar {
   /** Answers a pending confirmation. */
   approve(id: string, allow: boolean, reason?: string): void {
     if (!this.alive) return
-    this.child?.stdin.write(`${JSON.stringify({
-      id: ++this.counter,
-      method: 'approval',
-      params: { id, allow, ...(reason ? { reason } : {}) }
-    })}\n`)
+    this.child?.stdin.write(requestLine(++this.counter, 'approval', {
+      id,
+      allow,
+      ...(reason ? { reason } : {})
+    }))
   }
 
   /** Stops the run in flight; the process stays up for the next one. */
   cancel(): void {
     this.cancelCount += 1
     if (!this.alive) return
-    this.child?.stdin.write(`${JSON.stringify({ id: ++this.counter, method: 'cancel', params: {} })}\n`)
+    this.child?.stdin.write(requestLine(++this.counter, 'cancel', {}))
   }
 
   /** Ends the process; called on quit so no agent outlives the window. */
@@ -417,7 +422,7 @@ export class AgentSidecar {
     this.child = null
     if (!child || child.exitCode !== null) return
     try {
-      child.stdin.write(`${JSON.stringify({ id: ++this.counter, method: 'shutdown', params: {} })}\n`)
+      child.stdin.write(requestLine(++this.counter, 'shutdown', {}))
     } catch {
       /* the pipe is already gone */
     }

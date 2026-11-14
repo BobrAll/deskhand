@@ -91,6 +91,24 @@ const ROLE_WORD: Record<string, string> = {
  */
 const TYPING_ROLES = new Set(['AXTextField', 'AXTextArea', 'AXSearchField', 'AXComboBox'])
 
+/**
+ * The instruction block the model reads above the list.
+ *
+ * Verbatim: the example line and the quoting rule are what make the names
+ * copyable, so they are part of the contract rather than a caption.
+ */
+const LIST_HEADER = [
+  '[Элементы активного окна]',
+  'То, что сейчас можно нажать, с точными названиями. Если нужный пункт есть',
+  'здесь — бери координаты из его строки, а название копируй в «…» как есть:',
+  '  @click X Y left «Название»',
+  'Это точнее, чем мерить по картинке: имя важнее координат, по нему клик',
+  'ставится в центр элемента.',
+  'Для рисунка используй @point circle X Y «Название» с тем же точным названием:',
+  'приложение привяжет обводку к границам однозначно названного элемента.',
+  ''
+]
+
 function visibleName(element: AxElementInfo): string {
   const text = (nameTexts(element)[0] ?? '').replace(/\s+/g, ' ').trim()
   return text.length > MAX_NAME ? `${text.slice(0, MAX_NAME - 1)}…` : text
@@ -169,15 +187,7 @@ export function formatOutline(
   const kept = rows.slice(0, MAX_ITEMS)
 
   return [
-    '[Элементы активного окна]',
-    'То, что сейчас можно нажать, с точными названиями. Если нужный пункт есть',
-    'здесь — бери координаты из его строки, а название копируй в «…» как есть:',
-    '  @click X Y left «Название»',
-    'Это точнее, чем мерить по картинке: имя важнее координат, по нему клик',
-    'ставится в центр элемента.',
-    'Для рисунка используй @point circle X Y «Название» с тем же точным названием:',
-    'приложение привяжет обводку к границам однозначно названного элемента.',
-    '',
+    ...LIST_HEADER,
     ...kept.map((row) => row.line),
     ...(rows.length > kept.length ? [`  …и ещё ${rows.length - kept.length}`] : [])
   ].join('\n')

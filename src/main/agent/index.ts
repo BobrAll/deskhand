@@ -355,6 +355,32 @@ export function createAgentController(host: AgentHost) {
   }
 
   /**
+   * Opens the run's state and returns the promise its verdict settles.
+   *
+   * The assignment happens synchronously inside the executor, so the `publish`
+   * that follows already sees the run it is describing.
+   */
+  function beginRun(actions: AgentActionRow[], total: number): Promise<AgentRunResult> {
+    let settled = false
+    return new Promise<AgentRunResult>((resolve) => {
+      current = {
+        actions,
+        step: 0,
+        total,
+        stopped: null,
+        notice: null,
+        firstToken: false,
+        pending: null,
+        finish: (result) => {
+          if (settled) return
+          settled = true
+          resolve(result)
+        }
+      }
+    })
+  }
+
+  /**
    * Answers the pending question.
    *
    * Called from the card through IPC, and from `stop()` with a refusal. Idempotent
@@ -425,23 +451,7 @@ export function createAgentController(host: AgentHost) {
     const actions: AgentActionRow[] = []
     const total = settings.agent.maxSteps
     const provider = withAgentBudget(input.provider)
-    let settled = false
-    const done = new Promise<AgentRunResult>((resolve) => {
-      current = {
-        actions,
-        step: 0,
-        total,
-        stopped: null,
-        notice: null,
-        firstToken: false,
-        pending: null,
-        finish: (result) => {
-          if (settled) return
-          settled = true
-          resolve(result)
-        }
-      }
-    })
+    const done = beginRun(actions, total)
 
     publish({ phase: 'arming', step: 0, total, label: 'Приготовился', actions: [], approval: null })
     trace('agent.start', {
@@ -593,7 +603,7 @@ export function createAgentController(host: AgentHost) {
             step: active.step,
             total: active.total,
             label: event.text.trim(),
-              actions: actionRows()
+            actions: actionRows()
           })
         }
         return
