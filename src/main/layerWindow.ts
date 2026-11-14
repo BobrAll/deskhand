@@ -25,11 +25,11 @@
  * do not — see `denyExternalLinks.ts`) and the module-specific `closed` reset.
  */
 
-import { join } from 'node:path'
 import { BrowserWindow } from 'electron'
 import type { ScreenRect } from '@shared/types'
 import { denyExternalLinks } from './denyExternalLinks'
 import { loadPage } from './pageLoad'
+import { preloadPath } from './preloadPath'
 
 /** How long to wait for a layer's page before painting anyway. */
 const LOAD_TIMEOUT_MS = 1500
@@ -80,7 +80,7 @@ export function createLayerWindow(options: LayerWindowOptions): BrowserWindow {
     vibrancy: options.vibrancy,
     visualEffectState: options.vibrancy ? 'active' : undefined,
     webPreferences: {
-      preload: join(__dirname, '../preload/index.js'),
+      preload: preloadPath,
       sandbox: false,
       contextIsolation: true,
       nodeIntegration: false

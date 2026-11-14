@@ -4,7 +4,6 @@
  * window loads its own page.
  */
 
-import { join } from 'node:path'
 import { app, BrowserWindow, screen } from 'electron'
 import {
   CARD_MAX_WIDTH,
@@ -26,6 +25,7 @@ import { hideFieldHighlight, showFieldHighlight } from '../fieldHighlight'
 import { clamp } from '../util'
 import { denyExternalLinks } from '../denyExternalLinks'
 import { loadPage } from '../pageLoad'
+import { preloadPath } from '../preloadPath'
 import { openAppWindows } from './settings'
 
 export {
@@ -50,8 +50,6 @@ const OVERLAY_MIN_HEIGHT = CARD_FOLDED_HEIGHT
 const OVERLAY_MAX_HEIGHT = 520
 
 const CARD_VIBRANCY = 'under-window' as const
-
-const preload = join(__dirname, '../preload/index.js')
 
 let overlayWindow: BrowserWindow | null = null
 let overlayVisible = false
@@ -112,7 +110,7 @@ function createOverlayWindow(): BrowserWindow {
     vibrancy: drawingActive || voiceActive ? undefined : CARD_VIBRANCY,
     visualEffectState: 'active',
     webPreferences: {
-      preload,
+      preload: preloadPath,
       sandbox: false,
       contextIsolation: true,
       nodeIntegration: false,

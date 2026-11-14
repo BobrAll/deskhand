@@ -65,28 +65,18 @@ function openAppWindow(options: AppWindowOptions): BrowserWindow {
   return win
 }
 
-export function openSettingsWindow(): BrowserWindow {
-  if (settingsWindow && !settingsWindow.isDestroyed()) {
-    settingsWindow.show()
-    settingsWindow.focus()
-    return settingsWindow
-  }
-
-  const win = openAppWindow({
-    title: 'Deskhand — настройки',
-    width: 980,
-    height: 760,
-    page: 'settings',
-    minWidth: 820,
-    minHeight: 560
-  })
-  settingsWindow = win
-  /**
-   * ⌘W and the red traffic light both come through here, not through
-   * `settings:close`, so the grace period for an in-flight write has to live on
-   * the window as well — otherwise the one gesture everybody uses to close a
-   * window would be the one that loses the last keystroke.
-   */
+/**
+ * Holds the window open while the renderer still has edits to write.
+ *
+ * ⌘W and the red traffic light both come through the window's own `close`, not
+ * through `settings:close`, so the grace period for an in-flight write has to
+ * live on the window as well — otherwise the one gesture everybody uses to close
+ * a window would be the one that loses the last keystroke.
+ *
+ * The `closing` latch is what lets the deferred `close()` through: without it the
+ * second call would be held again, and the deadline would extend itself forever.
+ */
+function holdCloseUntilWritesLand(win: BrowserWindow): void {
   let closing = false
   win.on('close', (event) => {
     if (closing || !settingsHeld) return
@@ -107,6 +97,25 @@ export function openSettingsWindow(): BrowserWindow {
     }
     setTimeout(attempt, CLOSE_POLL_MS)
   })
+}
+
+export function openSettingsWindow(): BrowserWindow {
+  if (settingsWindow && !settingsWindow.isDestroyed()) {
+    settingsWindow.show()
+    settingsWindow.focus()
+    return settingsWindow
+  }
+
+  const win = openAppWindow({
+    title: 'Deskhand — настройки',
+    width: 980,
+    height: 760,
+    page: 'settings',
+    minWidth: 820,
+    minHeight: 560
+  })
+  settingsWindow = win
+  holdCloseUntilWritesLand(win)
   win.on('closed', () => {
     settingsWindow = null
     settingsHeld = false
