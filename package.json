@@ -21,18 +21,22 @@
     "build:whisper": "node scripts/build-whisper.mjs",
     "build:transcribe": "node scripts/build-transcribe.mjs",
     "build:agent": "node scripts/build-agent.mjs",
+    "build:native": "npm run build:helper && npm run build:whisper && npm run build:agent",
     "pack": "npm run build && electron-builder --mac --dir",
-    "dist": "npm run build && electron-builder --mac",
+    "dist": "npm run build && electron-builder --mac && node scripts/prepare-release.mjs",
+    "sign:cert": "bash scripts/create-signing-cert.sh",
+    "sign:pin": "node scripts/pin-signing-cert.mjs",
     "agent:report": "node scripts/agent-trace-report.mjs",
     "agent:timeline": "node scripts/agent-trace-report.mjs --timeline",
     "test:native": "node scripts/test-native.mjs",
-    "lint": "eslint src",
+    "lint": "eslint src && node --check scripts/*.mjs scripts/lib/*.mjs && bash -n scripts/*.sh",
     "worktree": "node scripts/preview-worktree.mjs"
   },
   "build": {
     "appId": "com.bobr.deskhand",
     "productName": "Deskhand",
     "copyright": "© 2026 Alexander Bobrus",
+    "afterPack": "scripts/after-pack.mjs",
     "directories": {
       "output": "release",
       "buildResources": "build"
@@ -91,10 +95,18 @@
       "identity": null,
       "hardenedRuntime": false,
       "gatekeeperAssess": false,
+      "minimumSystemVersion": "14.0",
+      "artifactName": "Deskhand-${arch}.${ext}",
       "x64ArchFiles": "Contents/Resources/{deskhand-helper,whisper-cli,transcribe-cli,deskhand-agent}",
       "target": [
         {
           "target": "zip",
+          "arch": [
+            "universal"
+          ]
+        },
+        {
+          "target": "dmg",
           "arch": [
             "universal"
           ]
@@ -111,6 +123,7 @@
     "electron-store": "8.2.0"
   },
   "devDependencies": {
+    "@electron/osx-sign": "1.3.1",
     "@types/node": "20.16.11",
     "@types/react": "18.3.11",
     "@types/react-dom": "18.3.1",
