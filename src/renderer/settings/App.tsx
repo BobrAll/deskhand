@@ -30,7 +30,7 @@ import {
   hasUnsaved,
   holdReasonFor,
   invalidBaseUrlProviders,
-  writeStillCurrent,
+  writeCoversDraft,
   writableSettings
 } from './applyGate'
 import { ApplyStatus, type ApplyState } from './ApplyStatus'
@@ -355,7 +355,7 @@ export function App() {
         // «Применено» is about the draft on screen, not the snapshot that was
         // sent: an edit made during the round trip still has to be written, and
         // the footer (and the close hold) must say so until it is.
-        if (writeStillCurrent(written, draftRef.current)) setApplyState('saved')
+        if (writeCoversDraft(written, draftRef.current)) setApplyState('saved')
         return true
       } catch {
         // Nothing reached the disk, so a later change must be allowed to try again —

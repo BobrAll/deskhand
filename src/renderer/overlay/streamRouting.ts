@@ -50,16 +50,16 @@ export interface StreamState {
 }
 
 /**
- * Whether a rewrite's first chunk starts the answer over.
+ * Whether a rewrite starts the answer over on its first chunk.
  *
  * A rewrite keeps the answer it is rewriting on screen until the model produces
  * something — a card that blanked while «Короче» worked would lose the text the
- * user is still reading. That base is still there when a failed rewrite is
- * retried, so the retry's first chunk has to replace it as well: appending would
- * glue the new attempt onto the old answer.
+ * user is still reading. So the rule follows the screen, not the request: a
+ * retry starts from the very same text, and its first chunk has to replace that
+ * text as well, or the new attempt would be glued onto the old answer.
  */
-export function rewriteReplacesAnswer(baseOnScreen: string): boolean {
-  return baseOnScreen.trim().length > 0
+export function rewriteStartsOver(answerOnScreen: string): boolean {
+  return answerOnScreen.trim().length > 0
 }
 
 /**

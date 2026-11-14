@@ -42,7 +42,7 @@ import { useVoice } from './useVoice'
 import { deriveView } from './viewFlags'
 import { agentLabel, agentMark } from './agentRow'
 import { hasTextSelection, keyPolicy, type KeyAction } from './keyPolicy'
-import { rewriteReplacesAnswer, routeStream } from './streamRouting'
+import { rewriteStartsOver, routeStream } from './streamRouting'
 import { Markdown } from './markdownText'
 import { LiveThumb } from './LiveThumb'
 import { draggedWidth, expandedWidth, userWidthCeiling } from './cardWidth'
@@ -708,7 +708,7 @@ export function App() {
       const requestId = newRequestId()
       requestIdRef.current = requestId
       speechRef.current.stop()
-      replaceOnChunkRef.current = rewriteReplacesAnswer(answer)
+      replaceOnChunkRef.current = rewriteStartsOver(answer)
       setBusy(true)
       // The answer is what the user reads while the rewrite runs, so the card
       // steps out of the way of the drawing exactly as it does on `send`.
@@ -1022,8 +1022,7 @@ export function App() {
         agentPhase: agentRef.current?.phase ?? null,
         hasSelection: hasTextSelection(
           window.getSelection()?.toString() ?? '',
-          inputRef.current,
-          document.activeElement === inputRef.current
+          document.activeElement === inputRef.current ? inputRef.current : null
         ),
         hasAnswer: Boolean(answerTextRef.current.trim())
       })

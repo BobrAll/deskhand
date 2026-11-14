@@ -90,14 +90,14 @@ export function hasUnsaved(
 }
 
 /**
- * Whether a finished write is still the draft on screen.
+ * Whether a finished write covers the draft on screen.
  *
  * The store answers a write after a round trip, and the user may have typed since.
- * Reporting «Применено» for a snapshot that is no longer the draft claims the
- * newest edit is on disk while it is still waiting for its own write — and it
- * releases the close hold during exactly that gap.
+ * Saying «Применено» for a snapshot the draft has moved past would claim the
+ * newest edit is on disk while it is still waiting for its own write — and would
+ * release the close hold during exactly that gap.
  */
-export function writeStillCurrent(written: string, draft: AppSettings | null): boolean {
+export function writeCoversDraft(written: string, draft: AppSettings | null): boolean {
   return draft !== null && JSON.stringify(draft) === written
 }
 

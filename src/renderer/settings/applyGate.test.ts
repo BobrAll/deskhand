@@ -16,7 +16,7 @@ import {
   holdReasonFor,
   invalidBaseUrlProviders,
   tokensInRange,
-  writeStillCurrent,
+  writeCoversDraft,
   writableSettings
 } from './applyGate'
 
@@ -145,7 +145,7 @@ describe('applyGate: did the write that just finished cover the draft', () => {
   it('says yes when nothing was typed during the round trip', () => {
     const draft = settings({ maxTokens: 4096 })
 
-    expect(writeStillCurrent(JSON.stringify(draft), draft)).toBe(true)
+    expect(writeCoversDraft(JSON.stringify(draft), draft)).toBe(true)
   })
 
   it('says no when a newer edit is waiting for its own write', () => {
@@ -154,11 +154,11 @@ describe('applyGate: did the write that just finished cover the draft', () => {
     const written = JSON.stringify(settings({ maxTokens: 4096 }))
     const edited = settings({ maxTokens: 4097 })
 
-    expect(writeStillCurrent(written, edited)).toBe(false)
+    expect(writeCoversDraft(written, edited)).toBe(false)
   })
 
   it('says no before a draft exists', () => {
-    expect(writeStillCurrent(JSON.stringify(settings()), null)).toBe(false)
+    expect(writeCoversDraft(JSON.stringify(settings()), null)).toBe(false)
   })
 })
 

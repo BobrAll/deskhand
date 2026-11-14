@@ -30,19 +30,20 @@ describe('hasTextSelection: what counts as a selection', () => {
     // `window.getSelection()` is empty for a textarea selection, so this is the
     // only thing standing between ⌘C and the whole answer being copied over the
     // part of the question the user highlighted.
-    expect(hasTextSelection('', { selectionStart: 2, selectionEnd: 9 }, true)).toBe(true)
+    expect(hasTextSelection('', { selectionStart: 2, selectionEnd: 9 })).toBe(true)
   })
 
   it('does not call a caret a selection', () => {
-    expect(hasTextSelection('', { selectionStart: 4, selectionEnd: 4 }, true)).toBe(false)
+    expect(hasTextSelection('', { selectionStart: 4, selectionEnd: 4 })).toBe(false)
   })
 
-  it('ignores a selection the field kept after losing focus', () => {
-    expect(hasTextSelection('', { selectionStart: 2, selectionEnd: 9 }, false)).toBe(false)
+  it('ignores a range the field kept after losing focus', () => {
+    // The caller passes `null` for a field that is no longer focused.
+    expect(hasTextSelection('', null)).toBe(false)
   })
 
   it('sees a selection on the page without touching the field', () => {
-    expect(hasTextSelection('выделенный ответ', null, false)).toBe(true)
+    expect(hasTextSelection('выделенный ответ', null)).toBe(true)
   })
 })
 
