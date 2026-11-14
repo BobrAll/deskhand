@@ -72,6 +72,23 @@ func makeToolCall(id: String, name: String, argumentsJSON: String) -> ToolCall {
     }
 }
 
+/// The OpenAI-style marker that ends a stream.
+///
+/// Anthropic-compatible proxies send it too, in place of their own terminal
+/// event, so both decoders recognise the same string.
+let streamDoneMarker = "[DONE]"
+
+/// Throws when a stream stopped without a terminal event.
+///
+/// A stop reason or the provider's own end event finishes an answer. Without
+/// one the connection was cut, and the text that arrived is half a reply that
+/// must not be shown as final.
+func requireStreamFinished(stopReason: String?, sawTerminalEvent: Bool) throws {
+    guard sawTerminalEvent || stopReason != nil else {
+        throw LLMError.transport("the response stream ended before the model finished")
+    }
+}
+
 /// A tool call being assembled from stream fragments.
 ///
 /// Both wires send the id, the name and the arguments in separate chunks, so

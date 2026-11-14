@@ -108,6 +108,11 @@ public final class AgentLoop {
         messages.contains { !$0.images.isEmpty }
     }
 
+    /// Bytes of the prompt text, the number `step-timing` reports.
+    private static func textBytes(_ messages: [ChatMessage]) -> Int {
+        messages.reduce(0) { $0 + $1.text.utf8.count }
+    }
+
     /// The same history with every image dropped. Text stays: it is what the
     /// model can still read, and the screenshot's description lives there.
     private static func strippedImages(_ messages: [ChatMessage]) -> [ChatMessage] {
@@ -344,22 +349,7 @@ public final class AgentLoop {
                 log("tool \(call.name) \(argumentPreview(call.arguments))")
                 observer?.toolStarted(step, call: call, narration: completion.text)
                 let callClock = TimingClock()
-                let result: ToolResult
-                if let badArguments = call.argumentsError {
-                    // The arguments did not parse, so running the call with the
-                    // empty object it was given here would execute a different
-                    // call — usually a no-argument one — and the model would
-                    // read the resulting tool error as a fault of the tool.
-                    log("  arguments did not parse; not executing")
-                    result = .failure(Self.unparseableArgumentsMessage(raw: badArguments))
-                } else {
-                    result = await executor.call(
-                        name: call.name,
-                        arguments: call.arguments,
-                        verify: options.verifyActions && isLast,
-                        narration: completion.text
-                    )
-                }
+                let result = await toolResult(for: call, narration: completion.text, isLast: isLast)
                 let wall = callClock.milliseconds
                 totals.calls += 1
                 if result.isError { totals.failedCalls += 1 }
@@ -637,13 +627,8 @@ public final class AgentLoop {
     ) async throws -> ModelTurn {
         // Mutable because the refusal path asks the same step again without the
         // images.
-        var prompt = trimmedHistory(history)
-        // Once a provider has said it cannot take images, the newest screenshot
-        // still in the history must go too. `trimmedHistory` keeps one, so
-        // without this every following step re-sends the refused image, pays a
-        // failed round trip, and only then retries without it.
-        if imagesAlreadyRefused { prompt = Self.strippedImages(prompt) }
-        var promptBytes = prompt.reduce(0) { $0 + $1.text.utf8.count }
+        var prompt = promptForStep(history, imagesAlreadyRefused: imagesAlreadyRefused)
+        var promptBytes = Self.textBytes(prompt)
         let clock = TimingClock()
         // Streaming is reported as a growing prefix, throttled so a host that
         // resizes a window for every token does not spend the saved latency on
@@ -684,7 +669,7 @@ public final class AgentLoop {
                 throw error
             }
             prompt = Self.strippedImages(prompt)
-            promptBytes = prompt.reduce(0) { $0 + $1.text.utf8.count }
+            promptBytes = Self.textBytes(prompt)
             streamed = ""
             lastStreamAt = -1
             lastStreamLength = 0
@@ -705,6 +690,20 @@ public final class AgentLoop {
                 throw error
             }
         }
+    }
+
+    /// The history as it goes to the provider on this step.
+    ///
+    /// Once a provider has said it cannot take images, the newest screenshot
+    /// still in the history goes too: `trimmedHistory` keeps one, so without
+    /// this every following step would re-send the refused image, pay a failed
+    /// round trip, and only then retry without it.
+    private func promptForStep(
+        _ history: [ChatMessage],
+        imagesAlreadyRefused: Bool
+    ) -> [ChatMessage] {
+        let trimmed = trimmedHistory(history)
+        return imagesAlreadyRefused ? Self.strippedImages(trimmed) : trimmed
     }
 
     /// Keeps the conversation bounded.
@@ -820,6 +819,30 @@ public final class AgentLoop {
     private func argumentPreview(_ arguments: JSONValue) -> String {
         let text = arguments.serialized()
         return text.count > 220 ? String(text.prefix(220)) + "…" : text
+    }
+
+    /// The result of one call, or the refusal that stands in for it.
+    ///
+    /// A call whose arguments did not parse is not executed: running it with
+    /// the empty object the parser left would execute a different, usually
+    /// no-argument call, and the model would read the resulting tool error as a
+    /// fault of the tool. The refusal carries the raw text so the model can
+    /// correct it.
+    private func toolResult(
+        for call: ToolCall,
+        narration: String,
+        isLast: Bool
+    ) async -> ToolResult {
+        guard let rawArguments = call.argumentsError else {
+            return await executor.call(
+                name: call.name,
+                arguments: call.arguments,
+                verify: options.verifyActions && isLast,
+                narration: narration
+            )
+        }
+        log("  arguments did not parse; not executing")
+        return .failure(Self.unparseableArgumentsMessage(raw: rawArguments))
     }
 
     /// What the model is told when its own arguments did not parse.

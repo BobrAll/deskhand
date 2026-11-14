@@ -170,7 +170,7 @@ public struct AnthropicProvider: StreamingChatProvider {
         var stopReason: String?
         var inputTokens: Int?
         var outputTokens: Int?
-        var sawEnd = false
+        var sawTerminalEvent = false
 
         var lines: [JSONValue] = []
         defer { exchange?.stream(lines, status: status) }
@@ -179,10 +179,8 @@ public struct AnthropicProvider: StreamingChatProvider {
             let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
             guard trimmed.hasPrefix("data:") else { continue }
             let raw = trimmed.dropFirst(5).trimmingCharacters(in: .whitespaces)
-            if raw == "[DONE]" {
-                // Some Anthropic-compatible proxies end with the OpenAI marker
-                // instead of `message_stop`.
-                sawEnd = true
+            if raw == streamDoneMarker {
+                sawTerminalEvent = true
                 break
             }
             guard let value = try? JSONValue.parse(raw) else { continue }
@@ -234,19 +232,14 @@ public struct AnthropicProvider: StreamingChatProvider {
                 }
 
             case "message_stop":
-                sawEnd = true
+                sawTerminalEvent = true
 
             default:
                 continue
             }
         }
 
-        // A cut connection is not a finished answer, even when some text
-        // arrived before the cut: without a stop reason or `message_stop` the
-        // text is half a reply, and the loop would show it as final.
-        guard sawEnd || stopReason != nil else {
-            throw LLMError.transport("the response stream ended before the model finished")
-        }
+        try requireStreamFinished(stopReason: stopReason, sawTerminalEvent: sawTerminalEvent)
 
         let calls = builders.keys.sorted().map { index -> ToolCall in
             let builder = builders[index]!
