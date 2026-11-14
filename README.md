@@ -7,10 +7,10 @@ AI-ассистент для macOS, который открывается ряд
 Нужна macOS 14 или новее. Одна команда в Terminal:
 
 ```sh
-curl -fsSL https://github.com/BobrAll/deskhand/releases/latest/download/install.sh | bash
+curl -fsSL https://github.com/BobrAll/deskhand/releases/latest/download/install.sh -o /tmp/deskhand-install.sh && bash /tmp/deskhand-install.sh
 ```
 
-Установщик скачает последний релиз, проверит SHA-256 и положит `Deskhand.app` в «Программы». Если Terminal не подходит, скачай DMG со страницы релизов — ручная установка и обход предупреждения macOS описаны в [docs/install.md](docs/install.md).
+Установщик скачает последний релиз, проверит SHA-256 и подпись, положит `Deskhand.app` в «Программы». Если Terminal не подходит, скачай DMG со страницы релизов — ручная установка и обход предупреждения macOS описаны в [docs/install.md](docs/install.md).
 
 После первого запуска дай Deskhand «Универсальный доступ» и перезапусти. Для скриншотов разреши запись экрана, для голосового ввода — доступ к микрофону. Потом выбери OpenAI, OpenRouter или Anthropic, укажи ключ API и модель. Для скриншотов нужна модель с поддержкой изображений.
 

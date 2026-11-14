@@ -1,6 +1,6 @@
 # Установка Deskhand
 
-Deskhand не подписан платным сертификатом Apple, поэтому macOS предупреждает при первом запуске непривычным образом. Это ожидаемо: приложение собирается из этого репозитория, а рядом с архивом лежит контрольная сумма.
+Deskhand не подписан платным сертификатом Apple, поэтому macOS предупреждает при первом запуске непривычным образом. Это ожидаемо: приложение собирается из этого репозитория, а установщик сверяет архив с контрольной суммой и подписью.
 
 Нужна macOS 14 или новее.
 
@@ -9,22 +9,23 @@ Deskhand не подписан платным сертификатом Apple, п
 Открой Terminal («Программы» → «Утилиты» → Terminal) и вставь:
 
 ```sh
-curl -fsSL https://github.com/BobrAll/deskhand/releases/latest/download/install.sh | bash
-```
-
-Установщик скачает последний релиз, проверит SHA-256, положит `Deskhand.app` в «Программы», снимет карантин и запустит приложение. Пароль Mac понадобится, только если папку «Программы» нельзя изменить без него.
-
-Если GitHub не открывается, укажи зеркало: `DESKHAND_RELEASE_URL="https://…" bash /tmp/deskhand-install.sh`. Зеркало должно отдавать те же `Deskhand-universal.zip`, `.sha256` и `install.sh`.
-
-Если не хочешь запускать скрипт вслепую, скачай его, посмотри и запусти отдельно:
-
-```sh
 curl -fsSL https://github.com/BobrAll/deskhand/releases/latest/download/install.sh -o /tmp/deskhand-install.sh
-less /tmp/deskhand-install.sh
 bash /tmp/deskhand-install.sh
 ```
 
+Установщик скачает последний релиз, проверит SHA-256 и подпись, положит `Deskhand.app` в «Программы», снимет карантин и запустит приложение. Пароль Mac понадобится, только если папку «Программы» нельзя изменить без него.
+
+Если GitHub не открывается, укажи зеркало: `DESKHAND_RELEASE_URL="https://…" bash /tmp/deskhand-install.sh`. С зеркала установщик берёт `Deskhand-universal.zip` и `.sha256`; сам `install.sh` скачай оттуда же.
+
+Если не хочешь запускать скрипт вслепую, посмотри его перед запуском:
+
+```sh
+less /tmp/deskhand-install.sh
+```
+
 ## Вручную
+
+Быстрый путь через Terminal обычно не показывает диалог Gatekeeper: `curl` не ставит карантин. Диалог ниже — для установки из браузера.
 
 1. Скачай `Deskhand-universal.dmg` или `Deskhand-universal.zip` со страницы релизов.
 2. Открой DMG и перетащи `Deskhand.app` в «Программы». ZIP сначала распакуй.
@@ -57,7 +58,7 @@ xattr -dr com.apple.quarantine /Applications/Deskhand.app
 
 ## Обновления
 
-Повтори команду установки или скачай новый DMG. Настройки, ключи и модели в `~/Library/Application Support/Deskhand` остаются на месте.
+Повтори команду установки: она снимает карантин и сохраняет разрешения. Новый DMG из браузера может снова спросить подтверждение. Настройки, ключи и скачанные модели в `~/Library/Application Support/Deskhand` остаются на месте.
 
 ## Проверка архива
 
@@ -67,8 +68,17 @@ xattr -dr com.apple.quarantine /Applications/Deskhand.app
 shasum -a 256 -c Deskhand-universal.zip.sha256
 ```
 
-Если сумма не совпала, скачай архив заново.
+Контрольная сумма проверяет, что архив докачался целиком. Подлинность проверяет подпись: установщик сверяет сертификат с закреплённым отпечатком и не поставит сборку, подписанную другим ключом.
 
 ## Удаление
 
-Закрой Deskhand, удали `Deskhand.app` из «Программ» и папку `~/Library/Application Support/Deskhand`.
+Закрой Deskhand и удали приложение и его данные:
+
+```sh
+sudo rm -rf /Applications/Deskhand.app
+rm -rf ~/Library/Application\ Support/Deskhand \
+  ~/Library/Caches/Deskhand \
+  ~/Library/Preferences/com.bobr.deskhand.plist
+```
+
+Потом убери Deskhand из «Универсального доступа», «Записи экрана» и «Микрофона».

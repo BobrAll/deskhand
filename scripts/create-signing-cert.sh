@@ -18,12 +18,31 @@ KEYCHAIN_PASSWORD="${KEYCHAIN_PASSWORD:-}"
 say() { printf '%s\n' "$*"; }
 fail() { printf 'Ошибка: %s\n' "$*" >&2; exit 1; }
 
+pin_certificate() {
+  if ! command -v node >/dev/null 2>&1; then
+    say "Дальше запусти npm run sign:pin и закоммить scripts/signing.json."
+    return
+  fi
+  if ! DESKHAND_SIGN_IDENTITY="$CERT_NAME" DESKHAND_KEYCHAIN="$KEYCHAIN" \
+    node "$(dirname "$0")/pin-signing-cert.mjs"; then
+    fail "Сертификат не закреплён. Восстанови старый сертификат или задай DESKHAND_REPIN=1, если меняешь его осознанно."
+  fi
+  say "Отпечаток записан в ${DESKHAND_SIGN_PIN_PATH:-scripts/signing.json}. Закоммить его."
+}
+
 case "$CERT_NAME" in
   *[!A-Za-z0-9._\ -]*) fail "В имени сертификата допустимы только латиница, цифры, пробел, точка, дефис и подчёркивание." ;;
 esac
 
-if security find-identity -p codesigning "$KEYCHAIN" 2>/dev/null | grep -Fq "\"$CERT_NAME\""; then
+MATCHES="$(security find-identity -p codesigning "$KEYCHAIN" 2>/dev/null \
+  | grep -F "\"$CERT_NAME\"" | wc -l | tr -d ' ')" || true
+MATCHES="${MATCHES:-0}"
+if [ "$MATCHES" -gt 1 ]; then
+  fail "В ключнице несколько сертификатов «${CERT_NAME}». Удали лишние и запусти снова."
+fi
+if [ "$MATCHES" -eq 1 ]; then
   say "Сертификат «${CERT_NAME}» уже есть."
+  pin_certificate
   exit 0
 fi
 
@@ -90,4 +109,5 @@ fi
 if [ -z "$KEYCHAIN_PASSWORD" ]; then
   say "При первой сборке macOS спросит доступ к ключу — нажми «Always Allow»."
 fi
+pin_certificate
 say "Дальше запусти npm run dist: сборка подпишется этим сертификатом."

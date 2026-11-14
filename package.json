@@ -25,10 +25,11 @@
     "pack": "npm run build && electron-builder --mac --dir",
     "dist": "npm run build && electron-builder --mac && node scripts/prepare-release.mjs",
     "sign:cert": "bash scripts/create-signing-cert.sh",
+    "sign:pin": "node scripts/pin-signing-cert.mjs",
     "agent:report": "node scripts/agent-trace-report.mjs",
     "agent:timeline": "node scripts/agent-trace-report.mjs --timeline",
     "test:native": "node scripts/test-native.mjs",
-    "lint": "eslint src",
+    "lint": "eslint src && node --check scripts/*.mjs scripts/lib/*.mjs && bash -n scripts/*.sh",
     "worktree": "node scripts/preview-worktree.mjs"
   },
   "build": {

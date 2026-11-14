@@ -30,7 +30,9 @@ export default async function afterPack(context) {
   if (context.appOutDir.endsWith('-temp')) return
 
   const app = join(context.appOutDir, `${context.packager.appInfo.productFilename}.app`)
-  if (!existsSync(app)) return
+  if (!existsSync(app)) {
+    throw new Error(`Не найден собранный ${app}.`)
+  }
 
   const identity = process.env.DESKHAND_SIGN_IDENTITY || DEFAULT_IDENTITY
   const keychain = process.env.DESKHAND_KEYCHAIN || undefined
@@ -51,9 +53,11 @@ export default async function afterPack(context) {
   await signAsync({
     app,
     identity: stable ? identity : '-',
+    // osx-sign looks identities up with `security find-identity -v`, which
+    // hides untrusted self-signed certificates. Passing the name directly is
+    // what lets a local certificate sign the app.
     identityValidation: false,
     keychain,
-    hardenedRuntime: false,
     optionsForFile: () => ({ hardenedRuntime: false, timestamp: 'none' })
   })
 

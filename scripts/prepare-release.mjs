@@ -1,11 +1,18 @@
 // Collects the files that belong to a release next to the electron-builder
-// artifacts: the installer and SHA-256 files for every zip and dmg.
+// artifacts: the installer, SHA-256 files, and the certificate pin.
 import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { copyFile, chmod, readdir, writeFile } from 'node:fs/promises'
+import { chmod, readFile, writeFile } from 'node:fs/promises'
 import { createReadStream, existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import {
+  ARTIFACTS,
+  certificateLeaf,
+  isPinned,
+  pinInstaller,
+  readSigningPin
+} from './lib/release.mjs'
 
 const root = fileURLToPath(new URL('..', import.meta.url))
 const release = join(root, 'release')
@@ -18,23 +25,11 @@ async function sha256(path) {
   return hash.digest('hex')
 }
 
-const artifacts = (await readdir(release))
-  .filter((name) => name.endsWith('.zip') || name.endsWith('.dmg'))
-  .sort()
-
-if (artifacts.length === 0) {
-  throw new Error('В release нет .zip или .dmg — сначала собери приложение.')
+for (const name of ARTIFACTS) {
+  if (!existsSync(join(release, name))) {
+    throw new Error(`В release нет ${name}. Собери universal-релиз: npm run dist.`)
+  }
 }
-
-for (const name of artifacts) {
-  const hash = await sha256(join(release, name))
-  await writeFile(join(release, `${name}.sha256`), `${hash}  ${name}\n`)
-  console.log(`[release] ${name}`)
-}
-
-await copyFile(installer, target)
-await chmod(target, 0o755)
-console.log('[release] install.sh')
 
 const appDir = ['mac-universal', 'mac-arm64', 'mac']
   .find((name) => existsSync(join(release, name, 'Deskhand.app')))
@@ -57,8 +52,11 @@ const result = spawnSync('codesign', ['-d', '-r-', app], { encoding: 'utf8' })
 if (result.status !== 0) {
   throw new Error('Не удалось проверить подпись приложения.')
 }
-const requirement = `${result.stdout}${result.stderr}`
-if (requirement.includes('cdhash')) {
+const actualLeaf = certificateLeaf(`${result.stdout}${result.stderr}`)
+const pin = await readSigningPin(join(root, 'scripts', 'signing.json'))
+const pinnedLeaf = process.env.DESKHAND_SIGN_LEAF || pin.leaf
+
+if (!actualLeaf) {
   if (process.env.DESKHAND_ALLOW_ADHOC !== '1') {
     throw new Error(
       'Сборка подписана ad-hoc: разрешения будут слетать после обновлений. ' +
@@ -66,4 +64,30 @@ if (requirement.includes('cdhash')) {
     )
   }
   console.warn('[release] приложение подписано ad-hoc: разрешения будут слетать после обновлений.')
+} else {
+  if (!isPinned(pinnedLeaf)) {
+    throw new Error(
+      'Сертификат не закреплён. Запусти npm run sign:cert: он создаст сертификат ' +
+        'и запишет отпечаток в scripts/signing.json.'
+    )
+  }
+  if (actualLeaf !== pinnedLeaf.toLowerCase()) {
+    throw new Error(
+      `Сертификат сборки (${actualLeaf}) не совпадает с закреплённым (${pinnedLeaf}). ` +
+        'Восстанови тот же сертификат или обнови пин осознанно.'
+    )
+  }
 }
+
+const installerText = await readFile(installer, 'utf8')
+const releasedInstaller = actualLeaf ? pinInstaller(installerText, actualLeaf) : installerText
+
+for (const name of ARTIFACTS) {
+  const hash = await sha256(join(release, name))
+  await writeFile(join(release, `${name}.sha256`), `${hash}  ${name}\n`)
+  console.log(`[release] ${name}`)
+}
+
+await writeFile(target, releasedInstaller)
+await chmod(target, 0o755)
+console.log('[release] install.sh')
