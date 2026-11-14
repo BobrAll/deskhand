@@ -39,6 +39,13 @@ final class Bridge: @unchecked Sendable {
     /// How often the wait wakes up, so a cancel lands while a question is open.
     private static let approvalPollInterval: TimeInterval = 0.1
 
+    /// The model-facing refusal when the user stops the run.
+    ///
+    /// English like every other tool result: the model reads this string, not
+    /// the user, and a Russian refusal in an English conversation is noise the
+    /// model has to interpret.
+    private static let cancelledMessage = "The run was cancelled by the user."
+
     private final class ApprovalWait: @unchecked Sendable {
         let semaphore = DispatchSemaphore(value: 0)
         private let lock = NSLock()
@@ -249,21 +256,34 @@ final class Bridge: @unchecked Sendable {
 
     private func finishRun(_ handle: CancelToken) {
         lock.lock()
-        if activeRun === handle { activeRun = nil }
-        let waits = pendingApprovals
-        pendingApprovals.removeAll()
+        // Only the run that still owns the slot may clear it, and only it may
+        // close the questions: a cancelled run unwinds asynchronously, and by
+        // then the user may already have started another one.
+        let ownsSlot = activeRun === handle
+        if ownsSlot { activeRun = nil }
+        let waits = ownsSlot ? pendingApprovals : [:]
+        if ownsSlot { pendingApprovals.removeAll() }
         lock.unlock()
         // A run that ended while a question was open must not leave the app
         // waiting for an answer that will never come.
         for (_, wait) in waits { wait.resolve(.deny("The run ended.")) }
     }
 
+    /// Stops the run and frees the slot in the same breath.
+    ///
+    /// The run itself unwinds a moment later, and a `run` that arrives in that
+    /// window used to be rejected with "a run is already in progress" — an
+    /// English protocol message shown on the card right after the user pressed
+    /// Escape. The slot is released here instead; `finishRun` only clears the
+    /// slot it owns, so the cancelled task cannot take a newer run's state down
+    /// with it.
     private func cancelRun() {
         lock.lock()
         let running = activeRun
+        activeRun = nil
         lock.unlock()
         running?.cancel()
-        resolveAllApprovals(.deny("Отменено."))
+        resolveAllApprovals(.deny(Self.cancelledMessage))
     }
 
     // MARK: - Approval
@@ -272,6 +292,10 @@ final class Bridge: @unchecked Sendable {
         _ context: ToolCallContext,
         cancel: CancelToken
     ) -> ToolPolicyDecision {
+        // A stopped run must not put a question in front of the user: it would
+        // be for a call nobody is waiting on any more.
+        if cancel.isCancelled { return .deny(Self.cancelledMessage) }
+
         let id = nextApprovalId()
         let wait = ApprovalWait()
         lock.lock()
@@ -287,7 +311,7 @@ final class Bridge: @unchecked Sendable {
         while Date() < deadline {
             if cancel.isCancelled {
                 forgetApproval(id)
-                return .deny("Отменено.")
+                return .deny(Self.cancelledMessage)
             }
             if wait.semaphore.wait(timeout: .now() + Self.approvalPollInterval) == .success {
                 forgetApproval(id)

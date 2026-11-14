@@ -237,6 +237,18 @@ final class OpenAIEncodingTests: XCTestCase {
         XCTAssertEqual(payload["stream"]?.boolValue, true)
     }
 
+    func testAStreamingRequestAsksForTokenUsage() {
+        // Without `stream_options` OpenAI sends no usage block at all, so the
+        // step timing loses the token counts on the most common provider. The
+        // one-shot shape has its own usage field and must not grow this key.
+        let provider = OpenAICompatibleProvider(config: ProviderConfig(apiKey: "x"))
+        let streaming = provider.makePayload(messages: [], tools: [], systemPrompt: "", stream: true)
+        XCTAssertEqual(streaming["stream_options"]?["include_usage"]?.boolValue, true)
+
+        let oneShot = provider.makePayload(messages: [], tools: [], systemPrompt: "", stream: false)
+        XCTAssertNil(oneShot["stream_options"])
+    }
+
     func testDecodesToolCallsAndUsage() throws {
         let provider = OpenAICompatibleProvider(config: ProviderConfig(apiKey: "x"))
         let json = """
@@ -507,5 +519,160 @@ final class StreamingProviderTests: XCTestCase {
         XCTAssertEqual(completion.toolCalls[0].arguments["x"]?.intValue, 5)
         XCTAssertEqual(completion.usage?.inputTokens, 10)
         XCTAssertEqual(completion.usage?.outputTokens, 7)
+    }
+
+    // MARK: - A cut stream is not a finished answer
+
+    /// A connection that dies mid-answer leaves no terminal event behind. The
+    /// text that arrived is half a reply, so it must fail the turn rather than
+    /// become a final answer with a checkmark over it.
+    private func assertTransportFailure(
+        file: StaticString = #filePath,
+        line: UInt = #line,
+        _ run: () async throws -> Completion
+    ) async {
+        do {
+            _ = try await run()
+            XCTFail("a stream ended without a terminal event must not be returned", file: file, line: line)
+        } catch let error as LLMError {
+            guard case .transport = error else {
+                return XCTFail("expected a transport error, got \(error)", file: file, line: line)
+            }
+        } catch {
+            XCTFail("expected a transport error, got \(error)", file: file, line: line)
+        }
+    }
+
+    func testOpenAIRejectsAStreamThatEndsWithoutAFinishReasonOrDone() async throws {
+        StreamingURLProtocol.responses = [(200, """
+            data: {"choices":[{"delta":{"content":"half an ans"},"finish_reason":null}]}
+
+            """)]
+        let provider = OpenAICompatibleProvider(
+            config: ProviderConfig(apiKey: "x", maxTokens: 64),
+            session: session()
+        )
+        await assertTransportFailure {
+            try await provider.complete(
+                messages: [ChatMessage(role: .user, text: "go")],
+                tools: [],
+                systemPrompt: "sys"
+            ) { _ in }
+        }
+    }
+
+    func testOpenAIAcceptsAStreamThatEndsWithDoneAndNoFinishReason() async throws {
+        // Gateways in the wild end the stream with `[DONE]` and no
+        // `finish_reason` on the last chunk. That is a terminal event, so the
+        // text is a finished answer.
+        StreamingURLProtocol.responses = [(200, """
+            data: {"choices":[{"delta":{"content":"Готово"},"finish_reason":null}]}
+
+            data: [DONE]
+
+            """)]
+        let provider = OpenAICompatibleProvider(
+            config: ProviderConfig(apiKey: "x", maxTokens: 64),
+            session: session()
+        )
+        let completion = try await provider.complete(
+            messages: [ChatMessage(role: .user, text: "go")],
+            tools: [],
+            systemPrompt: "sys"
+        ) { _ in }
+        XCTAssertEqual(completion.text, "Готово")
+    }
+
+    func testAnthropicRejectsAStreamThatEndsWithoutMessageStop() async throws {
+        StreamingURLProtocol.responses = [(200, """
+            event: message_start
+            data: {"type":"message_start","message":{"usage":{"input_tokens":10,"output_tokens":1}}}
+
+            event: content_block_delta
+            data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"half an ans"}}
+
+            """)]
+        let provider = AnthropicProvider(
+            config: ProviderConfig(wire: .anthropic, apiKey: "x", maxTokens: 64),
+            session: session()
+        )
+        await assertTransportFailure {
+            try await provider.complete(
+                messages: [ChatMessage(role: .user, text: "go")],
+                tools: [],
+                systemPrompt: "sys"
+            ) { _ in }
+        }
+    }
+
+    // MARK: - Malformed tool arguments
+
+    func testOpenAIReportsUnparseableToolArgumentsInsteadOfAnEmptyObject() async throws {
+        StreamingURLProtocol.responses = [(200, """
+            data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"c1","function":{"name":"click","arguments":"{\\"x\\":"}}]},"finish_reason":"tool_calls"}]}
+
+            data: [DONE]
+
+            """)]
+        let provider = OpenAICompatibleProvider(
+            config: ProviderConfig(apiKey: "x", maxTokens: 64),
+            session: session()
+        )
+        let completion = try await provider.complete(
+            messages: [ChatMessage(role: .user, text: "go")],
+            tools: [],
+            systemPrompt: "sys"
+        ) { _ in }
+        XCTAssertEqual(completion.toolCalls.count, 1)
+        XCTAssertEqual(completion.toolCalls[0].argumentsError, #"{"x":"#)
+        XCTAssertEqual(completion.toolCalls[0].arguments, .object([:]))
+    }
+
+    func testOpenAIKeepsEmptyToolArgumentsAsAnEmptyObject() async throws {
+        StreamingURLProtocol.responses = [(200, """
+            data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"c1","function":{"name":"list_apps","arguments":""}}]},"finish_reason":"tool_calls"}]}
+
+            data: [DONE]
+
+            """)]
+        let provider = OpenAICompatibleProvider(
+            config: ProviderConfig(apiKey: "x", maxTokens: 64),
+            session: session()
+        )
+        let completion = try await provider.complete(
+            messages: [ChatMessage(role: .user, text: "go")],
+            tools: [],
+            systemPrompt: "sys"
+        ) { _ in }
+        XCTAssertNil(completion.toolCalls[0].argumentsError, "empty arguments mean no arguments")
+        XCTAssertEqual(completion.toolCalls[0].arguments, .object([:]))
+    }
+
+    func testAnthropicReportsUnparseableToolInputInsteadOfAnEmptyObject() async throws {
+        StreamingURLProtocol.responses = [(200, """
+            event: content_block_start
+            data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"t1","name":"click","input":{}}}
+
+            event: content_block_delta
+            data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\\"x\\":"}}
+
+            event: message_delta
+            data: {"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":2}}
+
+            event: message_stop
+            data: {"type":"message_stop"}
+
+            """)]
+        let provider = AnthropicProvider(
+            config: ProviderConfig(wire: .anthropic, apiKey: "x", maxTokens: 64),
+            session: session()
+        )
+        let completion = try await provider.complete(
+            messages: [ChatMessage(role: .user, text: "go")],
+            tools: [],
+            systemPrompt: "sys"
+        ) { _ in }
+        XCTAssertEqual(completion.toolCalls.count, 1)
+        XCTAssertEqual(completion.toolCalls[0].argumentsError, #"{"x":"#)
     }
 }
