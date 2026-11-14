@@ -14,6 +14,22 @@ function sse(...chunks: string[]): ReadableStream<Uint8Array> {
   })
 }
 
+/** A body that delivers one chunk and then dies the way a dropped socket does. */
+function brokenStream(chunk: string, error: Error): ReadableStream<Uint8Array> {
+  const encoder = new TextEncoder()
+  let sent = false
+  return new ReadableStream<Uint8Array>({
+    pull(controller) {
+      if (sent) {
+        controller.error(error)
+        return
+      }
+      sent = true
+      controller.enqueue(encoder.encode(chunk))
+    }
+  })
+}
+
 function event(payload: unknown): string {
   return `event: message\ndata: ${JSON.stringify(payload)}\n\n`
 }
@@ -348,6 +364,32 @@ describe('AnthropicProvider: reading the stream', () => {
     ])
   })
 
+  it('does not let a skipped event downgrade a turn that finished', async () => {
+    vi.stubGlobal('fetch', fetchMock)
+    respond(
+      sse(
+        'data:\n\n',
+        'data: not json\n\n',
+        textDelta('ок'),
+        event({ type: 'message_delta', delta: { stop_reason: 'end_turn' } }),
+        STOP
+      )
+    )
+
+    const stream = new AnthropicProvider().stream(messages, 'sk-ant', options())
+    expect(await stream.next()).toEqual({ value: { delta: 'ок' }, done: false })
+    expect(await stream.next()).toEqual({ value: 'complete', done: true })
+  })
+
+  it('ignores a chunk that is not an object', async () => {
+    vi.stubGlobal('fetch', fetchMock)
+    respond(sse('data: null\n\n', 'data: 7\n\n', textDelta('ok'), STOP))
+
+    expect(await drain(new AnthropicProvider().stream(messages, 'sk-ant', options()))).toEqual([
+      'ok'
+    ])
+  })
+
   it('keeps a delta split across chunks', async () => {
     vi.stubGlobal('fetch', fetchMock)
     respond(sse('data: {"type":"content_block_delta","delta":{"type":"text_del', 'ta","text":"слово"}}\n\n'))
@@ -363,6 +405,19 @@ describe('AnthropicProvider: reading the stream', () => {
 
     await expect(drain(new AnthropicProvider().stream(messages, 'sk-ant', options()))).rejects.toThrow(
       'Ошибка Anthropic: overloaded'
+    )
+  })
+
+  it.each([
+    ['without a message', event({ type: 'error', error: { type: 'overloaded_error' } }), 'overloaded_error'],
+    ['with only a code', event({ error: { code: 'overloaded_error' } }), 'overloaded_error'],
+    ['with no detail at all', event({ type: 'error' }), 'причина не указана']
+  ])('treats an error event %s as fatal', async (_case, frame, detail) => {
+    vi.stubGlobal('fetch', fetchMock)
+    respond(sse(frame))
+
+    await expect(drain(new AnthropicProvider().stream(messages, 'sk-ant', options()))).rejects.toThrow(
+      `Ошибка Anthropic: ${detail}`
     )
   })
 
@@ -416,6 +471,30 @@ describe('AnthropicProvider: failures', () => {
     await expect(drain(new AnthropicProvider().stream(messages, 'sk-ant', options()))).rejects.toThrow(
       'Нет соединения с интернетом или сервис недоступен.'
     )
+  })
+
+  it('maps a connection that dies mid-stream instead of leaking the raw failure', async () => {
+    vi.stubGlobal('fetch', fetchMock)
+    fetchMock.mockResolvedValue(new Response(brokenStream(textDelta('При'), new TypeError('terminated'))))
+
+    await expect(drain(new AnthropicProvider().stream(messages, 'sk-ant', options()))).rejects.toThrow(
+      'Нет соединения с интернетом или сервис недоступен.'
+    )
+  })
+
+  it('reports a stream read cut by the abort signal as cancelled', async () => {
+    vi.stubGlobal('fetch', fetchMock)
+    const controller = new AbortController()
+    fetchMock.mockResolvedValue(new Response(brokenStream(textDelta('a'), new TypeError('terminated'))))
+
+    const stream = new AnthropicProvider().stream(
+      messages,
+      'sk-ant',
+      options({ signal: controller.signal })
+    )
+    expect(await stream.next()).toEqual({ value: { delta: 'a' }, done: false })
+    controller.abort()
+    await expect(stream.next()).rejects.toThrow('Запрос отменён.')
   })
 
   it('reports a cancelled request as cancelled', async () => {

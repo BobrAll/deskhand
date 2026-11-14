@@ -46,7 +46,32 @@ export async function* readSse(body: ReadableStream<Uint8Array>, allowTail = tru
     const tail = allowTail ? parseBlock(buffer) : null
     if (tail) yield tail
   } finally {
+    // An early stop abandons the rest of the body, so the socket waits for the
+    // garbage collector unless it is cancelled here. A body that already failed
+    // has nothing to cancel, and that failure is not this one.
+    await reader.cancel().catch(() => {})
     reader.releaseLock()
+  }
+}
+
+/**
+ * `readSse` for a provider response: a failure while reading the body is a
+ * transport failure, not a bug in the decoder.
+ *
+ * The request has already succeeded by the time the body arrives, so a
+ * connection that dies halfway used to escape as a raw `TypeError: terminated`
+ * and reach the card in English. Provider errors are already ours and pass
+ * through unchanged.
+ */
+export async function* readProviderSse(
+  body: ReadableStream<Uint8Array>,
+  signal: AbortSignal
+): AsyncGenerator<SseEvent> {
+  try {
+    yield* readSse(body, false)
+  } catch (error) {
+    if (error instanceof ProviderError) throw error
+    throw toTransportError(error, signal)
   }
 }
 
@@ -67,6 +92,23 @@ function parseBlock(raw: string): SseEvent | null {
 export interface HttpErrorBody {
   message?: string
   error?: { message?: string; type?: string; code?: string }
+}
+
+/**
+ * The provider's own words for a streamed error, in the order it uses them.
+ *
+ * Some providers send only a type (`overloaded_error`), and treating such an
+ * event as if it carried nothing would end the turn with an empty answer and no
+ * error at all. A body with no usable text still counts as fatal; it just says
+ * so.
+ */
+export function providerErrorMessage(error: unknown): string {
+  const text = (value: unknown): string | undefined =>
+    typeof value === 'string' && value.trim() ? value.trim() : undefined
+  if (typeof error === 'string') return text(error) ?? 'причина не указана'
+  if (!error || typeof error !== 'object') return 'причина не указана'
+  const { message, type, code } = error as { message?: unknown; type?: unknown; code?: unknown }
+  return text(message) ?? text(type) ?? text(code) ?? 'причина не указана'
 }
 
 /**
@@ -127,7 +169,7 @@ export function toTransportError(error: unknown, signal: AbortSignal): ProviderE
   }
   const message = error instanceof Error ? error.message : String(error)
   if (/abort/i.test(message)) return new ProviderError('Запрос отменён.', false)
-  if (/ENOTFOUND|EAI_AGAIN|ENETUNREACH|fetch failed|network/i.test(message)) {
+  if (/ENOTFOUND|EAI_AGAIN|ENETUNREACH|ECONNRESET|EPIPE|fetch failed|network|terminated|socket hang up|other side closed/i.test(message)) {
     return new ProviderError('Нет соединения с интернетом или сервис недоступен.', true)
   }
   if (/timeout|timed out/i.test(message)) {

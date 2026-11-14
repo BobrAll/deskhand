@@ -1,7 +1,7 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import { ProviderError } from './provider'
-import { readSse, toProviderError, toTransportError } from './http'
+import { providerErrorMessage, readSse, toProviderError, toTransportError } from './http'
 
 /** A `text/event-stream` body delivered as the given chunks, in order. */
 function body(chunks: string[]): ReadableStream<Uint8Array> {
@@ -120,6 +120,39 @@ describe('readSse: the event stream', () => {
     // A second pass must not throw: the lock was released in `finally`.
     const again = await collect(['data: c\n\n'])
     expect(again).toEqual([{ data: 'c' }])
+  })
+
+  it('cancels the body a consumer abandoned', async () => {
+    const cancel = vi.fn()
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode('data: a\n\ndata: b\n\n'))
+      },
+      cancel
+    })
+
+    for await (const event of readSse(stream)) {
+      expect(event.data).toBe('a')
+      break
+    }
+
+    expect(cancel).toHaveBeenCalledTimes(1)
+  })
+
+  it('survives a cancel that fails', async () => {
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode('data: a\n\n'))
+      },
+      cancel() {
+        return Promise.reject(new Error('already gone'))
+      }
+    })
+
+    for await (const event of readSse(stream)) {
+      expect(event.data).toBe('a')
+      break
+    }
   })
 })
 
@@ -259,6 +292,24 @@ describe('toProviderError: the detail in the body', () => {
   })
 })
 
+describe('providerErrorMessage', () => {
+  it('prefers the message, then the type, then the code', () => {
+    expect(providerErrorMessage({ message: 'overloaded', type: 'x', code: 'y' })).toBe('overloaded')
+    expect(providerErrorMessage({ type: 'overloaded_error', code: 'y' })).toBe('overloaded_error')
+    expect(providerErrorMessage({ code: 'insufficient_quota' })).toBe('insufficient_quota')
+  })
+
+  it('keeps a string error', () => {
+    expect(providerErrorMessage('overloaded')).toBe('overloaded')
+  })
+
+  it('still says something when the provider said nothing', () => {
+    expect(providerErrorMessage({})).toBe('причина не указана')
+    expect(providerErrorMessage(undefined)).toBe('причина не указана')
+    expect(providerErrorMessage({ message: '   ' })).toBe('причина не указана')
+  })
+})
+
 describe('toTransportError', () => {
   function signal(aborted = false): AbortSignal {
     const controller = new AbortController()
@@ -285,8 +336,14 @@ describe('toTransportError', () => {
       'getaddrinfo ENOTFOUND api.openai.com',
       'EAI_AGAIN',
       'ENETUNREACH',
+      'ECONNRESET',
+      'EPIPE',
       'fetch failed',
-      'network error'
+      'network error',
+      // What undici throws when the connection dies mid-body.
+      'terminated',
+      'socket hang up',
+      'other side closed'
     ]) {
       const error = toTransportError(new Error(message), signal())
       expect(error.message, message).toBe('Нет соединения с интернетом или сервис недоступен.')
