@@ -19,6 +19,16 @@ body,
   --field-accent: #5b78ff;
   --field-accent-soft: rgb(91 120 255 / 0.42);
   --amp: 0.8;
+  /* The same glass register as the card: a tinted sheet over native frost. */
+  --panel: rgba(22, 22, 25, 0.72);
+  --panel-edge: rgba(255, 255, 255, 0.08);
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --panel: rgba(252, 253, 255, 0.66);
+    --panel-edge: rgba(0, 0, 0, 0.10);
+  }
 }
 
 .field-voice {
@@ -27,7 +37,7 @@ body,
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 8px;
+  border-radius: 9px;
   opacity: 0;
   overflow: hidden;
   transition: opacity 120ms ease-out;
@@ -40,12 +50,18 @@ body,
 .field-voice-surface {
   position: absolute;
   inset: 0;
+  border: 1px solid var(--panel-edge);
   border-radius: inherit;
-  background: rgb(17 19 27 / 0.88);
+  background-color: var(--panel);
+  background-image: linear-gradient(
+    to bottom,
+    light-dark(rgb(255 255 255 / 0.16), rgb(255 255 255 / 0.08)),
+    transparent 26px
+  );
   box-shadow:
-    inset 0 0 0 1px var(--field-accent-soft),
-    0 0 0 1px rgb(255 255 255 / 0.12),
-    0 6px 22px rgb(0 0 0 / 0.32);
+    inset 0 0 2px rgb(0 0 0 / 0.16),
+    0 0 18px rgb(91 120 255 / 0.18),
+    0 8px 24px rgb(0 0 0 / 0.18);
 }
 
 .field-voice-bars {

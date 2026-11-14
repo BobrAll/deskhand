@@ -1262,8 +1262,20 @@ static NSArray<NSDictionary *> *axCollectTargets(pid_t pid, double budgetMs) {
   return targets;
 }
 
-static NSDictionary *axFocusedElement(pid_t pid) {
-  AXUIElementRef focused = NULL;
+/** The focused element, without copying a whole document value just for a frame. */
+static NSDictionary *axDescribeFocused(AXUIElementRef element) {
+  NSString *role = axText(element, kAXRoleAttribute) ?: @"";
+  NSMutableDictionary *info = [NSMutableDictionary dictionary];
+  info[@"role"] = role;
+  NSDictionary *frame = axFrame(element);
+  if (frame) info[@"frame"] = frame;
+  info[@"editable"] = axRoleIsField(role) ? @YES : @NO;
+  info[@"pressable"] = @NO;
+  return info;
+}
+
+static NSDictionary *axFocusedElement(pid_t pid, BOOL lean) {
+  AXUIElementRef systemElement = NULL;
   AXUIElementRef system = AXUIElementCreateSystemWide();
   if (system) {
     AXUIElementSetMessagingTimeout(system, 0.3);
@@ -1271,28 +1283,53 @@ static NSDictionary *axFocusedElement(pid_t pid) {
     if (AXUIElementCopyAttributeValue(system, kAXFocusedUIElementAttribute, &value) ==
             kAXErrorSuccess &&
         value) {
-      focused = (AXUIElementRef)value;
+      systemElement = (AXUIElementRef)value;
     }
     CFRelease(system);
   }
-  if (!focused) {
-    AXUIElementRef application = AXUIElementCreateApplication(pid);
-    if (application) {
-      AXUIElementSetMessagingTimeout(application, 0.3);
-      CFTypeRef value = NULL;
-      if (AXUIElementCopyAttributeValue(application, kAXFocusedUIElementAttribute, &value) ==
-              kAXErrorSuccess &&
-          value) {
-        focused = (AXUIElementRef)value;
-      }
-      CFRelease(application);
+
+  AXUIElementRef appElement = NULL;
+  AXUIElementRef application = AXUIElementCreateApplication(pid);
+  if (application) {
+    AXUIElementSetMessagingTimeout(application, 0.3);
+    // Chromium browsers and other web-content apps keep their accessibility tree
+    // off until an assistive client asks for it. Without these writes the
+    // focused element is a web area or absent, and a dictation into a page ends
+    // up without a field to mark.
+    AXUIElementSetAttributeValue(application, CFSTR("AXEnhancedUserInterface"), kCFBooleanTrue);
+    AXUIElementSetAttributeValue(application, CFSTR("AXManualAccessibility"), kCFBooleanTrue);
+    CFTypeRef value = NULL;
+    if (AXUIElementCopyAttributeValue(application, kAXFocusedUIElementAttribute, &value) ==
+            kAXErrorSuccess &&
+        value) {
+      appElement = (AXUIElementRef)value;
     }
+    CFRelease(application);
   }
-  if (!focused) return nil;
-  NSMutableDictionary *info = [axDescribe(focused, axActions(focused)) mutableCopy];
-  pid_t owner = 0;
-  if (AXUIElementGetPid(focused, &owner) == kAXErrorSuccess) info[@"pid"] = @(owner);
-  CFRelease(focused);
+
+  // Prefer the element that is actually a text field. In a browser the
+  // system-wide focus can be the web area while the app's own answer is the real
+  // text control (or the other way around).
+  AXUIElementRef focused = NULL;
+  if (systemElement && axRoleIsField(axText(systemElement, kAXRoleAttribute))) {
+    focused = systemElement;
+  } else if (appElement && axRoleIsField(axText(appElement, kAXRoleAttribute))) {
+    focused = appElement;
+  } else {
+    focused = systemElement ? systemElement : appElement;
+  }
+
+  NSMutableDictionary *info = nil;
+  if (focused) {
+    info = lean
+      ? [axDescribeFocused(focused) mutableCopy]
+      : [axDescribe(focused, axActions(focused)) mutableCopy];
+    pid_t owner = 0;
+    if (AXUIElementGetPid(focused, &owner) == kAXErrorSuccess) info[@"pid"] = @(owner);
+  }
+  if (systemElement && systemElement != focused) CFRelease(systemElement);
+  if (appElement && appElement != focused) CFRelease(appElement);
+  if (focused) CFRelease(focused);
   return info;
 }
 
@@ -1331,7 +1368,7 @@ static int commandProbe(pid_t requestedPid, double x, double y) {
   if (isfinite(x) && isfinite(y)) payload[@"chain"] = axChainAtPoint(x, y, targets);
   [targets addObjectsFromArray:axCollectTargets(pid, 600)];
   payload[@"targets"] = targets;
-  NSDictionary *focused = axFocusedElement(pid);
+  NSDictionary *focused = axFocusedElement(pid, NO);
   if (focused) payload[@"focused"] = focused;
   payload[@"elapsedMs"] = @((CFAbsoluteTimeGetCurrent() - started) * 1000.0);
   emit(payload);
@@ -1360,7 +1397,7 @@ static int commandFocused(pid_t requestedPid) {
   NSMutableDictionary *payload = [NSMutableDictionary dictionary];
   payload[@"ok"] = @YES;
   payload[@"pid"] = @(pid);
-  NSDictionary *focused = pid > 0 ? axFocusedElement(pid) : nil;
+  NSDictionary *focused = pid > 0 ? axFocusedElement(pid, YES) : nil;
   if (focused) payload[@"focused"] = focused;
   emit(payload);
   return 0;

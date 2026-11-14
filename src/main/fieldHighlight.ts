@@ -23,6 +23,13 @@ import {
 
 /** A little air between the field's edge and the voice strip. */
 const HIGHLIGHT_PAD = 4
+/**
+ * The strip is a listening bar, not a repaint of the whole editor.
+ *
+ * A single-line field is used as-is; a tall text area would otherwise become a
+ * dark wall of glass, so the strip stays a compact band in the middle of it.
+ */
+const MAX_STRIP_HEIGHT = 46
 
 const layer: LayerWindowState = { window: null, loaded: null }
 let placedOn: ScreenRect | null = null
@@ -43,6 +50,10 @@ function createWindow(): BrowserWindow {
   return createLayerWindow({
     page: 'highlight',
     acceptFirstMouse: false,
+    // The strip is the same glass as the card: native frost behind a tinted
+    // surface, clipped to the rounded window so no square blur leaks out.
+    vibrancy: 'under-window',
+    roundedCorners: true,
     onClosed: () => {
       layer.window = null
       layer.loaded = null
@@ -53,13 +64,19 @@ function createWindow(): BrowserWindow {
   })
 }
 
-/** The window's bounds: the field plus the breathing room for its border. */
+/** The window's bounds: the field plus a band-sized roof and floor. */
 function highlightFrame(frame: ScreenRect): ScreenRect {
+  const innerHeight = Math.max(
+    1,
+    Math.min(frame.height, MAX_STRIP_HEIGHT - HIGHLIGHT_PAD * 2)
+  )
+  const height = innerHeight + HIGHLIGHT_PAD * 2
   return {
     x: Math.round(frame.x - HIGHLIGHT_PAD),
-    y: Math.round(frame.y - HIGHLIGHT_PAD),
+    // Centre the band in a tall editor; a single-line field has nowhere to go.
+    y: Math.round(frame.y + (frame.height - innerHeight) / 2 - HIGHLIGHT_PAD),
     width: Math.max(1, Math.round(frame.width + HIGHLIGHT_PAD * 2)),
-    height: Math.max(1, Math.round(frame.height + HIGHLIGHT_PAD * 2))
+    height: Math.max(1, Math.round(height))
   }
 }
 

@@ -35,13 +35,17 @@ import { loadPage } from './pageLoad'
 const LOAD_TIMEOUT_MS = 1500
 
 export interface LayerWindowOptions {
-  /** Renderer entry to load: `'drawing'`, `'cursor'` or `'presenter'`. */
+  /** Renderer entry to load: `'drawing'`, `'cursor'`, `'highlight'` or `'presenter'`. */
   page: string
   /**
    * Whether the layer accepts the first click. `drawing.ts` passes `true`;
    * the agent's two layers pass `false`. The values are not unified.
    */
   acceptFirstMouse: boolean
+  /** Native frost behind the layer, for surfaces that should read as glass. */
+  vibrancy?: 'under-window'
+  /** Clip the native window and its blur to the rounded CSS silhouette. */
+  roundedCorners?: boolean
   /** Case-insensitive `^https?:\/\/` in the window-open handler. */
   matchSchemeCaseInsensitively?: boolean
   /** Runs on `closed`, after the window's own state has been dropped. */
@@ -72,7 +76,9 @@ export function createLayerWindow(options: LayerWindowOptions): BrowserWindow {
     focusable: false,
     skipTaskbar: true,
     acceptFirstMouse: options.acceptFirstMouse,
-    roundedCorners: false,
+    roundedCorners: options.roundedCorners === true,
+    vibrancy: options.vibrancy,
+    visualEffectState: options.vibrancy ? 'active' : undefined,
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       sandbox: false,
