@@ -1147,6 +1147,15 @@ describe('a transcript with no card', () => {
 })
 
 describe('a capture that no longer represents the screen', () => {
+  type Harness = Awaited<ReturnType<typeof harness>>
+
+  /** The last context the controller published to the card. */
+  function lastContextUpdate(h: Harness): { screenshot: ScreenshotInfo | null } | undefined {
+    return h.send.mock.calls
+      .filter(([channel]) => channel === CH.overlay.contextUpdate)
+      .at(-1)?.[1] as { screenshot: ScreenshotInfo | null } | undefined
+  }
+
   /** A frame old enough that the next request has to take a new one. */
   const staleShot = (): ScreenshotInfo => ({
     dataUrl: 'data:image/jpeg;base64,b2xk',
@@ -1208,13 +1217,9 @@ describe('a capture that no longer represents the screen', () => {
       state.activeApp = noteApp
       vi.mocked(captureScreenshot).mockResolvedValueOnce(staleShot())
       const h = await harness()
-      const lastUpdate = (): { screenshot: ScreenshotInfo | null } | undefined =>
-        h.send.mock.calls
-          .filter(([channel]) => channel === CH.overlay.contextUpdate)
-          .at(-1)?.[1] as { screenshot: ScreenshotInfo | null } | undefined
 
       h.controller.setFlags({ includeSelection: false, includeScreenshot: true })
-      await vi.waitFor(() => expect(lastUpdate()?.screenshot?.dataUrl).toBe(staleShot().dataUrl))
+      await vi.waitFor(() => expect(lastContextUpdate(h)?.screenshot?.dataUrl).toBe(staleShot().dataUrl))
 
       // The app moves onto the exclusion list, so nothing may be photographed any
       // more. The live refresh has to tell the card that the frame it shows is
@@ -1223,7 +1228,7 @@ describe('a capture that no longer represents the screen', () => {
       h.send.mockClear()
       await vi.advanceTimersByTimeAsync(2_000)
 
-      expect(lastUpdate()?.screenshot).toBeNull()
+      expect(lastContextUpdate(h)?.screenshot).toBeNull()
       expect(h.controller.state()?.context.screenshot).toBeNull()
       h.controller.close()
     } finally {
@@ -1248,10 +1253,6 @@ describe('a capture that no longer represents the screen', () => {
       }
     })
     const h = await harness()
-    const lastUpdate = (): { screenshot: ScreenshotInfo | null } | undefined =>
-      h.send.mock.calls
-        .filter(([channel]) => channel === CH.overlay.contextUpdate)
-        .at(-1)?.[1] as { screenshot: ScreenshotInfo | null } | undefined
     const drawn = (): number | undefined =>
       (h.send.mock.calls
         .filter(([channel]) => channel === CH.overlay.annotations)
@@ -1277,7 +1278,7 @@ describe('a capture that no longer represents the screen', () => {
     h.send.mockClear()
     await h.controller.open()
 
-    await vi.waitFor(() => expect(lastUpdate()?.screenshot).toBeNull())
+    await vi.waitFor(() => expect(lastContextUpdate(h)?.screenshot).toBeNull())
     expect(drawn()).toBe(0)
     // One publish for the cleared state: the shape and the frame go together.
     expect(h.send.mock.calls.filter(([channel]) => channel === CH.overlay.contextUpdate)).toHaveLength(1)

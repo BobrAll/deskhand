@@ -93,6 +93,12 @@ interface TurnResult {
   acknowledged: boolean
 }
 
+/** One `open()` that is still collecting context, and the generation it started in. */
+interface OpenRun {
+  generation: number
+  promise: Promise<void>
+}
+
 interface Session {
   id: string
   snapshot: ContextSnapshot
@@ -252,9 +258,9 @@ export function createOverlayController(host: OverlayHost) {
    * The generation travels with the record because a `close()` during collection
    * dooms the open that is already running: joining it on the next press would
    * hand that press a card which is about to be taken down by its own generation
-   * check. Only an open from the current generation can be shared.
+   * check. See `currentOpen`.
    */
-  let opening: { generation: number; promise: Promise<void> } | null = null
+  let opening: OpenRun | null = null
   /**
    * The spoken turn still in flight.
    *
@@ -320,8 +326,7 @@ export function createOverlayController(host: OverlayHost) {
     const front = await helperFrontApplication()
     // A newer hold, or the end of this one, owns the answer by now.
     if (mine !== dictationRead) return
-    const win = host.window()
-    const cardVisible = Boolean(session && win && !win.isDestroyed() && win.isVisible())
+    const cardVisible = cardOnScreen()
     const ours = front?.pid === process.pid
     dictationOwnsCard = ours && cardVisible
     if (ours) {
@@ -476,6 +481,28 @@ export function createOverlayController(host: OverlayHost) {
   function cardOnScreen(): boolean {
     const win = host.window()
     return Boolean(session && win && !win.isDestroyed() && win.isVisible())
+  }
+
+  /**
+   * Whether `owner` is still the generation that owns the screen.
+   *
+   * Both `close()` and a fresh `open()` bump the counter, so this one comparison
+   * answers "did anything take the card away while the slow work was running".
+   */
+  function isCurrentGeneration(owner: number): boolean {
+    return owner === generation
+  }
+
+  /**
+   * The open a press or a transcript may join, if there is one.
+   *
+   * Only an open of the current generation is joinable: one that was already
+   * running when the card closed is doomed — it will find itself outdated and
+   * hide the window — so a press after Escape starts a fresh collection instead
+   * of inheriting that one.
+   */
+  function currentOpen(): OpenRun | null {
+    return opening && isCurrentGeneration(opening.generation) ? opening : null
   }
 
   function publishState(): void {
@@ -756,20 +783,18 @@ export function createOverlayController(host: OverlayHost) {
    *
    * The hotkey, push-to-talk and the tray all want the same card; running
    * `collectContext` twice at once would show the second session over the first.
-   *
-   * Sharing is limited to an open of the *current* generation. An open that was
-   * already running when the user closed the card is doomed — it will hit its
-   * own generation check and hide the window — so a press after Escape starts a
-   * fresh collection instead of inheriting that one. The doomed task is left to
-   * settle on its own; it can no longer clear `opening`, which now belongs to
-   * the newer open.
+   * Only an open that still owns the screen is shared (see `currentOpen`); a
+   * press after Escape starts a fresh collection and leaves the doomed one to
+   * settle on its own — it can no longer clear `opening`, which belongs to the
+   * newer open.
    */
   function open(): Promise<void> {
-    if (opening && opening.generation === generation) {
+    const joined = currentOpen()
+    if (joined) {
       // A second press joining an open that is still collecting still gets the
       // card on screen immediately: the session can arrive later.
       host.showInactive(INITIAL_HEIGHT)
-      return opening.promise
+      return joined.promise
     }
     // A fresh open starts a new card on the screen. Its own generation is what
     // tells a close from the previous one (a focus hand-back still in flight,
@@ -808,12 +833,12 @@ export function createOverlayController(host: OverlayHost) {
         excludedApps: settings.excludedApps,
         wantsScreenshot: settings.captureScreenshotByDefault
       })
-      if (startedIn === generation && session && snapshot.excluded) {
+      if (isCurrentGeneration(startedIn) && session && snapshot.excluded) {
         session.target = null
         close()
         return
       }
-      if (startedIn === generation && session) {
+      if (isCurrentGeneration(startedIn) && session) {
         session.snapshot = snapshot
         session.target = snapshot.activeApp
         session.flags = flags
@@ -823,7 +848,7 @@ export function createOverlayController(host: OverlayHost) {
     } else if (session && session.snapshot.activeApp) {
       void ensureFreshScreenshot(session)
     }
-    if (startedIn !== generation || dictating || !session) return
+    if (!isCurrentGeneration(startedIn) || dictating || !session) return
     win.focus()
     startLive(session)
   }
@@ -880,7 +905,7 @@ export function createOverlayController(host: OverlayHost) {
       excludedApps: settings.excludedApps,
       wantsScreenshot: settings.captureScreenshotByDefault,
       onCopySent: () => {
-        if (!dictating && startedIn === generation) host.show(INITIAL_HEIGHT)
+        if (!dictating && isCurrentGeneration(startedIn)) host.show(INITIAL_HEIGHT)
       }
     })
 
@@ -889,7 +914,7 @@ export function createOverlayController(host: OverlayHost) {
     // no way to dismiss it, or take the keyboard from the user's own field. A
     // dictation is the one case that hides nothing — the same window is already
     // showing its bars.
-    if (startedIn !== generation || dictating) {
+    if (!isCurrentGeneration(startedIn) || dictating) {
       // A newer open may already own the window (the press that followed the
       // close that doomed this one): hiding it here would take down the card
       // that press just put up. Only the newest open may hide what it showed.
@@ -956,7 +981,7 @@ export function createOverlayController(host: OverlayHost) {
     // is also called for a card that was never open (a voice turn that ends in
     // dictation mode), and stealing focus then would be the opposite of help.
     const target = session?.target ?? null
-    const wasOpen = Boolean(session && host.window()?.isVisible())
+    const wasOpen = cardOnScreen()
     // A plan outlives the card if it is not stopped here: closing the overlay
     // while the assistant is mid-click must return the machine to the user.
     agent.stop()
@@ -1005,7 +1030,7 @@ export function createOverlayController(host: OverlayHost) {
    * window it is in — would swallow the press.
    */
   async function returnFocusTo(target: ActiveAppInfo | null, closedIn: number): Promise<void> {
-    if (closedIn !== generation) return
+    if (!isCurrentGeneration(closedIn)) return
     if (target && (target.bundleId || target.pid > 0)) {
       try {
         if (await helperActivate({ bundleId: target.bundleId, pid: target.pid })) return
@@ -1014,7 +1039,7 @@ export function createOverlayController(host: OverlayHost) {
       }
     }
     // A reopen moved the generation while the helper was loading the app.
-    if (closedIn !== generation) return
+    if (!isCurrentGeneration(closedIn)) return
     const overlay = host.window()
     const others = BrowserWindow.getAllWindows().some(
       (win) => win !== overlay && !win.isDestroyed() && win.isVisible()
@@ -1706,8 +1731,9 @@ export function createOverlayController(host: OverlayHost) {
       if (!cardOnScreen()) return
       sendToWindow(CH.voice.transcript, { text, send: submit })
     }
-    if (opening && opening.generation === generation) {
-      void opening.promise.then(push, push)
+    const joined = currentOpen()
+    if (joined) {
+      void joined.promise.then(push, push)
       return
     }
     push()

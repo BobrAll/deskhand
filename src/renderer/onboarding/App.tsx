@@ -110,9 +110,8 @@ export function App() {
         setNotice({ kind: 'err', text: test.message })
         return
       }
-      // Both store calls answer with the bundle they left behind, and that is the
-      // one the panel shows and the next provider's save spreads: the bundle
-      // loaded on mount predates every key saved in this window.
+      // The store answers with the bundle it now holds: that is what the panel
+      // shows, and what the next provider's save builds on.
       const saved = await saveConnection(window.deskhand.settings, {
         provider,
         key,
