@@ -27,6 +27,12 @@ export function firstLine(text: string): string {
   return text.split('\n').find((line) => line.trim())?.trim().slice(0, FIRST_LINE_CHARS) ?? ''
 }
 
+/** The last non-empty line: where Python puts the exception, not the traceback header. */
+export function lastLine(text: string): string {
+  const lines = text.split('\n').filter((line) => line.trim())
+  return lines[lines.length - 1]?.trim().slice(0, FIRST_LINE_CHARS) ?? ''
+}
+
 /** Runs a command to completion; the first stderr line becomes the error. */
 export function run(command: string, args: string[], timeoutMs: number): Promise<void> {
   return new Promise((resolve, reject) => {

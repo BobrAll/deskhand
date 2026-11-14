@@ -31,7 +31,7 @@ class FakeChild extends EventEmitter {
   })
   readonly stdout = new PassThrough()
   readonly stderr = new PassThrough()
-  readonly kill = vi.fn((_signal?: NodeJS.Signals): boolean => true)
+  kill = vi.fn((_signal?: NodeJS.Signals): boolean => true)
   onWrite: ((request: Request, child: FakeChild) => void) | null = null
 
   reply(payload: { id: number; ok: boolean; error?: string }): void {
@@ -210,6 +210,17 @@ describe('the warm Silero worker', () => {
 
     expect(fallback).toHaveBeenCalledTimes(1)
     expect(child.kill).toHaveBeenCalledWith('SIGKILL')
+    worker.stop()
+  })
+
+  it('kills an idle worker that ignores SIGTERM with SIGKILL', async () => {
+    const child = answeringChild()
+    const worker = createWorker(() => asChild(child), { idleTimeoutMs: 10, killGraceMs: 20 })
+
+    await worker.render('Строка.', '/tmp/line.wav', vi.fn(async () => undefined))
+
+    await vi.waitFor(() => expect(child.kill).toHaveBeenCalledWith('SIGTERM'))
+    await vi.waitFor(() => expect(child.kill).toHaveBeenCalledWith('SIGKILL'))
     worker.stop()
   })
 

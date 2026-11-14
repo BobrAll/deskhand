@@ -87,6 +87,25 @@ const DIGRAPHS: Array<[string, string]> = [
   ['ng', 'нг']
 ]
 
+/** Latin letters that decomposition does not split into a base letter and a mark. */
+const FOLDED_LETTERS: Record<string, string> = {
+  'ß': 'ss', 'æ': 'ae', 'œ': 'oe', 'ø': 'o', 'ł': 'l',
+  'đ': 'd', 'ð': 'd', 'þ': 'th', 'ı': 'i'
+}
+
+/**
+ * A Latin word written with the base letters of its alphabet.
+ *
+ * Silero has no accented letter in its vocabulary, so `café` must reach the
+ * letter rules as `cafe` instead of passing `é` through untouched.
+ */
+function foldLatin(word: string): string {
+  return word
+    .normalize('NFD')
+    .replace(/\p{M}/gu, '')
+    .replace(/[ßæœøłđðþı]/gi, (letter) => FOLDED_LETTERS[letter.toLowerCase()])
+}
+
 /** The placeholder stands in for the long vowel produced by a silent final `e`. */
 const LONG_MARK = '\u0001'
 const SOFT_G = '\u0002'
@@ -120,7 +139,12 @@ function applyFinalE(word: string): { marked: string; longVowel: string } {
     return { marked: `${magic[1]}${LONG_MARK}${soft}`, longVowel: magic[2] }
   }
   if (word.length > 2 && word.endsWith('e') && !/[aeiou]$/.test(word.slice(0, -1))) {
-    return { marked: word.slice(0, -1), longVowel: '' }
+    // The `e` is silent, but a `g` or `c` before it is still soft: `edge` must
+    // not become «едг» and `large` not «ларг».
+    const stem = word.slice(0, -1)
+    const last = stem[stem.length - 1]
+    const soft = last === 'g' ? SOFT_G : last === 'c' ? SOFT_C : last
+    return { marked: `${stem.slice(0, -1)}${soft}`, longVowel: '' }
   }
   return { marked: word, longVowel: '' }
 }
@@ -231,9 +255,9 @@ function needsPronunciation(word: string): boolean {
 export function unknownWords(text: string): string[] {
   const words = new Set<string>()
   for (const token of text.match(LATIN_WORD) ?? []) {
-    const lower = token.toLowerCase()
-    if (dictionaryForm(lower)) continue
-    for (const part of token.split(/['’-]/).filter(Boolean)) {
+    const folded = foldLatin(token)
+    if (dictionaryForm(folded.toLowerCase())) continue
+    for (const part of folded.split(/['’-]/).filter(Boolean)) {
       if (part.length < 2) continue
       if (needsPronunciation(part)) words.add(part.toLowerCase())
     }
@@ -242,17 +266,18 @@ export function unknownWords(text: string): string[] {
 }
 
 function transliterateWord(word: string, pronunciations: Readonly<Record<string, string>>): string {
-  const lower = word.toLowerCase()
+  const folded = foldLatin(word)
+  const lower = folded.toLowerCase()
   const known = dictionaryForm(lower)
   if (known) return known
-  const acronymPlural = acronymPluralOf(word)
+  const acronymPlural = acronymPluralOf(folded)
   if (acronymPlural) return acronymPlural
   const plural = pluralOf(lower)
   if (plural) return plural
   const hint = pronunciations[lower]
   if (hint) return hint
-  if (looksLikeAcronym(word)) return spellAcronym(word)
-  return ruleTransliterate(word)
+  if (looksLikeAcronym(folded)) return spellAcronym(folded)
+  return ruleTransliterate(folded)
 }
 
 /**
@@ -270,8 +295,7 @@ export function transliterate(
   pronunciations: Readonly<Record<string, string>> = {}
 ): string {
   return text.replace(LATIN_WORD, (token) => {
-    const lower = token.toLowerCase()
-    const whole = dictionaryForm(lower)
+    const whole = dictionaryForm(foldLatin(token).toLowerCase())
     if (whole) return whole
     return token
       .split(/['’-]/)
