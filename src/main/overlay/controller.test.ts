@@ -22,7 +22,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { BrowserWindow } from 'electron'
 import { DEFAULT_SETTINGS } from '@shared/defaults'
 import { CH } from '@shared/ipc'
-import type { ActiveAppInfo, AgentRunResult, AppSettings, ScreenshotInfo, SendRequest } from '@shared/types'
+import type { ActiveAppInfo, AgentRunResult, Annotation, AppSettings, ScreenshotInfo, SendRequest } from '@shared/types'
 import { beginAgentTurn, endAgentTurn } from '../agent/cursor'
 import { captureScreenshot } from '../context/screenshot'
 import type { CaptureTarget } from '../context/screenshot'
@@ -65,6 +65,8 @@ const state = vi.hoisted(() => ({
   streams: 0,
   /** What the agent reports as a warning it worked around. */
   agentNotice: undefined as string | undefined,
+  /** Shapes the mocked writer paints during a turn. */
+  annotations: [] as Annotation[],
   /** Holds context collection so a test can inspect an open that is in flight. */
   collectGate: null as Promise<void> | null,
   /** One gate per `collectContext` call, for tests that run two opens at once. */
@@ -157,12 +159,16 @@ vi.mock('./request', () => ({
 vi.mock('../turnStream', async () => {
   const { ProviderError } = await import('../llm/provider')
   return {
-    consumeTurnStream: vi.fn(async (options: { onText: (text: string) => void }) => {
+    consumeTurnStream: vi.fn(async (options: {
+      onText: (text: string) => void
+      onAnnotations?: (annotations: Annotation[]) => void
+    }) => {
       state.streams += 1
       if (state.imageRefusedOnce && state.streams === 1) {
         throw new ProviderError('Модель не принимает изображения', true, 400, true)
       }
       if (state.fail) throw new Error('Request failed')
+      if (state.annotations.length > 0) options.onAnnotations?.(state.annotations)
       if (state.stream) { options.onText(state.text); state.afterChunk() }
       return { text: state.text, webLookup: state.webLookup }
     })
@@ -190,6 +196,7 @@ beforeEach(() => {
   state.imageRefusedOnce = false
   state.streams = 0
   state.agentNotice = undefined
+  state.annotations = []
   state.collectGate = null
   state.collectGates = []
   state.hideApp.mockClear()
@@ -203,7 +210,7 @@ async function harness(openCard = true) {
   let visible = false
   const send = vi.fn()
   const win = {
-    isVisible: () => visible, isDestroyed: () => false, setContentProtection: vi.fn(), webContents: { send }
+    isVisible: () => visible, isDestroyed: () => false, setContentProtection: vi.fn(), focus: vi.fn(), webContents: { send }
   } as unknown as BrowserWindow
   const host: OverlayHost = {
     prewarm: vi.fn(), show: vi.fn(() => { visible = true }),
@@ -1222,6 +1229,60 @@ describe('a capture that no longer represents the screen', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+
+  it('drops the shapes together with a refused frame', async () => {
+    state.activeApp = noteApp
+    state.annotations = [{ kind: 'circle', from: { x: 0.1, y: 0.2 }, to: { x: 0.3, y: 0.4 } }]
+    vi.mocked(captureScreenshot).mockResolvedValueOnce(staleShot())
+    vi.mocked(buildTurnRequest).mockImplementationOnce(async ({ ensureFreshScreenshot }) => {
+      await ensureFreshScreenshot()
+      return {
+        messages: [],
+        maxTokens: 1024,
+        area: staleShot().area,
+        canDraw: true,
+        useImage: true,
+        screenshot: null,
+        abandoned: false
+      }
+    })
+    const h = await harness()
+    const lastUpdate = (): { screenshot: ScreenshotInfo | null } | undefined =>
+      h.send.mock.calls
+        .filter(([channel]) => channel === CH.overlay.contextUpdate)
+        .at(-1)?.[1] as { screenshot: ScreenshotInfo | null } | undefined
+    const drawn = (): number | undefined =>
+      (h.send.mock.calls
+        .filter(([channel]) => channel === CH.overlay.annotations)
+        .at(-1)?.[1] as { count: number } | undefined)?.count
+
+    // A turn leaves one shape on the screen next to the frame it was measured
+    // against.
+    await h.controller.send({ ...h.request, includeScreenshot: true })
+    expect(drawn()).toBe(1)
+
+    // The app moves onto the exclusion list, so the refresh cannot photograph it:
+    // the frame goes, and the shape has no meaning without it.
+    state.settings.excludedApps = [noteApp.bundleId]
+    vi.mocked(helperFrontApplication).mockResolvedValue({
+      bundleId: 'com.bobr.deskhand',
+      name: 'Deskhand',
+      pid: process.pid,
+      windowId: null,
+      windowTitle: null,
+      bounds: null,
+      accessibility: true
+    })
+    h.send.mockClear()
+    await h.controller.open()
+
+    await vi.waitFor(() => expect(lastUpdate()?.screenshot).toBeNull())
+    expect(drawn()).toBe(0)
+    // One publish for the cleared state: the shape and the frame go together.
+    expect(h.send.mock.calls.filter(([channel]) => channel === CH.overlay.contextUpdate)).toHaveLength(1)
+    expect(h.controller.state()?.context.screenshot).toBeNull()
+    h.controller.close()
   })
 })
 

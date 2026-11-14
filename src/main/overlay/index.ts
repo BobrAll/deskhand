@@ -647,6 +647,9 @@ export function createOverlayController(host: OverlayHost) {
         // thumbnail keeps promising a frame the model will never receive.
         target.snapshot.screenshot = null
         target.snapshot.screenshotPending = false
+        // The shapes were measured against that frame: keeping them would leave
+        // an arrow pointing at a screen that is no longer shown.
+        if (session === target) discardAnnotations()
         publishContext(target)
         return null
       }
@@ -699,12 +702,10 @@ export function createOverlayController(host: OverlayHost) {
       target.snapshot.screenshotPending = true
       publishContext(target)
     }
-    const shot = await captureFor(target)
-    if (session === target && (showPending || !shot)) {
-      target.snapshot.screenshotPending = false
-      publishContext(target)
-    }
-    return shot
+    // `captureFor` publishes the settled context itself, including the cleared
+    // state when nothing may be photographed. Sending it again here would make
+    // the card redraw the same frame twice.
+    return captureFor(target)
   }
 
   /** Re-captures on a timer while the card is on screen. */
