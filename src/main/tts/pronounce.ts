@@ -233,6 +233,17 @@ async function askModel(terms: string[], settings: AppSettings): Promise<Hints> 
 }
 
 /**
+ * What a lookup request depends on: a change is a reason to retry at once
+ * instead of serving the rest of the old backoff window.
+ *
+ * The key itself never stays in module state — only a fingerprint of it.
+ */
+function lookupIdentity(settings: AppSettings, model: string, apiKey: string): string {
+  const keyId = createHash('sha256').update(apiKey).digest('hex')
+  return [settings.provider, model, settings.baseUrls[settings.provider] ?? '', keyId].join('\u0000')
+}
+
+/**
  * True when a model and a key exist and this exact configuration's backoff has
  * expired.
  */
@@ -248,11 +259,8 @@ function lookupAllowed(settings: AppSettings): boolean {
   }
   if (!model || !apiKey) return false
   // Switching to a faster provider or model, or rotating the key, is a reason
-  // to try again now, not to serve the rest of the old backoff window. The key
-  // itself never stays in module state — only a fingerprint of it.
-  const keyId = createHash('sha256').update(apiKey).digest('hex')
-  const config = [settings.provider, model,
-    settings.baseUrls[settings.provider] ?? '', keyId].join('\u0000')
+  // to try again now, not to serve the rest of the old backoff window.
+  const config = lookupIdentity(settings, model, apiKey)
   if (config !== unavailableFor) {
     unavailableFor = config
     unavailableUntil = 0

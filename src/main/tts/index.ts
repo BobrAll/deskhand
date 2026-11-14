@@ -73,25 +73,36 @@ function cacheKey(
   text: string,
   hints: Readonly<Record<string, string>> = {}
 ): string {
-  let identity: Array<string | number> = [settings.baseUrl, settings.model, settings.voice, settings.style]
-  if (settings.engine === 'silero') {
-    // The weights come from a pinned release, so the version and the speaker are
-    // the whole identity; hashing 300 MB on every line would be absurd. The hints
-    // are part of it because a line first spoken before a hint arrived must not
-    // keep the rule-based pronunciation forever.
-    identity = [
-      SILERO_CACHE_ID,
-      sileroSpeaker(settings.sileroVoice),
-      TRANSLITERATION_VERSION,
-      Object.entries(hints)
-        .sort(([left], [right]) => left.localeCompare(right))
-        .map(([word, pronunciation]) => `${word}=${pronunciation}`)
-        .join(CACHE_KEY_SEPARATOR)
-    ]
-  }
+  const identity = settings.engine === 'silero'
+    ? sileroIdentity(settings, hints)
+    : remoteIdentity(settings)
   return createHash('sha256')
     .update([...identity, text].join(CACHE_KEY_SEPARATOR))
     .digest('hex')
+}
+
+/**
+ * The local engine's identity: the pinned weights, the speaker and the hints.
+ *
+ * The weights come from a pinned release, so the version and the speaker are the
+ * whole identity; hashing 300 MB on every line would be absurd. The hints are
+ * part of it because a line first spoken before a hint arrived must not keep the
+ * rule-based pronunciation forever.
+ */
+function sileroIdentity(
+  settings: TtsSettings,
+  hints: Readonly<Record<string, string>>
+): Array<string | number> {
+  const spelling = Object.entries(hints)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([word, pronunciation]) => `${word}=${pronunciation}`)
+    .join(CACHE_KEY_SEPARATOR)
+  return [SILERO_CACHE_ID, sileroSpeaker(settings.sileroVoice), TRANSLITERATION_VERSION, spelling]
+}
+
+/** The remote engine's identity: every field the service turns into a sound. */
+function remoteIdentity(settings: TtsSettings): Array<string | number> {
+  return [settings.baseUrl, settings.model, settings.voice, settings.style]
 }
 
 /** The remote engine answers in MP3; the local engine writes a WAV. */
@@ -231,9 +242,12 @@ export async function synthesize(text: string, localOnly = false): Promise<TtsRe
   const running = inFlight.get(key)
   if (running) return running
 
+  // Reading the cache yields to the event loop, so a sibling line can register
+  // the same key in `inFlight` while this one waits for the disk. Its job is
+  // then the answer for this one too, and the cached copy would be older.
   const cached = await readCache(key, extension)
-  const pending = inFlight.get(key)
-  if (pending) return pending
+  const startedDuringRead = inFlight.get(key)
+  if (startedDuringRead) return startedDuringRead
   if (cached) return cached
 
   const job = (settings.tts.engine === 'silero'

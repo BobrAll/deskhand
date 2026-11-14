@@ -280,7 +280,12 @@ async function runInstall(onProgress: (progress: TtsSetupProgress) => void): Pro
   }
 }
 
-/** Removes the venv, the weights and the clip cache in one go. */
+/**
+ * Removes the venv and the weights.
+ *
+ * Clips already in the TTS cache stay: they are keyed by the pinned release and
+ * the speaker, so a reinstall would produce the same audio for them.
+ */
 export async function removeSilero(): Promise<void> {
   stopSileroWorker()
   await rm(sileroDir(), { recursive: true, force: true })
@@ -451,20 +456,23 @@ async function renderThroughWorker(
   directory: string
 ): Promise<void> {
   if (shuttingDown) throw new Error('Синтез остановлен.')
+  const renderOnceShot = (): Promise<void> => renderSilero([job], speaker, directory)
+
   let script: string
   try {
     script = await ensureWorkerScript()
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     console.warn('[tts] unable to write the silero worker script (%s); using the one-shot renderer', message)
-    await renderSilero([job], speaker, directory)
+    await renderOnceShot()
     return
   }
   const key = workerKey(speaker, script)
   if (workerUnavailableFor === key && Date.now() < workerUnavailableUntil) {
-    await renderSilero([job], speaker, directory)
+    await renderOnceShot()
     return
   }
+  // The backoff belongs to one worker key; a different speaker starts with none.
   if (workerUnavailableFor !== key) {
     workerUnavailableFor = key
     workerUnavailableUntil = 0
@@ -472,7 +480,7 @@ async function renderThroughWorker(
   await workerFor(speaker, script).render(
     job.text,
     job.output,
-    () => renderSilero([job], speaker, directory),
+    renderOnceShot,
     async () => {
       const audio = await readFile(job.output)
       if (audio.length === 0) throw new Error('Silero вернул пустой файл.')

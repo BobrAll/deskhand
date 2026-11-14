@@ -95,6 +95,14 @@ describe('transliterate', () => {
     expect(transliterate('cache')).toBe('к+эш')
   })
 
+  it('reads a silent final e as a long vowel, and only drops it otherwise', () => {
+    // `-iCe` lengthens the vowel and keeps the `c` soft; `-le` after a consonant
+    // is simply silent. Both paths are the letter rules, not the dictionary.
+    expect(transliterate('slice')).toBe('слайс')
+    expect(transliterate('compile')).toBe('компайл')
+    expect(transliterate('table')).toBe('табл')
+  })
+
   it('leaves a Russian line untouched', () => {
     expect(transliterate('Проверь файл.')).toBe('Проверь файл.')
   })
