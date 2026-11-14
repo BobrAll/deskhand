@@ -119,9 +119,9 @@ export function settingsWereRecovered(): boolean {
 /**
  * True when the last write was dropped instead of saved.
  *
- * A lost settings save is otherwise indistinguishable from a saved one: the
- * value comes back from memory for the rest of the run and only disappears on
- * the next launch.
+ * `patchSettings` already logs the dropped write; this probe is for tests and
+ * for a caller that can tell the user. Nothing in the app reads it yet, because
+ * the settings bundle's shared type has no field to carry it.
  */
 export function settingsWriteFailed(): boolean {
   return writeFailed

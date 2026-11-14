@@ -47,10 +47,11 @@ export type AbortWatchMode = 'key' | 'mouse' | 'interaction'
  * stops it with `stop()`, which is what makes a plan interruptible.
  *
  * The helper can also refuse and exit at once — without Accessibility it prints
- * `{"ok":false,"error":"accessibility-denied"}` and returns. `onFailure` is how
- * that reaches the caller: the handle would otherwise look alive for a process
- * that is already gone, and the drawing layer (which is dismissed by this
- * watcher) would simply stop responding to the next click.
+ * `{"ok":false,"error":"accessibility-denied"}` and returns. That death used to
+ * be invisible: the handle kept looking alive while the drawing layer silently
+ * stopped dismissing on the next click. It is logged here; `onFailure` is an
+ * optional hook for a caller that can react (the current drawing and agent
+ * watchers do not pass one).
  */
 export interface AbortWatcher {
   stop(): void

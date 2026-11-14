@@ -1,3 +1,6 @@
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { BrowserWindow } from 'electron'
@@ -140,10 +143,36 @@ describe('denyExternalLinks: navigation in place', () => {
   it('lets the app load its own file pages', () => {
     denyExternalLinks(fakeWindow())
 
-    expect(navigate('file:///Applications/Deskhand.app/renderer/settings/index.html')).toEqual({
-      allowed: true,
-      opened: null
-    })
+    const page = pathToFileURL(join(__dirname, '../renderer/settings/index.html')).href
+
+    expect(navigate(page)).toEqual({ allowed: true, opened: null })
+  })
+
+  it('denies a local file that is not one of the app pages', () => {
+    // A dragged `.html` is still a `file:` URL, and navigating to it would keep
+    // the deskhand preload while showing a foreign page.
+    denyExternalLinks(fakeWindow())
+
+    const foreign = pathToFileURL(join(tmpdir(), 'dropped.html')).href
+
+    expect(navigate(foreign)).toEqual({ allowed: false, opened: null })
+  })
+
+  it('denies a file that only looks like it lives next to the renderer', () => {
+    denyExternalLinks(fakeWindow())
+
+    const sibling = pathToFileURL(join(__dirname, '../renderer-evil/index.html')).href
+
+    expect(navigate(sibling).allowed).toBe(false)
+  })
+
+  it('denies a renderer path that climbs out, including a percent-encoded one', () => {
+    denyExternalLinks(fakeWindow())
+
+    const renderer = pathToFileURL(join(__dirname, '../renderer')).href
+
+    expect(navigate(`${renderer}/../preload/index.js`).allowed).toBe(false)
+    expect(navigate(`${renderer}/%2e%2e/preload/index.js`).allowed).toBe(false)
   })
 
   it('lets the dev server load its own pages', () => {

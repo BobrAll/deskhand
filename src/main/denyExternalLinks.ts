@@ -9,6 +9,7 @@
  * behaviour change and is tracked separately.
  */
 
+import { normalize, join, sep } from 'node:path'
 import { shell } from 'electron'
 import type { BrowserWindow } from 'electron'
 
@@ -27,13 +28,39 @@ const ANY_CASE_SCHEME = /^https?:\/\//i
 const EXACT_CASE_SCHEME = /^https?:\/\//
 
 /**
+ * Where the build puts the app's own pages, next to the main bundle.
+ *
+ * `file:` alone proves nothing: every local file has that scheme, and a window
+ * that navigates to one keeps its preload — the deskhand API exposed to the
+ * renderer. Only the renderer directory is the app.
+ */
+const RENDERER_DIR = join(__dirname, '../renderer')
+
+/** The local path a `file:` URL points at, or null for anything else. */
+function localPath(url: string): string | null {
+  try {
+    const parsed = new URL(url)
+    if (parsed.protocol !== 'file:') return null
+    // `normalize` folds `..`, so a crafted path cannot climb out of the
+    // renderer directory after the percent-encoded segments are decoded.
+    return normalize(decodeURIComponent(parsed.pathname))
+  } catch {
+    return null
+  }
+}
+
+/**
  * Whether a URL is one of the app's own pages.
  *
- * The renderers are loaded from `file:` in a packaged build and from the Vite
- * dev server otherwise; anything else is a web page, not the app.
+ * The renderers are loaded from the renderer directory in a packaged build and
+ * from the Vite dev server otherwise; anything else is a web page or a foreign
+ * file, not the app.
  */
 function isAppUrl(url: string): boolean {
-  if (url.startsWith('file:')) return true
+  if (url.startsWith('file:')) {
+    const path = localPath(url)
+    return path !== null && path.startsWith(`${RENDERER_DIR}${sep}`)
+  }
   const devServer = process.env['ELECTRON_RENDERER_URL']
   if (!devServer) return false
   try {

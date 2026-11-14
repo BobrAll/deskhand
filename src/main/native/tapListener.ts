@@ -20,8 +20,9 @@
  * The failure count belongs to the listener, not to one child: a helper that
  * reports `ready` and then dies still died, and resetting the count on every
  * `ready` would make the backoff and its ceiling unreachable — a helper that
- * crashes right after starting would be respawned every second, forever. Only an
- * explicit `start()` forgives the previous failures.
+ * crashes right after starting would be respawned every second, forever. Only a
+ * run that stayed up past `HEALTHY_RUN_MS`, or an explicit `start()`, forgives
+ * the earlier failures.
  */
 
 import { spawn, type ChildProcess } from 'node:child_process'
@@ -36,6 +37,17 @@ interface HelperLine<Event extends string> {
 
 /** How many restarts in a row before the listener gives up. */
 const MAX_FAILURES = 6
+
+/**
+ * How long a helper has to stay up before its death stops counting as part of a
+ * crash loop.
+ *
+ * The first restart already waits a second, so a process that ran for this long
+ * was doing its job, not failing to start. Without the rule, one death a day
+ * would accumulate across days and hit the cap below, leaving the listener
+ * stopped until someone opened the settings window.
+ */
+const HEALTHY_RUN_MS = 60_000
 
 export abstract class TapListener<Event extends string> {
   private child: ChildProcess | null = null
@@ -107,6 +119,8 @@ export abstract class TapListener<Event extends string> {
 
     const reader = createInterface({ input: child.stdout! })
     let reportedReady = false
+    /** When this child last said `ready`; the clock for the healthy-run rule. */
+    let readySince = 0
 
     reader.on('line', (line) => {
       const text = line.trim()
@@ -124,6 +138,7 @@ export abstract class TapListener<Event extends string> {
       }
       if (payload.event === 'ready') {
         reportedReady = true
+        readySince = Date.now()
         // `lastError` is about the current process; the failure count is not.
         // Clearing it here would also clear the reason a restarted helper is
         // being retried with a longer delay (see `scheduleRestart`).
@@ -151,6 +166,10 @@ export abstract class TapListener<Event extends string> {
         this.onExitWithoutReady()
         return
       }
+      // A helper that stayed up is not part of a crash loop: a death after a
+      // long run says nothing about the failures it accumulated before it, and
+      // carrying them over would eventually stop restarting a healthy listener.
+      if (Date.now() - readySince >= HEALTHY_RUN_MS) this.failures = 0
       console.warn(`[${this.tag}] listener exited with ${code}; restarting`)
       this.scheduleRestart()
     })
@@ -170,7 +189,7 @@ export abstract class TapListener<Event extends string> {
     this.failures += 1
     if (this.failures > MAX_FAILURES) {
       console.warn(
-        `[${this.tag}] listener failed ${MAX_FAILURES} times in a row; not restarting until it is started again`
+        `[${this.tag}] listener died ${MAX_FAILURES} times without a healthy run; not restarting until it is started again`
       )
       return
     }

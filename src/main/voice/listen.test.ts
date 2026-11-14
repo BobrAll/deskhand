@@ -413,8 +413,31 @@ describe('VoiceKeyListener: restart and stop', () => {
     expect(state.children).toHaveLength(7)
     expect(tap.listening).toBe(false)
     expect(console.warn).toHaveBeenCalledWith(
-      expect.stringContaining('failed 6 times in a row')
+      expect.stringContaining('died 6 times without a healthy run')
     )
+  })
+
+  it('forgives the earlier failures after a long healthy run', () => {
+    // One death a day used to accumulate across days and stop the listener for
+    // good; a process that stayed up for a minute was not in a crash loop.
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(1_000)
+    started()
+
+    const first = state.children[0]
+    first.stdout.emit('{"event":"ready"}')
+    clock.mockReturnValue(2_000)
+    first.exit(0)
+    expect(state.timers[state.timers.length - 1].ms).toBe(1000)
+    state.timers[state.timers.length - 1].fn()
+
+    const second = state.children[1]
+    second.stdout.emit('{"event":"ready"}')
+    clock.mockReturnValue(62_001)
+    second.exit(0)
+
+    // A second failure in a row would have doubled the delay; the healthy run
+    // started the count over.
+    expect(state.timers[state.timers.length - 1].ms).toBe(1000)
   })
 
   it('forgets the failures when the listener is started again', () => {
