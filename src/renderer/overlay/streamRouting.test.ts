@@ -10,7 +10,7 @@
 
 import { describe, expect, it } from 'vitest'
 import type { StreamEvent } from '@shared/types'
-import { routeStream, type StreamState } from './streamRouting'
+import { rewriteReplacesAnswer, routeStream, type StreamState } from './streamRouting'
 
 const chunk = (requestId: string, delta: string): StreamEvent => ({ type: 'chunk', requestId, delta })
 const done = (requestId: string, text: string): StreamEvent => ({
@@ -98,6 +98,20 @@ describe('routeStream: replacing instead of appending', () => {
       text: '',
       clearSpoken: true
     })
+  })
+})
+
+describe('rewriteReplacesAnswer: a rewrite starts over', () => {
+  it('replaces the answer the rewrite starts from, retry included', () => {
+    // A failed rewrite leaves its base on screen, and «Повторить» starts from
+    // that same base. Appending the retry's chunks would glue them to the answer
+    // the attempt is supposed to replace, so the rule may not depend on where the
+    // base came from.
+    expect(rewriteReplacesAnswer('старый ответ')).toBe(true)
+  })
+
+  it('has nothing to replace when the card is empty', () => {
+    expect(rewriteReplacesAnswer('   ')).toBe(false)
   })
 })
 

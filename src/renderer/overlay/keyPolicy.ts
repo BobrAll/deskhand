@@ -46,6 +46,32 @@ export interface KeyInput {
   hasAnswer: boolean
 }
 
+/** The part of a text field the user may have selected. */
+export interface FieldSelection {
+  selectionStart: number
+  selectionEnd: number
+}
+
+/**
+ * Whether the user has text selected anywhere they can see it.
+ *
+ * A selection inside the prompt field is invisible to `window.getSelection()`:
+ * the textarea keeps it in its own state. Without the field, ⌘C over a
+ * highlighted part of the question took the key over and copied the whole answer
+ * instead of the highlighted text.
+ */
+export function hasTextSelection(
+  pageSelection: string,
+  field: FieldSelection | null,
+  fieldFocused: boolean
+): boolean {
+  if (pageSelection !== '') return true
+  // A field that lost focus keeps its last selection; that is not something the
+  // user is looking at, and ⌘C there is the "copy the answer" shortcut.
+  if (!field || !fieldFocused) return false
+  return field.selectionStart !== field.selectionEnd
+}
+
 /**
  * Reads the key.
  *

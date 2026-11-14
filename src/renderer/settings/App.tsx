@@ -30,6 +30,7 @@ import {
   hasUnsaved,
   holdReasonFor,
   invalidBaseUrlProviders,
+  writeStillCurrent,
   writableSettings
 } from './applyGate'
 import { ApplyStatus, type ApplyState } from './ApplyStatus'
@@ -277,6 +278,16 @@ export function App() {
   const writtenRef = useRef<string | null>(null)
 
   /**
+   * The draft as of the newest render.
+   *
+   * A write resolves after the state it was started from may have moved on, and
+   * its callback must compare against what is on screen now — the `draft` it
+   * closed over is the snapshot it sent.
+   */
+  const draftRef = useRef<AppSettings | null>(null)
+  draftRef.current = draft
+
+  /**
    * The snapshot a failed write was for, so it is not retried in a loop.
    *
    * Without this, a write that throws leaves the draft different from the bundle,
@@ -341,7 +352,10 @@ export function App() {
           return false
         }
         setHotkeyMessage(null)
-        setApplyState('saved')
+        // «Применено» is about the draft on screen, not the snapshot that was
+        // sent: an edit made during the round trip still has to be written, and
+        // the footer (and the close hold) must say so until it is.
+        if (writeStillCurrent(written, draftRef.current)) setApplyState('saved')
         return true
       } catch {
         // Nothing reached the disk, so a later change must be allowed to try again —
