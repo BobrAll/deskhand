@@ -6,11 +6,16 @@
       http-equiv="Content-Security-Policy"
       content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'"
     />
-    <title>Deskhand — поле ввода</title>
+    <title>Deskhand — голосовое поле</title>
     <link rel="stylesheet" href="../styles/base.css" />
   </head>
   <body>
-    <div id="root"><div class="field-highlight"></div></div>
+    <div id="root">
+      <div class="field-voice">
+        <div class="field-voice-surface"></div>
+        <div class="field-voice-bars"></div>
+      </div>
+    </div>
     <script type="module" src="./main.ts"></script>
   </body>
 </html>

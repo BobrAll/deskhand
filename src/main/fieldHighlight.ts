@@ -21,11 +21,15 @@ import {
   type LayerWindowState
 } from './layerWindow'
 
-/** A little air between the field's edge and the border. */
-const HIGHLIGHT_PAD = 6
+/** A little air between the field's edge and the voice strip. */
+const HIGHLIGHT_PAD = 4
 
 const layer: LayerWindowState = { window: null, loaded: null }
 let placedOn: ScreenRect | null = null
+/** Whether the strip is currently on screen. */
+let visible = false
+/** Latest microphone level, so a late layer still opens at the right amplitude. */
+let level = 0
 /**
  * Which request owns the layer right now.
  *
@@ -43,6 +47,8 @@ function createWindow(): BrowserWindow {
       layer.window = null
       layer.loaded = null
       placedOn = null
+      visible = false
+      level = 0
     }
   })
 }
@@ -67,15 +73,27 @@ export async function showFieldHighlight(frame: ScreenRect | null): Promise<void
   const target = await ensureLayerWindow(layer, createWindow, { watchDestroyed: true })
   if (!target || target.isDestroyed() || mine !== token) return
   placedOn = placeLayer(target, placedOn, highlightFrame(frame)).placedOn
-  target.webContents.send(CH.voice.fieldHighlight, { visible: true })
+  visible = true
+  target.webContents.send(CH.voice.fieldHighlight, { visible: true, level })
   target.showInactive()
 }
 
-/** Removes the border without waiting for a pending layer load. */
+/** Removes the strip without waiting for a pending layer load. */
 export function hideFieldHighlight(): void {
   token += 1
+  visible = false
+  level = 0
   const target = layer.window
   if (!target || target.isDestroyed()) return
-  target.webContents.send(CH.voice.fieldHighlight, { visible: false })
+  target.webContents.send(CH.voice.fieldHighlight, { visible: false, level: 0 })
   target.hide()
+}
+
+/** Feeds the microphone meter to the strip while it is on screen. */
+export function setFieldLevel(next: number): void {
+  level = Math.max(0, Math.min(1, next))
+  if (!visible) return
+  const target = layer.window
+  if (!target || target.isDestroyed()) return
+  target.webContents.send(CH.voice.fieldHighlight, { visible: true, level })
 }

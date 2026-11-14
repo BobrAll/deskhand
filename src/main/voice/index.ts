@@ -59,6 +59,8 @@ export interface VoiceHost {
   beginDictation(): Promise<void>
   /** Reveals the bars without activating the card or collecting context again. */
   showIndicator(): void
+  /** Feeds the field strip the same microphone level as the cursor bars. */
+  fieldLevel(level: number): void
   /** Puts recognised text into an open card. */
   deliver(text: string, options: DeliverOptions): void
   /**
@@ -633,6 +635,7 @@ export function createVoiceController(host: VoiceHost) {
   function setLevel(value: number): void {
     if (phase !== 'listening') return
     level = Math.max(0, Math.min(1, value))
+    host.fieldLevel(level)
   }
 
   function ensureListener(binding: VoiceBinding, binary: string): VoiceKeyListener {

@@ -131,6 +131,7 @@ function makeHost() {
     targetValue: null as ActiveAppInfo | null,
     prewarmed: 0,
     indicators: 0,
+    fieldLevels: [] as number[],
     target: () => host.targetValue,
     isOpen: () => host.openResult,
     beginDictation: async () => {
@@ -138,6 +139,9 @@ function makeHost() {
     },
     showIndicator: () => {
       host.indicators += 1
+    },
+    fieldLevel: (value: number) => {
+      host.fieldLevels.push(value)
     },
     prewarm: () => {
       host.prewarmed += 1
@@ -696,6 +700,8 @@ describe('createVoiceController: the level meter', () => {
     voice.setLevel(0.4)
     vi.advanceTimersByTime(100)
     expect(lastEvent(host).level).toBe(0.4)
+    // The field strip gets the same clamped values, without waiting for the tick.
+    expect(host.fieldLevels).toEqual([1, 0, 0.4])
   })
 
   it('ignores a level tick outside `listening`', () => {

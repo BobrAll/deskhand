@@ -14,6 +14,7 @@ import { registerHotkey, unregisterHotkey } from './hotkey'
 import { registerIpc } from './ipc'
 import { createTray, destroyTray, refreshTray } from './tray'
 import { destroyDrawing } from './drawing'
+import { setFieldLevel } from './fieldHighlight'
 import { destroyAgentCursor } from './agent/cursor'
 import { destroyAgentPresentation } from './agent/presentation'
 import { flushTrace } from './agent/trace'
@@ -54,6 +55,7 @@ const voice = createVoiceController({
   isOpen: () => overlay.isOpen(),
   beginDictation: () => overlay.beginDictation(),
   showIndicator: () => overlay.showVoiceIndicator(),
+  fieldLevel: (level) => setFieldLevel(level),
   deliver: (text, options) => overlay.deliver(text, options),
   endDictation: () => overlay.endDictation(),
   emit: (channel, payload) => overlay.emit(channel, payload),

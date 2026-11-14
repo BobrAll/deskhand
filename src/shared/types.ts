@@ -449,9 +449,11 @@ export interface VoiceEvent {
   code?: VoiceErrorCode
 }
 
-/** Main -> the transparent field layer: draw or drop the insertion border. */
+/** Main -> the transparent field layer: draw or drop the voice strip. */
 export interface FieldHighlightEvent {
   visible: boolean
+  /** 0..1 microphone level, so the bars open with the user's voice. */
+  level: number
 }
 
 export interface VoiceStatus {
