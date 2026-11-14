@@ -328,8 +328,8 @@ describe('consumeTurnStream: a round that is no longer wanted', () => {
       onText: out.onText
     })
 
-    expect(out.text.join('')).toBe('Готово\n@po\n')
-    expect(result.text).toBe('Готово\n@po\n')
+    expect(out.text.join('')).toBe('Готово\n@po')
+    expect(result.text).toBe('Готово\n@po')
   })
 
   it('lets a provider failure propagate, because the caller owns the retry', async () => {

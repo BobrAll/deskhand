@@ -30,6 +30,9 @@ const MARKERS = ['point', 'draw', ...KINDS]
 
 const MARKER = new RegExp(`^@(?:${MARKERS.join('|')})\\b`, 'i')
 
+/** `@` followed by the word the model is typing, so it can be matched against `MARKERS`. */
+const MARKER_NAME = /^@([A-Za-z]*)/
+
 /**
  * The smallest extent, in 0–1 units, that a drawing can have and still be meant.
  *
@@ -72,6 +75,37 @@ function coordinate(value: number): number {
   return clamp01(Math.abs(value) > PERCENT_COORDINATE ? value / 100 : value)
 }
 
+/**
+ * Splits the part after the marker into tokens.
+ *
+ * A comma between two digits is a decimal comma ("0,5"), so it belongs to the
+ * number — unless that number already has a decimal point, where it can only
+ * separate ("0.5,0.8"). Every other comma separates as well, so the spaced form
+ * with trailing commas ("arrow, 0.5, 0.8"), the compact list ("0.5,0.8,0.3,0.4")
+ * and the decimal comma all read as the same line.
+ */
+function markerTokens(rest: string): string[] {
+  const tokens: string[] = []
+  let current = ''
+  for (let index = 0; index < rest.length; index += 1) {
+    const char = rest[index]
+    if (char === ',') {
+      const betweenDigits = /\d/.test(rest[index - 1] ?? '') && /\d/.test(rest[index + 1] ?? '')
+      if (betweenDigits && !current.includes('.')) {
+        current += '.'
+        continue
+      }
+    } else if (!/[\s;]/.test(char)) {
+      current += char
+      continue
+    }
+    tokens.push(current)
+    current = ''
+  }
+  tokens.push(current)
+  return tokens.filter(Boolean)
+}
+
 function cleanLabel(raw: string): string | undefined {
   const label = raw
     .trim()
@@ -85,6 +119,22 @@ function cleanLabel(raw: string): string | undefined {
 }
 
 /**
+ * Whether `text` could still grow into a drawing marker once more characters
+ * arrive.
+ *
+ * The stream parser needs this to decide what to hold back: `@po` may become
+ * `@point` two deltas later, while `@username` is ordinary text from its first
+ * character. The test is on the word after the `@`, so the answer does not
+ * depend on where the network cut the chunk.
+ */
+export function couldStartMarker(text: string): boolean {
+  const match = MARKER_NAME.exec(text)
+  if (!match) return false
+  const name = match[1].toLowerCase()
+  return MARKERS.some((marker) => marker.startsWith(name))
+}
+
+/**
  * Parses one line. Returns `null` when the line is not protocol syntax at all,
  * and an empty `annotations` list when it looked like protocol syntax but could
  * not be used (garbage coordinates) — the caller then drops the line instead of
@@ -94,10 +144,10 @@ export function parseAnnotationLine(line: string): ParsedLine | null {
   const trimmed = line.trim()
   if (!MARKER.test(trimmed)) return null
 
-  // Everything after the leading marker, split on whitespace and commas so both
-  // "@point arrow 0.5 0.8 0.8 0.1" and "@point arrow, 0.5, 0.8, 0.8, 0.1" work.
+  // Everything after the leading marker, as the model may write it: spaced, with
+  // commas between values, compact, or with a decimal comma.
   const rest = trimmed.replace(/^@[A-Za-z]+\s*/, '')
-  const tokens = rest.split(/[\s,;]+/).filter(Boolean)
+  const tokens = markerTokens(rest)
 
   let kind: AnnotationKind = 'circle'
   let index = 0
@@ -109,8 +159,7 @@ export function parseAnnotationLine(line: string): ParsedLine | null {
 
   const numbers: number[] = []
   while (index < tokens.length && numbers.length < 4) {
-    const token = tokens[index]
-    const value = Number.parseFloat(token.replace(',', '.'))
+    const value = Number.parseFloat(tokens[index])
     if (!Number.isFinite(value)) break
     numbers.push(value)
     index += 1

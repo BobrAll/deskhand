@@ -76,12 +76,13 @@ describe('ResponseStream: a marker cut by a chunk boundary', () => {
     expect(stream.push('int 0.5 0.5\n').annotations).toHaveLength(1)
   })
 
-  it('flushes the held tail on finish(), parsed as a line', () => {
+  it('flushes a held tail that turned out to be prose on finish()', () => {
     const stream = new ResponseStream()
 
     expect(stream.push('@po').text).toBe('')
-    // The tail never got its newline; `consume()` appends one.
-    expect(stream.finish()).toEqual({ text: '@po\n', annotations: [] })
+    // `@po` never became a marker and never got a newline, so it is returned
+    // exactly as it arrived — no newline the model did not write.
+    expect(stream.finish()).toEqual({ text: '@po', annotations: [] })
   })
 
   it('finish() is idempotent and empty when nothing was held', () => {
@@ -89,7 +90,7 @@ describe('ResponseStream: a marker cut by a chunk boundary', () => {
 
     expect(stream.finish()).toEqual({ text: '', annotations: [] })
     stream.push('@po')
-    expect(stream.finish().text).toBe('@po\n')
+    expect(stream.finish().text).toBe('@po')
     expect(stream.finish()).toEqual({ text: '', annotations: [] })
   })
 })
@@ -111,7 +112,7 @@ describe('ResponseStream: a line with @ that is not a command', () => {
   })
 
   it('passes a lone @ through as text', () => {
-    expect(whole('@')).toEqual({ text: '@\n', annotations: [] })
+    expect(whole('@')).toEqual({ text: '@', annotations: [] })
   })
 })
 
@@ -212,7 +213,8 @@ describe('ResponseStream: what a chunk carries', () => {
 })
 
 describe('ResponseStream: any chunking gives an identical result', () => {
-  // Markers at column 0 — the shape the protocol asks the model for.
+  // Markers at column 0 — the shape the protocol asks the model for — and the
+  // shapes that only look like markers once a network chunk boundary cuts them.
   const corpus = [
     'Просто ответ',
     'Строка один\nСтрока два\n',
@@ -225,7 +227,20 @@ describe('ResponseStream: any chunking gives an identical result', () => {
     '@po',
     '@point',
     '@',
-    `${ARROW_LINE}\n${CIRCLE_LINE}\n`
+    `${ARROW_LINE}\n${CIRCLE_LINE}\n`,
+    // A marker that starts mid-line is prose: it is not at the start of its own
+    // line, and the answer must not depend on where the network cut it.
+    `x ${CIRCLE_LINE}\n`,
+    `Скажу так: ${ARROW_LINE}\nготово\n`,
+    // The prompt's own example is indented by two spaces, and a model that
+    // copies it writes the same indent.
+    `  ${CIRCLE_LINE}\n`,
+    '   @point 0.5 0.5\n',
+    'tail @cl',
+    'Готово\n@po',
+    '@usern',
+    '  @hover 0.1 0.2\n',
+    '@web\nИщу\n'
   ]
 
   it('matches the whole-string result for every fixed chunking', () => {
@@ -255,32 +270,34 @@ describe('ResponseStream: any chunking gives an identical result', () => {
     expect(whole(corpus[3]).annotations).toHaveLength(1)
     expect(whole(corpus[0]).text).toBe('Просто ответ')
     expect(whole(corpus[4]).annotations.map((shape) => shape.kind)).toEqual(['box', 'underline'])
+    expect(whole(corpus[14]).annotations, 'indented marker').toHaveLength(1)
   })
 
-  // KNOWN BUG: characterization — `push()` decides whether to hold the tail by
-  // looking at the whole pending string, so a tail that starts with text is
-  // flushed before its `@` ever arrives.
-  it('differs on a marker that starts mid-line (known bug)', () => {
-    const wholeLine = whole(`x ${CIRCLE_LINE}\n`)
-    expect(wholeLine.text).toBe(`x ${CIRCLE_LINE}\n`)
+  it('treats a marker that starts mid-line as prose however it is split', () => {
+    const input = `x ${CIRCLE_LINE}\n`
+    const wholeLine = whole(input)
+
+    expect(wholeLine.text).toBe(input)
     expect(wholeLine.annotations).toEqual([])
-
-    const split = run(['x ', `${CIRCLE_LINE}\n`])
-    expect(split.text).toBe('x ')
-    expect(split.annotations).toHaveLength(1)
+    // Every split of the same output gives the same answer: no drawing, and the
+    // marker line printed as the text the model wrote.
+    for (const split of [['x ', `${CIRCLE_LINE}\n`], ['x @point ci', `rcle 0.42 0.31 0.52 0.41 «Экспорт»\n`]]) {
+      expect(run(split), JSON.stringify(split)).toEqual(wholeLine)
+    }
   })
 
-  // KNOWN BUG: characterization — same root cause: the trailing text tail is
-  // flushed without the newline that a per-line split would add.
-  it('differs on a text tail that ends with @ (known bug)', () => {
+  it('flushes a prose tail without the newline of a complete line', () => {
     expect(whole('tail @cl').text).toBe('tail @cl')
-    expect(run(['tail ', '@cl']).text).toBe('tail @cl\n')
+    expect(run(['tail ', '@cl']).text).toBe('tail @cl')
+    expect(whole('Готово\n@po').text).toBe('Готово\n@po')
+    expect(run(byChar('Готово\n@po')).text).toBe('Готово\n@po')
   })
 
-  // KNOWN BUG: characterization — leading whitespace before a marker is flushed
-  // as answer text, so the answer gains spaces that the whole-string feed keeps.
-  it('differs on whitespace in front of a marker (known bug)', () => {
+  it('drops the indent in front of a marker instead of printing it', () => {
     expect(whole('   @point 0.5 0.5\n').text).toBe('')
-    expect(run(byChar('   @point 0.5 0.5\n')).text).toBe('   ')
+    expect(run(byChar('   @point 0.5 0.5\n')).text).toBe('')
+    expect(run(byChar('   @point 0.5 0.5\n')).annotations).toHaveLength(1)
+    // Whitespace in front of ordinary text is answer text and stays.
+    expect(run(byChar('   привет\n')).text).toBe('   привет\n')
   })
 })

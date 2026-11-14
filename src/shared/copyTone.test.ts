@@ -36,6 +36,14 @@ const POLITE_PRONOUN =
 const POLITE_IMPERATIVE =
   /(?<![\p{L}])(?:проверьте|введите|попробуйте|нажмите|выберите|увеличьте|укажите|откройте|разрешите|включите|выключите|удерживайте|добавьте|заполните|выполните|пересоберите|повторите|уточните|задайте|подождите|перезапустите|дождитесь|смотрите|говорите|возьмите|используйте|настройте|сохраните|удалите|перейдите|запустите)(?![\p{L}])/iu
 
+/**
+ * The polite formulas that carry neither a pronoun nor an imperative.
+ *
+ * «Повтори, пожалуйста» is the form that used to reach the voice bank: the
+ * request is already on «ты», and the word only adds a bow.
+ */
+const POLITE_FORMULA = /(?<![\p{L}])(?:пожалуйста|извините)(?![\p{L}])/iu
+
 function sources(directory: string): string[] {
   return readdirSync(directory).flatMap((entry) => {
     const path = join(directory, entry)
@@ -58,7 +66,8 @@ function violations(): string[] {
       .split('\n')
       .flatMap((line, index) => {
         if (isComment(line)) return []
-        const hit = POLITE_PRONOUN.exec(line) ?? POLITE_IMPERATIVE.exec(line)
+        const hit =
+          POLITE_PRONOUN.exec(line) ?? POLITE_IMPERATIVE.exec(line) ?? POLITE_FORMULA.exec(line)
         return hit ? [`${name}:${index + 1}  ${hit[0]}  →  ${line.trim()}`] : []
       })
   })
@@ -74,7 +83,8 @@ describe('copy: the app addresses the user as «ты»', () => {
     // permission nobody needs, and the next reader would think it was.
     for (const [name, reason] of Object.entries(ALLOWED)) {
       const text = readFileSync(join(ROOT, name), 'utf8')
-      const found = POLITE_PRONOUN.test(text) || POLITE_IMPERATIVE.test(text)
+      const found =
+        POLITE_PRONOUN.test(text) || POLITE_IMPERATIVE.test(text) || POLITE_FORMULA.test(text)
       expect(found, `${name} no longer needs its exemption (${reason})`).toBe(true)
     }
   })
