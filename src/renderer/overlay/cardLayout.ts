@@ -129,9 +129,10 @@ export function layoutCard(input: CardLayoutInput): CardLayout {
   const actionsWidth = input.hasAnswer
     ? Math.ceil(measureLine(
         // The widest the strip can get, measured once so the card does not grow
-        // when the answer finishes and the remaining buttons appear. «Вернуть» is
-        // the longer of the two width labels, so it is the one measured.
-        `${input.speaking ? 'Остановить озвучку' : 'Прослушать'} Вернуть Скопировать`,
+        // when the answer finishes, the remaining buttons appear, or copy
+        // confirms itself. «Вернуть» is the longer of the width labels;
+        // «✓ Скопировано» is the longer of the copy labels.
+        `${input.speaking ? 'Остановить озвучку' : 'Прослушать'} Вернуть ✓ Скопировано`,
         ACTIONS_FONT
       )) + ACTIONS_CHROME
     : 0

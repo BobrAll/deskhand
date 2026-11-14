@@ -92,6 +92,8 @@ export function App() {
   const [typing, setTyping] = useState(false)
   /** The resize listener is registered once; it reads the latest typing state. */
   const typingRef = useRef(false)
+  /** Option turns the whole card, text included, into a window handle. */
+  const [dragAnywhere, setDragAnywhere] = useState(false)
   /**
    * The width the user chose for this card, or `null` while it sizes itself.
    *
@@ -432,6 +434,21 @@ export function App() {
   useEffect(() => {
     return () => {
       if (copiedTimerRef.current !== null) window.clearTimeout(copiedTimerRef.current)
+    }
+  }, [])
+
+  useEffect(() => {
+    const setOption = (event: KeyboardEvent): void => {
+      if (event.key === 'Alt') setDragAnywhere(event.type === 'keydown')
+    }
+    const reset = (): void => setDragAnywhere(false)
+    window.addEventListener('keydown', setOption)
+    window.addEventListener('keyup', setOption)
+    window.addEventListener('blur', reset)
+    return () => {
+      window.removeEventListener('keydown', setOption)
+      window.removeEventListener('keyup', setOption)
+      window.removeEventListener('blur', reset)
     }
   }, [])
 
@@ -1080,7 +1097,13 @@ export function App() {
    */
   if (listening) {
     return (
-      <div ref={rootRef} className="card" style={{ width: cardWidth }} data-voice>
+      <div
+        ref={rootRef}
+        className="card"
+        style={{ width: cardWidth }}
+        data-voice
+        data-drag-anywhere={dragAnywhere || undefined}
+      >
         <div
           className="voice"
           data-phase={voice.phase}
@@ -1194,8 +1217,12 @@ export function App() {
     // before the session exists is a no-op rather than an error: `send` returns
     // without touching the text, and the same Enter works a moment later.
     return (
-      <div ref={rootRef} className="card" style={{ width: cardWidth }}>
-        <div className="move" aria-hidden />
+      <div
+        ref={rootRef}
+        className="card"
+        style={{ width: cardWidth }}
+        data-drag-anywhere={dragAnywhere || undefined}
+      >
         <div className="bar">
           {composer}
           {/*
@@ -1234,8 +1261,8 @@ export function App() {
       style={{ width: cardWidth }}
       data-busy={busy || undefined}
       data-drawing={(drawn > 0 && !typing) || undefined}
+      data-drag-anywhere={dragAnywhere || undefined}
     >
-      <div className="move" aria-hidden />
       {!agentRunning && showingTranscript && <div className="line">Распознано</div>}
       {!agentRunning && (
         <div className="bar">
@@ -1522,7 +1549,7 @@ export function App() {
                 title={copied ? 'Скопировано в буфер обмена' : 'Скопировать ответ'}
                 onClick={() => void copy()}
               >
-                {copied ? 'Скопировано' : 'Скопировать'}
+                {copied ? '✓ Скопировано' : 'Скопировать'}
               </button>
             </>
           )}

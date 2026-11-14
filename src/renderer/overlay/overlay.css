@@ -42,6 +42,36 @@ body,
   flex-direction: column;
   gap: 3px;
   animation: appear 100ms ease-out;
+  /* The whole glass is a handle. Text, controls and the answer opt out below:
+     a window that can only be grabbed by its top six points is a puzzle. */
+  -webkit-app-region: drag;
+  cursor: grab;
+}
+
+.card :is(textarea, button, input, a, .answer, .meta, .drawer, .foot, .agent, .grip) {
+  -webkit-app-region: no-drag;
+}
+
+/* Holding Option turns the whole card into a handle, including the field and
+   the answer. The plain drag stays off the text so typing and selecting keep
+   working; this is the escape hatch for "move it from here". */
+.card[data-drag-anywhere],
+.card[data-drag-anywhere] * {
+  -webkit-app-region: drag !important;
+  cursor: grab !important;
+}
+
+textarea.prompt {
+  cursor: text;
+}
+
+.card button,
+.card a {
+  cursor: pointer;
+}
+
+.card .answer {
+  cursor: text;
 }
 
 /* The panel is the window: its rounded corners are the window's own, so the
@@ -83,21 +113,6 @@ body,
 /* A faint accent edge marks a request in progress. */
 .card[data-busy]::before {
   border-color: color-mix(in srgb, var(--accent) 45%, var(--panel-edge));
-}
-
-/* The only draggable part of the card: the six points of top padding. It sits
-   outside the field, so a drag never starts a text selection. */
-.card > .move {
-  position: absolute;
-  inset: 0 0 auto 0;
-  height: 6px;
-  z-index: 2;
-  cursor: grab;
-  -webkit-app-region: drag;
-}
-
-.card > .move:active {
-  cursor: grabbing;
 }
 
 @keyframes appear {
@@ -842,9 +857,14 @@ button.link.primary:hover:not(:disabled) {
 }
 
 /* Copy is the one action that confirms itself in place; a new line under the
-   card would survive long after the click and push everything around. */
-button.link[data-copied] {
+   card would survive long after the click and push everything around. The tint
+   and the check are the point — a green word alone disappears under the hover
+   that follows the click. */
+button.link[data-copied],
+button.link[data-copied]:hover:not(:disabled) {
   color: var(--success);
+  background: color-mix(in srgb, var(--success) 14%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--success) 30%, transparent);
 }
 
 /* ------------------------------------------------------- the listening card */
