@@ -36,35 +36,23 @@ const EXACT_CASE_SCHEME = /^https?:\/\//
  */
 const RENDERER_DIR = join(__dirname, '../renderer')
 
-/** The local path a `file:` URL points at, or null for anything else. */
-function localPath(url: string): string | null {
-  try {
-    const parsed = new URL(url)
-    if (parsed.protocol !== 'file:') return null
-    // `normalize` folds `..`, so a crafted path cannot climb out of the
-    // renderer directory after the percent-encoded segments are decoded.
-    return normalize(decodeURIComponent(parsed.pathname))
-  } catch {
-    return null
-  }
-}
-
 /**
  * Whether a URL is one of the app's own pages.
  *
  * The renderers are loaded from the renderer directory in a packaged build and
  * from the Vite dev server otherwise; anything else is a web page or a foreign
- * file, not the app.
+ * file, not the app. For `file:` URLs `normalize` folds `..`, so a crafted path
+ * cannot climb out of the renderer directory once the percent-encoded segments
+ * are decoded.
  */
-function isAppUrl(url: string): boolean {
-  if (url.startsWith('file:')) {
-    const path = localPath(url)
-    return path !== null && path.startsWith(`${RENDERER_DIR}${sep}`)
-  }
+function isAppPage(url: string): boolean {
   const devServer = process.env['ELECTRON_RENDERER_URL']
-  if (!devServer) return false
   try {
-    return new URL(url).origin === new URL(devServer).origin
+    const parsed = new URL(url)
+    if (parsed.protocol === 'file:') {
+      return normalize(decodeURIComponent(parsed.pathname)).startsWith(`${RENDERER_DIR}${sep}`)
+    }
+    return devServer !== undefined && parsed.origin === new URL(devServer).origin
   } catch {
     return false
   }
@@ -84,7 +72,7 @@ export function denyExternalLinks(
   // replaces the app's own page and leaves no way back. Deny it the same way,
   // and hand only a real http(s) link to the browser.
   win.webContents.on('will-navigate', (event, url) => {
-    if (isAppUrl(url)) return
+    if (isAppPage(url)) return
     event.preventDefault()
     if (pattern.test(url)) void shell.openExternal(url)
   })

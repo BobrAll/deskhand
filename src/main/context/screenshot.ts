@@ -70,13 +70,7 @@ const READ_ATTEMPTS = 12
 const READ_RETRY_MS = 40
 const SCREENCAPTURE_TIMEOUT_MS = 8000
 
-/**
- * Where the image sits on the real screen, in *points*.
- *
- * A window capture covers the window rectangle; a display capture covers the
- * whole display the cursor is on. `null` only when Electron cannot answer, in
- * which case nothing is drawn rather than drawing something wrong.
- */
+/** The window rectangle, in points, rounded to what `screencapture` accepts. */
 function areaFromBounds(bounds: NonNullable<CaptureTarget['bounds']>): ScreenRect {
   return {
     x: Math.round(bounds.x),

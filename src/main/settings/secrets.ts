@@ -6,6 +6,7 @@
 
 import { app, safeStorage } from 'electron'
 import Store from 'electron-store'
+import { openRecoverableStore } from './recoverableStore'
 import type { KeyStatus, ProviderId } from '@shared/types'
 import { PROVIDERS } from '@shared/defaults'
 
@@ -18,43 +19,25 @@ let store: Store<SecretsSchema> | null = null
 /**
  * Opens the secrets file, replacing it when it cannot be parsed.
  *
- * `conf` parses the file on the first read, and only there does
- * `clearInvalidConfig` apply; without it a corrupt `deskhand-secrets.json`
- * makes every read throw, which turns `keyStatuses()` and the whole settings
- * bundle into a rejected promise and leaves the settings window on «Не удалось
- * загрузить настройки». The first store is opened without the flag so the
- * corruption is seen and logged instead of being repaired silently.
+ * Without the recovery a corrupt `deskhand-secrets.json` makes every read throw,
+ * which turns `keyStatuses()` and the whole settings bundle into a rejected
+ * promise and leaves the settings window on «Не удалось загрузить настройки».
  */
 function db(): Store<SecretsSchema> | null {
-  if (store) return store
-  try {
-    const first = new Store<SecretsSchema>({
-      name: 'deskhand-secrets',
-      defaults: { secrets: {} }
-    })
-    first.get('secrets')
-    store = first
-    return store
-  } catch (error) {
-    console.warn('[secrets] secrets file is unreadable; the stored keys are lost:', error)
-  }
-  try {
-    store = openStore(true)
-    store.get('secrets')
-    return store
-  } catch (error) {
-    console.error('[secrets] unable to reset the secrets file:', error)
-    store = null
-    return null
-  }
-}
-
-function openStore(clearInvalidConfig: boolean): Store<SecretsSchema> {
-  return new Store<SecretsSchema>({
-    name: 'deskhand-secrets',
-    defaults: { secrets: {} },
-    ...(clearInvalidConfig ? { clearInvalidConfig: true } : {})
+  store ??= openRecoverableStore({
+    create: (clearInvalidConfig) =>
+      new Store<SecretsSchema>({
+        name: 'deskhand-secrets',
+        defaults: { secrets: {} },
+        ...(clearInvalidConfig ? { clearInvalidConfig: true } : {})
+      }),
+    probe: 'secrets',
+    messages: {
+      unreadable: '[secrets] secrets file is unreadable; the stored keys are lost:',
+      resetFailed: '[secrets] unable to reset the secrets file:'
+    }
   })
+  return store
 }
 
 /** The stored slots as they are on disk; a corrupted one may not be a string. */
