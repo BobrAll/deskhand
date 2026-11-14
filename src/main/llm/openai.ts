@@ -25,6 +25,13 @@ interface OpenAiMessage {
   content: string | OpenAiPart[]
 }
 
+/** One `data:` payload of a streamed chat completion. */
+interface OpenAiChunk {
+  choices?: Array<{ delta?: { content?: string | null }; finish_reason?: string | null }>
+  error?: HttpErrorBody['error']
+  usage?: { prompt_tokens?: number; completion_tokens?: number }
+}
+
 export interface OpenAiCompatibleConfig {
   id: LlmProvider['id']
   label: string
@@ -49,6 +56,13 @@ function encodeBlocks(parts: ContentPart[]): string | OpenAiPart[] {
   })
 }
 
+/** `finish_reason` in the words the caller knows. */
+function streamEnd(reason: string): StreamEnd {
+  if (reason === 'stop') return 'complete'
+  if (reason === 'length') return 'limit'
+  return 'incomplete'
+}
+
 export class OpenAIProvider implements LlmProvider {
   readonly id: LlmProvider['id']
   private readonly label: string
@@ -67,7 +81,33 @@ export class OpenAIProvider implements LlmProvider {
     apiKey: string,
     options: StreamOptions
   ): AsyncGenerator<StreamChunk, StreamEnd> {
-    const body = {
+    const body = await this.openStream(messages, apiKey, options)
+    let end: StreamEnd = 'incomplete'
+    let malformed = false
+    for await (const event of readSse(body, false)) {
+      if (event.data === '[DONE]') return malformed ? 'incomplete' : end
+      let parsed: unknown
+      try {
+        parsed = JSON.parse(event.data)
+      } catch {
+        malformed = true
+        continue
+      }
+      const payload = parsed as OpenAiChunk
+      if (payload.error?.message) {
+        throw new ProviderError(`Ошибка модели: ${payload.error.message}`, true)
+      }
+      if (payload.usage) traceModelUsage(payload.usage.prompt_tokens, payload.usage.completion_tokens)
+      const reason = payload.choices?.[0]?.finish_reason
+      if (reason) end = streamEnd(reason)
+      const delta = payload.choices?.[0]?.delta?.content
+      if (delta) yield { delta }
+    }
+    return 'incomplete'
+  }
+
+  private payload(messages: ChatMessage[], options: StreamOptions): object {
+    return {
       model: options.model,
       temperature: options.temperature,
       max_tokens: options.maxTokens,
@@ -79,7 +119,14 @@ export class OpenAIProvider implements LlmProvider {
         content: encodeBlocks(message.parts)
       }))
     }
+  }
 
+  /** Sends the turn and returns its event stream, or throws a mapped error. */
+  private async openStream(
+    messages: ChatMessage[],
+    apiKey: string,
+    options: StreamOptions
+  ): Promise<ReadableStream<Uint8Array>> {
     let response: Response
     try {
       response = await fetch(apiEndpoint(apiRoot(options, this.baseUrl), 'chat/completions').href, {
@@ -89,7 +136,7 @@ export class OpenAIProvider implements LlmProvider {
           'Content-Type': 'application/json',
           ...this.extraHeaders
         },
-        body: JSON.stringify(body),
+        body: JSON.stringify(this.payload(messages, options)),
         signal: options.signal
       })
     } catch (error) {
@@ -98,32 +145,6 @@ export class OpenAIProvider implements LlmProvider {
 
     if (!response.ok) throw await toProviderError(response, this.label)
     if (!response.body) throw new ProviderError('Пустой ответ от сервиса модели.', true)
-
-    let end: StreamEnd = 'incomplete'
-    let malformed = false
-    for await (const event of readSse(response.body, false)) {
-      if (event.data === '[DONE]') return malformed ? 'incomplete' : end
-      let parsed: unknown
-      try {
-        parsed = JSON.parse(event.data)
-      } catch {
-        malformed = true
-        continue
-      }
-      const payload = parsed as {
-        choices?: Array<{ delta?: { content?: string | null }; finish_reason?: string | null }>
-        error?: HttpErrorBody['error']
-        usage?: { prompt_tokens?: number; completion_tokens?: number }
-      }
-      if (payload.error?.message) {
-        throw new ProviderError(`Ошибка модели: ${payload.error.message}`, true)
-      }
-      if (payload.usage) traceModelUsage(payload.usage.prompt_tokens, payload.usage.completion_tokens)
-      const reason = payload.choices?.[0]?.finish_reason
-      if (reason) end = reason === 'stop' ? 'complete' : reason === 'length' ? 'limit' : 'incomplete'
-      const delta = payload.choices?.[0]?.delta?.content
-      if (delta) yield { delta }
-    }
-    return 'incomplete'
+    return response.body
   }
 }

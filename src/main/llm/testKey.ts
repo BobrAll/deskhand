@@ -32,9 +32,14 @@ function apiHeaders(provider: ProviderId, key: string): Record<string, string> {
     : { Authorization: `Bearer ${key}` }
 }
 
-function describe(status: number, label: string, body: string): string {
+/** The provider as the person reads it in a sentence. */
+function providerLabel(provider: ProviderId): string {
+  return providerInfo(provider)?.label ?? provider
+}
+
+function probeMessage(status: number, provider: ProviderId, body: string): string {
   return describeProviderStatus(status, {
-    label,
+    label: providerLabel(provider),
     detail: body.slice(0, BODY_PREVIEW_CHARS),
     probe: true
   }).message
@@ -63,12 +68,10 @@ export async function testApiKey(
     })
 
     if (response.ok) {
-      const label = providerInfo(provider)?.label ?? provider
-      return { ok: true, message: `Ключ ${label} работает.` }
+      return { ok: true, message: `Ключ ${providerLabel(provider)} работает.` }
     }
     const body = await response.text().catch(() => '')
-    const label = providerInfo(provider)?.label ?? provider
-    return { ok: false, message: describe(response.status, label, body) }
+    return { ok: false, message: probeMessage(response.status, provider, body) }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     if (/abort/i.test(message)) return { ok: false, message: 'Превышено время ожидания ответа.' }
@@ -99,10 +102,7 @@ export async function listProviderModels(
         signal
       })
       if (!response.ok) {
-        return {
-          ok: false,
-          message: describe(response.status, providerInfo(provider)?.label ?? provider, '')
-        }
+        return { ok: false, message: probeMessage(response.status, provider, '') }
       }
 
       const page = await response.json() as { data?: unknown; has_more?: unknown; last_id?: unknown } | null
