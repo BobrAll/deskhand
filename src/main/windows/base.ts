@@ -1,6 +1,4 @@
-import { join } from 'node:path'
-
-const preload = join(__dirname, '../preload/index.js')
+import { preloadPath } from '../preloadPath'
 
 /** The app's own window colour, so the first frame is not white. */
 const WINDOW_BACKGROUND = '#0f1115'
@@ -22,7 +20,7 @@ export function appWindowOptions(
     titleBarStyle: 'hiddenInset',
     trafficLightPosition: TRAFFIC_LIGHT_POSITION,
     webPreferences: {
-      preload,
+      preload: preloadPath,
       sandbox: false,
       contextIsolation: true,
       nodeIntegration: false

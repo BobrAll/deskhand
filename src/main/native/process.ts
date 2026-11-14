@@ -58,16 +58,25 @@ export function runHelper(
   const command = args[0]
   const end = traceEnd('helper', { command })
   return new Promise((resolve) => {
+    let timeoutTimer: ReturnType<typeof setTimeout> | undefined
+    /** Set once the child has been signalled; guards a second SIGTERM. */
+    let killTimer: ReturnType<typeof setTimeout> | undefined
+
+    /** Releases the timers, the abort listener and the trace slice, once. */
+    const settle = (payload: HelperPayload | null): void => {
+      clearTimeout(timeoutTimer)
+      clearTimeout(killTimer)
+      signal?.removeEventListener('abort', cancel)
+      end()
+      resolve(payload)
+    }
+
     // Wait for process close instead of using execFile's AbortSignal: its
     // callback can fire before the helper releases a held key or button.
     const child = execFile(binary, args, { ...(signal ? {} : { timeout: timeoutMs }), maxBuffer: MAX_OUTPUT_BYTES }, (error, stdout) => {
-      clearTimeout(timer)
-      clearTimeout(force)
-      signal?.removeEventListener('abort', cancel)
-      end()
       if (error) {
         trace('helper.error', { command, killed: error.killed === true })
-        resolve(null)
+        settle(null)
         return
       }
       try {
@@ -78,19 +87,22 @@ export function runHelper(
         if (command === 'click' && typeof payload.pressMs === 'number' && typeof payload.releaseMs === 'number') {
           trace('click.native', { pressMs: payload.pressMs, releaseMs: payload.releaseMs })
         }
-        resolve(payload)
+        settle(payload)
       } catch {
-        resolve(null)
+        settle(null)
       }
     })
-    let force: ReturnType<typeof setTimeout> | undefined
-    const cancel = (): void => {
-      if (force) return
+
+    function cancel(): void {
+      if (killTimer) return
       child.kill('SIGTERM')
-      force = setTimeout(() => child.kill('SIGKILL'), KILL_GRACE_MS)
+      killTimer = setTimeout(() => child.kill('SIGKILL'), KILL_GRACE_MS)
     }
-    const timer = signal ? setTimeout(cancel, timeoutMs) : undefined
-    signal?.addEventListener('abort', cancel, { once: true })
+
+    if (signal) {
+      timeoutTimer = setTimeout(cancel, timeoutMs)
+      signal.addEventListener('abort', cancel, { once: true })
+    }
   })
 }
 

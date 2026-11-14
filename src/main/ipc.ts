@@ -165,45 +165,67 @@ async function applySettingsSideEffects(
   return null
 }
 
-export function registerIpc(deps: IpcDeps): void {
-  /**
-   * Points the voice settings at one model.
-   *
-   * One place, because three paths do it: a finished download, a finished
-   * import, and a delete that took the selected model away. The model is read
-   * from the settings at transcription time, so writing the file is enough —
-   * unlike the hotkey, nothing holds it across calls.
-   */
-  function selectModel(id: string): void {
-    patchSettings({ voice: { ...getSettings().voice, model: id } })
-  }
+/**
+ * Points the voice settings at one model.
+ *
+ * One place, because three paths do it: a finished download, a finished
+ * import, and a delete that took the selected model away. The model is read
+ * from the settings at transcription time, so writing the file is enough —
+ * unlike the hotkey, nothing holds it across calls.
+ */
+function selectModel(id: string): void {
+  patchSettings({ voice: { ...getSettings().voice, model: id } })
+}
 
-  // ---- overlay -----------------------------------------------------------
-  ipcMain.handle(CH.overlay.getState, () => deps.overlay.state())
+/**
+ * Wires every channel to its handler.
+ *
+ * Split by the window each group serves: the card, the settings window, the
+ * onboarding wizard, and the two background features the card asks for (push to
+ * talk and speech). Registration order does not matter — every channel is
+ * distinct, and `ipc.test.ts` pins that none is wired twice.
+ */
+export function registerIpc(deps: IpcDeps): void {
+  registerOverlayHandlers(deps.overlay)
+  registerSettingsHandlers(deps)
+  registerPermissionHandlers()
+  registerOnboardingHandlers()
+  registerVoiceHandlers(deps.voice)
+  registerTtsHandlers()
+  registerAgentHandlers(deps.overlay)
+}
+
+// ---- the card ------------------------------------------------------------
+function registerOverlayHandlers(overlay: OverlayController): void {
+  ipcMain.handle(CH.overlay.getState, () => overlay.state())
 
   ipcMain.on(CH.overlay.send, (_event, request: SendRequest) => {
-    void deps.overlay.send(request)
+    void overlay.send(request)
   })
-  ipcMain.on(CH.overlay.cancel, (_event, requestId: string) => deps.overlay.cancel(requestId))
-  ipcMain.on(CH.overlay.setFlags, (_event, flags: ContextFlags) => deps.overlay.setFlags(flags))
-  ipcMain.on(CH.overlay.clearDrawing, () => deps.overlay.clearDrawing())
-  ipcMain.on(CH.overlay.typing, (_event, typing: boolean) => deps.overlay.setTyping(Boolean(typing)))
+  ipcMain.on(CH.overlay.cancel, (_event, requestId: string) => overlay.cancel(requestId))
+  ipcMain.on(CH.overlay.setFlags, (_event, flags: ContextFlags) => overlay.setFlags(flags))
+  ipcMain.on(CH.overlay.clearDrawing, () => overlay.clearDrawing())
+  ipcMain.on(CH.overlay.typing, (_event, typing: boolean) => overlay.setTyping(Boolean(typing)))
   ipcMain.on(CH.overlay.resize, (_event, height: number, width?: number, pin?: boolean) =>
-    deps.overlay.resize(height, width, Boolean(pin))
+    overlay.resize(height, width, Boolean(pin))
   )
-  ipcMain.on(CH.overlay.close, () => deps.overlay.close())
+  ipcMain.on(CH.overlay.close, () => overlay.close())
 
   ipcMain.handle(CH.overlay.copy, async (_event, text: string): Promise<ActionResult> => {
     try {
-      await deps.overlay.copy(text)
+      await overlay.copy(text)
       return { ok: true }
     } catch {
       return { ok: false, message: 'Не удалось скопировать ответ.' }
     }
   })
-  ipcMain.handle(CH.overlay.paste, (_event, text: string) => deps.overlay.paste(text))
+  ipcMain.handle(CH.overlay.paste, (_event, text: string) => overlay.paste(text))
+}
 
-  // ---- settings ----------------------------------------------------------
+// ---- the settings window -------------------------------------------------
+function registerSettingsHandlers(
+  deps: Pick<IpcDeps, 'applyHotkey' | 'applyLaunchAtLogin' | 'voice' | 'setRecording'>
+): void {
   ipcMain.handle(CH.settings.load, () => loadSettingsBundle())
 
   ipcMain.handle(CH.settings.save, async (_event, incoming: unknown) => {
@@ -248,8 +270,10 @@ export function registerIpc(deps: IpcDeps): void {
   // 450 ms debounce would destroy the window and take the edit with it.
   ipcMain.on(CH.settings.hold, (_event, held: boolean) => setSettingsHeld(Boolean(held)))
   ipcMain.on(CH.settings.recording, (_event, active: boolean) => deps.setRecording(Boolean(active)))
+}
 
-  // ---- permissions -------------------------------------------------------
+// ---- permissions ---------------------------------------------------------
+function registerPermissionHandlers(): void {
   ipcMain.handle(CH.permissions.status, () => readPermissions())
   ipcMain.handle(CH.permissions.request, (_event, kind: unknown) => {
     if (kind === undefined || kind === 'accessibility' || kind === 'screenRecording') {
@@ -264,8 +288,10 @@ export function registerIpc(deps: IpcDeps): void {
       openPermissionPane(kind)
     }
   )
+}
 
-  // ---- onboarding --------------------------------------------------------
+// ---- onboarding ----------------------------------------------------------
+function registerOnboardingHandlers(): void {
   ipcMain.handle(CH.onboarding.complete, () => {
     patchSettings({ onboardingCompleted: true })
     closeOnboardingWindow()
@@ -274,25 +300,27 @@ export function registerIpc(deps: IpcDeps): void {
     closeOnboardingWindow()
     openSettingsWindow()
   })
+}
 
-  // ---- voice (push-to-talk) ----------------------------------------------
+// ---- voice (push-to-talk) ------------------------------------------------
+function registerVoiceHandlers(voice: VoiceController): void {
   ipcMain.handle(CH.voice.status, async () => {
-    return deps.voice.status()
+    return voice.status()
   })
 
   // The card is opened *by* the key press, so it asks what it missed on mount.
-  ipcMain.handle(CH.voice.attach, () => deps.voice.attach())
+  ipcMain.handle(CH.voice.attach, () => voice.attach())
 
   ipcMain.handle(CH.voice.recorded, async (_event, wavBase64: string, durationMs: number) => {
-    return deps.voice.handleRecording({ wavBase64: String(wavBase64 ?? ''), durationMs: Number(durationMs) || 0 })
+    return voice.handleRecording({ wavBase64: String(wavBase64 ?? ''), durationMs: Number(durationMs) || 0 })
   })
 
   ipcMain.on(CH.voice.failed, (_event, message: string) => {
-    deps.voice.failed(String(message ?? 'Микрофон недоступен.'))
+    voice.failed(String(message ?? 'Микрофон недоступен.'))
   })
 
   ipcMain.on(CH.voice.level, (_event, level: number) => {
-    deps.voice.setLevel(Number(level) || 0)
+    voice.setLevel(Number(level) || 0)
   })
 
   ipcMain.handle(CH.voice.download, async (event, model: string) => {
@@ -312,7 +340,7 @@ export function registerIpc(deps: IpcDeps): void {
     } catch {
       /* the failure is already in the last progress event */
     }
-    return deps.voice.status()
+    return voice.status()
   })
 
   ipcMain.handle(CH.voice.deleteModel, async (_event, model: string) => {
@@ -320,7 +348,7 @@ export function registerIpc(deps: IpcDeps): void {
     const wasSelected = getSettings().voice.model === id
     await deleteModel(id)
     if (wasSelected) selectModel(BUNDLED_VOICE_MODEL.id)
-    return deps.voice.status()
+    return voice.status()
   })
 
   ipcMain.handle(CH.voice.importModel, async () => {
@@ -335,7 +363,7 @@ export function registerIpc(deps: IpcDeps): void {
     } catch (error) {
       console.warn('[voice] import failed:', error)
     }
-    return deps.voice.status()
+    return voice.status()
   })
 
   ipcMain.handle(CH.voice.test, async () => {
@@ -349,11 +377,13 @@ export function registerIpc(deps: IpcDeps): void {
       message: status.ready ? 'Можно удерживать горячую клавишу и говорить.' : (status.detail ?? undefined)
     }
   })
+}
 
-  // ---- the assistant's voice ---------------------------------------------
-  // Synthesis lives in the main process because that is where the key is: the
-  // overlay asks for a line and gets a clip back, never a credential. The key
-  // itself is written once and never read back through any channel.
+// ---- the assistant's voice -----------------------------------------------
+// Synthesis lives in the main process because that is where the key is: the
+// overlay asks for a line and gets a clip back, never a credential. The key
+// itself is written once and never read back through any channel.
+function registerTtsHandlers(): void {
   ipcMain.handle(CH.tts.speak, (_event, text: unknown, localOnly: unknown) =>
     synthesize(typeof text === 'string' ? text : '', localOnly === true)
   )
@@ -380,29 +410,31 @@ export function registerIpc(deps: IpcDeps): void {
     await removeSilero()
     return ttsStatus()
   })
+}
 
-  // ---- agent (mouse and keyboard control) --------------------------------
-  // The card can ask whether the assistant may press anything, can stop a run and
-  // can answer the question the run is blocked on. It cannot start one: a run is
-  // only ever started by a request the user typed, so no channel here moves the
-  // cursor on its own.
-  ipcMain.handle(CH.agent.availability, () => deps.overlay.agentAvailability())
+// ---- agent (mouse and keyboard control) ----------------------------------
+// The card can ask whether the assistant may press anything, can stop a run and
+// can answer the question the run is blocked on. It cannot start one: a run is
+// only ever started by a request the user typed, so no channel here moves the
+// cursor on its own.
+function registerAgentHandlers(overlay: OverlayController): void {
+  ipcMain.handle(CH.agent.availability, () => overlay.agentAvailability())
   // Persisting the switch itself: it cannot start a run and it cannot move the
   // cursor — the settings tab and the card both use it, and nothing else does.
   ipcMain.handle(CH.agent.setEnabled, (_event, enabled: boolean) =>
-    deps.overlay.setAgentEnabled(Boolean(enabled))
+    overlay.setAgentEnabled(Boolean(enabled))
   )
   ipcMain.handle(CH.agent.clearApprovals, () => {
     patchSettings({ agent: { ...getSettings().agent, rememberedApprovals: [] } })
   })
   ipcMain.handle(CH.agent.stop, () => {
-    deps.overlay.stopAgent()
+    overlay.stopAgent()
   })
   // One answer to one question. The id is checked in the controller, so a stale
   // click — a button that was already handled, a second press after the run moved
   // on — is dropped instead of being applied to the next call.
   ipcMain.handle(CH.agent.answer, (_event, id: unknown, allow: unknown, remember: unknown) => {
     if (typeof id !== 'string' || !id) return
-    deps.overlay.answerAgent(id, allow === true, remember === true)
+    overlay.answerAgent(id, allow === true, remember === true)
   })
 }

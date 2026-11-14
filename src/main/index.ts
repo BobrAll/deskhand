@@ -31,6 +31,7 @@ import { shutdownSilero } from './tts/silero'
 import { encryptionAvailable } from './settings/secrets'
 import { QUIT_LABEL, SETTINGS_ACCELERATOR, SETTINGS_LABEL } from './menus'
 import { DEFAULT_SETTINGS } from '@shared/defaults'
+import type { AppSettings } from '@shared/types'
 
 /**
  * Audio has to start without a click.
@@ -191,6 +192,53 @@ function reportStartupPermissions(): void {
  */
 let quitStarted = false
 
+/**
+ * Whether this launch came from the login item rather than from the user.
+ *
+ * A manual launch has to produce something visible, while a launch by the login
+ * item stays quiet. Older macOS builds may not report the flag at all; a visible
+ * overlay is the safer default, so a failure counts as a manual launch.
+ */
+function launchedByLoginItem(): boolean {
+  try {
+    return app.getLoginItemSettings().wasOpenedAtLogin
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Starts the pieces no first window or hotkey needs.
+ *
+ * `bootstrap` schedules this on a zero timeout so the hotkey, the voice tap and
+ * the window request are all registered before the tray, the login item and a
+ * permission diagnostic take the main thread. An immediate quit may have run
+ * `finishQuit` already; creating the tray after `destroyTray()` would leave an
+ * icon nobody removes, so a started quit skips the whole group. Inside it each
+ * step stands alone: a tray icon that cannot be created must not skip the login
+ * item or the permission diagnostic as well.
+ */
+function startDeferredServices(settings: AppSettings): void {
+  if (quitStarted) return
+  const attempt = (task: () => void): void => {
+    try {
+      task()
+    } catch (error) {
+      console.error('[app] deferred startup step failed:', error)
+    }
+  }
+  attempt(() => createTray({
+    openAssistant: () => {
+      void overlay.open()
+    },
+    openSettings: () => openSettingsWindow(),
+    openOnboarding: () => openOnboardingWindow(),
+    quit
+  }))
+  attempt(() => applyLaunchAtLogin(settings.launchAtLogin))
+  attempt(reportStartupPermissions)
+}
+
 function bootstrap(): void {
   buildApplicationMenu()
 
@@ -243,55 +291,19 @@ function bootstrap(): void {
   // this only confirms it.
   voice.applySettings()
 
-  // A manual launch (double-click on the app icon) must produce something visible:
-  // otherwise the click looks like a no-op. A launch by the login item must stay
-  // quiet instead.
-  let launchedManually = true
-  try {
-    launchedManually = !app.getLoginItemSettings().wasOpenedAtLogin
-  } catch {
-    // Older macOS builds may not report the flag at all; the visible overlay is
-    // the safer default.
-  }
-
+  // A manual launch (double-click on the app icon) must produce something
+  // visible: otherwise the click looks like a no-op. A launch by the login item
+  // must stay quiet instead.
   if (!settings.onboardingCompleted) {
     patchSettings({ onboardingCompleted: true })
     openOnboardingWindow()
-  } else if (launchedManually) {
+  } else if (!launchedByLoginItem()) {
     void overlay.open()
   }
 
-  // None of this is needed for the first window or the first hotkey, and creating
-  // the tray alone blocks the main thread for tens of milliseconds. The zero
-  // timeout moves it out of the synchronous part of `bootstrap` — it does not
-  // wait for the card to paint, which happens in the renderer process anyway.
-  // What it buys is that the hotkey, the voice tap and the window request are all
-  // registered before the tray, the login item and a permission diagnostic take
-  // the main thread.
-  setTimeout(() => {
-    // An immediate quit may have run `finishQuit` already; creating the tray
-    // after `destroyTray()` would leave an icon nobody removes.
-    if (quitStarted) return
-    // Each step stands alone: a tray icon that cannot be created must not skip
-    // the login item or the permission diagnostic as well.
-    const attempt = (task: () => void): void => {
-      try {
-        task()
-      } catch (error) {
-        console.error('[app] deferred startup step failed:', error)
-      }
-    }
-    attempt(() => createTray({
-      openAssistant: () => {
-        void overlay.open()
-      },
-      openSettings: () => openSettingsWindow(),
-      openOnboarding: () => openOnboardingWindow(),
-      quit
-    }))
-    attempt(() => applyLaunchAtLogin(settings.launchAtLogin))
-    attempt(reportStartupPermissions)
-  }, 0)
+  // Off the synchronous startup path; the tray alone blocks the main thread for
+  // tens of milliseconds. See `startDeferredServices`.
+  setTimeout(() => startDeferredServices(settings), 0)
 }
 
 /** One instance only: a second launch just re-opens the overlay. */
