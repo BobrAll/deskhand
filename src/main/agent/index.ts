@@ -113,6 +113,15 @@ const APPROVAL_TIMEOUT_MS = 5 * 60_000
 const REFUSED_LABEL = 'Действие отклонено.'
 
 /**
+ * What the agent is told when the user stops the run on a pending question.
+ *
+ * Model-facing, so English: this string becomes the tool result the model reads
+ * on its next step, and text the model reads is English by contract. The card's
+ * own sentence is the `message` `stop()` publishes.
+ */
+const CANCELLED_REASON = 'The run was cancelled by the user.'
+
+/**
  * Milliseconds, at one decimal.
  *
  * Not integers: most tool calls take a fraction of a millisecond, and rounding
@@ -895,7 +904,7 @@ export function createAgentController(host: AgentHost) {
       const pending = active.pending
       clearTimeout(pending.timer)
       active.pending = null
-      approve(pending.request.id, false, 'Отменено.')
+      approve(pending.request.id, false, CANCELLED_REASON)
     }
     sidecar.cancel()
     watcher?.stop()

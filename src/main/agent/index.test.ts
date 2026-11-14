@@ -735,7 +735,11 @@ describe('stopping', () => {
 
     // A stop that did not answer the question would be a stop that never lands:
     // the agent is blocked on it.
-    expect(state.approvals).toEqual([{ id: 'call-1', allow: false, reason: 'Отменено.' }])
+    // The refusal reaches the model as a tool result, so that sentence is
+    // English; the card keeps its own Russian one, published by `stop()`.
+    expect(state.approvals).toEqual([
+      { id: 'call-1', allow: false, reason: 'The run was cancelled by the user.' }
+    ])
     expect(state.cancels).toBe(1)
     expect(h.last()).toMatchObject({ phase: 'aborted', message: 'Остановлено: ты взял мышь.' })
 
