@@ -192,11 +192,15 @@ export class SileroWorker {
     this.busy = true
     void this.run(job)
       .then(job.resolve, job.reject)
-      .finally(() => {
-        this.busy = false
-        this.pump()
-        if (!this.busy) this.scheduleIdle()
-      })
+      .finally(() => this.finishJob())
+  }
+
+  private finishJob(): void {
+    this.busy = false
+    this.pump()
+    // `pump` takes `busy` again when another phrase was waiting; only a queue
+    // that stayed empty starts the idle countdown.
+    if (!this.busy) this.scheduleIdle()
   }
 
   private async run(job: Job): Promise<void> {
