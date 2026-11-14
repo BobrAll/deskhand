@@ -228,7 +228,7 @@ function performShow(height: number, width: number, activate: boolean): void {
   // A card that is already on screen keeps its own size.
   //
   // Both numbers passed here are guesses: until the renderer lays itself out the
-  // card is one folded line tall and 112 points wide, still empty. The renderer
+  // card is one folded line tall and one narrow width wide, still empty. The renderer
   // reports the real size a frame later and resizes the window itself, so
   // re-applying a guess over a card that is already being typed into would shrink
   // it back to the empty pill between two keystrokes. Keep the position when the
@@ -386,6 +386,18 @@ export const overlayHost: OverlayHost = {
 
   hideField(): void {
     hideFieldHighlight()
+  },
+
+  /** Takes the keyboard for an approval question. */
+  focus(): void {
+    const win = overlayWindow
+    if (!win || win.isDestroyed() || !overlayVisible) return
+    win.focus()
+    try {
+      app.focus({ steal: true })
+    } catch {
+      /* keeping the current focus is acceptable */
+    }
   },
 
   /**

@@ -14,10 +14,14 @@
  */
 
 /**
- * Folded — which is how the card opens: a small pill about three times as wide
- * as the single line it is tall.
+ * Folded — which is how the card opens: a small pill wide enough for the resting
+ * placeholder and the two trailing controls.
+ *
+ * It used to be 112, which was exactly the empty field plus a chevron. The card
+ * now also carries a close button and asks «Что сделать?», so the narrow width has
+ * to cover both without clipping the only label an empty card has.
  */
-export const CARD_NARROW_WIDTH = 112
+export const CARD_NARROW_WIDTH = 152
 
 /**
  * macOS can composite a transparent window as an opaque rectangle when both

@@ -36,7 +36,9 @@ const state = vi.hoisted(() => ({
   cancels: 0,
   runs: [] as unknown[],
   /** Everything the controller asked the trace to record. */
-  traceEvents: [] as Record<string, unknown>[]
+  traceEvents: [] as Record<string, unknown>[],
+  /** The callback the run registered with the Escape/mouse watcher. */
+  abort: (_reason: 'escape' | 'mousemove') => {}
 }))
 
 vi.mock('./trace', () => ({
@@ -53,7 +55,10 @@ vi.mock('electron', () => ({
 }))
 vi.mock('../native/helper', () => ({
   helperBinary: () => state.helper,
-  watchForAbort: () => ({ stop: vi.fn() })
+  watchForAbort: (_mode: string, onAbort: (reason: 'escape' | 'mousemove') => void) => {
+    state.abort = onAbort
+    return { stop: vi.fn() }
+  }
 }))
 vi.mock('../settings/store', () => ({
   getSettings: () => ({
@@ -119,9 +124,11 @@ function harness(options: { maxTokens?: number } = {}) {
   const events: AgentEvent[] = []
   const passthrough: boolean[] = []
   const presentations: AgentPresentation[] = []
+  const focuses: number[] = []
   const controller = createAgentController({
     emit: (event) => events.push(event),
     setPassthrough: (active) => passthrough.push(active),
+    focus: () => focuses.push(focuses.length + 1),
     present: (action) => presentations.push(action)
   })
   return {
@@ -129,6 +136,7 @@ function harness(options: { maxTokens?: number } = {}) {
     events,
     passthrough,
     presentations,
+    focuses,
     /** The last thing the card was told. */
     last: () => events.at(-1)!,
     /** Everything this run asked the trace to record. */
@@ -161,6 +169,7 @@ beforeEach(() => {
   state.cancels = 0
   state.runs = []
   state.traceEvents = []
+  state.abort = () => {}
 })
 
 describe('availability: three separate reasons, three separate fixes', () => {
@@ -568,6 +577,68 @@ describe('the question in the card', () => {
 
     state.emit({ kind: 'done', complete: true, answer: 'Готово.' })
     await running
+  })
+
+  it('takes the keyboard when it asks, and only then', async () => {
+    const h = harness()
+    const running = h.run()
+    await vi.waitFor(() => expect(h.passthrough).toEqual([true]))
+    expect(h.focuses).toHaveLength(0)
+
+    state.emit({ kind: 'approval', request: call() })
+
+    expect(h.focuses).toHaveLength(1)
+    h.controller.answer('call-1', false, false)
+    state.emit({ kind: 'cancelled' })
+    await running
+  })
+
+  it('does not stop the run when the hand moves toward the answer', async () => {
+    const h = harness()
+    const running = h.run()
+    await vi.waitFor(() => expect(state.runs).toHaveLength(1))
+
+    state.emit({ kind: 'approval', request: call() })
+    expect(h.last().phase).toBe('asking')
+
+    // The pointer is on its way to «Разрешить». Reaching for the card is not
+    // taking control back; the watcher used to stop the run here.
+    state.abort('mousemove')
+
+    expect(state.cancels).toBe(0)
+    expect(h.last().phase).toBe('asking')
+
+    h.controller.answer('call-1', false, false)
+    state.emit({ kind: 'cancelled' })
+    await running
+  })
+
+  it('lets the hand leave the button before the mouse can stop the run', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    try {
+      const started = new Date('2026-01-01T00:00:00Z')
+      vi.setSystemTime(started)
+      const h = harness()
+      const running = h.run()
+      await vi.waitFor(() => expect(state.runs).toHaveLength(1))
+
+      state.emit({ kind: 'approval', request: call() })
+      h.controller.answer('call-1', true, false)
+
+      state.abort('mousemove')
+      expect(state.cancels).toBe(0)
+      expect(h.last().phase).toBe('acting')
+
+      vi.setSystemTime(new Date(started.getTime() + 1300))
+      state.abort('mousemove')
+
+      expect(state.cancels).toBe(1)
+      expect(h.last().phase).toBe('aborted')
+      const result = await running
+      expect(result.aborted).toBe(true)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('remembers a "разрешить всегда" by fingerprint, and nothing else', async () => {

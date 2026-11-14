@@ -25,6 +25,8 @@ export type KeyAction =
   | 'close'
   | 'cancel'
   | 'stopAgent'
+  | 'approve'
+  | 'approveAlways'
   | 'paste'
   | 'copy'
   | 'send'
@@ -40,6 +42,8 @@ export interface KeyInput {
   tagName: string | null
   /** The agent row's phase, when a run is on screen. */
   agentPhase: AgentPhase | null
+  /** A writer request is in flight, so Escape stops it instead of closing. */
+  busy: boolean
   /** Whether anything is selected on the page. */
   hasSelection: boolean
   /** Whether there is an answer to copy. */
@@ -65,10 +69,23 @@ export function keyPolicy(input: KeyInput): KeyAction {
       return 'stopAgent'
     }
     if (input.agentPhase === 'arming' || input.agentPhase === 'acting') return 'stopAgent'
+    // A running answer is not a reason to close the card: the first Escape
+    // stops it and puts the question back, the second one closes an idle card.
+    if (input.busy) return 'cancel'
     return 'close'
   }
 
   const meta = input.meta
+
+  /**
+   * The approval question owns Enter while it is on screen.
+   *
+   * A focused button keeps its own Enter: the card must not turn a deliberate
+   * «Отменить» into an approval because the window handler heard the key first.
+   */
+  if (input.agentPhase === 'asking' && input.tagName !== 'BUTTON') {
+    if (input.key === 'Enter') return meta ? 'approveAlways' : 'approve'
+  }
 
   // ⌘⏎ pastes the answer — the same thing the «Вставить» button does.
   if (meta && input.key === 'Enter') return 'paste'

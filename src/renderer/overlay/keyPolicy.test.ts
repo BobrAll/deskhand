@@ -19,6 +19,7 @@ function key(overrides: Partial<KeyInput> = {}): KeyInput {
     shift: false,
     tagName: 'TEXTAREA',
     agentPhase: null,
+    busy: false,
     hasSelection: false,
     hasAnswer: true,
     ...overrides
@@ -46,6 +47,26 @@ describe('keyPolicy: Escape while a run owns the card', () => {
 
   it('closes a card with no run on it', () => {
     expect(keyPolicy(key({ key: 'Escape', agentPhase: null }))).toBe('close')
+  })
+
+  it('stops a running answer without closing the card', () => {
+    expect(keyPolicy(key({ key: 'Escape', busy: true }))).toBe('cancel')
+  })
+})
+
+describe('keyPolicy: the question in the card', () => {
+  it('approves with Enter and remembers with Command+Enter', () => {
+    expect(keyPolicy(key({ key: 'Enter', agentPhase: 'asking' }))).toBe('approve')
+    expect(keyPolicy(key({ key: 'Enter', agentPhase: 'asking', meta: true }))).toBe('approveAlways')
+  })
+
+  it('leaves Enter to a focused approval button', () => {
+    // Otherwise tabbing to «Отменить» and pressing Enter would approve instead.
+    expect(keyPolicy(key({ key: 'Enter', agentPhase: 'asking', tagName: 'BUTTON' }))).toBeNull()
+  })
+
+  it('refuses the question with Escape', () => {
+    expect(keyPolicy(key({ key: 'Escape', agentPhase: 'asking' }))).toBe('stopAgent')
   })
 })
 

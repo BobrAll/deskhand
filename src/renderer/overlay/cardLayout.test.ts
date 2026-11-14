@@ -45,6 +45,7 @@ function input(overrides: Partial<CardLayoutInput> = {}): CardLayoutInput {
     busy: false,
     speaking: false,
     agentStatus: null,
+    agentHint: null,
     agentRunning: false,
     listening: false,
     wantsWide: false,
@@ -138,5 +139,18 @@ describe('layoutCard: the rest of the card', () => {
 
     expect(still.width).toBe(measured + AGENT_STATUS_INSET)
     expect(running.width).toBe(measured)
+  })
+
+  it('leaves room for the Escape hint beside a running agent', () => {
+    const agentStatus = 'Нажимаю «Экспорт»'
+    const hint = 'Esc — остановить'
+    const withHint = layoutCard(input({ agentStatus, agentHint: hint, agentRunning: true }))
+    const measured = (agentStatus.length + 2 + hint.length) * POINTS_PER_CHAR +
+      AGENT_ROW_CHROME + CARET_SLACK
+
+    // The line wants more than the content cap; the point is that the hint is
+    // part of the measurement instead of being clipped by a width that forgot it.
+    expect(withHint.naturalWidth).toBe(measured)
+    expect(withHint.width).toBe(CARD_WIDTH)
   })
 })

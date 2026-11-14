@@ -70,6 +70,8 @@ export interface CardLayoutInput {
   speaking: boolean
   /** The agent row's status line, when it has one. */
   agentStatus: string | null
+  /** The stop hint beside a running agent's status, when it is shown. */
+  agentHint: string | null
   /** The status is drawn while the run is still going, without the row's inset. */
   agentRunning: boolean
   /** A voice turn shows the bars and nothing else. */
@@ -133,8 +135,9 @@ export function layoutCard(input: CardLayoutInput): CardLayout {
         ACTIONS_FONT
       )) + ACTIONS_CHROME
     : 0
-  const agentWidth = input.agentStatus
-    ? Math.ceil(measureLine(input.agentStatus, AGENT_FONT)) +
+  const agentLine = [input.agentStatus, input.agentHint].filter(Boolean).join('  ')
+  const agentWidth = agentLine
+    ? Math.ceil(measureLine(agentLine, AGENT_FONT)) +
       AGENT_ROW_CHROME + (input.agentRunning ? 0 : AGENT_STATUS_INSET) + CARET_SLACK
     : 0
 

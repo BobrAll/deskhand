@@ -85,6 +85,21 @@ body,
   border-color: color-mix(in srgb, var(--accent) 45%, var(--panel-edge));
 }
 
+/* The only draggable part of the card: the six points of top padding. It sits
+   outside the field, so a drag never starts a text selection. */
+.card > .move {
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 6px;
+  z-index: 2;
+  cursor: grab;
+  -webkit-app-region: drag;
+}
+
+.card > .move:active {
+  cursor: grabbing;
+}
+
 @keyframes appear {
   from {
     opacity: 0;
@@ -210,6 +225,39 @@ button.toggle[data-alert] {
 
 button.toggle[data-open] svg {
   transform: rotate(180deg);
+}
+
+/* The mouse's way out. The same quiet register as the chevron: it is a door
+   out of a small panel, not a third thing to read. */
+button.close {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  margin-top: 1px;
+  padding: 0;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  border-color: transparent;
+  color: var(--text-faint);
+  transition: color 90ms ease-out, background 90ms ease-out;
+}
+
+button.close svg {
+  width: 9px;
+  height: 9px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+}
+
+button.close:hover:not(:disabled) {
+  background: var(--surface);
+  border-color: transparent;
+  color: var(--text);
 }
 
 /* While an answer streams the chevron gets company: a long answer that is
@@ -422,6 +470,15 @@ button.tag.clear {
   animation: agent-step-in 150ms ease-out;
 }
 
+/* A stop control cannot live on the card while a plan is click-through; the
+   key that can is worth naming. */
+.agent-hint {
+  flex: none;
+  font-size: 10.5px;
+  color: var(--text-faint);
+  white-space: nowrap;
+}
+
 .agent-dot {
   width: 6px;
   height: 6px;
@@ -451,6 +508,18 @@ button.tag.clear {
   margin-top: 2px;
   padding-top: 6px;
   border-top: 1px solid color-mix(in srgb, var(--accent) 22%, transparent);
+}
+
+.agent-ask-title {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.agent-ask-hint {
+  font-size: 10.5px;
+  line-height: 1.35;
+  color: var(--text-faint);
 }
 
 .agent-ask-detail {
@@ -770,6 +839,12 @@ button.link.primary {
 
 button.link.primary:hover:not(:disabled) {
   background: var(--accent-soft);
+}
+
+/* Copy is the one action that confirms itself in place; a new line under the
+   card would survive long after the click and push everything around. */
+button.link[data-copied] {
+  color: var(--success);
 }
 
 /* ------------------------------------------------------- the listening card */

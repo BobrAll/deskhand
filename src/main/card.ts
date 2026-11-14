@@ -165,6 +165,37 @@ export function boundsFor(anchor: CardAnchor, height: number, width: number): Sc
   }
 }
 
+function coversPoint(rect: ScreenRect, point: ScreenPoint): boolean {
+  return point.x >= rect.x && point.x < rect.x + rect.width &&
+    point.y >= rect.y && point.y < rect.y + rect.height
+}
+
+/**
+ * Keeps an auto-placed card off the pointer when its far edge has to be pinned.
+ *
+ * A card that grows wider near a display edge slides back over the pointer: the
+ * right side no longer fits, so `xFor` clamps the far edge and the panel ends up
+ * under the cursor. Moving to the other side is the last resort — the side is
+ * kept whenever it can — but a cursor hidden under the answer cannot point at
+ * anything.
+ */
+function keepPointerClear(placed: CardAnchor, height: number, width: number): CardAnchor {
+  if (!coversPoint(boundsFor(placed, height, width), placed.point)) return placed
+
+  const min = placed.area.x + CARD_MARGIN
+  const max = Math.max(min, placed.area.x + placed.area.width - width - CARD_MARGIN)
+  const toRight = { x: placed.point.x + CARD_GAP, right: true }
+  const toLeft = { x: placed.point.x - CARD_GAP - width, right: false }
+  const candidates = placed.right ? [toRight, toLeft] : [toLeft, toRight]
+
+  for (const candidate of candidates) {
+    if (candidate.x < min || candidate.x > max) continue
+    const next: CardAnchor = { ...placed, x: candidate.x, right: candidate.right }
+    if (!coversPoint(boundsFor(next, height, width), placed.point)) return next
+  }
+  return placed
+}
+
 /**
  * Re-applies a remembered anchor to a new size.
  *
@@ -221,8 +252,9 @@ export function resizeAnchor(options: ResizeAnchorOptions): CardAnchor {
       y: placed.above ? bounds.y + bounds.height + CARD_GAP : bounds.y - CARD_GAP
     }
     // From here on the horizontal edge belongs to the user, including a resize
-    // that happens after the drag has ended.
-    if (pin) placed.pinned = true
+    // that happens after the drag has ended. A moved window is as much their
+    // choice as a dragged edge, so both pin it.
+    placed.pinned = true
   } else {
     const room = roomAround(placed.point, placed.area)
     if (height > room.below && height <= room.above) placed.above = true
@@ -230,6 +262,7 @@ export function resizeAnchor(options: ResizeAnchorOptions): CardAnchor {
     // The width changed with the text, so the horizontal edge is re-derived too:
     // the card widens away from the pointer instead of running off the display.
     placed.x = xFor(placed, width)
+    return keepPointerClear(placed, height, width)
   }
 
   return placed

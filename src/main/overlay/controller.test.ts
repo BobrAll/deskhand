@@ -38,6 +38,7 @@ import { buildTurnRequest } from './request'
 import { applyHistorySettings } from './history'
 import { delay } from '../util'
 import { consumeTurnStream } from '../turnStream'
+import { pasteAnswer } from '../paste'
 import type { OverlayHost } from './host'
 
 const state = vi.hoisted(() => ({
@@ -197,7 +198,7 @@ async function harness(openCard = true) {
     showInactive: vi.fn(() => { visible = true }),
     hide: vi.fn(() => { visible = false }), window: () => win,
     resize: vi.fn(), setDrawing: vi.fn(), setVoice: vi.fn(), setPassthrough: vi.fn(),
-    showField: vi.fn(), hideField: vi.fn()
+    focus: vi.fn(), showField: vi.fn(), hideField: vi.fn()
   }
   const controller = createOverlayController(host)
   if (openCard) await controller.open()
@@ -216,6 +217,35 @@ function gate(): { wait: Promise<void>; release: () => void } {
   const wait = new Promise<void>((resolve) => { release = resolve })
   return { wait, release }
 }
+
+describe('pasting the answer', () => {
+  it('stays visible with the fallback message when the paste cannot land', async () => {
+    const h = await harness()
+    vi.mocked(pasteAnswer).mockResolvedValueOnce({
+      ok: false,
+      copiedOnly: true,
+      message: 'Не удалось вернуться в исходное приложение — ответ скопирован в буфер обмена.'
+    })
+
+    const result = await h.controller.paste('Ответ')
+
+    expect(result).toMatchObject({ ok: false, copiedOnly: true })
+    // Hiding first was how the only sentence explaining the failure ended up in
+    // an invisible window.
+    expect(h.host.hide).not.toHaveBeenCalled()
+    expect(h.host.show).toHaveBeenCalled()
+  })
+
+  it('hides only after the answer has actually been pasted', async () => {
+    const h = await harness()
+    vi.mocked(pasteAnswer).mockResolvedValueOnce({ ok: true, copiedOnly: false })
+
+    const result = await h.controller.paste('Ответ')
+
+    expect(result).toMatchObject({ ok: true })
+    expect(h.host.hide).toHaveBeenCalledOnce()
+  })
+})
 
 describe('routing: the agent or the writer', () => {
   it('sends an action request to the agent when the mode is ready', async () => {

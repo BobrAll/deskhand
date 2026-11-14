@@ -56,6 +56,13 @@ export interface OverlayHost {
    * click lands on the app the plan is about instead of on our own panel.
    */
   setPassthrough(active: boolean): void
+  /**
+   * Takes the keyboard for an approval question.
+   *
+   * The run is already blocked on the answer, so this cannot interrupt an action;
+   * it is what makes Enter, Command+Enter and Escape work without a click.
+   */
+  focus(): void
   hide(): void
   window(): BrowserWindow | null
 }

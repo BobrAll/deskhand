@@ -393,6 +393,7 @@ export function createOverlayController(host: OverlayHost) {
    */
   const agent = createAgentController({
     setPassthrough: (active) => host.setPassthrough(active),
+    focus: () => host.focus(),
     emit: (event: AgentEvent) => publishAgent(event),
     present: (action) => paintAgentPresentation(action)
   })
@@ -1626,11 +1627,19 @@ export function createOverlayController(host: OverlayHost) {
 
   async function paste(text: string): Promise<PasteResult> {
     const target = session?.target ?? null
+    // The card stays on screen until the paste has actually landed. Hiding it
+    // first meant a failure was reported into an invisible window: the answer
+    // was in the clipboard, but the person saw only that nothing happened.
+    const result = await pasteAnswer(text, target)
+    if (!result.ok) {
+      host.show(INITIAL_HEIGHT)
+      return result
+    }
     // The drawing pointed at something the user has now acted on: leaving it up
     // would cover the very text we are pasting.
     discardAnnotations()
     host.hide()
-    return pasteAnswer(text, target)
+    return result
   }
 
   /**

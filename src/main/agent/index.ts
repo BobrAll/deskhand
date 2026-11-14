@@ -51,6 +51,13 @@ import { createRunTrace } from './run-trace'
 export interface AgentHost {
   /** Makes the card ignore the mouse while the agent works, and take it back while it asks. */
   setPassthrough(active: boolean): void
+  /**
+   * Takes the keyboard for an approval question.
+   *
+   * Optional so a headless host can ignore it. The run is blocked on the answer,
+   * so focusing the card cannot interrupt an action.
+   */
+  focus?(): void
   /** Reports progress to the card. */
   emit(event: AgentEvent): void
   /**
@@ -102,6 +109,15 @@ const IDLE_EVENT: AgentEvent = { phase: 'idle', step: 0, total: 0, label: '' }
  * for the rest of the day. The agent has its own ceiling; this one is the host's.
  */
 const APPROVAL_TIMEOUT_MS = 5 * 60_000
+
+/**
+ * How long after an approval the mouse is allowed to move without stopping the run.
+ *
+ * The hand is already on the mouse when it answers the question, and letting go of
+ * the button moves it a few points. Without this grace, the run the user just
+ * allowed would stop on the way back to the keyboard.
+ */
+const APPROVAL_MOUSE_GRACE_MS = 1_200
 
 /**
  * Milliseconds, at one decimal.
@@ -249,6 +265,8 @@ export function createAgentController(host: AgentHost) {
   /** Bumped by `stop()`; a run compares it and gives up. */
   let generation = 0
   let running = false
+  /** Mouse movements before this instant belong to the answer, not to a stop. */
+  let ignoreMouseUntil = 0
   /** The last event the card was told about. */
   let lastPublished: AgentEvent = IDLE_EVENT
 
@@ -524,6 +542,11 @@ export function createAgentController(host: AgentHost) {
     // control back before the next click lands. Escape works always.
     watcher = watchForAbort(options.abortOnMouseMove ? 'mouse' : 'key', (reason) => {
       if (token !== generation) return
+      // Reaching for the answer is not taking control back. A question makes the
+      // card clickable, and the hand on the mouse is on its way to «Разрешить»;
+      // stopping the run there was the bug. Escape still refuses it.
+      if (reason === 'mousemove' &&
+          (current?.pending || Date.now() < ignoreMouseUntil)) return
       trace('agent.abort', { reason })
       stop(reason === 'mousemove' ? 'Остановлено: ты взял мышь.' : 'Остановлено по Escape.')
     })
@@ -792,11 +815,14 @@ export function createAgentController(host: AgentHost) {
 
     trace('agent.approval', { outcome: 'asked', tool: request.tool })
     host.setPassthrough(false)
+    // The card is clickable now; the keyboard should reach the answer too.
+    host.focus?.()
     const settle = (allow: boolean, remember: boolean, reason?: string): void => {
       const pending = active.pending
       if (!pending || pending.request.id !== request.id) return
       clearTimeout(pending.timer)
       active.pending = null
+      if (allow) ignoreMouseUntil = Date.now() + APPROVAL_MOUSE_GRACE_MS
       if (allow && remember && request.fingerprint) {
         // Stored as a digest, not as the agent's readable fingerprint: the
         // settings file keeps a fixed-size, opaque list, and the readable form

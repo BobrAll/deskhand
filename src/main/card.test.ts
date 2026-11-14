@@ -210,6 +210,32 @@ describe('card: resizing at the anchor', () => {
     expect(next.point.y).toBe(300 - GAP)
   })
 
+  it('keeps a moved card where it was left on the resize after that', () => {
+    const dropped: ScreenRect = { x: 200, y: 300, width: 112, height: 31 }
+    const moved = resizeAnchor({ anchor: base, bounds: dropped, height: 31, width: 112, workAreaAt: () => SCREEN })
+    const after = resizeAnchor({
+      anchor: moved,
+      bounds: boundsFor(moved, 31, 112),
+      height: 200,
+      width: 360,
+      workAreaAt: () => SCREEN
+    })
+
+    expect(after.x).toBe(200)
+  })
+
+  it('moves a wide card aside instead of parking it over the pointer', () => {
+    // The side was chosen when the card was 112 wide and still fitted to the
+    // right. The answer grew to 360, that side no longer fits, and the clamped
+    // far edge would have put the panel under the cursor at x=1200.
+    const nearEdge: CardAnchor = { ...base, point: at(1200, 400), x: 1210 }
+    const inPlace: ScreenRect = { x: 1210, y: 410, width: 112, height: 31 }
+    const next = resizeAnchor({ anchor: nearEdge, bounds: inPlace, height: 520, width: 360, workAreaAt: () => SCREEN })
+
+    expect(next.x).toBe(1200 - GAP - 360)
+    expect(next.right).toBe(false)
+  })
+
   it('pulls a dragged card back when growing wider would carry it off screen', () => {
     const dropped: ScreenRect = { x: 1400, y: 300, width: 112, height: 31 }
     const next = resizeAnchor({ anchor: base, bounds: dropped, height: 31, width: 360, workAreaAt: () => SCREEN })

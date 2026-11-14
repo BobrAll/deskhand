@@ -76,6 +76,9 @@ export function App() {
   const [busy, setBusy] = useState(false)
   const [failure, setFailure] = useState<Failure | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
+  /** The copy button says it worked, then goes back to being a command. */
+  const [copied, setCopied] = useState(false)
+  const copiedTimerRef = useRef<number | null>(null)
   /** How many shapes are painted on the screen right now. */
   const [drawn, setDrawn] = useState(0)
   /**
@@ -400,6 +403,30 @@ export function App() {
     }
   }, [finishTurnSpeech])
 
+  /**
+   * Permissions and availability are changed in another window.
+   *
+   * The card can be open the whole time — the user goes to System Settings,
+   * grants Accessibility, and comes back to the same card. Without a pull on
+   * focus it keeps saying «нужен доступ» until it is closed and reopened.
+   */
+  useEffect(() => {
+    const refresh = (): void => {
+      void window.deskhand.overlay
+        .getState()
+        .then((next) => { if (next) applyState(next) })
+        .catch(() => undefined)
+    }
+    window.addEventListener('focus', refresh)
+    return () => window.removeEventListener('focus', refresh)
+  }, [applyState])
+
+  useEffect(() => {
+    return () => {
+      if (copiedTimerRef.current !== null) window.clearTimeout(copiedTimerRef.current)
+    }
+  }, [])
+
   useEffect(() => {
     // No session yet means the card is the empty one drawn while the context is
     // being collected — and it must *not* take the keyboard here. Focusing the
@@ -540,6 +567,7 @@ export function App() {
   }, [voice.code, voice.at])
   const agentRunning = busy && agent !== null
   const agentStatus = agent && agentLabel(agent, answer)
+  const agentHint = agentRunning ? 'Esc — остановить' : null
   const agentDone = !busy && !hasAnswer && agent !== null && agentMark(agent) === 'done'
   const showWaiting = waitStage !== 'quiet' && !hasAnswer && !agent
   const wantsWide = (expanded && !agentRunning) || Boolean(failure) ||
@@ -561,6 +589,7 @@ export function App() {
     busy,
     speaking: speech.speaking,
     agentStatus,
+    agentHint,
     agentRunning,
     listening,
     wantsWide,
@@ -836,7 +865,12 @@ export function App() {
     const text = answerTextRef.current
     if (!text.trim()) return
     await window.deskhand.overlay.copy(text)
-    setNotice('Скопировано в буфер обмена')
+    if (copiedTimerRef.current !== null) window.clearTimeout(copiedTimerRef.current)
+    setCopied(true)
+    copiedTimerRef.current = window.setTimeout(() => {
+      copiedTimerRef.current = null
+      setCopied(false)
+    }, 1500)
   }, [])
 
   /**
@@ -917,29 +951,39 @@ export function App() {
     }
   }, [])
 
+  const closeCard = useCallback(() => {
+    speechRef.current.stop()
+    window.deskhand.overlay.close()
+  }, [])
+
   /**
-   * Stops the answer in flight.
+   * Stops the answer in flight and gives the question back.
    *
    * The order matters: the request is marked ignored *before* it is cancelled, so
    * a chunk already on its way cannot land on a card that has stopped waiting for
-   * it.
-   *
-   * `closeWhenIdle` is the one difference between the two ways in. Escape on a
-   * card with nothing running dismisses the card; the «Стоп» button only exists
-   * while an answer is streaming and has nothing to dismiss.
+   * it. The field is only refilled when the user has not started a follow-up in
+   * it — stopping an answer must not overwrite the next question.
    */
-  const cancelRequest = useCallback((closeWhenIdle: boolean) => {
+  const cancelRequest = useCallback(() => {
     speechRef.current.stop()
     const id = requestIdRef.current
-    if (!id) {
-      if (closeWhenIdle) window.deskhand.overlay.close()
-      return
-    }
+    if (!id) return
     ignoredRequestRef.current = id
     requestIdRef.current = null
+    busyRef.current = false
     setBusy(false)
+    setFailure(null)
+    setNotice(null)
+    spokenPromptRef.current = false
+    const question = last?.prompt ?? ''
+    if (question && !promptRef.current) {
+      setPrompt(question)
+      promptRef.current = question
+      setTyping(true)
+    }
+    inputRef.current?.focus()
     window.deskhand.overlay.cancel(id)
-  }, [])
+  }, [last])
 
   /**
    * Performs what `keyPolicy` decided.
@@ -949,19 +993,24 @@ export function App() {
    */
   const perform = useCallback(
     (action: Exclude<KeyAction, null>) => {
-      if (action === 'close' || action === 'stopAgent') speechRef.current.stop()
       if (action === 'close') {
-        window.deskhand.overlay.close()
+        closeCard()
         return
       }
       if (action === 'stopAgent') {
+        speechRef.current.stop()
         // The user ended this one, so the voice does not report it back to them.
         stoppedByUserRef.current = true
         void window.deskhand.agent.stop()
         return
       }
       if (action === 'cancel') {
-        cancelRequest(true)
+        cancelRequest()
+        return
+      }
+      if (action === 'approve' || action === 'approveAlways') {
+        const request = agentRef.current?.approval
+        if (request) void answerAgent(request, true, action === 'approveAlways')
         return
       }
       if (action === 'paste') {
@@ -974,7 +1023,7 @@ export function App() {
       }
       send(promptRef.current)
     },
-    [cancelRequest, copy, paste, send]
+    [answerAgent, cancelRequest, closeCard, copy, paste, send]
   )
 
   useEffect(() => {
@@ -985,6 +1034,7 @@ export function App() {
         shift: event.shiftKey,
         tagName: (event.target as HTMLElement | null)?.tagName ?? null,
         agentPhase: agentRef.current?.phase ?? null,
+        busy: busyRef.current,
         hasSelection: Boolean(window.getSelection()?.toString()),
         hasAnswer: Boolean(answerTextRef.current.trim())
       })
@@ -1067,7 +1117,8 @@ export function App() {
       className="prompt"
       rows={1}
       spellCheck
-      placeholder="Слушаю"
+      placeholder="Что сделать?"
+      aria-label="Что сделать?"
       data-wrap={wrapped || undefined}
       value={prompt}
       disabled={blocked}
@@ -1090,6 +1141,7 @@ export function App() {
           shift: event.shiftKey,
           tagName: 'TEXTAREA',
           agentPhase: null,
+          busy: busyRef.current,
           hasSelection: false,
           hasAnswer: Boolean(answer.trim())
         }) !== 'send') {
@@ -1122,6 +1174,7 @@ export function App() {
     // without touching the text, and the same Enter works a moment later.
     return (
       <div ref={rootRef} className="card" style={{ width: cardWidth }}>
+        <div className="move" aria-hidden />
         <div className="bar">
           {composer}
           {/*
@@ -1134,6 +1187,11 @@ export function App() {
             to the left — a jump in the middle of the first sentence typed.
           */}
           <span className="reserve" aria-hidden />
+          <button className="close" title="Закрыть" aria-label="Закрыть" onClick={closeCard}>
+            <svg viewBox="0 0 10 10" aria-hidden>
+              <path d="M2 2l6 6M8 2l-6 6" />
+            </svg>
+          </button>
         </div>
       </div>
     )
@@ -1156,6 +1214,7 @@ export function App() {
       data-busy={busy || undefined}
       data-drawing={(drawn > 0 && !typing) || undefined}
     >
+      <div className="move" aria-hidden />
       {!agentRunning && showingTranscript && <div className="line">Распознано</div>}
       {!agentRunning && (
         <div className="bar">
@@ -1164,7 +1223,7 @@ export function App() {
             <button
               className="stop"
               title="Остановить ответ"
-              onClick={() => cancelRequest(false)}
+              onClick={cancelRequest}
             >
               <span aria-hidden />
             </button>
@@ -1180,6 +1239,11 @@ export function App() {
           >
             <svg viewBox="0 0 10 6" aria-hidden>
               <path d="M1 1l4 4 4-4" />
+            </svg>
+          </button>
+          <button className="close" title="Закрыть" aria-label="Закрыть" onClick={closeCard}>
+            <svg viewBox="0 0 10 10" aria-hidden>
+              <path d="M2 2l6 6M8 2l-6 6" />
             </svg>
           </button>
         </div>
@@ -1311,6 +1375,7 @@ export function App() {
             <div className="agent-head" role="status">
               <span className="agent-dot" aria-hidden />
               <span className="agent-label" key={`${agent.step}:${agent.phase}`}>{agentStatus}</span>
+              {agentHint && <span className="agent-hint">{agentHint}</span>}
             </div>
           )}
 
@@ -1323,6 +1388,7 @@ export function App() {
           */}
           {agent.phase === 'asking' && approval && (
             <div className="agent-ask" role="group" aria-label="Подтверждение действия">
+              <div className="agent-ask-title">Нужно разрешение</div>
               {agent.message && <div className="agent-ask-detail">{agent.message}</div>}
               <div className="agent-ask-buttons">
                 <button
@@ -1333,9 +1399,10 @@ export function App() {
                 </button>
                 <button
                   className="agent-always"
+                  title="Запомнить именно это действие и больше не спрашивать"
                   onClick={() => void answerAgent(approval, true, true)}
                 >
-                  Разрешить всегда
+                  Больше не спрашивать
                 </button>
                 <button
                   className="agent-deny"
@@ -1344,6 +1411,7 @@ export function App() {
                   Отменить
                 </button>
               </div>
+              <div className="agent-ask-hint">↩ разрешить · ⌘↩ больше не спрашивать · Esc отменить</div>
             </div>
           )}
         </div>
@@ -1353,7 +1421,7 @@ export function App() {
         <div className="waiting" role="status" aria-live="polite">
           <div className="waiting-label">Готовлю ответ…</div>
           {waitStage === 'long' ? (
-            <div>Ответ занимает больше времени. Esc — остановить.</div>
+            <div>Ответ занимает больше времени. Esc — остановить ответ.</div>
           ) : waitStage === 'tip' ? (
             <div><span className="waiting-caption">На заметку</span>{waiting.tip}</div>
           ) : null}
@@ -1427,8 +1495,13 @@ export function App() {
                   Шире
                 </button>
               )}
-              <button className="link" title="Скопировать ответ" onClick={() => void copy()}>
-                Скопировать
+              <button
+                className="link"
+                data-copied={copied || undefined}
+                title={copied ? 'Скопировано в буфер обмена' : 'Скопировать ответ'}
+                onClick={() => void copy()}
+              >
+                {copied ? 'Скопировано' : 'Скопировать'}
               </button>
             </>
           )}
