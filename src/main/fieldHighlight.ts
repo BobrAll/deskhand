@@ -21,8 +21,6 @@ import {
   type LayerWindowState
 } from './layerWindow'
 
-/** A little air between the field's edge and the voice strip. */
-const HIGHLIGHT_PAD = 4
 /**
  * The strip is a listening bar, not a repaint of the whole editor.
  *
@@ -64,19 +62,15 @@ function createWindow(): BrowserWindow {
   })
 }
 
-/** The window's bounds: the field plus a band-sized roof and floor. */
+/** The window's bounds: exactly the field, or a compact band inside a tall one. */
 function highlightFrame(frame: ScreenRect): ScreenRect {
-  const innerHeight = Math.max(
-    1,
-    Math.min(frame.height, MAX_STRIP_HEIGHT - HIGHLIGHT_PAD * 2)
-  )
-  const height = innerHeight + HIGHLIGHT_PAD * 2
+  const height = Math.max(1, Math.min(frame.height, MAX_STRIP_HEIGHT))
   return {
-    x: Math.round(frame.x - HIGHLIGHT_PAD),
+    x: Math.round(frame.x),
     // Centre the band in a tall editor; a single-line field has nowhere to go.
-    y: Math.round(frame.y + (frame.height - innerHeight) / 2 - HIGHLIGHT_PAD),
-    width: Math.max(1, Math.round(frame.width + HIGHLIGHT_PAD * 2)),
-    height: Math.max(1, Math.round(height))
+    y: Math.round(frame.y + (frame.height - height) / 2),
+    width: Math.max(1, Math.round(frame.width)),
+    height: Math.round(height)
   }
 }
 
