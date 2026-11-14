@@ -6,6 +6,7 @@ interface WindowDouble {
   show: ReturnType<typeof vi.fn>
   focus: ReturnType<typeof vi.fn>
   hide: ReturnType<typeof vi.fn>
+  setFocusable: ReturnType<typeof vi.fn>
   close(): void
   emit(event: string): boolean
 }
@@ -18,6 +19,7 @@ vi.mock('electron', async () => {
     show = vi.fn()
     focus = vi.fn()
     hide = vi.fn()
+    setFocusable = vi.fn()
     webContents = { setWindowOpenHandler: vi.fn() }
     constructor(readonly options: Record<string, unknown>) {
       super()
@@ -173,5 +175,28 @@ describe('settings window lifecycle', () => {
     expect(state.windows[0].options).toMatchObject({ width: 760, height: 660, resizable: false })
     api.closeOnboardingWindow()
     expect(api.openAppWindows()).toEqual([settings])
+  })
+
+  it('parks every open app window while the card owns the keyboard', async () => {
+    const api = await load()
+    api.openSettingsWindow()
+    api.openOnboardingWindow()
+
+    api.setAppWindowsFocusable(false)
+    expect(state.windows.map((win) => win.setFocusable.mock.lastCall?.[0])).toEqual([false, false])
+
+    api.setAppWindowsFocusable(true)
+    expect(state.windows.map((win) => win.setFocusable.mock.lastCall?.[0])).toEqual([true, true])
+  })
+
+  it('lets a deliberately opened settings window take the keyboard back', async () => {
+    const api = await load()
+    const win = api.openSettingsWindow()
+    api.setAppWindowsFocusable(false)
+
+    api.openSettingsWindow()
+
+    expect(win.setFocusable).toHaveBeenLastCalledWith(true)
+    expect(win.focus).toHaveBeenCalled()
   })
 })

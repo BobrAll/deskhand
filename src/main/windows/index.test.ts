@@ -10,6 +10,7 @@ interface WindowDouble {
   show: ReturnType<typeof vi.fn>
   focus: ReturnType<typeof vi.fn>
   setVibrancy: ReturnType<typeof vi.fn>
+  setFocusable: ReturnType<typeof vi.fn>
 }
 const state = vi.hoisted(() => ({
   hidden: false, windows: [] as WindowDouble[], unhide: vi.fn(), focus: vi.fn(), vibrancy: vi.fn()
@@ -28,6 +29,7 @@ vi.mock('electron', async () => {
     showInactive = vi.fn(() => { this.visible = true })
     focus = vi.fn()
     setAlwaysOnTop = vi.fn()
+    setFocusable = vi.fn()
     setVibrancy = state.vibrancy
     constructor(options: Record<string, unknown>) {
       super()
@@ -136,6 +138,30 @@ describe('voice indicator visibility', () => {
     expect(win.showInactive).toHaveBeenCalledOnce()
     expect(win.bounds.width).toBe(80)
     expect(state.vibrancy).toHaveBeenLastCalledWith(null)
+  })
+})
+
+describe('card focus', () => {
+  it('keeps the app windows that are already open from taking the keyboard', async () => {
+    const { overlayHost, openSettingsWindow } = await import('./index')
+    overlayHost.prewarm()
+    const card = state.windows[0]
+    card.emit('ready-to-show')
+
+    openSettingsWindow()
+    const settings = state.windows[1]
+    settings.emit('ready-to-show')
+
+    overlayHost.show(31)
+    expect(settings.setFocusable).toHaveBeenLastCalledWith(false)
+
+    openSettingsWindow()
+    expect(settings.setFocusable).toHaveBeenLastCalledWith(true)
+    card.emit('focus')
+    expect(settings.setFocusable).toHaveBeenLastCalledWith(false)
+
+    overlayHost.hide()
+    expect(settings.setFocusable).toHaveBeenLastCalledWith(true)
   })
 })
 

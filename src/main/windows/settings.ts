@@ -126,6 +126,9 @@ function holdCloseUntilWritesLand(win: BrowserWindow): void {
 }
 
 export function openSettingsWindow(): BrowserWindow {
+  // Asking for a window is a decision that it should have the keyboard, even
+  // when the card parked it a moment ago.
+  setAppWindowsFocusable(true)
   if (settingsWindow && !settingsWindow.isDestroyed()) {
     // Reopening during the deferred close is a request to stay.
     cancelPendingClose?.()
@@ -154,6 +157,7 @@ export function openSettingsWindow(): BrowserWindow {
 }
 
 export function openOnboardingWindow(): BrowserWindow {
+  setAppWindowsFocusable(true)
   if (onboardingWindow && !onboardingWindow.isDestroyed()) {
     onboardingWindow.show()
     onboardingWindow.focus()
@@ -209,4 +213,19 @@ export function openAppWindows(): BrowserWindow[] {
   return [settingsWindow, onboardingWindow].filter(
     (win): win is BrowserWindow => win !== null && !win.isDestroyed()
   )
+}
+
+/**
+ * Decides which of the app's windows may take the keyboard.
+ *
+ * The card takes focus as an ordinary window of this app, so macOS looks for the
+ * next window of the app whenever the card gives the keyboard up — on Escape and
+ * when an agent run makes it click-through. A settings window the user left behind
+ * another app is exactly that next window: it gets ordered in front for the moment
+ * before focus reaches the remembered app, which looks like settings flashing over
+ * the user's work. A window that cannot become key is not a candidate, so the
+ * keyboard falls through to the app behind the card instead.
+ */
+export function setAppWindowsFocusable(focusable: boolean): void {
+  for (const win of openAppWindows()) win.setFocusable(focusable)
 }

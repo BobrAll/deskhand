@@ -951,11 +951,11 @@ export function createOverlayController(host: OverlayHost) {
    * - the remembered target still exists — it is activated, which is exactly what
    *   "return me where I was" means;
    * - there is no target (the app was on the exclusion list, or the frontmost app
-   *   could not be read) — then hiding ourselves is the only honest move: macOS
-   *   hands the keyboard to the next application instead of to a windowless app.
-   *   `app.hide()` is skipped while another of our windows is visible, because it
-   *   hides those too — and a settings window the user opened on purpose is not
-   *   something to close on their behalf.
+   *   could not be read) — then the keyboard goes to one of our own windows when
+   *   one is visible, and to the next application otherwise. The card parked
+   *   those windows while it was on screen, so the hand-off has to be explicit;
+   *   a settings window the user opened on purpose is not something to close on
+   *   their behalf.
    */
   async function returnFocusTo(target: ActiveAppInfo | null): Promise<void> {
     if (target && (target.bundleId || target.pid > 0)) {
@@ -966,10 +966,18 @@ export function createOverlayController(host: OverlayHost) {
       }
     }
     const overlay = host.window()
-    const others = BrowserWindow.getAllWindows().some(
+    const fallback = BrowserWindow.getAllWindows().find(
       (win) => win !== overlay && !win.isDestroyed() && win.isVisible()
     )
-    if (others) return
+    if (fallback) {
+      // The card kept this window out of the keyboard for the whole session
+      // (see `setAppWindowsFocusable`), so the automatic hand-off no longer
+      // reaches it. Hand it back explicitly: the user asked for this window, and
+      // with nothing to return to it is the honest place for focus.
+      fallback.show()
+      fallback.focus()
+      return
+    }
     app.hide()
   }
 
