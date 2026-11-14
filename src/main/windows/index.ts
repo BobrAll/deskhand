@@ -191,7 +191,13 @@ function positionOverlay(win: BrowserWindow, height: number, width: number): voi
  * Re-applies the remembered anchor to a new size, or places the card for the
  * first time when there is no anchor yet.
  */
-function resizeAtAnchor(win: BrowserWindow, height: number, width: number, pin = false): void {
+function resizeAtAnchor(
+  win: BrowserWindow,
+  height: number,
+  width: number,
+  pin = false,
+  typing = false
+): void {
   if (!anchor) {
     positionOverlay(win, height, width)
     return
@@ -202,7 +208,8 @@ function resizeAtAnchor(win: BrowserWindow, height: number, width: number, pin =
     height,
     width,
     workAreaAt,
-    pin
+    pin,
+    typing
   })
   resizeBounds = boundsFor(anchor, height, width)
   // Native animation is right for a card that grows as text arrives — one small
@@ -351,7 +358,7 @@ export const overlayHost: OverlayHost = {
     presentOverlay(height, width, false)
   },
 
-  resize(height: number, width = CARD_WIDTH, pin = false): void {
+  resize(height: number, width = CARD_WIDTH, pin = false, typing = false): void {
     const win = overlayWindow
     if (!win || win.isDestroyed()) return
     const safeHeight = Math.round(clamp(height, OVERLAY_MIN_HEIGHT, OVERLAY_MAX_HEIGHT))
@@ -361,7 +368,7 @@ export const overlayHost: OverlayHost = {
     const safeWidth = Math.round(clamp(width, CARD_MIN_WIDTH, CARD_MAX_WIDTH))
     const bounds = resizeBounds ?? win.getBounds()
     if (bounds.height === safeHeight && bounds.width === safeWidth && !pin) return
-    resizeAtAnchor(win, safeHeight, safeWidth, pin)
+    resizeAtAnchor(win, safeHeight, safeWidth, pin, typing)
   },
 
   /** Clears blur while a drawing needs to reveal detail behind the card. */

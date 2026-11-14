@@ -613,6 +613,38 @@ describe('the question in the card', () => {
     await running
   })
 
+  it('refuses the open question on Escape instead of stopping the whole run', async () => {
+    const h = harness()
+    const running = h.run()
+    await vi.waitFor(() => expect(state.runs).toHaveLength(1))
+
+    state.emit({ kind: 'approval', request: call() })
+    state.abort('escape')
+
+    expect(state.approvals).toEqual([
+      { id: 'call-1', allow: false, reason: 'Пользователь отклонил действие.' }
+    ])
+    expect(state.cancels).toBe(0)
+    expect(h.last()).toMatchObject({ phase: 'aborted', message: 'Действие отклонено.' })
+
+    state.emit({ kind: 'cancelled' })
+    await running
+  })
+
+  it('ignores the renderer’s Escape after the question is already answered', async () => {
+    const h = harness()
+    const running = h.run()
+    await vi.waitFor(() => expect(state.runs).toHaveLength(1))
+
+    state.emit({ kind: 'approval', request: call() })
+    h.controller.answer('call-1', false, false)
+    state.abort('escape')
+
+    expect(state.cancels).toBe(0)
+    state.emit({ kind: 'cancelled' })
+    await running
+  })
+
   it('lets the hand leave the button before the mouse can stop the run', async () => {
     vi.useFakeTimers({ toFake: ['Date'] })
     try {

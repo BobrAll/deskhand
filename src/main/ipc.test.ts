@@ -286,14 +286,18 @@ describe('registerIpc: the handlers reach their dependency', () => {
     expect(deps.overlay.setTyping).toHaveBeenCalledWith(true)
 
     electron.ons.get(CH.overlay.resize)!({}, 120, 360)
-    expect(deps.overlay.resize).toHaveBeenCalledWith(120, 360, false)
+    expect(deps.overlay.resize).toHaveBeenCalledWith(120, 360, false, false)
 
     // A drag pins the left edge; anything else is coerced, because the renderer
     // is not trusted with the type.
     electron.ons.get(CH.overlay.resize)!({}, 120, 480, true)
-    expect(deps.overlay.resize).toHaveBeenCalledWith(120, 480, true)
+    expect(deps.overlay.resize).toHaveBeenCalledWith(120, 480, true, false)
     electron.ons.get(CH.overlay.resize)!({}, 120, 480, 'yes')
-    expect(deps.overlay.resize).toHaveBeenCalledWith(120, 480, true)
+    expect(deps.overlay.resize).toHaveBeenCalledWith(120, 480, true, false)
+
+    // Typing is passed through with the same coercion.
+    electron.ons.get(CH.overlay.resize)!({}, 120, 360, false, 1)
+    expect(deps.overlay.resize).toHaveBeenCalledWith(120, 360, false, true)
   })
 
   it('answers the agent availability question from the overlay', async () => {

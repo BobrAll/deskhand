@@ -114,7 +114,7 @@ export interface DeskhandApi {
      * dragging the right edge means: the edge under the pointer has to follow the
      * pointer, and the anchor would otherwise decide which side grows.
      */
-    resize(height: number, width?: number, pin?: boolean): void
+    resize(height: number, width?: number, pin?: boolean, typing?: boolean): void
   }
   /** Used only by the transparent drawing layer. */
   drawing: {

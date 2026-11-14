@@ -61,8 +61,8 @@ const api: DeskhandApi = {
     clearDrawing: () => ipcRenderer.send(CH.overlay.clearDrawing),
     setTyping: (typing: boolean) => ipcRenderer.send(CH.overlay.typing, typing),
     close: () => ipcRenderer.send(CH.overlay.close),
-    resize: (height: number, width?: number, pin?: boolean) =>
-      ipcRenderer.send(CH.overlay.resize, height, width, pin)
+    resize: (height: number, width?: number, pin?: boolean, typing?: boolean) =>
+      ipcRenderer.send(CH.overlay.resize, height, width, pin, typing)
   },
   drawing: {
     onDraw: (handler) => subscribe<DrawingPayload>(CH.drawing.draw, handler)

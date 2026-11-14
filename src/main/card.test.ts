@@ -248,10 +248,18 @@ describe('card: resizing at the anchor', () => {
     expect(next.right).toBe(false)
   })
 
-  it('does not jump to the other side while the folded field is being typed into', () => {
+  it('does not jump to the other side while the field is being typed into', () => {
     const nearEdge: CardAnchor = { ...base, point: at(1200, 400), x: 1210 }
     const inPlace: ScreenRect = { x: 1210, y: 410, width: 112, height: 31 }
-    const next = resizeAnchor({ anchor: nearEdge, bounds: inPlace, height: 31, width: 360, workAreaAt: () => SCREEN })
+    // 48 is a wrapped two-line question, the case the height-based guard missed.
+    const next = resizeAnchor({
+      anchor: nearEdge,
+      bounds: inPlace,
+      height: 48,
+      width: 360,
+      typing: true,
+      workAreaAt: () => SCREEN
+    })
 
     // The far edge is clamped as before; the side stays where the typing is.
     expect(next.x).toBe(1440 - 360 - MIN)

@@ -90,6 +90,8 @@ export function App() {
    * over drawing: the card goes back to full density and the drawing stays.
    */
   const [typing, setTyping] = useState(false)
+  /** The resize listener is registered once; it reads the latest typing state. */
+  const typingRef = useRef(false)
   /**
    * The width the user chose for this card, or `null` while it sizes itself.
    *
@@ -229,6 +231,7 @@ export function App() {
   answerTextRef.current = answer
   busyRef.current = busy
   agentRef.current = agent
+  typingRef.current = typing
 
   /**
    * Applies a state broadcast. A *new* session replaces the card completely; the
@@ -623,7 +626,7 @@ export function App() {
       lastHeight = height
       // `pin` while a drag is in flight: the right edge is under the pointer, so
       // the card has to grow away from its left edge instead of from the anchor.
-      window.deskhand.overlay.resize(height, width, draggingRef.current)
+      window.deskhand.overlay.resize(height, width, draggingRef.current, typingRef.current)
     }
     const onFocus = (): void => {
       lastWidth = lastHeight = 0
@@ -821,6 +824,9 @@ export function App() {
    */
   const answerAgent = useCallback(
     async (request: AgentToolRequest, allow: boolean, remember: boolean) => {
+      // A refusal ends the run; the run's own «Остановлено» would repeat the
+      // decision the voice is about to name.
+      if (!allow) stoppedByUserRef.current = true
       await window.deskhand.agent.answer(request.id, allow, remember)
       // The decision is the user's, so the line confirms it rather than the
       // agent's judgement — and the click that made it is already on the card.
@@ -1020,15 +1026,9 @@ export function App() {
       }
       if (action === 'approve' || action === 'approveAlways' || action === 'deny') {
         const request = agentRef.current?.approval
-        if (request) {
-          void answerAgent(request, action !== 'deny', action === 'approveAlways')
-          return
-        }
-        // No question on screen: Escape's only remaining job is to stop the run.
-        if (action === 'deny') {
-          stoppedByUserRef.current = true
-          void window.deskhand.agent.stop()
-        }
+        // The native watcher answers an Escape that arrives with no question
+        // left; doing it here as well would stop a run the user only refused.
+        if (request) void answerAgent(request, action !== 'deny', action === 'approveAlways')
         return
       }
       if (action === 'paste') {

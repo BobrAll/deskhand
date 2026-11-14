@@ -180,10 +180,6 @@ function coversPoint(rect: ScreenRect, point: ScreenPoint): boolean {
  * anything.
  */
 function keepPointerClear(placed: CardAnchor, height: number, width: number): CardAnchor {
-  // A folded card is the line being typed into: moving it to the other side of
-  // the pointer mid-sentence is worse than the pointer sitting under a one-line
-  // panel. Once there is an answer to read, the cursor matters again.
-  if (height <= CARD_FOLDED_HEIGHT) return placed
   if (!coversPoint(boundsFor(placed, height, width), placed.point)) return placed
 
   const min = placed.area.x + CARD_MARGIN
@@ -229,10 +225,18 @@ export interface ResizeAnchorOptions {
   workAreaAt(point: ScreenPoint): ScreenRect
   /** The horizontal edge is the user's: they dragged the card or pulled its edge. */
   pin?: boolean
+  /**
+   * The user is writing in the card.
+   *
+   * A card that jumps to the other side of the pointer mid-sentence is worse
+   * than one that sits under an idle cursor; the pointer is not being aimed
+   * while the caret is in the field.
+   */
+  typing?: boolean
 }
 
 export function resizeAnchor(options: ResizeAnchorOptions): CardAnchor {
-  const { anchor, bounds, height, width, workAreaAt, pin = false } = options
+  const { anchor, bounds, height, width, workAreaAt, pin = false, typing = false } = options
   const placed: CardAnchor = { ...anchor, point: { ...anchor.point } }
   placed.area = workAreaAt(placed.point)
 
@@ -267,7 +271,9 @@ export function resizeAnchor(options: ResizeAnchorOptions): CardAnchor {
     // The width changed with the text, so the horizontal edge is re-derived too:
     // the card widens away from the pointer instead of running off the display.
     placed.x = xFor(placed, width)
-    return keepPointerClear(placed, height, width)
+    // A field that is being typed into owns the caret, not the pointer; moving
+    // the card under the hand mid-sentence is the worse surprise.
+    return typing ? placed : keepPointerClear(placed, height, width)
   }
 
   return placed

@@ -33,7 +33,7 @@ export interface OverlayHost {
    * pointer, and only the card's own anchor would otherwise decide which side
    * grows.
    */
-  resize(height: number, width?: number, pin?: boolean): void
+  resize(height: number, width?: number, pin?: boolean, typing?: boolean): void
   /**
    * Tells the window whether shapes are painted on the screen right now, so it
    * can drop its native blur while they are: a frosted card over the very spot

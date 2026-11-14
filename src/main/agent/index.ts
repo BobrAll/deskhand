@@ -267,6 +267,8 @@ export function createAgentController(host: AgentHost) {
   let running = false
   /** Mouse movements before this instant belong to the answer, not to a stop. */
   let ignoreMouseUntil = 0
+  /** The same for the Escape that the renderer may have handled already. */
+  let ignoreEscapeUntil = 0
   /** The last event the card was told about. */
   let lastPublished: AgentEvent = IDLE_EVENT
 
@@ -467,6 +469,7 @@ export function createAgentController(host: AgentHost) {
     running = true
     activeTrace = runTrace
     ignoreMouseUntil = 0
+    ignoreEscapeUntil = 0
     const actions: AgentActionRow[] = []
     const total = settings.agent.maxSteps
     const provider = withAgentBudget(input.provider)
@@ -545,9 +548,18 @@ export function createAgentController(host: AgentHost) {
       if (token !== generation) return
       // Reaching for the answer is not taking control back. A question makes the
       // card clickable, and the hand on the mouse is on its way to «Разрешить»;
-      // stopping the run there was the bug. Escape still refuses it.
+      // stopping the run there was the bug.
       if (reason === 'mousemove' &&
           (current?.pending || Date.now() < ignoreMouseUntil)) return
+      // An open question owns Escape: it answers «нет», exactly as the button
+      // does. Stopping the whole run here would race the renderer's own answer.
+      if (reason === 'escape' && current?.pending) {
+        current.pending.settle(false, false, 'Пользователь отклонил действие.')
+        return
+      }
+      // The renderer may have answered the question a moment ago; its keydown
+      // reaches us in the same keystroke.
+      if (reason === 'escape' && Date.now() < ignoreEscapeUntil) return
       trace('agent.abort', { reason })
       stop(reason === 'mousemove' ? 'Остановлено: ты взял мышь.' : 'Остановлено по Escape.')
     })
@@ -824,8 +836,10 @@ export function createAgentController(host: AgentHost) {
       clearTimeout(pending.timer)
       active.pending = null
       // Leaving the button moves the mouse; neither answer should turn that into
-      // a stop before the run has had a chance to act on the decision.
+      // a stop before the run has had a chance to act on the decision. The
+      // renderer's Escape arrives around the same time as the native one.
       ignoreMouseUntil = Date.now() + APPROVAL_MOUSE_GRACE_MS
+      ignoreEscapeUntil = Date.now() + APPROVAL_MOUSE_GRACE_MS
       if (allow && remember && request.fingerprint) {
         // Stored as a digest, not as the agent's readable fingerprint: the
         // settings file keeps a fixed-size, opaque list, and the readable form
@@ -899,6 +913,7 @@ export function createAgentController(host: AgentHost) {
     }
     generation += 1
     ignoreMouseUntil = 0
+    ignoreEscapeUntil = 0
     const active = current
     if (active?.pending) {
       const pending = active.pending

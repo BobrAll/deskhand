@@ -206,9 +206,13 @@ function registerOverlayHandlers(overlay: OverlayController): void {
   ipcMain.on(CH.overlay.setFlags, (_event, flags: ContextFlags) => overlay.setFlags(flags))
   ipcMain.on(CH.overlay.clearDrawing, () => overlay.clearDrawing())
   ipcMain.on(CH.overlay.typing, (_event, typing: boolean) => overlay.setTyping(Boolean(typing)))
-  ipcMain.on(CH.overlay.resize, (_event, height: number, width?: number, pin?: boolean) =>
-    overlay.resize(height, width, Boolean(pin))
-  )
+  ipcMain.on(CH.overlay.resize, (
+    _event,
+    height: number,
+    width?: number,
+    pin?: boolean,
+    typing?: boolean
+  ) => overlay.resize(height, width, Boolean(pin), Boolean(typing)))
   ipcMain.on(CH.overlay.close, () => overlay.close())
 
   ipcMain.handle(CH.overlay.copy, async (_event, text: string): Promise<ActionResult> => {

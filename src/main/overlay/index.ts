@@ -1024,8 +1024,8 @@ export function createOverlayController(host: OverlayHost) {
     }
   }
 
-  function resize(height: number, width?: number, pin?: boolean): void {
-    host.resize(height, width, pin)
+  function resize(height: number, width?: number, pin?: boolean, writing?: boolean): void {
+    host.resize(height, width, pin, writing)
   }
 
   /**
