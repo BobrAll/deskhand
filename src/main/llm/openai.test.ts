@@ -204,6 +204,26 @@ describe('[OI]Provider: the request', () => {
     expect(body.stream_options).toEqual({ include_usage: true })
   })
 
+  it("lets the caller's own stream_options win, including the opt-out", async () => {
+    vi.stubGlobal('fetch', fetchMock)
+    fetchMock
+      .mockResolvedValueOnce(new Response(sse(dataEvent({ choices: [] }))))
+      .mockResolvedValueOnce(new Response(sse(dataEvent({ choices: [] }))))
+
+    await drain(
+      provider().stream(messages, '', options({ extraBody: { stream_options: { include_usage: false } } }))
+    )
+    await drain(
+      provider().stream(messages, '', options({ extraBody: { stream_options: undefined } }))
+    )
+
+    const body = (index: number): Record<string, unknown> =>
+      JSON.parse((fetchMock.mock.calls[index] as [string, RequestInit])[1].body as string)
+    expect(body(0).stream_options).toEqual({ include_usage: false })
+    // `undefined` drops the field from the JSON body entirely.
+    expect(body(1)).not.toHaveProperty('stream_options')
+  })
+
   it('joins several text parts with a blank line and trims', async () => {
     vi.stubGlobal('fetch', fetchMock)
     respond(sse(dataEvent({ choices: [] })))

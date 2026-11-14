@@ -118,11 +118,13 @@ export class OpenAIProvider implements LlmProvider {
         ? { max_completion_tokens: options.maxTokens }
         : { temperature: options.temperature, max_tokens: options.maxTokens }),
       ...disabledReasoning(apiRoot(options, this.baseUrl), options.model),
+      // Without this the stream carries no usage at all, and `traceModelUsage`
+      // never sees a token count on the OpenAI wire. A caller that sets its own
+      // `stream_options` in `extraBody` wins, and a gateway that rejects the
+      // field can be opted out of the same way.
+      stream_options: { include_usage: true },
       ...options.extraBody,
       stream: true,
-      // Without this the stream carries no usage at all, and `traceModelUsage`
-      // never sees a token count on the OpenAI wire.
-      stream_options: { include_usage: true },
       messages: messages.map((message): OpenAiMessage => ({
         role: message.role,
         content: encodeBlocks(message.parts)
