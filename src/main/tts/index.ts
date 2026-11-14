@@ -115,6 +115,20 @@ function mimeFor(extension: ClipFormat): string {
 }
 
 /**
+ * The synthesis key, or null when the secrets store cannot be read.
+ *
+ * A corrupt store is the same as no key: speech must fall back to the macOS
+ * voice instead of rejecting `tts.status` and throwing at every sentence.
+ */
+function ttsKey(): string | null {
+  try {
+    return getTtsKey()
+  } catch {
+    return null
+  }
+}
+
+/**
  * Why live synthesis cannot run, or null when it can.
  *
  * The single rule both `synthesize` and `ttsStatus` ask; exported so the
@@ -131,7 +145,7 @@ export function ttsBlockReason(settings: AppSettings = getSettings()): string | 
   if (!tts.baseUrl) return 'Не указан адрес сервиса.'
   if (!tts.model) return 'Не указана модель.'
   if (!tts.voice) return 'Не указан голос.'
-  if (!getTtsKey()) return 'Не указан ключ синтеза.'
+  if (!ttsKey()) return 'Не указан ключ синтеза.'
   return null
 }
 
@@ -183,7 +197,7 @@ async function pruneCache(): Promise<void> {
 }
 
 async function requestSynthesis(text: string, settings: TtsSettings): Promise<TtsResult> {
-  const key = getTtsKey()
+  const key = ttsKey()
   if (!key) return { ok: false, message: 'Ключ синтеза не настроен.' }
 
   let response: Response
@@ -301,7 +315,7 @@ export function ttsStatus(): TtsStatus {
     engine: settings.tts.engine,
     voice: silero ? sileroSpeaker(settings.tts.sileroVoice) : settings.tts.voice,
     model: settings.tts.model,
-    keyConfigured: Boolean(getTtsKey()),
+    keyConfigured: Boolean(ttsKey()),
     recordedVoice: RECORDED.voice,
     silero: silero ? { installed: sileroRuntimeReady() && sileroModelsReady() } : null
   }

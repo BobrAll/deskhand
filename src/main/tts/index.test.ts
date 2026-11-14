@@ -16,6 +16,7 @@ import type { TtsResult } from '@shared/tts'
 const fake = vi.hoisted(() => ({
   settings: {} as AppSettings,
   key: null as string | null,
+  keyUnreadable: false,
   cache: new Map<string, Buffer>(),
   calls: [] as Array<Record<string, unknown>>
 }))
@@ -76,7 +77,12 @@ vi.mock('node:fs/promises', async (importOriginal) => {
 })
 
 vi.mock('../settings/store', () => ({ getSettings: () => fake.settings }))
-vi.mock('../settings/secrets', () => ({ getTtsKey: () => fake.key }))
+vi.mock('../settings/secrets', () => ({
+  getTtsKey: () => {
+    if (fake.keyUnreadable) throw new Error('the secrets store is unreadable')
+    return fake.key
+  }
+}))
 
 async function load() {
   return import('./index')
@@ -108,6 +114,7 @@ const SILERO: AppSettings = {
 beforeEach(() => {
   fake.settings = CONFIGURED
   fake.key = 'sk-test'
+  fake.keyUnreadable = false
   fake.cache.clear()
   fake.calls = []
   silero.runtime = false
@@ -186,6 +193,20 @@ describe('live synthesis', () => {
   it('does not call the service at all when it is not configured', async () => {
     fake.key = null
     const { synthesize } = await load()
+    const result = await synthesize('Готово.')
+    expect(result.ok).toBe(false)
+    expect(fake.calls).toHaveLength(0)
+  })
+
+  it('treats an unreadable key as a missing one instead of throwing', async () => {
+    fake.keyUnreadable = true
+    const { synthesize, ttsBlockReason, ttsStatus } = await load()
+
+    expect(ttsBlockReason(CONFIGURED)).toContain('ключ')
+    const status = ttsStatus()
+    expect(status.keyConfigured).toBe(false)
+    expect(status.configured).toBe(false)
+
     const result = await synthesize('Готово.')
     expect(result.ok).toBe(false)
     expect(fake.calls).toHaveLength(0)
