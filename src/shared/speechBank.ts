@@ -11,8 +11,8 @@
  * - no app names, buttons, amounts, recipients or typed text;
  * - no promise about the outcome ("сделал", "получилось");
  * - one short sentence, spoken address is "ты", no slang, no «пожалуйста».
- *   A line is only ever heard as the file recorded for it, so rewording means
- *   re-recording `src/renderer/overlay/speech/<id>.mp3` and `manifest.json`.
+ *   Rewording a line means re-recording `src/renderer/overlay/speech/<id>.mp3`
+ *   and `manifest.json`, or the old file no longer matches the new text.
  */
 export type SpeechCue =
   | 'acknowledge'

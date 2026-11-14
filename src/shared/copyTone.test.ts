@@ -3,9 +3,9 @@
  *
  * This is not a style preference that can live in a document nobody reads at
  * the moment of writing a string: the app says it in the card, in settings, in
- * permission hints and in spoken lines, and a single «вы» in the middle of that
- * is the kind of thing that only shows up on screen. So the rule from
- * `AGENTS.md` ("Copy and tone") is checked here.
+ * permission hints and in spoken lines, and a single «вы» — or a «пожалуйста»
+ * — in the middle of that is the kind of thing that only shows up on screen. So
+ * the rule from `AGENTS.md` ("Copy and tone") is checked here.
  *
  * Comments are skipped on purpose: a comment may quote a polite form to explain
  * why it is wrong, and it never reaches the person using the app. Text the model
@@ -37,10 +37,11 @@ const POLITE_IMPERATIVE =
   /(?<![\p{L}])(?:проверьте|введите|попробуйте|нажмите|выберите|увеличьте|укажите|откройте|разрешите|включите|выключите|удерживайте|добавьте|заполните|выполните|пересоберите|повторите|уточните|задайте|подождите|перезапустите|дождитесь|смотрите|говорите|возьмите|используйте|настройте|сохраните|удалите|перейдите|запустите)(?![\p{L}])/iu
 
 /**
- * The polite formulas that carry neither a pronoun nor an imperative.
+ * The politeness words that carry no request of their own.
  *
- * «Повтори, пожалуйста» is the form that used to reach the voice bank: the
- * request is already on «ты», and the word only adds a bow.
+ * «Повтори, пожалуйста» used to reach the voice bank: the request is already on
+ * «ты», and the word only adds a bow. «Извините» is the same bow in front of an
+ * apology, and neither belongs in copy that is already direct.
  */
 const POLITE_FORMULA = /(?<![\p{L}])(?:пожалуйста|извините)(?![\p{L}])/iu
 
