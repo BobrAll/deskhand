@@ -24,6 +24,7 @@ const state = vi.hoisted(() => ({
   remembered: [] as string[],
   maxSteps: 8,
   abortOnMouseMove: true,
+  focused: true,
   verifyResult: true,
   showActions: true,
   saveRunTraces: false,
@@ -129,6 +130,7 @@ function harness(options: { maxTokens?: number } = {}) {
     emit: (event) => events.push(event),
     setPassthrough: (active) => passthrough.push(active),
     focus: () => focuses.push(focuses.length + 1),
+    hasFocus: () => state.focused,
     present: (action) => presentations.push(action)
   })
   return {
@@ -159,6 +161,7 @@ beforeEach(() => {
   state.remembered = []
   state.maxSteps = 8
   state.abortOnMouseMove = true
+  state.focused = true
   state.verifyResult = true
   state.showActions = true
   state.saveRunTraces = false
@@ -628,6 +631,25 @@ describe('the question in the card', () => {
     expect(h.last().phase).toBe('asking')
 
     h.controller.answer('call-1', false, false)
+    state.emit({ kind: 'cancelled' })
+    await running
+  })
+
+  it('answers the question itself when the card lost the keyboard', async () => {
+    state.focused = false
+    const h = harness()
+    const running = h.run()
+    await vi.waitFor(() => expect(state.runs).toHaveLength(1))
+
+    state.emit({ kind: 'approval', request: call() })
+    state.abort('escape')
+
+    expect(state.approvals).toEqual([
+      { id: 'call-1', allow: false, reason: 'Пользователь отклонил действие.' }
+    ])
+    expect(state.cancels).toBe(0)
+    expect(h.last()).toMatchObject({ phase: 'aborted', message: 'Действие отклонено.' })
+
     state.emit({ kind: 'cancelled' })
     await running
   })

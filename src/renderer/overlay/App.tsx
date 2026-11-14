@@ -97,6 +97,8 @@ export function App() {
   const [newText, setNewText] = useState(false)
   /** The reader asked to follow the bottom; a new answer starts at the top. */
   const followAnswerRef = useRef(false)
+  /** A rewrite keeps the old answer mounted until its first chunk; jump then. */
+  const scrollToTopOnNextAnswerRef = useRef(false)
   /** How many shapes are painted on the screen right now. */
   const [drawn, setDrawn] = useState(0)
   /**
@@ -288,6 +290,7 @@ export function App() {
     resetCopied()
     setNewText(false)
     followAnswerRef.current = false
+    scrollToTopOnNextAnswerRef.current = false
     setBusy(false)
     setDrawn(0)
     setTyping(typing)
@@ -617,12 +620,14 @@ export function App() {
   const agentFinished = finishedSummary !== null
   const agentSucceeded = agentFinished && agent !== null && agentMark(agent) === 'done'
   const showWaiting = waitStage !== 'quiet' && !hasAnswer && !agent
-  const blockedActionWide = Boolean(
-    state?.agent.enabled && !state.agent.ready && hasAnswer && !busy &&
+  /** An action that produced an answer because the agent is blocked, not refused. */
+  const blockedAction = Boolean(
+    state && state.agent.enabled && !state.agent.ready && !state.context.excluded &&
+    hasAnswer && !busy && !agentRunning &&
     last && !last.refine && looksLikeAction(last.prompt)
   )
   const wantsWide = (expanded && !agentRunning) || Boolean(failure) ||
-    agent?.phase === 'asking' || showWaiting || blockedActionWide
+    agent?.phase === 'asking' || showWaiting || blockedAction
 
   /**
    * The width the card takes, and whether the question wraps in it.
@@ -698,6 +703,11 @@ export function App() {
   useEffect(() => {
     const node = answerRef.current
     if (!node) return
+    if (scrollToTopOnNextAnswerRef.current) {
+      scrollToTopOnNextAnswerRef.current = false
+      node.scrollTop = 0
+      followAnswerRef.current = false
+    }
     if (followAnswerRef.current) {
       node.scrollTop = node.scrollHeight
       setNewText(false)
@@ -807,8 +817,8 @@ export function App() {
       followAnswerRef.current = false
       setNewText(false)
       // A refinement reuses the mounted answer until its first chunk lands;
-      // without this it would keep the old reader's scroll position.
-      answerRef.current?.scrollTo({ top: 0 })
+      // jump to the top only when the new text is actually there.
+      scrollToTopOnNextAnswerRef.current = true
       setLast({
         prompt: last?.prompt ?? '',
         mode: last?.mode ?? 'insert',
@@ -1208,10 +1218,6 @@ export function App() {
     last
   })
   const showingTranscript = busy && last?.spoken && Boolean(prompt)
-  /** An action that produced an answer because the agent is blocked, not refused. */
-  const blockedAction = Boolean(
-    agentBlocked && promptLooksLikeAction && hasAnswer && !blocked && !busy && !agentRunning
-  )
   /**
    * The field is shared by the provisional and ready card.
    *
@@ -1528,7 +1534,7 @@ export function App() {
             </div>
           )}
         </>
-      ) : agent && (agentStatus || approval) ? (
+      ) : agent && (agentStatus || approval) && !(agent.code === 'blocked' && blockedAction) ? (
         <div
           className="agent"
           data-phase={agent.phase}

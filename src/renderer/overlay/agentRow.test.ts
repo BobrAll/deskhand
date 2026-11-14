@@ -120,6 +120,26 @@ describe('agentSummary', () => {
     }))).toBe('Готово · 1 шаг')
   })
 
+  it('does not turn a blocked start into a failed run', () => {
+    expect(agentSummary(event({
+      phase: 'error', code: 'blocked', message: 'Нужен доступ.'
+    }))).toBeNull()
+  })
+
+  it('keeps the stop sentence even when it is also the answer', () => {
+    expect(agentSummary(event({
+      phase: 'aborted', step: 2, message: 'Остановлено: ты взял мышь.',
+      actions: [{ tool: 'click', label: 'Нажал', ok: true }]
+    }), 'Остановлено: ты взял мышь.')).toBe('Остановлено: ты взял мышь. · 2 шага')
+  })
+
+  it('uses the fallback call count when a terminal event carries no step', () => {
+    expect(agentSummary(event({
+      phase: 'done', completed: true, step: 0,
+      actions: [{ tool: 'click', label: 'Нажал', ok: true }]
+    }))).toBe('Готово · 1 шаг')
+  })
+
   it('says nothing while the run is still going', () => {
     expect(agentSummary(event({ phase: 'acting' }))).toBeNull()
   })

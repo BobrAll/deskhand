@@ -393,6 +393,7 @@ export function createOverlayController(host: OverlayHost) {
   const agent = createAgentController({
     setPassthrough: (active) => host.setPassthrough(active),
     focus: () => host.focus(),
+    hasFocus: () => Boolean(host.window()?.isFocused()),
     emit: (event: AgentEvent) => publishAgent(event),
     present: (action) => paintAgentPresentation(action)
   })

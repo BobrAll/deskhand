@@ -58,6 +58,13 @@ export interface AgentHost {
    * so focusing the card cannot interrupt an action.
    */
   focus?(): void
+  /**
+   * Whether the card owns the keyboard for the approval question.
+   *
+   * When it does, Escape is handled by the renderer's keydown; when it does not,
+   * the native watcher has to answer the question itself.
+   */
+  hasFocus?(): boolean
   /** Reports progress to the card. */
   emit(event: AgentEvent): void
   /**
@@ -556,11 +563,14 @@ export function createAgentController(host: AgentHost) {
       // stopping the run there was the bug.
       if (reason === 'mousemove' &&
           (current?.pending || Date.now() < ignoreMouseUntil)) return
-      // An open question owns Escape, but the renderer's keydown is the one that
-      // answers it: it knows about the approval on screen and can keep this tap
-      // from also stopping the run. If the card somehow lost focus, the question
-      // still has its timeout and its buttons.
-      if (reason === 'escape' && current?.pending) return
+      // An open question owns Escape. The focused card answers it itself; only
+      // when the user clicked away does the native watcher answer, so Escape
+      // cannot be swallowed by the app behind the question.
+      if (reason === 'escape' && current?.pending) {
+        if (host.hasFocus?.() !== false) return
+        current.pending.settle(false, false, 'Пользователь отклонил действие.')
+        return
+      }
       // The renderer may have answered the question a moment ago; its keydown
       // reaches us in the same keystroke.
       if (reason === 'escape' && Date.now() < ignoreEscapeUntil) return
@@ -768,8 +778,8 @@ export function createAgentController(host: AgentHost) {
           publish({
             phase: 'done',
             completed: false,
-            step: 0,
-            total: 0,
+            step: active.step,
+            total: active.total,
             label: explanation,
             actions: actionRows(),
             approval: null,
@@ -781,8 +791,8 @@ export function createAgentController(host: AgentHost) {
         publish({
           phase: 'done',
           completed: true,
-          step: 0,
-          total: 0,
+          step: active.step,
+          total: active.total,
           label: 'Готово',
           actions: actionRows(),
           approval: null
@@ -793,8 +803,8 @@ export function createAgentController(host: AgentHost) {
       case 'cancelled':
         publish({
           phase: 'aborted',
-          step: 0,
-          total: 0,
+          step: active.step,
+          total: active.total,
           label: '',
           actions: actionRows(),
           approval: null,
@@ -879,6 +889,8 @@ export function createAgentController(host: AgentHost) {
       } else {
         publish({
           phase: 'aborted',
+          step: active.step,
+          total: active.total,
           label: '',
           approval: null,
           actions: actionRows(),
@@ -941,8 +953,8 @@ export function createAgentController(host: AgentHost) {
     if (!running) return
     publish({
       phase: 'aborted',
-      step: 0,
-      total: 0,
+      step: current?.step ?? 0,
+      total: current?.total ?? 0,
       label: '',
       actions: actionRows(),
       approval: null,

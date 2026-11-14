@@ -40,11 +40,20 @@ export function actionCount(count: number): string {
  */
 export function agentSummary(event: AgentEvent, answer = ''): string | null {
   if (event.phase !== 'done' && event.phase !== 'aborted' && event.phase !== 'error') return null
+  // A blocked start never ran; its reason belongs to the blocked-action row, not
+  // to a verdict over a run that has no steps.
+  if (event.code === 'blocked') return null
   // The live counter is the agent's step number, so the finished sentence uses
   // the same number rather than the count of tool calls inside those steps.
   const steps = event.step > 0 ? event.step : (event.actions?.length ?? 0)
   if (event.phase === 'done' && event.completed) {
     return `Готово${steps > 0 ? ` · ${actionCount(steps)}` : ''}`
+  }
+  if (event.phase !== 'done') {
+    // A stop or crash has its own sentence; do not run it through the answer
+    // dedupe, which would turn an identical answer into «Не выполнено».
+    const message = (event.message ?? (event.phase === 'aborted' ? 'Остановлено' : 'Ошибка')).trim()
+    return steps > 0 ? `${message} · ${actionCount(steps)}` : message
   }
   const message = agentLabel(event, answer)
   if (!message) return `Не выполнено${steps > 0 ? ` · ${actionCount(steps)}` : ''}`
