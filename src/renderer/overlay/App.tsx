@@ -40,7 +40,7 @@ import { useSpeech } from './useSpeech'
 import { useWaiting } from './useWaiting'
 import { useVoice } from './useVoice'
 import { deriveView } from './viewFlags'
-import { agentLabel, agentMark } from './agentRow'
+import { actionCount, agentLabel, agentMark } from './agentRow'
 import { keyPolicy, type KeyAction } from './keyPolicy'
 import { routeStream } from './streamRouting'
 import { Markdown } from './markdownText'
@@ -617,8 +617,18 @@ export function App() {
   }, [voice.code, voice.at])
   const agentRunning = busy && agent !== null
   const agentStatus = agent && agentLabel(agent, answer)
-  const agentHint = agentRunning && agent?.phase !== 'asking' ? 'Esc — остановить' : null
-  const agentDone = !busy && !hasAnswer && agent !== null && agentMark(agent) === 'done'
+  const agentHistory = agent?.actions ?? []
+  const agentSteps = agentHistory.length
+  const agentHint = agentRunning && agent?.phase !== 'asking'
+    ? `${agent?.step ?? 0}/${agent?.total ?? 0} · Esc — остановить`
+    : null
+  const agentFinished = !busy && agent?.phase === 'done'
+  const agentSucceeded = agentFinished && agent !== null && agentMark(agent) === 'done'
+  const agentSummary = agentFinished
+    ? agentSucceeded
+      ? `Готово${agentSteps > 0 ? ` · ${actionCount(agentSteps)}` : ''}`
+      : (agentStatus ?? `Не выполнено${agentSteps > 0 ? ` · ${actionCount(agentSteps)}` : ''}`)
+    : null
   const showWaiting = waitStage !== 'quiet' && !hasAnswer && !agent
   const wantsWide = (expanded && !agentRunning) || Boolean(failure) ||
     agent?.phase === 'asking' || showWaiting
@@ -1524,13 +1534,40 @@ export function App() {
         </div>
       )}
 
-      {agentDone ? (
-        <div className="agent-head agent-done" role="status">
-          <svg className="agent-check" viewBox="0 0 20 20" aria-hidden="true">
-            <path d="m3 10 4.5 4.5 9-9" />
-          </svg>
-          <span className="agent-label">Готово</span>
-        </div>
+      {agentFinished ? (
+        <>
+          <div
+            className="agent-head agent-done"
+            data-mark={agentSucceeded ? 'done' : 'failed'}
+            role="status"
+          >
+            {agentSucceeded ? (
+              <svg className="agent-check" viewBox="0 0 20 20" aria-hidden="true">
+                <path d="m3 10 4.5 4.5 9-9" />
+              </svg>
+            ) : (
+              <span className="agent-dot" aria-hidden />
+            )}
+            <span className="agent-label">{agentSummary}</span>
+          </div>
+          {agentSteps > 0 && (hasAnswer ? expanded : true) && (
+            <div className="agent-history" aria-label="Действия агента">
+              {(expanded ? agentHistory : agentHistory.slice(-3)).map((action, index) => (
+                <div
+                  className="agent-history-row"
+                  data-fail={!action.ok || undefined}
+                  key={`${index}-${action.label}`}
+                >
+                  <i aria-hidden />
+                  <span>{action.label}</span>
+                </div>
+              ))}
+              {!expanded && agentSteps > 3 && (
+                <div className="agent-history-more">… ещё {agentSteps - 3}</div>
+              )}
+            </div>
+          )}
+        </>
       ) : agent && (agentStatus || approval) ? (
         <div
           className="agent"

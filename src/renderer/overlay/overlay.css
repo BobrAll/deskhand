@@ -465,6 +465,53 @@ button.tag.clear {
   padding-block: 2px;
 }
 
+/* The steps a run actually took. The last few are visible in the folded card;
+   the rest is one chevron away, and the list scrolls instead of growing the
+   window past the display. */
+.agent-history {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  max-height: 140px;
+  margin: 1px 0 0 12px;
+  padding: 2px 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.agent-history-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  font-size: 10.5px;
+  line-height: 1.35;
+  color: var(--text-dim);
+}
+
+.agent-history-row i {
+  flex: none;
+  width: 5px;
+  height: 5px;
+  margin-top: 4px;
+  border-radius: 50%;
+  background: var(--success);
+}
+
+.agent-history-row[data-fail] i {
+  background: var(--danger);
+}
+
+.agent-history-row span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.agent-history-more {
+  padding-left: 11px;
+  font-size: 10px;
+  color: var(--text-faint);
+}
+
 .agent-check {
   width: 12px;
   height: 12px;
@@ -474,6 +521,10 @@ button.tag.clear {
   stroke-width: 2;
   stroke-linecap: round;
   stroke-linejoin: round;
+}
+
+.agent-head[data-mark='failed'] .agent-dot {
+  background: var(--danger);
 }
 
 .agent-label {

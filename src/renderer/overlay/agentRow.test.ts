@@ -9,7 +9,7 @@
 
 import { describe, expect, it } from 'vitest'
 import type { AgentEvent } from '@shared/types'
-import { agentLabel, agentMark } from './agentRow'
+import { actionCount, agentLabel, agentMark } from './agentRow'
 
 function event(overrides: Partial<AgentEvent> = {}): AgentEvent {
   return { phase: 'acting', step: 1, total: 3, label: '', ...overrides }
@@ -78,5 +78,18 @@ describe('the agent row’s label', () => {
   it('shows the stop reason on an aborted run', () => {
     expect(agentLabel(event({ phase: 'aborted', message: 'Остановлено: ты взял мышь.' })))
       .toBe('Остановлено: ты взял мышь.')
+  })
+})
+
+describe('actionCount', () => {
+  it('declines the noun for the numbers a run actually produces', () => {
+    expect(actionCount(1)).toBe('1 шаг')
+    expect(actionCount(2)).toBe('2 шага')
+    expect(actionCount(4)).toBe('4 шага')
+    expect(actionCount(5)).toBe('5 шагов')
+    expect(actionCount(11)).toBe('11 шагов')
+    expect(actionCount(21)).toBe('21 шаг')
+    expect(actionCount(22)).toBe('22 шага')
+    expect(actionCount(25)).toBe('25 шагов')
   })
 })

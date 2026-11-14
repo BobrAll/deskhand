@@ -22,6 +22,15 @@ export function agentMark(event: AgentEvent): AgentMark {
   return event.completed ? 'done' : 'failed'
 }
 
+/** «1 шаг», «3 шага», «11 шагов»: the count is read, not decoded. */
+export function actionCount(count: number): string {
+  const lastTwo = count % 100
+  const last = count % 10
+  if (last === 1 && lastTwo !== 11) return `${count} шаг`
+  if (last >= 2 && last <= 4 && (lastTwo < 12 || lastTwo > 14)) return `${count} шага`
+  return `${count} шагов`
+}
+
 /** The current action or a terminal message that is not already in the answer. */
 export function agentLabel(event: AgentEvent, answer = ''): string | null {
   if (event.phase === 'arming') return 'Подготовка'
