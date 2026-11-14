@@ -8,6 +8,7 @@ import { ProviderError, type ChatMessage, type ContentPart, type LlmProvider, ty
 import {
   apiEndpoint,
   apiRoot,
+  parseSseJson,
   providerErrorMessage,
   readProviderSse,
   toProviderError,
@@ -88,14 +89,8 @@ export class OpenAIProvider implements LlmProvider {
       // Termination comes from `[DONE]` and `finish_reason` only: an event this
       // decoder skips must not decide that an otherwise finished turn is broken.
       if (event.data === '[DONE]') return end
-      let parsed: unknown
-      try {
-        parsed = JSON.parse(event.data)
-      } catch {
-        continue
-      }
-      if (!parsed || typeof parsed !== 'object') continue
-      const payload = parsed as OpenAiChunk
+      const payload = parseSseJson<OpenAiChunk>(event)
+      if (!payload) continue
       if (payload.error) {
         throw new ProviderError(`Ошибка модели: ${providerErrorMessage(payload.error)}`, true)
       }
@@ -109,8 +104,6 @@ export class OpenAIProvider implements LlmProvider {
   }
 
   private payload(messages: ChatMessage[], options: StreamOptions): object {
-    // Reasoning models reject `max_tokens` and a non-default temperature; their
-    // limit travels as `max_completion_tokens` instead.
     const reasoning = isReasoningModel(options.model)
     return {
       model: options.model,

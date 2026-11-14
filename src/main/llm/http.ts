@@ -58,10 +58,9 @@ export async function* readSse(body: ReadableStream<Uint8Array>, allowTail = tru
  * `readSse` for a provider response: a failure while reading the body is a
  * transport failure, not a bug in the decoder.
  *
- * The request has already succeeded by the time the body arrives, so a
- * connection that dies halfway used to escape as a raw `TypeError: terminated`
- * and reach the card in English. Provider errors are already ours and pass
- * through unchanged.
+ * The status line already succeeded by the time the body arrives, so a
+ * connection that dies halfway must not reach the card as a raw
+ * `TypeError: terminated`. Provider errors are already ours and pass through.
  */
 export async function* readProviderSse(
   body: ReadableStream<Uint8Array>,
@@ -89,9 +88,34 @@ function parseBlock(raw: string): SseEvent | null {
   return event ? { event, data: payload } : { data: payload }
 }
 
+/**
+ * The JSON object an event carries, or `null` when it carries none.
+ *
+ * A stream sometimes holds non-JSON noise or a bare array between payloads;
+ * neither is an event this decoder can read, and skipping one must not decide
+ * that the turn is broken. The caller names the shape it expects — nothing here
+ * validates it.
+ */
+export function parseSseJson<T extends object>(event: SseEvent): T | null {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(event.data)
+  } catch {
+    return null
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null
+  return parsed as T
+}
+
 export interface HttpErrorBody {
   message?: string
   error?: { message?: string; type?: string; code?: string }
+}
+
+const UNSPECIFIED_REASON = 'причина не указана'
+
+function nonEmptyText(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim() ? value.trim() : undefined
 }
 
 /**
@@ -103,12 +127,10 @@ export interface HttpErrorBody {
  * so.
  */
 export function providerErrorMessage(error: unknown): string {
-  const text = (value: unknown): string | undefined =>
-    typeof value === 'string' && value.trim() ? value.trim() : undefined
-  if (typeof error === 'string') return text(error) ?? 'причина не указана'
-  if (!error || typeof error !== 'object') return 'причина не указана'
+  if (typeof error === 'string') return nonEmptyText(error) ?? UNSPECIFIED_REASON
+  if (!error || typeof error !== 'object') return UNSPECIFIED_REASON
   const { message, type, code } = error as { message?: unknown; type?: unknown; code?: unknown }
-  return text(message) ?? text(type) ?? text(code) ?? 'причина не указана'
+  return nonEmptyText(message) ?? nonEmptyText(type) ?? nonEmptyText(code) ?? UNSPECIFIED_REASON
 }
 
 /**

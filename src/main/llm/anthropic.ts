@@ -13,7 +13,7 @@ import {
   type StreamChunk, type StreamEnd,
   type StreamOptions
 } from './provider'
-import { apiEndpoint, apiRoot, providerErrorMessage, readProviderSse, toProviderError, toTransportError } from './http'
+import { apiEndpoint, apiRoot, parseSseJson, providerErrorMessage, readProviderSse, toProviderError, toTransportError } from './http'
 
 type AnthropicBlock =
   | { type: 'text'; text: string }
@@ -72,14 +72,8 @@ export class AnthropicProvider implements LlmProvider {
     let inputTokens: number | undefined
     let outputTokens: number | undefined
     for await (const event of readProviderSse(body, options.signal)) {
-      let parsed: unknown
-      try {
-        parsed = JSON.parse(event.data)
-      } catch {
-        continue
-      }
-      if (!parsed || typeof parsed !== 'object') continue
-      const payload = parsed as AnthropicEvent
+      const payload = parseSseJson<AnthropicEvent>(event)
+      if (!payload) continue
       // Any error event is fatal, even one that names only its type: an empty
       // answer with no error is worse than a vague one.
       if (payload.error || payload.type === 'error') {

@@ -63,8 +63,8 @@ export async function testApiKey(
     if (response.ok) {
       return { ok: true, message: `Ключ ${providerLabel(provider)} работает.` }
     }
-    // A body that cannot be read is not an error of its own, but a cancelled
-    // read is: the status has not been reported yet.
+    // A body that cannot be read is not an error of its own; a read cut off by
+    // the deadline is, because then the status was never reported.
     const body = await response.text().catch((error: unknown) => {
       if (signal.aborted) throw error
       return ''

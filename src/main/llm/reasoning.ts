@@ -10,10 +10,14 @@ export function disabledReasoning(baseUrl: string, model: string): object {
   if (new URL(baseUrl).hostname === 'openrouter.ai') {
     return { reasoning: { enabled: false } }
   }
-  const name = model.split('/').pop() ?? model
-  return /^gpt-(?:5\.[1-9]|[6-9])/.test(name)
+  return /^gpt-(?:5\.[1-9]|[6-9])/.test(modelName(model))
     ? { reasoning_effort: 'none' }
     : {}
+}
+
+/** The model's own name: an OpenRouter vendor prefix (`openai/gpt-5`) is not part of it. */
+function modelName(model: string): string {
+  return model.split('/').pop() ?? model
 }
 
 /**
@@ -21,10 +25,8 @@ export function disabledReasoning(baseUrl: string, model: string): object {
  *
  * The o-series and the gpt-5 family reject `max_tokens` — their limit travels as
  * `max_completion_tokens` — and reject any `temperature` other than the default,
- * so the chat request must leave both out for them. A vendor prefix from
- * OpenRouter (`openai/gpt-5`) is not part of the name.
+ * so the chat request must leave both out for them.
  */
 export function isReasoningModel(model: string): boolean {
-  const name = model.split('/').pop() ?? model
-  return /^(?:o[1-9]|gpt-[5-9])(?:[.-]|$)/.test(name)
+  return /^(?:o[1-9]|gpt-[5-9])(?:[.-]|$)/.test(modelName(model))
 }

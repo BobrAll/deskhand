@@ -78,32 +78,35 @@ function coordinate(value: number): number {
 /**
  * Splits the part after the marker into tokens.
  *
- * A comma between two digits is a decimal comma ("0,5"), so it belongs to the
- * number — unless that number already has a decimal point, where it can only
- * separate ("0.5,0.8"). Every other comma separates as well, so the spaced form
- * with trailing commas ("arrow, 0.5, 0.8"), the compact list ("0.5,0.8,0.3,0.4")
- * and the decimal comma all read as the same line.
+ * The only comma that does not separate values is the decimal comma between two
+ * digits ("0,5"); it belongs to the number unless the number already has a
+ * decimal point ("0.5,0.8"). That is what makes the spaced form with trailing
+ * commas ("arrow, 0.5, 0.8"), the compact list ("0.5,0.8,0.3,0.4") and the
+ * decimal comma read as the same line.
  */
 function markerTokens(rest: string): string[] {
   const tokens: string[] = []
-  let current = ''
+  let token = ''
   for (let index = 0; index < rest.length; index += 1) {
     const char = rest[index]
-    if (char === ',') {
-      const betweenDigits = /\d/.test(rest[index - 1] ?? '') && /\d/.test(rest[index + 1] ?? '')
-      if (betweenDigits && !current.includes('.')) {
-        current += '.'
-        continue
-      }
-    } else if (!/[\s;]/.test(char)) {
-      current += char
-      continue
+    if (char === ',' && isDecimalComma(rest, index, token)) {
+      token += '.'
+    } else if (/[\s;,]/.test(char)) {
+      tokens.push(token)
+      token = ''
+    } else {
+      token += char
     }
-    tokens.push(current)
-    current = ''
   }
-  tokens.push(current)
+  tokens.push(token)
   return tokens.filter(Boolean)
+}
+
+/** Whether the comma at `index` is the decimal comma inside the token so far. */
+function isDecimalComma(rest: string, index: number, token: string): boolean {
+  const digitBefore = /\d/.test(rest[index - 1] ?? '')
+  const digitAfter = /\d/.test(rest[index + 1] ?? '')
+  return digitBefore && digitAfter && !token.includes('.')
 }
 
 function cleanLabel(raw: string): string | undefined {

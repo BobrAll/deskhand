@@ -300,9 +300,9 @@ function contextBlock(input: RequestInput): string[] {
     lines.push('"""')
     lines.push(text)
     lines.push('"""')
-    // The collector has its own, higher limit, so the cut happens here without
-    // `truncated` ever being set. The model has to know it is not reading the
-    // whole selection either way.
+    // The collector's own limit is higher than this one, so a selection between
+    // the two is cut here with `truncated` still false. Either way the model has
+    // to know it is not reading the whole selection.
     if (selection.truncated || selection.text.length > text.length) {
       lines.push('(выделение обрезано из-за размера)')
     }

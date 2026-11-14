@@ -32,14 +32,7 @@ export interface ParsedChunk {
 
 export class ResponseStream {
   private pending = ''
-  /**
-   * Whether the line being accumulated has produced no answer text yet.
-   *
-   * A marker is only a marker at the start of a line. Once part of the line is
-   * already in the answer, an `@point …` later in it is prose — which is why the
-   * same model output must not draw or print depending on where the network cut
-   * the chunk.
-   */
+  /** Whether the line being accumulated has produced no answer text yet. */
   private atLineStart = true
   webLookup = false
 
@@ -52,9 +45,7 @@ export class ResponseStream {
     while (newline !== -1) {
       const line = this.pending.slice(0, newline)
       this.pending = this.pending.slice(newline + 1)
-      if (this.atLineStart) this.consume(line, result)
-      else result.text += `${line}\n`
-      this.atLineStart = true
+      this.completeLine(line, result)
       newline = this.pending.indexOf('\n')
     }
 
@@ -76,19 +67,13 @@ export class ResponseStream {
     this.pending = ''
     const result: ParsedChunk = { text: '', annotations: [] }
     if (!tail) return result
-    // A tail that never got its newline is still a line to the protocol — unless
-    // it turns out to be prose. Prose is returned exactly as `push()` returns it,
-    // without the newline `consume()` adds to a complete line.
+    // `push()` only holds a tail at a line start, so it is either a marker or
+    // prose returned exactly as it arrived — without a newline it never had.
     if (!this.applyMarker(tail, result)) result.text = tail
     return result
   }
 
-  /**
-   * Whether the tail could still turn into a marker line.
-   *
-   * Decided from the beginning of the line, not from wherever an `@` happens to
-   * sit: once the line has produced text, a later `@point` in it is prose.
-   */
+  /** Whether the held tail could still turn into a marker line. */
   private couldBecomeMarker(): boolean {
     const trimmed = this.pending.trimStart()
     // Whitespace alone is held so that an indented marker — the prompt's own
@@ -98,9 +83,15 @@ export class ResponseStream {
     return couldStartMarker(trimmed) || WEB_MARKER.startsWith(trimmed.toLowerCase())
   }
 
-  private consume(line: string, result: ParsedChunk): void {
-    if (this.applyMarker(line, result)) return
-    result.text += `${line}\n`
+  /**
+   * Handles one complete line: as a marker when it opens the line, otherwise as
+   * answer text. Once the line has produced text, an `@point` later in it is
+   * prose — which is why the answer cannot depend on where the network cut the
+   * chunk.
+   */
+  private completeLine(line: string, result: ParsedChunk): void {
+    if (!this.atLineStart || !this.applyMarker(line, result)) result.text += `${line}\n`
+    this.atLineStart = true
   }
 
   /** Applies a protocol line. Returns false when the line is ordinary prose. */
