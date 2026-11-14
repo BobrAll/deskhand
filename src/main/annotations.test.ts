@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { isDrawable, parseAnnotationLine } from './annotations'
+import { couldStartMarker, isDrawable, parseAnnotationLine } from './annotations'
 
 describe('parseAnnotationLine: marker recognition', () => {
   it('returns null for a line that is not protocol syntax', () => {
@@ -28,6 +28,26 @@ describe('parseAnnotationLine: marker recognition', () => {
     expect(parseAnnotationLine('   @point 0.1 0.2 0.3 0.4   ')).toEqual(
       parseAnnotationLine('@point 0.1 0.2 0.3 0.4')
     )
+  })
+})
+
+describe('couldStartMarker: what the stream parser must hold back', () => {
+  it('accepts a marker that has not finished arriving', () => {
+    for (const tail of ['@', '@p', '@po', '@poi', '@poin', '@point', '@cir', '@under']) {
+      expect(couldStartMarker(tail), tail).toBe(true)
+    }
+  })
+
+  it('accepts every marker spelling once complete', () => {
+    for (const marker of ['@point', '@draw', '@arrow', '@circle', '@box', '@underline', '@Point']) {
+      expect(couldStartMarker(marker), marker).toBe(true)
+    }
+  })
+
+  it('rejects a word that can no longer become a marker', () => {
+    for (const tail of ['@pointless', '@username', '@hover', 'текст', 'x @po', '']) {
+      expect(couldStartMarker(tail), tail).toBe(false)
+    }
   })
 })
 
@@ -92,7 +112,7 @@ describe('parseAnnotationLine: numbers', () => {
     })
   })
 
-  it('splits on commas and semicolons as well as whitespace', () => {
+  it('reads commas used as separators', () => {
     const expected = {
       kind: 'arrow',
       from: { x: 0.5, y: 0.8 },
@@ -105,13 +125,20 @@ describe('parseAnnotationLine: numbers', () => {
     expect(parseAnnotationLine('@point arrow;0.5;0.8;0.82;0.11')?.annotations[0]).toEqual(expected)
   })
 
-  // KNOWN BUG: characterization — commas separate tokens, so "0,5" is split into
-  // "0" and "5" before the decimal-comma fallback can run.
-  it('mangles a decimal comma (known bug)', () => {
-    expect(parseAnnotationLine('@point 0,5 0,2 0,3 0,4')?.annotations[0].from).toEqual({
-      x: 0,
-      y: 0.05
+  it('reads a decimal comma instead of splitting the number in two', () => {
+    // Splitting on commas read this line as "0 5 0 2" and drew a tiny ring in
+    // the top-left corner instead of the shape the model asked for.
+    expect(parseAnnotationLine('@point 0,5 0,2 0,3 0,4')?.annotations[0]).toEqual({
+      kind: 'circle',
+      from: { x: 0.5, y: 0.2 },
+      to: { x: 0.3, y: 0.4 },
+      label: undefined
     })
+  })
+
+  it('drops a line whose numbers do not parse', () => {
+    expect(parseAnnotationLine('@point 0,5 мусор')).toEqual({ annotations: [] })
+    expect(parseAnnotationLine('@point arrow,')).toEqual({ annotations: [] })
   })
 
   it('scales percentages down', () => {
