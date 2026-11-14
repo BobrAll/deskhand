@@ -10,10 +10,12 @@ import ApplicationServices
 enum ValueRole {
     /// A field whose value is text the user can edit.
     ///
-    /// Used wherever an editable field must be told from text that merely
-    /// describes something: the approval question (typing into a field commits
-    /// nothing), `set_value` (a text-entry role has a typing fallback), and a
-    /// plain click (a field is clicked to place the caret).
+    /// The call sites are the decisions that depend on "the user can type
+    /// here": the approval question (typing into a field commits nothing),
+    /// `set_value` (a text-entry role has a typing fallback), and a plain click
+    /// (a field is clicked to place the caret). Identity deliberately does not
+    /// use this predicate: it goes through `isIdentity`, because a field's
+    /// value is content, not its name.
     static func isTextEntry(_ role: String) -> Bool {
         role == kAXTextFieldRole
             || role == kAXTextAreaRole
@@ -23,8 +25,10 @@ enum ValueRole {
     /// A control whose value is state rather than text that names it.
     ///
     /// A checked box reports 1, a slider its position, a pop-up its selected
-    /// item. Keeping those out of the identity is what lets a toggle keep its
-    /// number and be reported as a change instead of as a new control.
+    /// item. This list is the one place those roles are enumerated for value
+    /// semantics; keeping their values out of the identity is what lets a
+    /// toggle keep its number and be reported as a change instead of as a new
+    /// control.
     static func isState(_ role: String) -> Bool {
         switch role {
         case kAXCheckBoxRole, kAXRadioButtonRole, kAXSliderRole,
@@ -38,9 +42,11 @@ enum ValueRole {
 
     /// Whether the value names the element, so it belongs in its identity.
     ///
-    /// True for text-describing roles — list rows, cells, static text, menu
-    /// items, links — where two rows with the same role and no title are
-    /// indistinguishable without their text.
+    /// True for every role whose value is neither editable text nor state —
+    /// list rows, cells, static text, menu items, links — where two rows with
+    /// the same role and no title are indistinguishable without their text.
+    /// Both exceptions are answered by their own predicate, so a caller never
+    /// has to repeat the role lists to ask this question.
     static func isIdentity(_ role: String) -> Bool {
         !isTextEntry(role) && !isState(role)
     }

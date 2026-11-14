@@ -977,7 +977,7 @@ public final class ToolExecutor: @unchecked Sendable {
             throw ToolError.message("invalid scroll direction \"\(directionName)\"; use up, down, left or right")
         }
         let requestedPages = optionalDouble(args, "pages") ?? 1
-        guard let pages = Self.effectiveScrollPages(requestedPages) else {
+        guard let pages = Mouse.effectiveScrollPages(requestedPages) else {
             throw ToolError.message(
                 "pages must be greater than 0; got \(requestedPages). Use a positive number of"
                     + " pages, or 1 when unsure.")
@@ -1007,18 +1007,6 @@ public final class ToolExecutor: @unchecked Sendable {
         return finish(
             message,
             session: session, actionLabel: "the scroll", verify: verify)
-    }
-
-    /// The page count a scroll may actually move.
-    ///
-    /// A page is 12 wheel lines emitted in chunks 20 ms apart, so a page count
-    /// from the model is a duration as much as a distance: `pages: 10000` is
-    /// 120 000 chunks and roughly 13 minutes on a tool the host treats as
-    /// harmless. The cap bounds that, and a non-positive or non-finite count is
-    /// a malformed request rather than a small scroll.
-    static func effectiveScrollPages(_ requested: Double) -> Double? {
-        guard requested.isFinite, requested > 0 else { return nil }
-        return min(requested, Mouse.maxScrollPages)
     }
 
     private func drag(_ args: JSONValue, verify: Bool) async throws -> ToolResult {

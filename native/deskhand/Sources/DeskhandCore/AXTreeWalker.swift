@@ -23,10 +23,12 @@ public struct AXSnapshot: Sendable {
     ///
     /// Element indices cannot be used: they are assigned by traversal order and
     /// shift whenever anything above a node is inserted or removed. The key is
-    /// therefore built from what the node *is* — role, identifier and text —
-    /// with an occurrence counter so that two identical list rows stay distinct.
-    /// Geometry is deliberately excluded: it is compared separately, because a
-    /// scroll moves everything without changing anything.
+    /// therefore built from what the node *is* — role, subrole, identifier,
+    /// title and label, plus the value only when that value names the node (see
+    /// `identityBase(of:)`) — with an occurrence counter so that two identical
+    /// list rows stay distinct. Geometry is deliberately excluded: it is
+    /// compared separately, because a scroll moves everything without changing
+    /// anything.
     func identityKeys() -> [String] {
         Self.identityKeys(of: nodes)
     }
@@ -102,9 +104,9 @@ public struct AXSnapshot: Sendable {
     /// What changed since an earlier snapshot of the same window.
     ///
     /// Identity is content-based: a node keeps its identity while the thing
-    /// that names it stays the same. Editing a text field or toggling a
-    /// checkbox therefore shows up as one changed node, while a row whose text
-    /// is its name is a different row when that text differs.
+    /// that names it stays the same. Editing a field or toggling a checkbox
+    /// therefore shows up as one changed node, while a row whose text is its
+    /// name is a different row when that text differs.
     public func diff(from previous: AXSnapshot) -> AXSnapshotDiff {
         let previousIDs = previous.identityKeys()
         let currentIDs = identityKeys()
