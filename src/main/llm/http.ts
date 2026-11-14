@@ -22,6 +22,8 @@ export interface SseEvent {
   data: string
 }
 
+const EVENT_SEPARATOR = /\r?\n\r?\n/
+
 /** Parses a raw `text/event-stream` body into events. */
 export async function* readSse(body: ReadableStream<Uint8Array>, allowTail = true): AsyncGenerator<SseEvent> {
   const reader = body.getReader()
@@ -32,13 +34,13 @@ export async function* readSse(body: ReadableStream<Uint8Array>, allowTail = tru
       const { done, value } = await reader.read()
       if (done) break
       buffer += decoder.decode(value, { stream: true })
-      let boundary = /\r?\n\r?\n/.exec(buffer)
-      while (boundary) {
+      for (;;) {
+        const boundary = EVENT_SEPARATOR.exec(buffer)
+        if (!boundary) break
         const raw = buffer.slice(0, boundary.index)
         buffer = buffer.slice(boundary.index + boundary[0].length)
         const parsed = parseBlock(raw)
         if (parsed) yield parsed
-        boundary = /\r?\n\r?\n/.exec(buffer)
       }
     }
     const tail = allowTail ? parseBlock(buffer) : null
@@ -85,21 +87,7 @@ const IMAGE_REJECTION = /image|vision|multimodal|modality|content[-_ ]?type/i
  * names the model, and it may be one we have never heard of.
  */
 export async function toProviderError(response: Response, providerLabel: string): Promise<ProviderError> {
-  let detail = ''
-  try {
-    const text = await response.text()
-    if (text) {
-      try {
-        const body = JSON.parse(text) as HttpErrorBody
-        detail = body.error?.message ?? body.message ?? ''
-      } catch {
-        detail = text.slice(0, 300)
-      }
-    }
-  } catch {
-    /* ignore */
-  }
-
+  const detail = await readErrorDetail(response)
   const status = response.status
   const described = describeProviderStatus(status, { label: providerLabel, detail })
   return new ProviderError(
@@ -108,6 +96,28 @@ export async function toProviderError(response: Response, providerLabel: string)
     status,
     (status === 400 || status === 422) && IMAGE_REJECTION.test(detail)
   )
+}
+
+/**
+ * The provider's own words from a failed response, or an empty string.
+ *
+ * Only the message is wanted: the enclosing sentence is ours. A body that is not
+ * JSON is cut to a preview, and a body that cannot be read at all is not an error
+ * of its own — the status already told the story.
+ */
+async function readErrorDetail(response: Response): Promise<string> {
+  try {
+    const text = await response.text()
+    if (!text) return ''
+    try {
+      const body = JSON.parse(text) as HttpErrorBody
+      return body.error?.message ?? body.message ?? ''
+    } catch {
+      return text.slice(0, 300)
+    }
+  } catch {
+    return ''
+  }
 }
 
 /** Maps a fetch/abort failure to a user-facing message. */
