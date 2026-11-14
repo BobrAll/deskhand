@@ -26,6 +26,23 @@ const ANY_CASE_SCHEME = /^https?:\/\//i
 /** The same pattern case-sensitively, which is what the three app windows kept. */
 const EXACT_CASE_SCHEME = /^https?:\/\//
 
+/**
+ * Whether a URL is one of the app's own pages.
+ *
+ * The renderers are loaded from `file:` in a packaged build and from the Vite
+ * dev server otherwise; anything else is a web page, not the app.
+ */
+function isAppUrl(url: string): boolean {
+  if (url.startsWith('file:')) return true
+  const devServer = process.env['ELECTRON_RENDERER_URL']
+  if (!devServer) return false
+  try {
+    return new URL(url).origin === new URL(devServer).origin
+  } catch {
+    return false
+  }
+}
+
 export function denyExternalLinks(
   win: BrowserWindow,
   options: DenyExternalLinksOptions = {}
@@ -34,5 +51,14 @@ export function denyExternalLinks(
   win.webContents.setWindowOpenHandler(({ url }) => {
     if (pattern.test(url)) void shell.openExternal(url)
     return { action: 'deny' }
+  })
+  // `setWindowOpenHandler` only sees a new window: a link dragged onto the page,
+  // or an anchor without `target="_blank"`, is an ordinary navigation that
+  // replaces the app's own page and leaves no way back. Deny it the same way,
+  // and hand only a real http(s) link to the browser.
+  win.webContents.on('will-navigate', (event, url) => {
+    if (isAppUrl(url)) return
+    event.preventDefault()
+    if (pattern.test(url)) void shell.openExternal(url)
   })
 }

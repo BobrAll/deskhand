@@ -390,25 +390,53 @@ describe('VoiceKeyListener: restart and stop', () => {
     expect(tap.listening).toBe(true)
   })
 
-  it('keeps restarting with a 1 s backoff forever (KNOWN BUG: characterization)', () => {
-    // `launch()` resets `failures` whenever the helper reports `ready`, and a
-    // restart only happens after `ready` — so the exponential growth and the
-    // six-failure cap are unreachable: every restart waits 1000 ms.
+  it('backs off exponentially and gives up instead of spinning every second', () => {
+    // `launch()` used to reset `failures` whenever the helper reported `ready`,
+    // and a restart only happens after `ready` — so the exponential growth and
+    // the six-failure cap were unreachable and a dying helper was respawned
+    // every second, forever.
     const { tap } = started()
     const delays: number[] = []
 
-    for (let attempt = 0; attempt < 8; attempt += 1) {
+    for (let attempt = 0; attempt < 10; attempt += 1) {
       const child = state.children[state.children.length - 1]
       child.stdout.emit('{"event":"ready"}')
+      const timersBefore = state.timers.length
       child.exit(0)
+      if (state.timers.length === timersBefore) break
       const timer = state.timers[state.timers.length - 1]
       delays.push(timer.ms)
       timer.fn()
     }
 
-    expect(delays).toEqual([1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000])
-    expect(state.children).toHaveLength(9)
-    expect(tap.listening).toBe(true)
+    expect(delays).toEqual([1000, 2000, 4000, 8000, 16000, 30000])
+    expect(state.children).toHaveLength(7)
+    expect(tap.listening).toBe(false)
+    expect(console.warn).toHaveBeenCalledWith(
+      expect.stringContaining('failed 6 times in a row')
+    )
+  })
+
+  it('forgets the failures when the listener is started again', () => {
+    const { tap } = started()
+    // Exhaust the retries.
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      const child = state.children[state.children.length - 1]
+      child.stdout.emit('{"event":"ready"}')
+      const timersBefore = state.timers.length
+      child.exit(0)
+      if (state.timers.length === timersBefore) break
+      state.timers[state.timers.length - 1].fn()
+    }
+
+    expect(tap.start('Alt+Shift+Space')).toBeNull()
+    const child = state.children[state.children.length - 1]
+    const timersBefore = state.timers.length
+    child.stdout.emit('{"event":"ready"}')
+    child.exit(0)
+
+    expect(state.timers.length).toBe(timersBefore + 1)
+    expect(state.timers[state.timers.length - 1].ms).toBe(1000)
   })
 
   it('does not retry a process that never reported ready', () => {

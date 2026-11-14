@@ -17,9 +17,11 @@
  * the old one can report its death a moment later. Only the current child's exit
  * or error may change the listener's state or schedule a restart.
  *
- * The known backoff defect (`failures` is reset by every `ready`, so the cap is
- * unreachable in practice) lives here; the characterization tests in
- * `listen.test.ts` pin it.
+ * The failure count belongs to the listener, not to one child: a helper that
+ * reports `ready` and then dies still died, and resetting the count on every
+ * `ready` would make the backoff and its ceiling unreachable — a helper that
+ * crashes right after starting would be respawned every second, forever. Only an
+ * explicit `start()` forgives the previous failures.
  */
 
 import { spawn, type ChildProcess } from 'node:child_process'
@@ -122,7 +124,9 @@ export abstract class TapListener<Event extends string> {
       }
       if (payload.event === 'ready') {
         reportedReady = true
-        this.failures = 0
+        // `lastError` is about the current process; the failure count is not.
+        // Clearing it here would also clear the reason a restarted helper is
+        // being retried with a longer delay (see `scheduleRestart`).
         this.lastError = null
       }
       if (payload.event) this.onEvent(payload.event)
@@ -164,7 +168,12 @@ export abstract class TapListener<Event extends string> {
   private scheduleRestart(): void {
     if (this.stopped || this.restartTimer) return
     this.failures += 1
-    if (this.failures > MAX_FAILURES) return
+    if (this.failures > MAX_FAILURES) {
+      console.warn(
+        `[${this.tag}] listener failed ${MAX_FAILURES} times in a row; not restarting until it is started again`
+      )
+      return
+    }
     // 1s, 2s, 4s… capped at 30s: long enough not to spin, short enough that a
     // permission granted mid-session revives the listener without a restart.
     const delayMs = Math.min(30_000, 1000 * 2 ** (this.failures - 1))

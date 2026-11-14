@@ -1,20 +1,20 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { BrowserWindow } from 'electron'
 
 /**
- * One handler for four windows. The only interesting axis is the scheme match:
- * three windows have always been case-sensitive, and `agent/cursor.ts` has always
- * had the `i` flag — a difference the extraction has to preserve, not smooth
- * over, because making `HTTPS://…` open in three windows that ignore it today is
- * a behaviour change.
+ * One handler for four windows. The interesting axes are the scheme match (three
+ * windows have always been case-sensitive, and `agent/cursor.ts` has always had
+ * the `i` flag) and the two ways a page can leave the app: a new window, and a
+ * navigation in place (a dragged link, an anchor without `target="_blank"`).
  *
  * The window is a fake; no Electron is started.
  */
 
 const env = vi.hoisted(() => ({
   opened: [] as string[],
-  handler: null as ((details: { url: string }) => { action: string }) | null
+  handler: null as ((details: { url: string }) => { action: string }) | null,
+  navigate: null as ((event: { preventDefault: () => void }, url: string) => void) | null
 }))
 
 vi.mock('electron', () => ({
@@ -33,12 +33,15 @@ function fakeWindow(): BrowserWindow {
     webContents: {
       setWindowOpenHandler: (handler: (details: { url: string }) => { action: string }) => {
         env.handler = handler
+      },
+      on: (event: string, handler: (event: { preventDefault: () => void }, url: string) => void) => {
+        if (event === 'will-navigate') env.navigate = handler
       }
     }
   } as unknown as BrowserWindow
 }
 
-/** Runs the installed handler and returns the URL it asked the shell to open. */
+/** Runs the installed window-open handler and returns what it did. */
 function open(url: string): { action: string; opened: string | null } {
   if (!env.handler) throw new Error('no handler installed')
   env.opened.length = 0
@@ -46,9 +49,23 @@ function open(url: string): { action: string; opened: string | null } {
   return { action: result.action, opened: env.opened[0] ?? null }
 }
 
+/** Runs the installed navigation guard for `url`; true when it was allowed. */
+function navigate(url: string): { allowed: boolean; opened: string | null } {
+  if (!env.navigate) throw new Error('no navigation guard installed')
+  env.opened.length = 0
+  let prevented = false
+  env.navigate({ preventDefault: () => { prevented = true } }, url)
+  return { allowed: !prevented, opened: env.opened[0] ?? null }
+}
+
 beforeEach(() => {
   env.opened.length = 0
   env.handler = null
+  env.navigate = null
+})
+
+afterEach(() => {
+  vi.unstubAllEnvs()
 })
 
 describe('denyExternalLinks: the case-sensitive windows', () => {
@@ -101,5 +118,48 @@ describe('denyExternalLinks: the case-insensitive window (agent cursor)', () => 
     denyExternalLinks(fakeWindow(), { matchSchemeCaseInsensitively: true })
     expect(open('ftp://example.com').opened).toBeNull()
     expect(open('about:blank').action).toBe('deny')
+  })
+})
+
+describe('denyExternalLinks: navigation in place', () => {
+  it('denies a link dragged onto the page and opens it in the browser', () => {
+    denyExternalLinks(fakeWindow())
+
+    expect(navigate('https://example.com/dropped')).toEqual({
+      allowed: false,
+      opened: 'https://example.com/dropped'
+    })
+  })
+
+  it('denies a navigation to a non-web URL without opening anything', () => {
+    denyExternalLinks(fakeWindow())
+
+    expect(navigate('javascript:alert(1)')).toEqual({ allowed: false, opened: null })
+  })
+
+  it('lets the app load its own file pages', () => {
+    denyExternalLinks(fakeWindow())
+
+    expect(navigate('file:///Applications/Deskhand.app/renderer/settings/index.html')).toEqual({
+      allowed: true,
+      opened: null
+    })
+  })
+
+  it('lets the dev server load its own pages', () => {
+    vi.stubEnv('ELECTRON_RENDERER_URL', 'http://localhost:5173')
+    denyExternalLinks(fakeWindow())
+
+    expect(navigate('http://localhost:5173/settings/index.html')).toEqual({
+      allowed: true,
+      opened: null
+    })
+  })
+
+  it('denies a navigation to another host while the dev server is running', () => {
+    vi.stubEnv('ELECTRON_RENDERER_URL', 'http://localhost:5173')
+    denyExternalLinks(fakeWindow())
+
+    expect(navigate('http://localhost:9999/settings/index.html').allowed).toBe(false)
   })
 })
