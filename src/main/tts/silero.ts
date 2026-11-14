@@ -298,33 +298,22 @@ export async function removeSilero(): Promise<void> {
   await rm(sileroDir(), { recursive: true, force: true })
 }
 
-async function ensureBatchScript(): Promise<string> {
-  const script = batchScript()
-  // Same rule as the worker script: a changed script must reach an existing
-  // install, and an unchanged one must not be rewritten on every phrase.
+/**
+ * Writes a generated Python script when it is missing or its content changed.
+ *
+ * An app update may ship a different protocol or a fix in the script itself, so
+ * a changed one must reach an existing install; an unchanged one must not be
+ * rewritten on every phrase, because that disturbs a warm process.
+ */
+async function ensureScript(path: string, content: string): Promise<string> {
   try {
-    if (await readFile(script, 'utf8') === BATCH_SCRIPT) return script
+    if (await readFile(path, 'utf8') === content) return path
   } catch {
     /* the script appears on first use */
   }
   await mkdir(sileroDir(), { recursive: true })
-  await writeFile(script, BATCH_SCRIPT)
-  return script
-}
-
-async function ensureWorkerScript(): Promise<string> {
-  const script = workerScript()
-  // An app update may ship a different protocol or a fix in the worker itself.
-  // Rewrite only when the content differs so a warm process is not disturbed on
-  // every phrase.
-  try {
-    if (await readFile(script, 'utf8') === WORKER_SCRIPT) return script
-  } catch {
-    /* the script appears on first use */
-  }
-  await mkdir(sileroDir(), { recursive: true })
-  await writeFile(script, WORKER_SCRIPT)
-  return script
+  await writeFile(path, content)
+  return path
 }
 
 /** One warm process per runtime and speaker, plus the fallback processes in flight. */
@@ -453,7 +442,7 @@ async function renderSilero(
   directory: string
 ): Promise<void> {
   if (jobs.length === 0) return
-  const script = await ensureBatchScript()
+  const script = await ensureScript(batchScript(), BATCH_SCRIPT)
   const jobsPath = join(directory, 'jobs.json')
   await writeFile(jobsPath, JSON.stringify(jobs))
   await spawnCaptured(
@@ -479,7 +468,7 @@ async function renderThroughWorker(
 
   let script: string
   try {
-    script = await ensureWorkerScript()
+    script = await ensureScript(workerScript(), WORKER_SCRIPT)
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     console.warn('[tts] unable to write the silero worker script (%s); using the one-shot renderer', message)

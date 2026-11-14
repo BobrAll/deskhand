@@ -401,11 +401,21 @@ export function createVoiceController(host: VoiceHost) {
    * dismissed.
    */
   function abortTurnWithError(message: string, code?: VoiceErrorCode): void {
+    discardTurn()
+    console.warn('[voice]', message)
+    finishIdle({ error: message, code })
+  }
+
+  /**
+   * Abandons the turn in flight and leaves the card to the next one.
+   *
+   * The recorder is stopped if it is still running, and the turn is bumped so a
+   * recognition that answers late can no longer end this turn a second time.
+   */
+  function discardTurn(): void {
     turn += 1
     if (phase === 'listening') host.emit(CH.voice.stop, { transcribe: false })
     abortRecognition()
-    console.warn('[voice]', message)
-    finishIdle({ error: message, code })
   }
 
   /**
@@ -583,11 +593,7 @@ export function createVoiceController(host: VoiceHost) {
     // The cancel must come from the hold that owns the card, or a stray edge of
     // the other one would abort a turn it never started.
     if (binding && binding !== turnBinding) return
-    // Recognition is a child process that can still answer; bumping the turn is
-    // what stops its result from finishing this turn a second time.
-    turn += 1
-    if (phase === 'listening') host.emit(CH.voice.stop, { transcribe: false })
-    abortRecognition()
+    discardTurn()
     finishIdle({ error: listenerError() ?? undefined })
   }
 
@@ -641,9 +647,7 @@ export function createVoiceController(host: VoiceHost) {
     }
 
     busy = true
-    // The budget the watchdog will use is the audio's, not a flat ceiling: a
-    // four-minute dictation takes longer than a command and was being aborted
-    // mid-recognition with the recording already gone.
+    // The watchdog reads this when `setPhase` arms it below.
     transcribeBudgetMs = transcribeBudget(result.durationMs)
     // This turn is about to load the model itself; a warm-up would be a second
     // copy of the same work. Cancel first: stopping drops the mark of the load it
