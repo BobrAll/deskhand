@@ -76,7 +76,7 @@ export interface CardAnchor {
   /**
    * The side of the pointer the card hangs on.
    *
-   * Remembered because the card *grows sideways*: it opens as a 112 pt pill and
+   * Remembered because the card *grows sideways*: it opens as a narrow pill and
    * widens with every letter typed, so the horizontal edge has to be computed
    * from the width each time instead of being frozen at the size it opened with.
    * The side is the part that stays.

@@ -33,8 +33,9 @@ export const CARD_MIN_WIDTH = 80
 export const CARD_VOICE_WIDTH = CARD_MIN_WIDTH
 
 /**
- * The widest the card gets, whether it is a question or an answer inside it. It
- * widens to this only when content actually needs the room.
+ * The widest an ordinary card gets. It widens to this only when content actually
+ * needs the room. A table or a code block may open wider through
+ * `STRUCTURED_WIDTH` in `cardLayout.ts` without becoming a user-sized panel.
  */
 export const CARD_WIDTH = 360
 

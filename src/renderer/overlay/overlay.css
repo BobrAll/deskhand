@@ -48,7 +48,20 @@ body,
   cursor: grab;
 }
 
-.card :is(textarea, button, input, a, .answer, .meta, .drawer, .foot, .agent, .grip) {
+.card :is(
+  textarea,
+  button,
+  input,
+  a,
+  .answer,
+  .meta,
+  .drawer,
+  .foot,
+  .agent,
+  .agent-done,
+  .agent-history,
+  .grip
+) {
   -webkit-app-region: no-drag;
 }
 

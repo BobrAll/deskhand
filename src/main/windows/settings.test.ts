@@ -86,6 +86,23 @@ describe('settings window lifecycle', () => {
     expect(state.windows[0].destroyed).toBe(true)
   })
 
+  it('cancels a deferred close when settings is reopened', async () => {
+    const api = await load()
+    const win = api.openSettingsWindow()
+    api.setSettingsHeld(true)
+    api.closeSettingsWindow()
+    expect(win.hide).toHaveBeenCalledOnce()
+
+    expect(api.openSettingsWindow()).toBe(win)
+    expect(win.show).toHaveBeenCalled()
+    vi.advanceTimersByTime(1200)
+    expect(state.windows[0].destroyed).toBe(false)
+
+    api.setSettingsHeld(false)
+    api.closeSettingsWindow()
+    expect(state.windows[0].destroyed).toBe(true)
+  })
+
   it('closes after the 1200 ms ceiling even if the renderer stays busy', async () => {
     const api = await load()
     api.openSettingsWindow()

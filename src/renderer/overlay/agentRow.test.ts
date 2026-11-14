@@ -84,7 +84,7 @@ describe('the agent row’s label', () => {
 describe('agentSummary', () => {
   it('counts the steps of a successful run', () => {
     expect(agentSummary(event({
-      phase: 'done', completed: true,
+      phase: 'done', completed: true, step: 2,
       actions: [
         { tool: 'click', label: 'Нажал', ok: true },
         { tool: 'click', label: 'Нажал', ok: true }
@@ -94,13 +94,30 @@ describe('agentSummary', () => {
 
   it('does not call a run finished just because the phase is done', () => {
     expect(agentSummary(event({ phase: 'done', completed: false, message: 'Не дошёл.' })))
-      .toBe('Не дошёл.')
+      .toBe('Не дошёл. · 1 шаг')
   })
 
   it('has a count when a failed run has no message of its own', () => {
     expect(agentSummary(event({
       phase: 'done', completed: false, actions: [{ tool: 'click', label: 'Нажал', ok: false }]
     }))).toBe('Задача осталась невыполненной · 1 шаг')
+  })
+
+  it('summarises an aborted run with its steps and history count', () => {
+    expect(agentSummary(event({
+      phase: 'aborted', step: 2, message: 'Остановлено: ты взял мышь.',
+      actions: [{ tool: 'click', label: 'Нажал', ok: true }]
+    }))).toBe('Остановлено: ты взял мышь. · 2 шага')
+  })
+
+  it('uses the agent step number rather than the call count', () => {
+    expect(agentSummary(event({
+      phase: 'done', completed: true, step: 1,
+      actions: [
+        { tool: 'click', label: 'Нажал', ok: true },
+        { tool: 'click', label: 'Нажал', ok: true }
+      ]
+    }))).toBe('Готово · 1 шаг')
   })
 
   it('says nothing while the run is still going', () => {

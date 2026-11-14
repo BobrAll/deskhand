@@ -39,9 +39,13 @@ export function actionCount(count: number): string {
  * because "Готово" without it is a claim without evidence.
  */
 export function agentSummary(event: AgentEvent, answer = ''): string | null {
-  if (event.phase !== 'done') return null
-  const steps = event.actions?.length ?? 0
-  if (event.completed) return `Готово${steps > 0 ? ` · ${actionCount(steps)}` : ''}`
+  if (event.phase !== 'done' && event.phase !== 'aborted' && event.phase !== 'error') return null
+  // The live counter is the agent's step number, so the finished sentence uses
+  // the same number rather than the count of tool calls inside those steps.
+  const steps = event.step > 0 ? event.step : (event.actions?.length ?? 0)
+  if (event.phase === 'done' && event.completed) {
+    return `Готово${steps > 0 ? ` · ${actionCount(steps)}` : ''}`
+  }
   const message = agentLabel(event, answer)
   if (!message) return `Не выполнено${steps > 0 ? ` · ${actionCount(steps)}` : ''}`
   return steps > 0 ? `${message} · ${actionCount(steps)}` : message

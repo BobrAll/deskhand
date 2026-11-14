@@ -277,6 +277,8 @@ export function createAgentController(host: AgentHost) {
     actions: AgentActionRow[]
     step: number
     total: number
+    /** Labels captured when a tool starts, paired with its result later. */
+    callLabels: Array<{ step: number; name: string; label: string }>
     /**
      * Why the loop gave up, when it did.
      *
@@ -387,6 +389,7 @@ export function createAgentController(host: AgentHost) {
         actions,
         step: 0,
         total,
+        callLabels: [],
         stopped: null,
         notice: null,
         firstToken: false,
@@ -461,7 +464,9 @@ export function createAgentController(host: AgentHost) {
     const state = availability()
     if (!state.ready) {
       const message = state.reason ?? 'Агентный режим недоступен.'
-      publish({ phase: 'error', step: 0, total: 0, label: '', message, code: 'blocked' })
+      // A blocked run has no actions of its own. Without this, a previous run's
+      // history survives in `lastPublished` and appears under the new error.
+      publish({ phase: 'error', step: 0, total: 0, label: '', actions: [], message, code: 'blocked' })
       return { answer: '', actions: [], message, blocked: true }
     }
 
@@ -551,12 +556,11 @@ export function createAgentController(host: AgentHost) {
       // stopping the run there was the bug.
       if (reason === 'mousemove' &&
           (current?.pending || Date.now() < ignoreMouseUntil)) return
-      // An open question owns Escape: it answers «нет», exactly as the button
-      // does. Stopping the whole run here would race the renderer's own answer.
-      if (reason === 'escape' && current?.pending) {
-        current.pending.settle(false, false, 'Пользователь отклонил действие.')
-        return
-      }
+      // An open question owns Escape, but the renderer's keydown is the one that
+      // answers it: it knows about the approval on screen and can keep this tap
+      // from also stopping the run. If the card somehow lost focus, the question
+      // still has its timeout and its buttons.
+      if (reason === 'escape' && current?.pending) return
       // The renderer may have answered the question a moment ago; its keydown
       // reaches us in the same keystroke.
       if (reason === 'escape' && Date.now() < ignoreEscapeUntil) return
@@ -648,19 +652,23 @@ export function createAgentController(host: AgentHost) {
         // finished — cancelled mid-flight, or the process killed — still appears
         // in the timeline as a call that began.
         trace('agent.tool', { step: event.step, tool: event.name })
-        publish({
-          phase: 'acting',
-          step: event.step,
-          total: active.total,
-          label: describeCall({
+        {
+          const label = describeCall({
             id: '',
             tool: event.name,
             arguments: event.args,
             fingerprint: '',
             narration: event.narration
-          }),
-          actions: actionRows()
-        })
+          })
+          active.callLabels.push({ step: event.step, name: event.name, label })
+          publish({
+            phase: 'acting',
+            step: event.step,
+            total: active.total,
+            label,
+            actions: actionRows()
+          })
+        }
         return
       case 'present':
         // A picture, not a phase: the card's caption and the run's verdict do
@@ -684,9 +692,15 @@ export function createAgentController(host: AgentHost) {
         })
         return
       case 'result': {
+        const pendingLabel = active.callLabels.findIndex(
+          (entry) => entry.step === event.step && entry.name === event.name
+        )
+        const label = pendingLabel >= 0
+          ? active.callLabels.splice(pendingLabel, 1)[0].label
+          : (lastPublished.label || event.name)
         active.actions.push({
           tool: event.name,
-          label: lastPublished.label || event.name,
+          label,
           ok: event.ok
         })
         // The phases are recorded separately because they have different fixes;
@@ -930,6 +944,7 @@ export function createAgentController(host: AgentHost) {
       step: 0,
       total: 0,
       label: '',
+      actions: actionRows(),
       approval: null,
       message
     })

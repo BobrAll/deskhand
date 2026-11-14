@@ -86,6 +86,13 @@ export function App() {
   /** The copy button says it worked, then goes back to being a command. */
   const [copied, setCopied] = useState(false)
   const copiedTimerRef = useRef<number | null>(null)
+  const resetCopied = useCallback(() => {
+    setCopied(false)
+    if (copiedTimerRef.current !== null) {
+      window.clearTimeout(copiedTimerRef.current)
+      copiedTimerRef.current = null
+    }
+  }, [])
   /** The answer has new text below the reader's position. */
   const [newText, setNewText] = useState(false)
   /** The reader asked to follow the bottom; a new answer starts at the top. */
@@ -278,13 +285,9 @@ export function App() {
     setAnswer('')
     setFailure(null)
     setNotice(null)
-    setCopied(false)
+    resetCopied()
     setNewText(false)
     followAnswerRef.current = false
-    if (copiedTimerRef.current !== null) {
-      window.clearTimeout(copiedTimerRef.current)
-      copiedTimerRef.current = null
-    }
     setBusy(false)
     setDrawn(0)
     setTyping(typing)
@@ -296,7 +299,7 @@ export function App() {
     turnKindRef.current = { spoken: false, action: false }
     stoppedByUserRef.current = false
     setAgent(null)
-  }, [])
+  }, [resetCopied])
 
   const reset = useCallback(
     (next: OverlayState) => {
@@ -614,8 +617,12 @@ export function App() {
   const agentFinished = finishedSummary !== null
   const agentSucceeded = agentFinished && agent !== null && agentMark(agent) === 'done'
   const showWaiting = waitStage !== 'quiet' && !hasAnswer && !agent
+  const blockedActionWide = Boolean(
+    state?.agent.enabled && !state.agent.ready && hasAnswer && !busy &&
+    last && !last.refine && looksLikeAction(last.prompt)
+  )
   const wantsWide = (expanded && !agentRunning) || Boolean(failure) ||
-    agent?.phase === 'asking' || showWaiting
+    agent?.phase === 'asking' || showWaiting || blockedActionWide
 
   /**
    * The width the card takes, and whether the question wraps in it.
@@ -694,9 +701,9 @@ export function App() {
     if (followAnswerRef.current) {
       node.scrollTop = node.scrollHeight
       setNewText(false)
-    } else if (busy) {
+    } else {
       // The answer starts at its beginning; the pill appears only when there is
-      // actually something below the fold.
+      // actually something below the fold — while streaming and after it ends.
       setNewText(node.scrollHeight > node.clientHeight + 1)
     }
   }, [answer, busy])
@@ -731,6 +738,7 @@ export function App() {
     setAnswer('')
     setFailure(null)
     setNotice(null)
+    resetCopied()
     followAnswerRef.current = false
     setNewText(false)
     // A new question is a new card: a width chosen while reading the previous
@@ -769,7 +777,7 @@ export function App() {
       includeScreenshot: current.flags.includeScreenshot,
       voice: spoken
     })
-  }, [])
+  }, [resetCopied])
 
   /**
    * "Короче / длиннее" on an answer that is already on screen. The current text is
@@ -792,11 +800,15 @@ export function App() {
       setBusy(true)
       setFailure(null)
       setNotice(null)
+      resetCopied()
       // A rewrite is a writer turn; an agent summary from the previous turn
       // must not sit over the reworked text.
       setAgent(null)
       followAnswerRef.current = false
       setNewText(false)
+      // A refinement reuses the mounted answer until its first chunk lands;
+      // without this it would keep the old reader's scroll position.
+      answerRef.current?.scrollTo({ top: 0 })
       setLast({
         prompt: last?.prompt ?? '',
         mode: last?.mode ?? 'insert',
@@ -813,7 +825,7 @@ export function App() {
         refine: { direction, baseAnswer }
       })
     },
-    [answer, last]
+    [answer, last, resetCopied]
   )
 
   /** Repeats whatever the last turn was: a question, or a rewrite and its base. */
@@ -906,7 +918,10 @@ export function App() {
       setAnswer('')
       setFailure(null)
       setNotice(null)
+      resetCopied()
       setAgent(null)
+      followAnswerRef.current = false
+      setNewText(false)
       setPrompt(text)
       // A dictated draft is text the user will read and edit in the card, so it
       // counts as engaging with it — same as a keystroke.
@@ -922,7 +937,7 @@ export function App() {
       }
     })
     return off
-  }, [])
+  }, [resetCopied])
 
   /**
    * Follow the stream only while the reader is at its bottom.
@@ -932,9 +947,10 @@ export function App() {
    */
   const onAnswerScroll = useCallback((event: ReactUIEvent<HTMLDivElement>) => {
     const node = event.currentTarget
+    const hidden = node.scrollHeight > node.clientHeight + 1
     const atBottom = node.scrollHeight - node.scrollTop - node.clientHeight < 24
     followAnswerRef.current = atBottom
-    if (atBottom) setNewText(false)
+    setNewText(!atBottom && hidden)
   }, [])
 
   const jumpToNewText = useCallback(() => {
@@ -1494,7 +1510,7 @@ export function App() {
             )}
             <span className="agent-label">{finishedSummary}</span>
           </div>
-          {agentSteps > 0 && (hasAnswer ? expanded : true) && (
+          {agentSteps > 0 && (
             <div className="agent-history" aria-label="Действия агента">
               {(expanded ? agentHistory : agentHistory.slice(-3)).map((action, index) => (
                 <div
@@ -1610,14 +1626,7 @@ export function App() {
         </div>
       )}
 
-      {/*
-        The everyday actions, on one row; rewrites live in the drawer.
-
-        Pasting is not here. It is the one action that takes the card away from
-        you — it activates another app, sends a keystroke and comes back — and
-        behind a button in the corner it fired by accident. ⌘⏎ is the same
-        action, reached on purpose.
-      */}
+      {/* The everyday actions, on one row; rewrites live in the drawer. */}
       {hasAnswer && (!busy || speech.speaking) && (
         <div className="foot answer-actions">
           <button className="link" onClick={() => speech.speaking ? speech.stop() : speech.speak(answer)}>

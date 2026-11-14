@@ -613,20 +613,21 @@ describe('the question in the card', () => {
     await running
   })
 
-  it('refuses the open question on Escape instead of stopping the whole run', async () => {
+  it('leaves the refusal on Escape to the focused card', async () => {
     const h = harness()
     const running = h.run()
     await vi.waitFor(() => expect(state.runs).toHaveLength(1))
 
     state.emit({ kind: 'approval', request: call() })
+    // The native watcher sees the same Escape. It must not answer the question
+    // itself: the renderer's keydown does, and a second answer would stop the run.
     state.abort('escape')
 
-    expect(state.approvals).toEqual([
-      { id: 'call-1', allow: false, reason: 'Пользователь отклонил действие.' }
-    ])
+    expect(state.approvals).toEqual([])
     expect(state.cancels).toBe(0)
-    expect(h.last()).toMatchObject({ phase: 'aborted', message: 'Действие отклонено.' })
+    expect(h.last().phase).toBe('asking')
 
+    h.controller.answer('call-1', false, false)
     state.emit({ kind: 'cancelled' })
     await running
   })

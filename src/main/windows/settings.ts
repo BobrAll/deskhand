@@ -20,6 +20,14 @@ interface AppWindowOptions {
 
 let settingsWindow: BrowserWindow | null = null
 let onboardingWindow: BrowserWindow | null = null
+/**
+ * Cancels a close that is waiting for the renderer to finish a write.
+ *
+ * The window is hidden while it waits. Without this hook, opening settings again
+ * during the grace would find the hidden window, show it, and then watch the old
+ * close destroy it a moment later.
+ */
+let cancelPendingClose: (() => void) | null = null
 
 /**
  * Set through the `settings.hold` channel while the renderer still has edits to
@@ -78,6 +86,15 @@ function openAppWindow(options: AppWindowOptions): BrowserWindow {
  */
 function holdCloseUntilWritesLand(win: BrowserWindow): void {
   let closing = false
+  let timer: ReturnType<typeof setTimeout> | null = null
+
+  const cancelClose = (): void => {
+    if (timer !== null) clearTimeout(timer)
+    timer = null
+    closing = false
+    if (cancelPendingClose === cancelClose) cancelPendingClose = null
+  }
+
   win.on('close', (event) => {
     if (closing || !settingsHeld) return
     event.preventDefault()
@@ -86,25 +103,32 @@ function holdCloseUntilWritesLand(win: BrowserWindow): void {
     // flash back when another window activates the app. The renderer is still
     // alive while hidden; the write and the real close continue underneath.
     win.hide()
+    cancelPendingClose = cancelClose
     // Polled rather than a fixed wait: a write usually lands in a few
     // milliseconds, and making the user watch a 1.2 s pause for it would be its
     // own small bug. The ceiling only exists so a wedged renderer cannot make the
     // window unclosable.
     const deadline = Date.now() + CLOSE_GRACE_MS
     const attempt = (): void => {
+      timer = null
       if (win.isDestroyed()) return
       if (!settingsHeld || Date.now() >= deadline) {
+        if (cancelPendingClose === cancelClose) cancelPendingClose = null
         win.close()
         return
       }
-      setTimeout(attempt, CLOSE_POLL_MS)
+      timer = setTimeout(attempt, CLOSE_POLL_MS)
     }
-    setTimeout(attempt, CLOSE_POLL_MS)
+    timer = setTimeout(attempt, CLOSE_POLL_MS)
   })
+
+  win.on('closed', cancelClose)
 }
 
 export function openSettingsWindow(): BrowserWindow {
   if (settingsWindow && !settingsWindow.isDestroyed()) {
+    // Reopening during the deferred close is a request to stay.
+    cancelPendingClose?.()
     settingsWindow.show()
     settingsWindow.focus()
     return settingsWindow
