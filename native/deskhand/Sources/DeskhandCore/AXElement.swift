@@ -148,16 +148,26 @@ public struct AXElement {
 
     /// Screen-space frame, if the element exposes position and size.
     public func frame() -> CGRect? {
-        guard let posValue = copy(kAXPositionAttribute),
-              let sizeValue = copy(kAXSizeAttribute),
-              CFGetTypeID(posValue) == AXValueGetTypeID(),
-              CFGetTypeID(sizeValue) == AXValueGetTypeID()
+        guard let position = copy(kAXPositionAttribute) else { return nil }
+        return AXElement.rect(position: position, size: copy(kAXSizeAttribute))
+    }
+
+    /// The rectangle two `AXValue` attribute reads describe, or nil when either
+    /// is missing or carries something other than a point and a size.
+    ///
+    /// Shared by the one-at-a-time and the batched readers, which receive the
+    /// same values from different calls.
+    static func rect(position: CFTypeRef?, size: CFTypeRef?) -> CGRect? {
+        guard let position, let size,
+              CFGetTypeID(position) == AXValueGetTypeID(),
+              CFGetTypeID(size) == AXValueGetTypeID()
         else { return nil }
         var point = CGPoint.zero
-        var size = CGSize.zero
-        guard AXValueGetValue(posValue as! AXValue, .cgPoint, &point) else { return nil }
-        guard AXValueGetValue(sizeValue as! AXValue, .cgSize, &size) else { return nil }
-        return CGRect(origin: point, size: size)
+        var dimensions = CGSize.zero
+        guard AXValueGetValue(position as! AXValue, .cgPoint, &point),
+              AXValueGetValue(size as! AXValue, .cgSize, &dimensions)
+        else { return nil }
+        return CGRect(origin: point, size: dimensions)
     }
 
     public func focused() -> Bool {
@@ -294,18 +304,7 @@ public struct AXWalkedValues {
     }
 
     public var frame: CGRect? {
-        guard let positionValue = raw(kAXPositionAttribute),
-              let sizeValue = raw(kAXSizeAttribute),
-              CFGetTypeID(positionValue) == AXValueGetTypeID(),
-              CFGetTypeID(sizeValue) == AXValueGetTypeID()
-        else { return nil }
-
-        var point = CGPoint.zero
-        var size = CGSize.zero
-        guard AXValueGetValue(positionValue as! AXValue, .cgPoint, &point),
-              AXValueGetValue(sizeValue as! AXValue, .cgSize, &size)
-        else { return nil }
-        return CGRect(origin: point, size: size)
+        AXElement.rect(position: raw(kAXPositionAttribute), size: raw(kAXSizeAttribute))
     }
 
     public var actions: [String] { element.actionNames() }

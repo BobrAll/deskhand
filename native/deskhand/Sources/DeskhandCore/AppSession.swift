@@ -110,24 +110,10 @@ public final class AppSession {
         diffBaseline = snap
         diffBaselineTable = nil
 
-        // A refresh without a screenshot must not change the coordinate space.
-        // The model reads pixels off the last screenshot it was given, and that
-        // screenshot was taken at the capture scale (0.87 here, not 1.0).
-        // Resetting the scale to 1.0 makes the same pixel mean a different
-        // point, so the click lands tens of points away from the target and the
-        // model reads the empty diff as "I missed" — while it aimed correctly.
-        // The scale is kept and only the window frame is updated, since the
-        // window may have moved. With no mapper yet, a scale of 1 is the honest
-        // fallback: pixels equal points inside the window.
-        if let frame = snap.windowFrame {
-            coordinateMapper = Self.mapperAfterTreeWalk(
-                existing: coordinateMapper, windowFrame: frame)
-        }
-        // Resolved again rather than carried in the snapshot: the snapshot is
-        // `Sendable` and describes a window, while an action needs a handle it
-        // can raise. Re-resolving is one attribute read and cannot go stale
-        // between the walk and the action.
-        windowElement = AXTreeWalker.focusedWindow(of: AXElement.application(pid: app.pid))
+        // The mapper is kept, not reset: a walk without a screenshot must not
+        // change the coordinate space the model is reading pixels in. See
+        // `mapperAfterTreeWalk` for the measurement behind that.
+        syncWindowState(with: snap)
 
         if includeScreenshot {
             do {
@@ -245,12 +231,24 @@ public final class AppSession {
         snapshot = latest
         elementTable = table
         diffBaselineTable = nil
-        if let frame = latest.windowFrame {
+        syncWindowState(with: latest)
+        return latest
+    }
+
+    /// Points the coordinate space and the window handle at a walk's window.
+    ///
+    /// The mapper keeps the scale the model is already working in — a walk alone
+    /// must not silently move every later click — while the frame is updated
+    /// because the window may have moved. The window handle is resolved again
+    /// rather than carried in the snapshot: the snapshot is `Sendable` and
+    /// describes a window, while an action needs a handle it can raise. One
+    /// attribute read, and it cannot go stale between the walk and the action.
+    private func syncWindowState(with snapshot: AXSnapshot) {
+        if let frame = snapshot.windowFrame {
             coordinateMapper = Self.mapperAfterTreeWalk(
                 existing: coordinateMapper, windowFrame: frame)
         }
         windowElement = AXTreeWalker.focusedWindow(of: AXElement.application(pid: app.pid))
-        return latest
     }
 
     /// The smallest node whose frame contains a screen point.
