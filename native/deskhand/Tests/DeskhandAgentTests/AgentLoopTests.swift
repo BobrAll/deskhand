@@ -447,6 +447,102 @@ final class AgentLoopTests: XCTestCase {
         XCTAssertTrue(trimmed.contains { $0.text == "important output" })
         XCTAssertTrue(trimmed.allSatisfy { $0.images.isEmpty })
     }
+
+    func testARefusedScreenshotIsNotSentAgainOnLaterSteps() async throws {
+        // Once a provider says it cannot take images, the newest screenshot
+        // still in the history is refused too. Without stripping it, every
+        // following step re-sends the image, pays a failed round trip and only
+        // then asks again without it — the exact cost the flag exists to avoid.
+        let provider = ImageRefusingProvider(steps: [
+            Completion(text: "", toolCalls: [
+                ToolCall(id: "c1", name: "get_app_state", arguments: .object([:]))
+            ], stopReason: "tool_calls"),
+            Completion(text: "", toolCalls: [
+                ToolCall(id: "c2", name: "list_apps", arguments: .object([:]))
+            ], stopReason: "tool_calls"),
+            Completion(text: "Done.", toolCalls: [], stopReason: "stop"),
+        ])
+        let executor = ScriptedExecutor(steps: [
+            .init(content: [.text("state"), .image(Data([1, 2, 3]))]),
+            .text("listed"),
+        ])
+        let loop = AgentLoop(
+            provider: provider,
+            executor: executor,
+            options: .init(keepScreenshots: 1, verbose: false)
+        )
+
+        let answer = try await loop.run(task: "look at the screen")
+
+        XCTAssertEqual(answer, "Done.")
+        XCTAssertEqual(provider.prompts.count, 4, "the refused step is asked again without the image")
+        XCTAssertTrue(
+            provider.prompts[1].contains { !$0.images.isEmpty },
+            "the screenshot went out once, before the refusal was known")
+        XCTAssertFalse(
+            provider.prompts[2].contains { !$0.images.isEmpty },
+            "the retry drops the image")
+        XCTAssertFalse(
+            provider.prompts[3].contains { !$0.images.isEmpty },
+            "no later step may carry an image the provider already refused")
+    }
+
+    func testAMalformedToolCallIsReportedAndNeverExecutedAsAnEmptyOne() async throws {
+        // `{}` is a different call than the one the model asked for: a broken
+        // click becomes a no-argument click, and the model reads the resulting
+        // error as a fault of the tool.
+        let provider = ScriptedProvider(steps: [
+            .init(text: "", toolCalls: [
+                ToolCall(
+                    id: "bad",
+                    name: "list_apps",
+                    arguments: .object([:]),
+                    argumentsError: #"{"include_installed":"#)
+            ]),
+            .init(text: "fixed", toolCalls: []),
+        ])
+        let executor = ScriptedExecutor(repeating: .text("should not run"))
+        let loop = AgentLoop(
+            provider: provider,
+            executor: executor,
+            options: .init(verbose: false)
+        )
+
+        let answer = try await loop.run(task: "call with broken arguments")
+
+        XCTAssertEqual(answer, "fixed")
+        XCTAssertTrue(executor.calls.isEmpty, "the call must not reach the tool layer")
+        let toolMessages = provider.calls[1].0.filter { $0.role == .tool }
+        XCTAssertEqual(toolMessages.count, 1)
+        XCTAssertTrue(toolMessages[0].isError)
+        XCTAssertEqual(toolMessages[0].toolCallID, "bad")
+        XCTAssertTrue(toolMessages[0].text.contains("not valid JSON"), toolMessages[0].text)
+        XCTAssertTrue(
+            toolMessages[0].text.contains("include_installed"),
+            "the model has to see what it actually sent")
+    }
+
+    func testANonPositiveStepBudgetDoesNotTrap() async throws {
+        // `--max-steps 0` used to reach `for step in 1...0` and crash the whole
+        // binary. One step is the smallest run that can say anything.
+        for budget in [0, -5] {
+            let provider = ScriptedProvider(steps: [
+                .init(text: "", toolCalls: [
+                    ToolCall(id: "c1", name: "list_apps", arguments: .object([:]))
+                ]),
+                .init(text: "never asked", toolCalls: []),
+            ])
+            let loop = AgentLoop(
+                provider: provider,
+                executor: ScriptedExecutor(repeating: .text("ok")),
+                options: .init(maxSteps: budget, verbose: false)
+            )
+            let answer = try await loop.run(task: "anything")
+            XCTAssertTrue(answer.contains("Stopped after 1 steps"), answer)
+            XCTAssertEqual(provider.calls.count, 1, "budget \(budget) still runs one step")
+            XCTAssertFalse(loop.finished)
+        }
+    }
 }
 
 /// A provider whose reply was cut off at the token limit.
@@ -465,6 +561,33 @@ private final class TruncatingProvider: ChatProvider {
     ) async throws -> Completion {
         calls += 1
         return Completion(text: "", toolCalls: [], stopReason: "length")
+    }
+}
+
+/// A model that cannot take images: any request carrying one is refused the way
+/// a real provider refuses it, with a 400 whose body names the modality.
+private final class ImageRefusingProvider: ChatProvider {
+    let config = ProviderConfig(apiKey: "test")
+    private var steps: [Completion]
+    private(set) var prompts: [[ChatMessage]] = []
+
+    init(steps: [Completion]) {
+        self.steps = steps
+    }
+
+    func complete(
+        messages: [ChatMessage],
+        tools: [ToolDefinition],
+        systemPrompt: String
+    ) async throws -> Completion {
+        prompts.append(messages)
+        if messages.contains(where: { !$0.images.isEmpty }) {
+            throw LLMError.http(status: 400, body: "This model does not support image input.")
+        }
+        guard !steps.isEmpty else {
+            return Completion(text: "script exhausted", toolCalls: [], stopReason: "stop")
+        }
+        return steps.removeFirst()
     }
 }
 

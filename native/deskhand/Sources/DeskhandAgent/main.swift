@@ -51,7 +51,15 @@ func parseArguments() throws -> CLI {
         case "--config", "-c":
             cli.configPath = iterator.next()
         case "--max-steps":
-            if let value = iterator.next(), let parsed = Int(value) { cli.maxSteps = parsed }
+            // A zero or negative budget used to reach `for step in 1...maxSteps`
+            // and trap, so the standalone binary crashed instead of answering.
+            guard let value = iterator.next(), let parsed = Int(value) else {
+                throw ToolError.message("--max-steps needs a whole number")
+            }
+            guard parsed > 0 else {
+                throw ToolError.message("--max-steps must be at least 1")
+            }
+            cli.maxSteps = parsed
         case "--quiet", "-q":
             cli.verbose = false
         case "--quiet-about-defaults":

@@ -210,10 +210,14 @@ public final class AgentLoop {
 
         let systemPrompt = Self.systemPrompt + "\n\n" + finalResponseInstruction + "\n\n" + environmentSummary()
 
-        for step in 1...options.maxSteps {
+        // `1...options.maxSteps` traps on a non-positive budget, and the
+        // command line accepts `--max-steps 0`. One step is the smallest run
+        // that can say anything, so that is what a bad value gets.
+        let stepBudget = max(1, options.maxSteps)
+        for step in 1...stepBudget {
             try Task.checkCancellation()
             try cancel?.check()
-            observer?.stepStarted(step, of: options.maxSteps)
+            observer?.stepStarted(step, of: stepBudget)
             totals.steps = step
             log("step \(step): asking \(provider.config.model)")
 
@@ -340,12 +344,22 @@ public final class AgentLoop {
                 log("tool \(call.name) \(argumentPreview(call.arguments))")
                 observer?.toolStarted(step, call: call, narration: completion.text)
                 let callClock = TimingClock()
-                let result = await executor.call(
-                    name: call.name,
-                    arguments: call.arguments,
-                    verify: options.verifyActions && isLast,
-                    narration: completion.text
-                )
+                let result: ToolResult
+                if let badArguments = call.argumentsError {
+                    // The arguments did not parse, so running the call with the
+                    // empty object it was given here would execute a different
+                    // call — usually a no-argument one — and the model would
+                    // read the resulting tool error as a fault of the tool.
+                    log("  arguments did not parse; not executing")
+                    result = .failure(Self.unparseableArgumentsMessage(raw: badArguments))
+                } else {
+                    result = await executor.call(
+                        name: call.name,
+                        arguments: call.arguments,
+                        verify: options.verifyActions && isLast,
+                        narration: completion.text
+                    )
+                }
                 let wall = callClock.milliseconds
                 totals.calls += 1
                 if result.isError { totals.failedCalls += 1 }
@@ -448,7 +462,7 @@ public final class AgentLoop {
 
         return finishRun(
             reason: "the step budget ran out",
-            answer: "Stopped after \(options.maxSteps) steps without finishing the task.",
+            answer: "Stopped after \(stepBudget) steps without finishing the task.",
             totals: totals, clock: runClock)
     }
 
@@ -474,7 +488,8 @@ public final class AgentLoop {
     private struct RunTotals {
         /// Steps the loop has started.
         var steps = 0
-        /// Calls actually executed, not calls the model asked for.
+        /// Calls the loop attempted, including ones it refused because their
+        /// arguments did not parse — those are counted as failed.
         var calls = 0
         var failedCalls = 0
     }
@@ -623,6 +638,11 @@ public final class AgentLoop {
         // Mutable because the refusal path asks the same step again without the
         // images.
         var prompt = trimmedHistory(history)
+        // Once a provider has said it cannot take images, the newest screenshot
+        // still in the history must go too. `trimmedHistory` keeps one, so
+        // without this every following step re-sends the refused image, pays a
+        // failed round trip, and only then retries without it.
+        if imagesAlreadyRefused { prompt = Self.strippedImages(prompt) }
         var promptBytes = prompt.reduce(0) { $0 + $1.text.utf8.count }
         let clock = TimingClock()
         // Streaming is reported as a growing prefix, throttled so a host that
@@ -800,6 +820,19 @@ public final class AgentLoop {
     private func argumentPreview(_ arguments: JSONValue) -> String {
         let text = arguments.serialized()
         return text.count > 220 ? String(text.prefix(220)) + "…" : text
+    }
+
+    /// What the model is told when its own arguments did not parse.
+    ///
+    /// The text is included because it is the only way the model can see what
+    /// it actually sent: the history shows the call with the empty object the
+    /// loop refused to run, not the broken text.
+    static func unparseableArgumentsMessage(raw: String) -> String {
+        let preview = raw.count > 200 ? String(raw.prefix(200)) + "…" : raw
+        return """
+            This call was not run: its arguments were not valid JSON. Resend it with valid \
+            JSON arguments. Received: \(preview)
+            """
     }
 
     private func textPreview(_ text: String) -> String {

@@ -140,6 +140,11 @@ public struct OpenAICompatibleProvider: StreamingChatProvider {
         if let temperature = config.temperature {
             payload["temperature"] = .number(temperature)
         }
+        // Without this, OpenAI answers a stream with no usage block at all, so
+        // `step-timing` loses the token counts on the most common provider.
+        if stream {
+            payload["stream_options"] = .object(["include_usage": .bool(true)])
+        }
         if !tools.isEmpty {
             payload["tools"] = .array(tools.map(\.openAIJSON))
             payload["tool_choice"] = .string("auto")
@@ -228,17 +233,19 @@ public struct OpenAICompatibleProvider: StreamingChatProvider {
             }
         }
 
-        if stopReason == nil && !sawDone && text.isEmpty && builders.isEmpty {
-            throw LLMError.transport("the response stream ended before the model answered")
+        // A stream that ends without a terminal event was cut, whatever text
+        // arrived before the cut. Accepting it returns half an answer with no
+        // stop reason, and the loop draws a checkmark over it.
+        guard stopReason != nil || sawDone else {
+            throw LLMError.transport("the response stream ended before the model finished")
         }
 
         let calls = builders.keys.sorted().map { index -> ToolCall in
             let builder = builders[index]!
-            let arguments = (try? JSONValue.parse(builder.arguments)) ?? .object([:])
-            return ToolCall(
+            return makeToolCall(
                 id: builder.id.isEmpty ? UUID().uuidString : builder.id,
                 name: builder.name,
-                arguments: arguments
+                argumentsJSON: builder.arguments
             )
         }
         if stopReason == "tool_calls" && calls.isEmpty {
@@ -348,8 +355,7 @@ public struct OpenAICompatibleProvider: StreamingChatProvider {
                 let id = raw["id"]?.stringValue ?? UUID().uuidString
                 let name = raw["function"]?["name"]?.stringValue ?? ""
                 let argumentText = raw["function"]?["arguments"]?.stringValue ?? "{}"
-                let arguments = (try? JSONValue.parse(argumentText)) ?? .object([:])
-                calls.append(ToolCall(id: id, name: name, arguments: arguments))
+                calls.append(makeToolCall(id: id, name: name, argumentsJSON: argumentText))
             }
         }
 
