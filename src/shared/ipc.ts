@@ -175,6 +175,11 @@ export const CH = {
   tts: {
     /** overlay -> main: `{ ok, audio }` for one line, or a reason to use the system voice. */
     speak: 'tts:speak',
+    /**
+     * overlay -> main: text that is about to be spoken, so its unknown English
+     * words can be looked up while the line is still being generated. No reply.
+     */
+    prefetch: 'tts:prefetch',
     /** Settings window: whether live synthesis is configured, and why not. */
     status: 'tts:status',
     /** Settings window: stores the synthesis key encrypted; never read back. */

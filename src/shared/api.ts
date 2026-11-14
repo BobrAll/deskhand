@@ -254,6 +254,13 @@ export interface DeskhandApi {
    */
   tts: {
     speak(text: string, localOnly?: boolean): Promise<TtsResult>
+    /**
+     * Warms pronunciation hints for words in text that is about to be spoken.
+     *
+     * The prompt is known while the model thinks, and an answer is known a
+     * sentence before its turn comes. Fire-and-forget: a line never waits for it.
+     */
+    prefetch(text: string): void
     status(): Promise<TtsStatus>
     /** Stores the key encrypted; an empty string removes it. */
     setKey(key: string): Promise<TtsStatus>

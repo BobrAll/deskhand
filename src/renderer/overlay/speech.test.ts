@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { automaticSpeech, requestedReading, speechText } from './speech'
+import { answerIsSpoken, automaticSpeech, requestedReading, speechText } from './speech'
 
 describe('spoken replies', () => {
   it('removes code, tables, URLs and tool instructions', () => {
@@ -59,6 +59,15 @@ describe('spoken replies', () => {
     expect(automaticSpeech('Объясни', answer)).toBe(answer)
     expect(automaticSpeech('Прочитай вслух', answer)).toBe(answer)
     expect(requestedReading('озвучь ответ')).toBe(true)
+  })
+  it('knows from the prompt alone whether the answer will be spoken', () => {
+    // Used to decide whether pronouncing its English words ahead of time is
+    // worth a request: a silent answer's words are never heard.
+    expect(answerIsSpoken('Объясни, что такое Figma')).toBe(true)
+    expect(answerIsSpoken('Напиши письмо про Figma')).toBe(false)
+    expect(answerIsSpoken('Переведи этот текст')).toBe(false)
+    expect(answerIsSpoken('Включи видео про Figma')).toBe(false)
+    expect(answerIsSpoken('Напиши и прочитай вслух')).toBe(true)
   })
   it('keeps long answers and shortens long failures', () => {
     const answer = 'Слово '.repeat(100).trim()

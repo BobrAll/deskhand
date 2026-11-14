@@ -47,6 +47,7 @@ exports[`preload: the exposed bridge > matches the snapshot of the method set 1`
   "tts.deleteKey",
   "tts.installSilero",
   "tts.onSetupProgress",
+  "tts.prefetch",
   "tts.preview",
   "tts.removeSilero",
   "tts.setKey",
