@@ -61,6 +61,17 @@ function clamp01(value: number): number {
   return Math.min(1, Math.max(0, value))
 }
 
+/**
+ * One coordinate in 0–1 units.
+ *
+ * A value above the percentage threshold is a coordinate the model wrote as 50
+ * instead of 0.5, so it is divided by a hundred; whatever is left is clamped into
+ * the image, because every consumer expects 0–1.
+ */
+function coordinate(value: number): number {
+  return clamp01(Math.abs(value) > PERCENT_COORDINATE ? value / 100 : value)
+}
+
 function cleanLabel(raw: string): string | undefined {
   const label = raw
     .trim()
@@ -114,13 +125,10 @@ export function parseAnnotationLine(line: string): ParsedLine | null {
 
   // Two numbers describe a circle centre plus a default radius; four describe a
   // full start→end pair. Coordinates may be given as percentages by accident.
-  const scaled = numbers.map((value) =>
-    Math.abs(value) > PERCENT_COORDINATE ? value / 100 : value
-  )
-  const x1 = clamp01(scaled[0])
-  const y1 = clamp01(scaled[1])
-  const x2 = scaled.length >= 4 ? clamp01(scaled[2]) : clamp01(x1 + DEFAULT_SIDE)
-  const y2 = scaled.length >= 4 ? clamp01(scaled[3]) : clamp01(y1 + DEFAULT_SIDE)
+  const x1 = coordinate(numbers[0])
+  const y1 = coordinate(numbers[1])
+  const x2 = numbers.length >= 4 ? coordinate(numbers[2]) : clamp01(x1 + DEFAULT_SIDE)
+  const y2 = numbers.length >= 4 ? coordinate(numbers[3]) : clamp01(y1 + DEFAULT_SIDE)
 
   const from: Point01 = { x: x1, y: y1 }
   const to: Point01 = { x: x2, y: y2 }

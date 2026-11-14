@@ -377,6 +377,20 @@ function clamp(value: unknown, min: number, max: number, fallback: number): numb
   return Math.min(max, Math.max(min, num))
 }
 
+/** A stored boolean, or the default when the value is anything else. */
+function bool(value: unknown, fallback: boolean): boolean {
+  return typeof value === 'boolean' ? value : fallback
+}
+
+/** A stored number rounded to a whole value and kept inside the setting's range. */
+function boundedInt(
+  value: unknown,
+  bounds: { readonly min: number; readonly max: number },
+  fallback: number
+): number {
+  return Math.round(clamp(value, bounds.min, bounds.max, fallback))
+}
+
 function sanitizeStringList(input: unknown, fallback: string[]): string[] {
   if (!Array.isArray(input)) return fallback
   const list = input
@@ -426,7 +440,7 @@ function sanitizeVoice(input: unknown): VoiceSettings {
   // field exists.
   const legacyDefault = raw.dictationHotkey === undefined && raw.hotkey === LEGACY_VOICE_HOTKEY
   return {
-    enabled: typeof raw.enabled === 'boolean' ? raw.enabled : DEFAULT_VOICE.enabled,
+    enabled: bool(raw.enabled, DEFAULT_VOICE.enabled),
     hotkey: legacyDefault ? DEFAULT_VOICE.hotkey : sanitizeHotkey(raw.hotkey, DEFAULT_VOICE.hotkey),
     dictationHotkey: sanitizeHotkey(raw.dictationHotkey, DEFAULT_VOICE.dictationHotkey),
     model: sanitizeVoiceModel(raw.model),
@@ -434,7 +448,7 @@ function sanitizeVoice(input: unknown): VoiceSettings {
     action: sanitizeVoiceAction(raw.action),
     answerVoice: sanitizeAnswerVoice(raw),
     agentFeedback: raw.agentFeedback !== false,
-    autoSend: typeof raw.autoSend === 'boolean' ? raw.autoSend : DEFAULT_VOICE.autoSend,
+    autoSend: bool(raw.autoSend, DEFAULT_VOICE.autoSend),
     minDurationMs: sanitizeDuration(raw.minDurationMs, 0, 5_000, DEFAULT_VOICE.minDurationMs),
     maxDurationMs: sanitizeDuration(
       raw.maxDurationMs,
@@ -487,13 +501,11 @@ const MAX_REMEMBERED_APPROVALS = 256
 
 function sanitizeAgent(input: unknown): AgentSettings {
   const raw = (typeof input === 'object' && input !== null ? input : {}) as Partial<AgentSettings>
-  const flag = (value: unknown, fallback: boolean): boolean =>
-    typeof value === 'boolean' ? value : fallback
   return {
     rememberedApprovals: Array.isArray(raw.rememberedApprovals)
       ? [...new Set(raw.rememberedApprovals.filter(value => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value)))].slice(-MAX_REMEMBERED_APPROVALS)
       : [],
-    enabled: flag(raw.enabled, DEFAULT_AGENT.enabled),
+    enabled: bool(raw.enabled, DEFAULT_AGENT.enabled),
     // Only the floor is enforced: a typo cannot produce a zero-step run, but the
     // user decides how large the budget is. The field is a text input, not a
     // preset, so an upper bound here would silently rewrite what they typed.
@@ -501,10 +513,10 @@ function sanitizeAgent(input: unknown): AgentSettings {
       typeof raw.maxSteps === 'number' && Number.isFinite(raw.maxSteps)
         ? Math.max(1, Math.round(raw.maxSteps))
         : DEFAULT_AGENT.maxSteps,
-    abortOnMouseMove: flag(raw.abortOnMouseMove, DEFAULT_AGENT.abortOnMouseMove),
-    verifyResult: flag(raw.verifyResult, DEFAULT_AGENT.verifyResult),
-    showActions: flag(raw.showActions, DEFAULT_AGENT.showActions),
-    saveRunTraces: flag(raw.saveRunTraces, DEFAULT_AGENT.saveRunTraces)
+    abortOnMouseMove: bool(raw.abortOnMouseMove, DEFAULT_AGENT.abortOnMouseMove),
+    verifyResult: bool(raw.verifyResult, DEFAULT_AGENT.verifyResult),
+    showActions: bool(raw.showActions, DEFAULT_AGENT.showActions),
+    saveRunTraces: bool(raw.saveRunTraces, DEFAULT_AGENT.saveRunTraces)
   }
 }
 
@@ -532,44 +544,35 @@ export function normalizeSettings(input: unknown): AppSettings {
       SETTINGS_BOUNDS.temperature.max,
       DEFAULT_SETTINGS.temperature
     ),
-    maxTokens: Math.round(clamp(
+    maxTokens: boundedInt(
       raw.maxTokens,
-      SETTINGS_BOUNDS.maxTokens.min,
-      SETTINGS_BOUNDS.maxTokens.max,
+      SETTINGS_BOUNDS.maxTokens,
       DEFAULT_SETTINGS.maxTokens
-    )),
+    ),
     systemPrompt:
       typeof raw.systemPrompt === 'string' && raw.systemPrompt.trim()
         ? raw.systemPrompt
         : DEFAULT_SYSTEM_PROMPT,
     hotkey:
       typeof raw.hotkey === 'string' && raw.hotkey.trim() ? raw.hotkey.trim() : DEFAULT_SETTINGS.hotkey,
-    captureScreenshotByDefault:
-      typeof raw.captureScreenshotByDefault === 'boolean'
-        ? raw.captureScreenshotByDefault
-        : DEFAULT_SETTINGS.captureScreenshotByDefault,
-    screenshotMaxSide: Math.round(clamp(
+    captureScreenshotByDefault: bool(
+      raw.captureScreenshotByDefault,
+      DEFAULT_SETTINGS.captureScreenshotByDefault
+    ),
+    screenshotMaxSide: boundedInt(
       raw.screenshotMaxSide,
-      SETTINGS_BOUNDS.screenshotMaxSide.min,
-      SETTINGS_BOUNDS.screenshotMaxSide.max,
+      SETTINGS_BOUNDS.screenshotMaxSide,
       DEFAULT_SETTINGS.screenshotMaxSide
-    )),
-    screenshotQuality: Math.round(clamp(
+    ),
+    screenshotQuality: boundedInt(
       raw.screenshotQuality,
-      SETTINGS_BOUNDS.screenshotQuality.min,
-      SETTINGS_BOUNDS.screenshotQuality.max,
+      SETTINGS_BOUNDS.screenshotQuality,
       DEFAULT_SETTINGS.screenshotQuality
-    )),
+    ),
     excludedApps: sanitizeStringList(raw.excludedApps, DEFAULT_EXCLUDED_APPS),
-    rememberConversation: typeof raw.rememberConversation === 'boolean'
-      ? raw.rememberConversation
-      : DEFAULT_SETTINGS.rememberConversation,
-    launchAtLogin:
-      typeof raw.launchAtLogin === 'boolean' ? raw.launchAtLogin : DEFAULT_SETTINGS.launchAtLogin,
-    onboardingCompleted:
-      typeof raw.onboardingCompleted === 'boolean'
-        ? raw.onboardingCompleted
-        : DEFAULT_SETTINGS.onboardingCompleted,
+    rememberConversation: bool(raw.rememberConversation, DEFAULT_SETTINGS.rememberConversation),
+    launchAtLogin: bool(raw.launchAtLogin, DEFAULT_SETTINGS.launchAtLogin),
+    onboardingCompleted: bool(raw.onboardingCompleted, DEFAULT_SETTINGS.onboardingCompleted),
     voice: sanitizeVoice(raw.voice),
     tts: sanitizeTts(raw.tts),
     agent: sanitizeAgent(raw.agent)

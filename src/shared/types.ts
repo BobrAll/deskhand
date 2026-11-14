@@ -637,9 +637,16 @@ export type AnnotationKind = 'circle' | 'box' | 'arrow' | 'underline'
 
 export interface Annotation {
   kind: AnnotationKind
-  /** Start point: the centre of a circle, one corner of a box, the arrow tail. */
+  /**
+   * One corner of the shape's box, or the tail of an arrow, or the start of an
+   * underline.
+   *
+   * A circle is drawn from the same two corners as a box — it is an ellipse
+   * inscribed in them, not a centre plus a radius — which is why a grounded
+   * circle is the rectangle of the element it encircles.
+   */
   from: Point01
-  /** End point: a point on the circle, the opposite corner, the arrow head. */
+  /** The opposite corner, the arrow head, or the end of the underline. */
   to: Point01
   /** Short caption drawn next to the shape. */
   label?: string

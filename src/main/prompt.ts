@@ -279,46 +279,55 @@ function formatInstruction(options: InstructionOptions): string {
   return tools ? `${base}\n\n${tools}` : base
 }
 
-export function buildRequest(input: RequestInput): BuiltRequest {
-  const lines: string[] = []
+/**
+ * Everything the model is told about the screen, in the order it reads it.
+ *
+ * The app comes first because it frames the rest; the selection is the text the
+ * request is about; the screenshot note says what the picture is and where its
+ * coordinates point; the outline names what is in it. The fallback line exists
+ * so an empty block is never a heading with nothing under it.
+ */
+function contextBlock(input: RequestInput): string[] {
   const snapshot = input.snapshot
+  if (!snapshot) return ['Контекст из приложения не собран.']
 
-  if (snapshot) {
-    lines.push(...contextLines(snapshot.activeApp))
+  const lines = contextLines(snapshot.activeApp)
 
-    if (input.includeSelection && snapshot.selection) {
-      const text = snapshot.selection.text.slice(0, MAX_SELECTION_CHARS)
-      lines.push('Выделенный текст:')
-      lines.push('"""')
-      lines.push(text)
-      lines.push('"""')
-      if (snapshot.selection.truncated) lines.push('(выделение обрезано из-за размера)')
+  if (input.includeSelection && snapshot.selection) {
+    const text = snapshot.selection.text.slice(0, MAX_SELECTION_CHARS)
+    lines.push('Выделенный текст:')
+    lines.push('"""')
+    lines.push(text)
+    lines.push('"""')
+    if (snapshot.selection.truncated) lines.push('(выделение обрезано из-за размера)')
+  }
+
+  if (input.imageAttached) {
+    const what = snapshot.screenshot?.fullScreen ? 'весь экран' : 'активное окно'
+    lines.push(`Приложен скриншот — ${what}. Используй его как основной контекст.`)
+    if (input.draw) {
+      lines.push(
+        'Все координаты @point считай по этому изображению: (0,0) — его ' +
+          'левый верхний угол, (1,1) — правый нижний.'
+      )
     }
+  } else if (input.requestedScreenshot) {
+    lines.push('Скриншот недоступен, опирайся только на текст.')
+  }
 
-    if (input.imageAttached) {
-      const what = snapshot?.screenshot?.fullScreen ? 'весь экран' : 'активное окно'
-      lines.push(`Приложен скриншот — ${what}. Используй его как основной контекст.`)
-      if (input.draw) {
-        lines.push(
-          'Все координаты @point считай по этому изображению: (0,0) — его ' +
-            'левый верхний угол, (1,1) — правый нижний.'
-        )
-      }
-    } else if (input.requestedScreenshot) {
-      lines.push('Скриншот недоступен, опирайся только на текст.')
-    }
-
-    // The exact names go after the screenshot note: the picture says what the
-    // window looks like, this says what the things in it are called.
-    if (input.draw && input.outline) {
-      lines.push('')
-      lines.push(input.outline)
-    }
+  // The exact names go after the screenshot note: the picture says what the
+  // window looks like, this says what the things in it are called.
+  if (input.draw && input.outline) {
+    lines.push('')
+    lines.push(input.outline)
   }
 
   if (lines.length === 0) lines.push('Контекст из приложения не собран.')
+  return lines
+}
 
-  const userText = ['[Контекст]', ...lines, '', '[Запрос]', input.prompt.trim()].join('\n')
+export function buildRequest(input: RequestInput): BuiltRequest {
+  const userText = ['[Контекст]', ...contextBlock(input), '', '[Запрос]', input.prompt.trim()].join('\n')
 
   const instruction = formatInstruction({
     mode: input.mode,

@@ -15,11 +15,18 @@
  * Verbs that ask for something to be done. Russian is inflected, so these are
  * stems, not words: «нажм» covers нажми/нажать/нажму/нажмите.
  *
- * `[^а-яё]` stands in for a word boundary — `\b` is ASCII-only and would treat
- * every Cyrillic letter as a boundary.
+ * One list, two matchers: a stem added here is recognised both mid-sentence and
+ * before the question filter. Written once because the two regexes used to carry
+ * their own copy, and a verb added to one of them silently changed the rule.
  */
-const ACTION =
-  /(^|[^а-яё])(нажм|жми|откр|запуст|включ|выключ|переключ|закр|сохран|впиш|введ|набер|выбер|постав|перемест|перетащ|прокрут|обнов|удали|скача|отправ|подтверд|созда|добав|перейд|загруз)/i
+const ACTION_STEMS =
+  'нажм|жми|откр|запуст|включ|выключ|переключ|закр|сохран|впиш|введ|набер|выбер|постав|перемест|перетащ|прокрут|обнов|удали|скача|отправ|подтверд|созда|добав|перейд|загруз'
+
+/**
+ * A stem anywhere in the text. `[^а-яё]` stands in for a word boundary — `\b` is
+ * ASCII-only and would treat every Cyrillic letter as a boundary.
+ */
+const ACTION = new RegExp(`(^|[^а-яё])(${ACTION_STEMS})`, 'i')
 
 /**
  * Opening an action with the verb is the least ambiguous form there is:
@@ -27,8 +34,10 @@ const ACTION =
  * so that an imperative is not defeated by a question word later in the same
  * sentence («открой вкладку и скажи, где я»).
  */
-const ACTION_AT_START =
-  /^(пожалуйста[,\s]+|давай[,\s]+)?(нажм|жми|откр|запуст|включ|выключ|переключ|закр|сохран|впиш|введ|набер|выбер|постав|перемест|перетащ|прокрут|обнов|удали|скача|отправ|подтверд|созда|добав|перейд|загруз|сделай)/i
+const ACTION_AT_START = new RegExp(
+  `^(пожалуйста[,\\s]+|давай[,\\s]+)?(${ACTION_STEMS}|сделай)`,
+  'i'
+)
 
 /**
  * «Сделай» asks for the thing to be done, wherever it stands.
