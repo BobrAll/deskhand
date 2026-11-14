@@ -255,11 +255,22 @@ export function resizeAnchor(options: ResizeAnchorOptions): CardAnchor {
     const min = placed.area.x + CARD_MARGIN
     const max = Math.max(min, placed.area.x + placed.area.width - width - CARD_MARGIN)
     placed.x = clamp(bounds.x, min, max)
-    // The top edge is what the user dropped. Growing down from it is the
-    // direction a window grows; the old side was about which side of the pointer
-    // it had been placed on, which no longer means anything after a move.
-    placed.above = false
-    placed.point = { x: placed.point.x, y: bounds.y - CARD_GAP }
+    // The top edge is what the user dropped only when the move actually changed
+    // it. A right-edge resize leaves the top alone, so the card keeps growing in
+    // the direction it was already growing.
+    const topMoved = Math.abs(bounds.y - yFor(anchor, bounds.height)) > DRAG_SLACK
+    if (topMoved) {
+      // Growing down from the dropped top is the direction a window grows; the
+      // old side was about which side of the pointer it had been placed on,
+      // which no longer means anything after a move.
+      placed.above = false
+      placed.point = { x: placed.point.x, y: bounds.y - CARD_GAP }
+    } else {
+      placed.point = {
+        x: placed.point.x,
+        y: placed.above ? bounds.y + bounds.height + CARD_GAP : bounds.y - CARD_GAP
+      }
+    }
     // From here on the horizontal edge belongs to the user, including a resize
     // that happens after the drag has ended. A moved window is as much their
     // choice as a dragged edge, so both pin it.

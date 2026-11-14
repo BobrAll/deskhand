@@ -575,7 +575,7 @@ export function App() {
   }, [voice.code, voice.at])
   const agentRunning = busy && agent !== null
   const agentStatus = agent && agentLabel(agent, answer)
-  const agentHint = agentRunning ? 'Esc — остановить' : null
+  const agentHint = agentRunning && agent?.phase !== 'asking' ? 'Esc — остановить' : null
   const agentDone = !busy && !hasAnswer && agent !== null && agentMark(agent) === 'done'
   const showWaiting = waitStage !== 'quiet' && !hasAnswer && !agent
   const wantsWide = (expanded && !agentRunning) || Boolean(failure) ||
@@ -1053,6 +1053,7 @@ export function App() {
         tagName: (event.target as HTMLElement | null)?.tagName ?? null,
         agentPhase: agentRef.current?.phase ?? null,
         busy: busyRef.current,
+        runActive: Boolean(agentRef.current) && busyRef.current,
         hasSelection: Boolean(window.getSelection()?.toString()),
         hasAnswer: Boolean(answerTextRef.current.trim())
       })
@@ -1145,6 +1146,7 @@ export function App() {
         setPrompt(event.target.value)
         setTyping(true)
       }}
+      onBlur={() => setTyping(false)}
       /*
         The field's own Enter, kept separate from the window handler on purpose
         (A1.7). Both ask `keyPolicy` — the same decision — but they are two call
@@ -1160,6 +1162,7 @@ export function App() {
           tagName: 'TEXTAREA',
           agentPhase: null,
           busy: busyRef.current,
+          runActive: false,
           hasSelection: false,
           hasAnswer: Boolean(answer.trim())
         }) !== 'send') {

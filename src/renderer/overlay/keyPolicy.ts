@@ -45,6 +45,8 @@ export interface KeyInput {
   agentPhase: AgentPhase | null
   /** A writer request is in flight, so Escape stops it instead of closing. */
   busy: boolean
+  /** An agent run is on screen, even if its phase is already `aborted`. */
+  runActive: boolean
   /** Whether anything is selected on the page. */
   hasSelection: boolean
   /** Whether there is an answer to copy. */
@@ -69,6 +71,10 @@ export function keyPolicy(input: KeyInput): KeyAction {
       return 'deny'
     }
     if (input.agentPhase === 'arming' || input.agentPhase === 'acting') return 'stopAgent'
+    // A refusal leaves the run's phase at `aborted` while the run is still on
+    // screen. The next Escape must stop that run, not fall through to the
+    // writer's cancel path and put the question back.
+    if (input.runActive) return 'stopAgent'
     // A running answer is not a reason to close the card: the first Escape
     // stops it and puts the question back, the second one closes an idle card.
     if (input.busy) return 'cancel'

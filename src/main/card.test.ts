@@ -236,6 +236,22 @@ describe('card: resizing at the anchor', () => {
     expect(boundsFor(moved, 200, 360).y).toBe(300)
   })
 
+  it('keeps growing upward when only the right edge is pulled', () => {
+    const above: CardAnchor = { ...base, above: true, point: at(700, 700) }
+    const bounds: ScreenRect = { x: 710, y: 659, width: 112, height: 31 }
+    const next = resizeAnchor({
+      anchor: above,
+      bounds,
+      height: 31,
+      width: 480,
+      pin: true,
+      workAreaAt: () => SCREEN
+    })
+
+    expect(next.above).toBe(true)
+    expect(next.x).toBe(710)
+  })
+
   it('moves a wide card aside instead of parking it over the pointer', () => {
     // The side was chosen when the card was 112 wide and still fitted to the
     // right. The answer grew to 360, that side no longer fits, and the clamped

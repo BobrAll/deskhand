@@ -20,6 +20,7 @@ function key(overrides: Partial<KeyInput> = {}): KeyInput {
     tagName: 'TEXTAREA',
     agentPhase: null,
     busy: false,
+    runActive: false,
     hasSelection: false,
     hasAnswer: true,
     ...overrides
@@ -51,6 +52,11 @@ describe('keyPolicy: Escape while a run owns the card', () => {
 
   it('stops a running answer without closing the card', () => {
     expect(keyPolicy(key({ key: 'Escape', busy: true }))).toBe('cancel')
+  })
+
+  it('stops a run whose phase is already aborted but is still on screen', () => {
+    expect(keyPolicy(key({ key: 'Escape', busy: true, runActive: true, agentPhase: 'aborted' })))
+      .toBe('stopAgent')
   })
 })
 
