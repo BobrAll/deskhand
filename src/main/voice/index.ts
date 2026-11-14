@@ -133,15 +133,20 @@ const WARMUP_RETRY_MS = 1_500
 /** Which physical hold started the turn: the main hotkey or the dictation one. */
 type VoiceBinding = 'primary' | 'dictation'
 
+/** One hold's tap process, and the last fatal error it reported. */
+interface TapBinding {
+  listener: VoiceKeyListener | null
+  /**
+   * Kept beside the listener because a `cancel` after a failed start still has to
+   * explain itself, and the two are only ever read together.
+   */
+  error: string | null
+}
+
 export function createVoiceController(host: VoiceHost) {
-  let listeners: Record<VoiceBinding, VoiceKeyListener | null> = {
-    primary: null,
-    dictation: null
-  }
-  /** Kept so a `cancel` after a failed start can still explain itself. */
-  const listenerErrors: Record<VoiceBinding, string | null> = {
-    primary: null,
-    dictation: null
+  const taps: Record<VoiceBinding, TapBinding> = {
+    primary: { listener: null, error: null },
+    dictation: { listener: null, error: null }
   }
   let phase: VoicePhase = 'idle'
   let startedAt = 0
@@ -375,21 +380,20 @@ export function createVoiceController(host: VoiceHost) {
   function abortTurnWithError(message: string, code?: VoiceErrorCode): void {
     turn += 1
     if (phase === 'listening') host.emit(CH.voice.stop, { transcribe: false })
-    abort?.abort()
-    abort = null
-    busy = false
+    abortRecognition()
     console.warn('[voice]', message)
     finishIdle({ error: message, code })
   }
 
   /**
-   * Drops the turn in flight because the user has started a new one.
+   * Drops the recognition in flight, if there is one.
    *
    * Aborting is not enough on its own — recognition is a child process that can
-   * still answer — so the press that follows bumps `turn` too, and the late
-   * result is discarded because its turn is no longer the current one.
+   * still answer — so a caller that must not apply its answer bumps `turn` as
+   * well, and the late result is discarded because its turn is no longer the
+   * current one.
    */
-  function supersede(): void {
+  function abortRecognition(): void {
     abort?.abort()
     abort = null
     busy = false
@@ -452,7 +456,7 @@ export function createVoiceController(host: VoiceHost) {
       // The turn in flight is superseded rather than queued: the new press owns
       // the card, and the old result is discarded when it returns (see the
       // `turn` check in `handleRecording`).
-      supersede()
+      abortRecognition()
       // A superseded dictation still owns the surface. The new turn has to be
       // free to open the card or show its own bars, so the old hold ends here
       // rather than at a `finishIdle` that will never run. A primary dictate
@@ -540,10 +544,25 @@ export function createVoiceController(host: VoiceHost) {
   async function onCancel(): Promise<void> {
     // Escape while talking, or the tap was disabled by macOS.
     if (phase === 'listening') host.emit(CH.voice.stop, { transcribe: false })
-    abort?.abort()
-    abort = null
-    busy = false
+    abortRecognition()
     finishIdle({ error: listenerError() ?? undefined })
+  }
+
+  /**
+   * Ends a turn that has nothing to recognise: no recorder at all, or silence.
+   *
+   * The card gets the sentence that explains it, and the renderer gets an answer
+   * to its `voice:recorded` call. The two wordings differ because one is read by
+   * a person and the other is only a log line in the caller.
+   */
+  function endTurnWithoutSpeech(
+    code: VoiceErrorCode,
+    error: string,
+    message: string
+  ): TranscribeResult {
+    busy = false
+    finishIdle({ error, code })
+    return { ok: false, text: '', ms: 0, message }
   }
 
   /** Called by the overlay once the recorder has stopped. */
@@ -562,16 +581,20 @@ export function createVoiceController(host: VoiceHost) {
 
     if (!result) {
       // No recorder at all: the microphone never opened.
-      busy = false
-      finishIdle({ error: 'Запись не удалась — микрофон недоступен.', code: 'noMic' })
-      return { ok: false, text: '', ms: 0, message: 'Запись не удалась.' }
+      return endTurnWithoutSpeech(
+        'noMic',
+        'Запись не удалась — микрофон недоступен.',
+        'Запись не удалась.'
+      )
     }
     if (!result.wavBase64) {
       // The recorder ran but found no speech: silence, or a press too short to be
       // a phrase. An error message would be wrong — nothing failed.
-      busy = false
-      finishIdle({ error: 'Ничего не расслышал — попробуй ещё раз.', code: 'notHeard' })
-      return { ok: false, text: '', ms: 0, message: 'Речь не распознана.' }
+      return endTurnWithoutSpeech(
+        'notHeard',
+        'Ничего не расслышал — попробуй ещё раз.',
+        'Речь не распознана.'
+      )
     }
 
     busy = true
@@ -654,23 +677,23 @@ export function createVoiceController(host: VoiceHost) {
   }
 
   function ensureListener(binding: VoiceBinding, binary: string): VoiceKeyListener {
-    const existing = listeners[binding]
+    const existing = taps[binding].listener
     if (existing) return existing
     const created = new VoiceKeyListener({
       binary,
       swallow: true,
       onEvent: (event) => handleTapEvent(event, binding),
       onError: (message) => {
-        listenerErrors[binding] = message
+        taps[binding].error = message
         console.warn('[voice]', message)
       }
     })
-    listeners[binding] = created
+    taps[binding].listener = created
     return created
   }
 
   function listenerError(): string | null {
-    return listenerErrors.primary ?? listenerErrors.dictation
+    return taps.primary.error ?? taps.dictation.error
   }
 
   /** (Re)starts both taps from the current settings. Safe to call repeatedly. */
@@ -678,8 +701,8 @@ export function createVoiceController(host: VoiceHost) {
     const settings = getSettings()
     const binary = helperBinary()
     if (!binary) {
-      listenerErrors.primary = 'Нативный helper не найден — голосовой ввод недоступен.'
-      listenerErrors.dictation = null
+      taps.primary.error = 'Нативный helper не найден — голосовой ввод недоступен.'
+      taps.dictation.error = null
       return
     }
     const primary = ensureListener('primary', binary)
@@ -694,13 +717,13 @@ export function createVoiceController(host: VoiceHost) {
       if (phase !== 'idle' || turnAction !== null) void onCancel()
       primary.stop()
       dictation.stop()
-      listenerErrors.primary = null
-      listenerErrors.dictation = null
+      taps.primary.error = null
+      taps.dictation.error = null
       scheduleWarmup()
       return
     }
     const primaryError = primary.start(settings.voice.hotkey)
-    listenerErrors.primary = primaryError
+    taps.primary.error = primaryError
     // Two taps on one combination would answer the same press twice. Spellings
     // such as `Control+Alt` and `Alt+Control` are the same chord, so compare the
     // parsed key code and modifier mask, not the raw strings.
@@ -714,7 +737,7 @@ export function createVoiceController(host: VoiceHost) {
     )
     if (shared) dictation.stop()
     const dictationError = shared ? null : dictation.start(settings.voice.dictationHotkey)
-    listenerErrors.dictation = dictationError
+    taps.dictation.error = dictationError
     if (primaryError && (shared || dictationError)) {
       // Neither hold can start a turn, so loading the model would only take the
       // machine for a feature that cannot be used.
@@ -732,12 +755,13 @@ export function createVoiceController(host: VoiceHost) {
   function stop(): void {
     // App shutdown or a full voice stop can land mid-hold; the surface must not
     // outlive the controller's state.
-    if (turnAction === 'dictate' || turnBinding === 'dictation') {
+    if (turnAction === 'dictate') {
       host.endDictation(turnBinding === 'primary')
     }
-    listeners.primary?.stop()
-    listeners.dictation?.stop()
-    listeners = { primary: null, dictation: null }
+    taps.primary.listener?.stop()
+    taps.dictation.listener?.stop()
+    taps.primary.listener = null
+    taps.dictation.listener = null
     abort?.abort()
     abort = null
     if (poller) clearInterval(poller)
@@ -762,8 +786,8 @@ export function createVoiceController(host: VoiceHost) {
    * brings it back with whatever is stored by then.
    */
   function suspend(): void {
-    listeners.primary?.stop()
-    listeners.dictation?.stop()
+    taps.primary.listener?.stop()
+    taps.dictation.listener?.stop()
   }
 
   async function status() {
