@@ -120,10 +120,10 @@ describe('a process that dies before the handshake', () => {
     await expect(sidecar.run(RUN)).rejects.toThrow('Агент остановился (1).')
 
     state.diesAtStart = false
-    const started = sidecar.run(RUN)
+    const next = sidecar.run(RUN)
     await vi.waitFor(() =>
       expect(state.writes.some((line) => JSON.parse(line).method === 'run')).toBe(true)
     )
-    await started
+    await next
   })
 })
