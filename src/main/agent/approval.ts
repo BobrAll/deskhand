@@ -23,8 +23,15 @@ import type { AgentToolRequest } from '@shared/types'
 
 export type ApprovalDecision =
   | { kind: 'allow' }
-  /** Refused outright, without a question: the user's secrets are not the agent's to type. */
-  | { kind: 'deny'; reason: string }
+  /**
+   * Refused outright, without a question: the user's secrets are not the agent's
+   * to type.
+   *
+   * Two sentences, because it reaches two readers: `label` is the row the card
+   * lists in Russian, `reason` is the tool result the model reads, and text the
+   * model reads is English.
+   */
+  | { kind: 'deny'; label: string; reason: string }
   /** Ask the user, and show them this. */
   | { kind: 'confirm'; detail: string }
 
@@ -217,7 +224,11 @@ export function classifyCall(request: AgentToolRequest, rememberedKeys: string[]
 
   // Never: a password typed by an assistant is a password in a transcript.
   if (request.tool === 'type_text' && SECRET.test(context)) {
-    return { kind: 'deny', reason: 'Секреты и пароли введи вручную.' }
+    return {
+      kind: 'deny',
+      label: 'Секреты и пароли введи вручную.',
+      reason: 'Secrets and passwords must be typed by the user.'
+    }
   }
 
   if (request.fingerprint && rememberedKeys.includes(rememberKey(request.fingerprint))) {

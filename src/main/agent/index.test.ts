@@ -405,6 +405,28 @@ describe('a run that works', () => {
     expect(result.actions).toEqual([{ tool: 'click', label: 'Нажимаю «Купить»', ok: true }])
   })
 
+  it('cuts a narration to the same caption the streamed prose gets', async () => {
+    // The model's narration can be a paragraph. The streamed path already
+    // clamped it to the status row; the narration event published the whole
+    // sentence, and one step could widen the card to full width.
+    const h = harness()
+    const running = h.run()
+    await vi.waitFor(() => expect(state.runs).toHaveLength(1))
+
+    const text =
+      'Открываю вкладку, нахожу поле поиска, ввожу запрос и смотрю на результаты. '.repeat(3)
+    state.emit({ kind: 'stream', step: 1, text })
+    const streamed = h.last().label
+    state.emit({ kind: 'narration', step: 1, text })
+
+    expect(h.last().label).toBe(streamed)
+    expect(h.last().label.length).toBeLessThanOrEqual(120)
+    expect(h.last().label.endsWith('…')).toBe(true)
+
+    state.emit({ kind: 'done', complete: true, answer: '' })
+    await running
+  })
+
   it('passes the task, the step budget and the verification flag through', async () => {
     state.maxSteps = 5
     state.verifyResult = false
@@ -595,7 +617,7 @@ describe('the question in the card', () => {
     await running
   })
 
-  it('turns a refusal into a stop, with the reason on the card', async () => {
+  it('keeps the run going after a refusal, with the reason on the card', async () => {
     const h = harness()
     const running = h.run()
     await vi.waitFor(() => expect(h.passthrough).toEqual([true]))
@@ -603,12 +625,51 @@ describe('the question in the card', () => {
     state.emit({ kind: 'approval', request: call() })
     h.controller.answer('call-1', false, false)
 
-    expect(state.approvals).toEqual([{ id: 'call-1', allow: false, reason: 'Пользователь отклонил действие.' }])
-    expect(h.last()).toMatchObject({ phase: 'aborted', approval: null, message: 'Действие отклонено.' })
+    expect(state.approvals).toEqual([{ id: 'call-1', allow: false, reason: 'The user declined the action.' }])
+    // The agent turns the refusal into a failed call and takes another step, so
+    // the run is not over: a terminal phase here said «остановлено» over a run
+    // that was still working, and left the card in front of the window the next
+    // click was aimed at.
+    expect(h.last()).toMatchObject({ phase: 'acting', approval: null, label: 'Действие отклонено.' })
+    // The card takes the mouse back whether the question was allowed or
+    // refused: otherwise the agent's next click lands on the panel.
+    expect(h.passthrough).toEqual([true, false, true])
 
-    state.emit({ kind: 'cancelled' })
+    state.emit({ kind: 'done', complete: true, answer: 'Готово.' })
     const result = await running
-    expect(result.aborted).toBe(true)
+    expect(result).toEqual({ answer: 'Готово.', actions: [] })
+  })
+
+  it('gives the mouse back when nobody answers the question', async () => {
+    const h = harness()
+    const running = h.run()
+    await vi.waitFor(() => expect(h.passthrough).toEqual([true]))
+
+    vi.useFakeTimers()
+    try {
+      state.emit({ kind: 'approval', request: call() })
+      expect(h.passthrough).toEqual([true, false])
+      // The five minutes the host allows a question to stay open.
+      vi.runAllTimers()
+    } finally {
+      vi.useRealTimers()
+    }
+
+    // The agent receives the refusal and keeps going; the card must not stay
+    // clickable-free until the next answered question. The reason is the tool
+    // result the model reads, so it is English; the card's sentence is Russian.
+    expect(state.approvals).toEqual([
+      { id: 'call-1', allow: false, reason: 'The action was not confirmed by the user.' }
+    ])
+    expect(h.passthrough).toEqual([true, false, true])
+    expect(h.last()).toMatchObject({
+      phase: 'acting',
+      approval: null,
+      label: 'Подтверждение не получено.'
+    })
+
+    state.emit({ kind: 'done', complete: true, answer: 'Готово.' })
+    await running
   })
 
   it('answers harmless calls itself, without troubling the user', async () => {
@@ -637,14 +698,19 @@ describe('the question in the card', () => {
       request: call({ id: 'call-1', tool: 'type_text', title: 'Пароль', fingerprint: '' })
     })
 
+    // The model reads the tool result, so that sentence is English; the row the
+    // card lists stays Russian.
     expect(state.approvals).toEqual([
-      { id: 'call-1', allow: false, reason: 'Секреты и пароли введи вручную.' }
+      { id: 'call-1', allow: false, reason: 'Secrets and passwords must be typed by the user.' }
     ])
     // A refusal that is not the user's decision must not lift the click-through.
     expect(h.passthrough).toEqual([true])
 
     state.emit({ kind: 'done', complete: true, answer: '' })
-    await running
+    const result = await running
+    expect(result.actions).toEqual([
+      { tool: 'type_text', label: 'Секреты и пароли введи вручную.', ok: false }
+    ])
   })
 
   it('ignores an answer for a question that is no longer open', async () => {
@@ -675,7 +741,11 @@ describe('stopping', () => {
 
     // A stop that did not answer the question would be a stop that never lands:
     // the agent is blocked on it.
-    expect(state.approvals).toEqual([{ id: 'call-1', allow: false, reason: 'Отменено.' }])
+    // The refusal reaches the model as a tool result, so that sentence is
+    // English; the card keeps its own Russian one, published by `stop()`.
+    expect(state.approvals).toEqual([
+      { id: 'call-1', allow: false, reason: 'The run was cancelled by the user.' }
+    ])
     expect(state.cancels).toBe(1)
     expect(h.last()).toMatchObject({ phase: 'aborted', message: 'Остановлено: ты взял мышь.' })
 
@@ -745,7 +815,30 @@ describe('the agent dying mid-run', () => {
     const result = await h.run()
 
     expect(result).toMatchObject({ blocked: true, message: 'Компонент агента не собран.' })
+    // Nothing else follows a failed start, so the card must not be left on
+    // `arming` with a live «Подготовка» over a run that never began.
+    expect(h.last()).toMatchObject({
+      phase: 'error',
+      code: 'blocked',
+      message: 'Компонент агента не собран.'
+    })
     expect(h.passthrough).toEqual([true, false])
+  })
+
+  it('names the start failure the same way on the card and in the result', async () => {
+    // A rejection that is not an `Error` has no message of its own; the card
+    // and the answer must still agree on the sentence.
+    state.runRejects = 'broken pipe' as unknown as Error
+    const h = harness()
+
+    const result = await h.run()
+
+    expect(result.message).toBe('Не удалось запустить агента.')
+    expect(h.last()).toMatchObject({
+      phase: 'error',
+      code: 'blocked',
+      message: 'Не удалось запустить агента.'
+    })
   })
 })
 

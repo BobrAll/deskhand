@@ -104,6 +104,48 @@ const IDLE_EVENT: AgentEvent = { phase: 'idle', step: 0, total: 0, label: '' }
 const APPROVAL_TIMEOUT_MS = 5 * 60_000
 
 /**
+ * Why a question was refused, in the two languages it has to be said in.
+ *
+ * The same decision reaches two readers: the card, which speaks Russian to the
+ * user, and the model, which receives the refusal as a tool result and reads
+ * English (`AGENTS.md`, "Copy and tone"). Keeping both sentences in one value
+ * is what stops them from drifting apart.
+ */
+interface Refusal {
+  /** What the card shows: Russian, «ты». */
+  label: string
+  /** What the agent gets as the tool result: English, like all model-facing text. */
+  reason: string
+}
+
+/**
+ * The user said no to the call the agent is blocked on.
+ *
+ * Not a stop: the agent receives the refusal as a failed call and takes another
+ * step, so the run is still alive. The card's sentence names the one thing that
+ * happened instead of claiming the whole run ended.
+ */
+const REFUSED: Refusal = {
+  label: 'Действие отклонено.',
+  reason: 'The user declined the action.'
+}
+
+/** Nobody answered the question before the host's ceiling. */
+const NOT_CONFIRMED: Refusal = {
+  label: 'Подтверждение не получено.',
+  reason: 'The action was not confirmed by the user.'
+}
+
+/**
+ * What the agent is told when the user stops the run on a pending question.
+ *
+ * Model-facing, so English: this string becomes the tool result the model reads
+ * on its next step, and text the model reads is English by contract. The card's
+ * own sentence is the `message` `stop()` publishes.
+ */
+const CANCELLED_REASON = 'The run was cancelled by the user.'
+
+/**
  * Milliseconds, at one decimal.
  *
  * Not integers: most tool calls take a fraction of a millisecond, and rounding
@@ -287,7 +329,7 @@ export function createAgentController(host: AgentHost) {
     pending: {
       request: AgentToolRequest
       timer: ReturnType<typeof setTimeout>
-      settle(allow: boolean, remember: boolean, reason?: string): void
+      settle(allow: boolean, remember: boolean, refusal?: Refusal): void
     } | null
     finish(result: AgentRunResult): void
   } | null = null
@@ -383,14 +425,14 @@ export function createAgentController(host: AgentHost) {
   /**
    * Answers the pending question.
    *
-   * Called from the card through IPC, and from `stop()` with a refusal. Idempotent
-   * on purpose: a second click on a button that was already handled, or an Escape
-   * arriving in the same tick as an answer, must not decide twice.
+   * Called from the card through IPC. Idempotent on purpose: a second click on
+   * a button that was already handled, or an Escape arriving in the same tick
+   * as an answer, must not decide twice.
    */
-  function answer(id: string, allow: boolean, remember: boolean, reason?: string): void {
+  function answer(id: string, allow: boolean, remember: boolean): void {
     const pending = current?.pending
     if (!pending || pending.request.id !== id) return
-    pending.settle(allow, remember, reason)
+    pending.settle(allow, remember)
   }
 
   /**
@@ -493,10 +535,15 @@ export function createAgentController(host: AgentHost) {
       // The same for a start that failed after the stop: the card already says
       // what happened, and a second verdict would replace the user's message.
       if (token === generation) {
+        const message =
+          error instanceof Error ? error.message : 'Не удалось запустить агента.'
+        // A start that failed has no further event to come: leaving the card on
+        // `arming` would show «Подготовка» for a run that is already over.
+        publish({ phase: 'error', step: 0, total: 0, label: '', message, code: 'blocked' })
         settleRun({
           answer: '',
           actions: actionRows(),
-          message: error instanceof Error ? error.message : 'Не удалось запустить агента.',
+          message,
           blocked: true
         })
       }
@@ -602,7 +649,9 @@ export function createAgentController(host: AgentHost) {
             phase: lastPublished.phase === 'asking' ? 'acting' : lastPublished.phase,
             step: active.step,
             total: active.total,
-            label: event.text.trim(),
+            // The same ceiling as the streamed path: a narration can be a
+            // paragraph, and a paragraph in the status row would widen the card.
+            label: caption(event.text),
             actions: actionRows()
           })
         }
@@ -784,15 +833,17 @@ export function createAgentController(host: AgentHost) {
     }
     if (decision.kind === 'deny') {
       trace('agent.approval', { outcome: 'denied' })
+      // The model reads `reason` as a tool result, so it is English; the row the
+      // card lists keeps the user's language.
       approve(request.id, false, decision.reason)
-      active.actions.push({ tool: request.tool, label: decision.reason, ok: false })
+      active.actions.push({ tool: request.tool, label: decision.label, ok: false })
       publish({ phase: 'acting', actions: actionRows(), code: 'secret' })
       return
     }
 
     trace('agent.approval', { outcome: 'asked', tool: request.tool })
     host.setPassthrough(false)
-    const settle = (allow: boolean, remember: boolean, reason?: string): void => {
+    const settle = (allow: boolean, remember: boolean, refusal: Refusal = REFUSED): void => {
       const pending = active.pending
       if (!pending || pending.request.id !== request.id) return
       clearTimeout(pending.timer)
@@ -809,29 +860,30 @@ export function createAgentController(host: AgentHost) {
           })
         }
       }
-      approve(
-        request.id,
-        allow,
-        allow ? undefined : (reason ?? 'Пользователь отклонил действие.')
-      )
+      approve(request.id, allow, allow ? undefined : refusal.reason)
+      // The panel had the mouse and the focus for a moment; the agent's next
+      // click must not land on it. That is true of a refusal as much as of an
+      // allow: the agent turns the refusal into a failed call and takes another
+      // step, so the run — and its clicks — continue either way.
+      host.setPassthrough(true)
       if (allow) {
-        // The panel had the mouse and the focus for a moment; the agent's next
-        // click must not land on it.
-        host.setPassthrough(true)
         publish({ phase: 'acting', approval: null, actions: actionRows() })
       } else {
+        // Not `aborted`: nothing stopped. The run goes on, and a terminal phase
+        // here would say "stopped" over work that is still happening — until
+        // the next question lifted the click-through again, leaving the card
+        // over the window the agent was about to press.
         publish({
-          phase: 'aborted',
-          label: '',
+          phase: 'acting',
           approval: null,
-          actions: actionRows(),
-          message: 'Действие отклонено.'
+          label: refusal.label,
+          actions: actionRows()
         })
       }
     }
     const timer = setTimeout(() => {
       trace('agent.approval', { outcome: 'timeout', tool: request.tool })
-      settle(false, false, 'Подтверждение не получено.')
+      settle(false, false, NOT_CONFIRMED)
     }, APPROVAL_TIMEOUT_MS)
     active.pending = { request, timer, settle }
 
@@ -874,7 +926,7 @@ export function createAgentController(host: AgentHost) {
       const pending = active.pending
       clearTimeout(pending.timer)
       active.pending = null
-      approve(pending.request.id, false, 'Отменено.')
+      approve(pending.request.id, false, CANCELLED_REASON)
     }
     sidecar.cancel()
     watcher?.stop()

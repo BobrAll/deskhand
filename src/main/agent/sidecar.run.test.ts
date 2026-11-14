@@ -7,9 +7,9 @@
  */
 
 import { EventEmitter } from 'node:events'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const state = vi.hoisted(() => ({ writes: [] as string[] }))
+const state = vi.hoisted(() => ({ writes: [] as string[], diesAtStart: false }))
 
 class FakeChild extends EventEmitter {
   exitCode: number | null = null
@@ -28,9 +28,20 @@ class FakeChild extends EventEmitter {
 
   constructor() {
     super()
+    if (state.diesAtStart) {
+      // Something a binary can really do before the handshake: a missing dylib,
+      // a broken signature, a crash in its own startup.
+      queueMicrotask(() => this.exitNow(1))
+      return
+    }
     queueMicrotask(() => {
       this.stdout.emit('data', `${JSON.stringify({ event: 'ready', params: { tools: 11 } })}\n`)
     })
+  }
+
+  private exitNow(code: number): void {
+    this.exitCode = code
+    this.emit('exit', code, null)
   }
 
   kill(): void {}
@@ -42,24 +53,34 @@ vi.mock('electron', () => ({ app: { getAppPath: () => '/tmp/app' } }))
 vi.mock('../paths', () => ({ resourceCandidates: () => ['/tmp/deskhand-agent'] }))
 vi.mock('./trace', () => ({ trace: () => {} }))
 
+const RUN = {
+  task: 'Нажми «Купить»',
+  provider: {
+    wire: 'openai' as const,
+    baseUrl: 'https://example.test',
+    model: 'm',
+    apiKey: 'k',
+    maxTokens: 1024,
+    temperature: 0
+  },
+  maxSteps: 5,
+  verifyActions: true,
+  visualize: true,
+  excludedApps: [] as string[]
+}
+
+beforeEach(() => {
+  state.writes = []
+  state.diesAtStart = false
+})
+
 describe('run request', () => {
   it('carries the excluded apps the settings configured', async () => {
     const { AgentSidecar } = await import('./sidecar')
     const sidecar = new AgentSidecar()
 
     await sidecar.run({
-      task: 'Нажми «Купить»',
-      provider: {
-        wire: 'openai',
-        baseUrl: 'https://example.test',
-        model: 'm',
-        apiKey: 'k',
-        maxTokens: 1024,
-        temperature: 0
-      },
-      maxSteps: 5,
-      verifyActions: true,
-      visualize: true,
+      ...RUN,
       excludedApps: ['com.apple.finder', 'com.1password.1password']
     })
 
@@ -74,5 +95,35 @@ describe('run request', () => {
       'com.apple.finder',
       'com.1password.1password'
     ])
+  })
+})
+
+describe('a process that dies before the handshake', () => {
+  it('fails the start at once instead of waiting out the timeout', async () => {
+    state.diesAtStart = true
+    const { AgentSidecar } = await import('./sidecar')
+    const sidecar = new AgentSidecar()
+
+    const started = Date.now()
+    await expect(sidecar.run(RUN)).rejects.toThrow('Агент остановился (1).')
+
+    // Without the exit settling the ready promise this waits for the whole
+    // ten-second handshake, and every request in the meantime is refused as
+    // "a run is already in progress".
+    expect(Date.now() - started).toBeLessThan(1_000)
+  })
+
+  it('lets the next run spawn a fresh process', async () => {
+    state.diesAtStart = true
+    const { AgentSidecar } = await import('./sidecar')
+    const sidecar = new AgentSidecar()
+    await expect(sidecar.run(RUN)).rejects.toThrow('Агент остановился (1).')
+
+    state.diesAtStart = false
+    const started = sidecar.run(RUN)
+    await vi.waitFor(() =>
+      expect(state.writes.some((line) => JSON.parse(line).method === 'run')).toBe(true)
+    )
+    await started
   })
 })
