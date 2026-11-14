@@ -51,9 +51,13 @@ export function agentSummary(event: AgentEvent, answer = ''): string | null {
   }
   if (event.phase !== 'done') {
     // A stop or crash has its own sentence; do not run it through the answer
-    // dedupe, which would turn an identical answer into «Не выполнено».
-    const message = (event.message ?? (event.phase === 'aborted' ? 'Остановлено' : 'Ошибка')).trim()
-    return steps > 0 ? `${message} · ${actionCount(steps)}` : message
+    // dedupe, which would turn an identical answer into «Не выполнено». When
+    // the answer already carries that sentence, the summary keeps a short label
+    // instead of printing the same line twice.
+    const fallback = event.phase === 'aborted' ? 'Остановлено' : 'Ошибка'
+    const message = (event.message ?? fallback).trim() || fallback
+    const label = message === answer.trim() ? fallback : message
+    return steps > 0 ? `${label} · ${actionCount(steps)}` : label
   }
   const message = agentLabel(event, answer)
   if (!message) return `Не выполнено${steps > 0 ? ` · ${actionCount(steps)}` : ''}`

@@ -613,7 +613,7 @@ export function App() {
   const agentStatus = agent && agentLabel(agent, answer)
   const agentHistory = agent?.actions ?? []
   const agentSteps = agentHistory.length
-  const agentHint = agentRunning && agent?.phase !== 'asking'
+  const agentHint = agentRunning && (agent?.phase === 'arming' || agent?.phase === 'acting')
     ? `${agent?.step ?? 0}/${agent?.total ?? 0} · Esc — остановить`
     : null
   const finishedSummary = !busy && agent ? agentSummary(agent, answer) : null
@@ -716,7 +716,7 @@ export function App() {
       // actually something below the fold — while streaming and after it ends.
       setNewText(node.scrollHeight > node.clientHeight + 1)
     }
-  }, [answer, busy])
+  }, [answer])
 
   // A setup problem or a failed request is not a detail: the card unfolds, so
   // the reason (and the way out of it) is never hidden behind a chevron.
@@ -1385,7 +1385,11 @@ export function App() {
       */}
       {blockedAction && !agentRunning && (
         <div className="line" data-tone="warn">
-          <span>{state.agent.reason ?? hint ?? 'Агент сейчас не может действовать.'}</span>
+          <span>
+            {state.agent.needsAccessibility
+              ? 'Нужен доступ — без него я не нажимаю.'
+              : 'Агент сейчас не может действовать.'}
+          </span>
           {state.agent.needsAccessibility ? (
             <button
               className="tag"

@@ -126,11 +126,11 @@ describe('agentSummary', () => {
     }))).toBeNull()
   })
 
-  it('keeps the stop sentence even when it is also the answer', () => {
+  it('does not repeat the stop sentence when it is also the answer', () => {
     expect(agentSummary(event({
       phase: 'aborted', step: 2, message: 'Остановлено: ты взял мышь.',
       actions: [{ tool: 'click', label: 'Нажал', ok: true }]
-    }), 'Остановлено: ты взял мышь.')).toBe('Остановлено: ты взял мышь. · 2 шага')
+    }), 'Остановлено: ты взял мышь.')).toBe('Остановлено · 2 шага')
   })
 
   it('uses the fallback call count when a terminal event carries no step', () => {
