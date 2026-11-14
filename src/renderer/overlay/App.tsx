@@ -40,7 +40,7 @@ import { useSpeech } from './useSpeech'
 import { useWaiting } from './useWaiting'
 import { useVoice } from './useVoice'
 import { deriveView } from './viewFlags'
-import { agentLabel, agentMark, agentSummary } from './agentRow'
+import { agentLabel, agentMark } from './agentRow'
 import { keyPolicy, type KeyAction } from './keyPolicy'
 import { routeStream } from './streamRouting'
 import { Markdown } from './markdownText'
@@ -611,14 +611,8 @@ export function App() {
   }, [voice.code, voice.at])
   const agentRunning = busy && agent !== null
   const agentStatus = agent && agentLabel(agent, answer)
-  const agentHistory = agent?.actions ?? []
-  const agentSteps = agentHistory.length
-  const agentHint = agentRunning && (agent?.phase === 'arming' || agent?.phase === 'acting')
-    ? `${agent?.step ?? 0}/${agent?.total ?? 0} · Esc — остановить`
-    : null
-  const finishedSummary = !busy && agent ? agentSummary(agent, answer) : null
-  const agentFinished = finishedSummary !== null
-  const agentSucceeded = agentFinished && agent !== null && agentMark(agent) === 'done'
+  const agentHint = agentRunning && agent?.phase !== 'asking' ? 'Esc — остановить' : null
+  const agentDone = !busy && !hasAnswer && agent !== null && agentMark(agent) === 'done'
   const showWaiting = waitStage !== 'quiet' && !hasAnswer && !agent
   /** An action that produced an answer because the agent is blocked, not refused. */
   const blockedAction = Boolean(
@@ -1504,40 +1498,13 @@ export function App() {
         </div>
       )}
 
-      {agentFinished ? (
-        <>
-          <div
-            className="agent-head agent-done"
-            data-mark={agentSucceeded ? 'done' : 'failed'}
-            role="status"
-          >
-            {agentSucceeded ? (
-              <svg className="agent-check" viewBox="0 0 20 20" aria-hidden="true">
-                <path d="m3 10 4.5 4.5 9-9" />
-              </svg>
-            ) : (
-              <span className="agent-dot" aria-hidden />
-            )}
-            <span className="agent-label">{finishedSummary}</span>
-          </div>
-          {agentSteps > 0 && (
-            <div className="agent-history" aria-label="Действия агента">
-              {(expanded ? agentHistory : agentHistory.slice(-3)).map((action, index) => (
-                <div
-                  className="agent-history-row"
-                  data-fail={!action.ok || undefined}
-                  key={`${index}-${action.label}`}
-                >
-                  <i aria-hidden />
-                  <span>{action.label}</span>
-                </div>
-              ))}
-              {!expanded && agentSteps > 3 && (
-                <div className="agent-history-more">… ещё {agentSteps - 3}</div>
-              )}
-            </div>
-          )}
-        </>
+      {agentDone ? (
+        <div className="agent-head agent-done" role="status">
+          <svg className="agent-check" viewBox="0 0 20 20" aria-hidden="true">
+            <path d="m3 10 4.5 4.5 9-9" />
+          </svg>
+          <span className="agent-label">Готово</span>
+        </div>
       ) : agent && (agentStatus || approval) && !(agent.code === 'blocked' && blockedAction) ? (
         <div
           className="agent"

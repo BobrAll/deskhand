@@ -9,7 +9,7 @@
 
 import { describe, expect, it } from 'vitest'
 import type { AgentEvent } from '@shared/types'
-import { actionCount, agentLabel, agentMark, agentSummary } from './agentRow'
+import { agentLabel, agentMark } from './agentRow'
 
 function event(overrides: Partial<AgentEvent> = {}): AgentEvent {
   return { phase: 'acting', step: 1, total: 3, label: '', ...overrides }
@@ -78,82 +78,5 @@ describe('the agent row’s label', () => {
   it('shows the stop reason on an aborted run', () => {
     expect(agentLabel(event({ phase: 'aborted', message: 'Остановлено: ты взял мышь.' })))
       .toBe('Остановлено: ты взял мышь.')
-  })
-})
-
-describe('agentSummary', () => {
-  it('counts the steps of a successful run', () => {
-    expect(agentSummary(event({
-      phase: 'done', completed: true, step: 2,
-      actions: [
-        { tool: 'click', label: 'Нажал', ok: true },
-        { tool: 'click', label: 'Нажал', ok: true }
-      ]
-    }))).toBe('Готово · 2 шага')
-  })
-
-  it('does not call a run finished just because the phase is done', () => {
-    expect(agentSummary(event({ phase: 'done', completed: false, message: 'Не дошёл.' })))
-      .toBe('Не дошёл. · 1 шаг')
-  })
-
-  it('has a count when a failed run has no message of its own', () => {
-    expect(agentSummary(event({
-      phase: 'done', completed: false, actions: [{ tool: 'click', label: 'Нажал', ok: false }]
-    }))).toBe('Задача осталась невыполненной · 1 шаг')
-  })
-
-  it('summarises an aborted run with its steps and history count', () => {
-    expect(agentSummary(event({
-      phase: 'aborted', step: 2, message: 'Остановлено: ты взял мышь.',
-      actions: [{ tool: 'click', label: 'Нажал', ok: true }]
-    }))).toBe('Остановлено: ты взял мышь. · 2 шага')
-  })
-
-  it('uses the agent step number rather than the call count', () => {
-    expect(agentSummary(event({
-      phase: 'done', completed: true, step: 1,
-      actions: [
-        { tool: 'click', label: 'Нажал', ok: true },
-        { tool: 'click', label: 'Нажал', ok: true }
-      ]
-    }))).toBe('Готово · 1 шаг')
-  })
-
-  it('does not turn a blocked start into a failed run', () => {
-    expect(agentSummary(event({
-      phase: 'error', code: 'blocked', message: 'Нужен доступ.'
-    }))).toBeNull()
-  })
-
-  it('does not repeat the stop sentence when it is also the answer', () => {
-    expect(agentSummary(event({
-      phase: 'aborted', step: 2, message: 'Остановлено: ты взял мышь.',
-      actions: [{ tool: 'click', label: 'Нажал', ok: true }]
-    }), 'Остановлено: ты взял мышь.')).toBe('Остановлено · 2 шага')
-  })
-
-  it('uses the fallback call count when a terminal event carries no step', () => {
-    expect(agentSummary(event({
-      phase: 'done', completed: true, step: 0,
-      actions: [{ tool: 'click', label: 'Нажал', ok: true }]
-    }))).toBe('Готово · 1 шаг')
-  })
-
-  it('says nothing while the run is still going', () => {
-    expect(agentSummary(event({ phase: 'acting' }))).toBeNull()
-  })
-})
-
-describe('actionCount', () => {
-  it('declines the noun for the numbers a run actually produces', () => {
-    expect(actionCount(1)).toBe('1 шаг')
-    expect(actionCount(2)).toBe('2 шага')
-    expect(actionCount(4)).toBe('4 шага')
-    expect(actionCount(5)).toBe('5 шагов')
-    expect(actionCount(11)).toBe('11 шагов')
-    expect(actionCount(21)).toBe('21 шаг')
-    expect(actionCount(22)).toBe('22 шага')
-    expect(actionCount(25)).toBe('25 шагов')
   })
 })

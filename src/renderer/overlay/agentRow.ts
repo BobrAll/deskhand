@@ -22,48 +22,6 @@ export function agentMark(event: AgentEvent): AgentMark {
   return event.completed ? 'done' : 'failed'
 }
 
-/** «1 шаг», «3 шага», «11 шагов»: the count is read, not decoded. */
-export function actionCount(count: number): string {
-  const lastTwo = count % 100
-  const last = count % 10
-  if (last === 1 && lastTwo !== 11) return `${count} шаг`
-  if (last >= 2 && last <= 4 && (lastTwo < 12 || lastTwo > 14)) return `${count} шага`
-  return `${count} шагов`
-}
-
-/**
- * The line a finished run leaves on the card.
- *
- * Success is the agent's verdict, not the phase: a run that ended without
- * finishing still has `phase: 'done'`. The step count is part of the sentence
- * because "Готово" without it is a claim without evidence.
- */
-export function agentSummary(event: AgentEvent, answer = ''): string | null {
-  if (event.phase !== 'done' && event.phase !== 'aborted' && event.phase !== 'error') return null
-  // A blocked start never ran; its reason belongs to the blocked-action row, not
-  // to a verdict over a run that has no steps.
-  if (event.code === 'blocked') return null
-  // The live counter is the agent's step number, so the finished sentence uses
-  // the same number rather than the count of tool calls inside those steps.
-  const steps = event.step > 0 ? event.step : (event.actions?.length ?? 0)
-  if (event.phase === 'done' && event.completed) {
-    return `Готово${steps > 0 ? ` · ${actionCount(steps)}` : ''}`
-  }
-  if (event.phase !== 'done') {
-    // A stop or crash has its own sentence; do not run it through the answer
-    // dedupe, which would turn an identical answer into «Не выполнено». When
-    // the answer already carries that sentence, the summary keeps a short label
-    // instead of printing the same line twice.
-    const fallback = event.phase === 'aborted' ? 'Остановлено' : 'Ошибка'
-    const message = (event.message ?? fallback).trim() || fallback
-    const label = message === answer.trim() ? fallback : message
-    return steps > 0 ? `${label} · ${actionCount(steps)}` : label
-  }
-  const message = agentLabel(event, answer)
-  if (!message) return `Не выполнено${steps > 0 ? ` · ${actionCount(steps)}` : ''}`
-  return steps > 0 ? `${message} · ${actionCount(steps)}` : message
-}
-
 /** The current action or a terminal message that is not already in the answer. */
 export function agentLabel(event: AgentEvent, answer = ''): string | null {
   if (event.phase === 'arming') return 'Подготовка'
