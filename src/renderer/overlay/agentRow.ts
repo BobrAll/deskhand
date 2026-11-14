@@ -31,6 +31,22 @@ export function actionCount(count: number): string {
   return `${count} шагов`
 }
 
+/**
+ * The line a finished run leaves on the card.
+ *
+ * Success is the agent's verdict, not the phase: a run that ended without
+ * finishing still has `phase: 'done'`. The step count is part of the sentence
+ * because "Готово" without it is a claim without evidence.
+ */
+export function agentSummary(event: AgentEvent, answer = ''): string | null {
+  if (event.phase !== 'done') return null
+  const steps = event.actions?.length ?? 0
+  if (event.completed) return `Готово${steps > 0 ? ` · ${actionCount(steps)}` : ''}`
+  const message = agentLabel(event, answer)
+  if (!message) return `Не выполнено${steps > 0 ? ` · ${actionCount(steps)}` : ''}`
+  return steps > 0 ? `${message} · ${actionCount(steps)}` : message
+}
+
 /** The current action or a terminal message that is not already in the answer. */
 export function agentLabel(event: AgentEvent, answer = ''): string | null {
   if (event.phase === 'arming') return 'Подготовка'

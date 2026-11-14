@@ -9,7 +9,7 @@
 
 import { describe, expect, it } from 'vitest'
 import type { AgentEvent } from '@shared/types'
-import { actionCount, agentLabel, agentMark } from './agentRow'
+import { actionCount, agentLabel, agentMark, agentSummary } from './agentRow'
 
 function event(overrides: Partial<AgentEvent> = {}): AgentEvent {
   return { phase: 'acting', step: 1, total: 3, label: '', ...overrides }
@@ -78,6 +78,33 @@ describe('the agent row’s label', () => {
   it('shows the stop reason on an aborted run', () => {
     expect(agentLabel(event({ phase: 'aborted', message: 'Остановлено: ты взял мышь.' })))
       .toBe('Остановлено: ты взял мышь.')
+  })
+})
+
+describe('agentSummary', () => {
+  it('counts the steps of a successful run', () => {
+    expect(agentSummary(event({
+      phase: 'done', completed: true,
+      actions: [
+        { tool: 'click', label: 'Нажал', ok: true },
+        { tool: 'click', label: 'Нажал', ok: true }
+      ]
+    }))).toBe('Готово · 2 шага')
+  })
+
+  it('does not call a run finished just because the phase is done', () => {
+    expect(agentSummary(event({ phase: 'done', completed: false, message: 'Не дошёл.' })))
+      .toBe('Не дошёл.')
+  })
+
+  it('has a count when a failed run has no message of its own', () => {
+    expect(agentSummary(event({
+      phase: 'done', completed: false, actions: [{ tool: 'click', label: 'Нажал', ok: false }]
+    }))).toBe('Задача осталась невыполненной · 1 шаг')
+  })
+
+  it('says nothing while the run is still going', () => {
+    expect(agentSummary(event({ phase: 'acting' }))).toBeNull()
   })
 })
 

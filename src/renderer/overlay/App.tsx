@@ -40,7 +40,7 @@ import { useSpeech } from './useSpeech'
 import { useWaiting } from './useWaiting'
 import { useVoice } from './useVoice'
 import { deriveView } from './viewFlags'
-import { actionCount, agentLabel, agentMark } from './agentRow'
+import { agentLabel, agentMark, agentSummary } from './agentRow'
 import { keyPolicy, type KeyAction } from './keyPolicy'
 import { routeStream } from './streamRouting'
 import { Markdown } from './markdownText'
@@ -610,13 +610,9 @@ export function App() {
   const agentHint = agentRunning && agent?.phase !== 'asking'
     ? `${agent?.step ?? 0}/${agent?.total ?? 0} · Esc — остановить`
     : null
-  const agentFinished = !busy && agent?.phase === 'done'
+  const finishedSummary = !busy && agent ? agentSummary(agent, answer) : null
+  const agentFinished = finishedSummary !== null
   const agentSucceeded = agentFinished && agent !== null && agentMark(agent) === 'done'
-  const agentSummary = agentFinished
-    ? agentSucceeded
-      ? `Готово${agentSteps > 0 ? ` · ${actionCount(agentSteps)}` : ''}`
-      : (agentStatus ?? `Не выполнено${agentSteps > 0 ? ` · ${actionCount(agentSteps)}` : ''}`)
-    : null
   const showWaiting = waitStage !== 'quiet' && !hasAnswer && !agent
   const wantsWide = (expanded && !agentRunning) || Boolean(failure) ||
     agent?.phase === 'asking' || showWaiting
@@ -796,6 +792,9 @@ export function App() {
       setBusy(true)
       setFailure(null)
       setNotice(null)
+      // A rewrite is a writer turn; an agent summary from the previous turn
+      // must not sit over the reworked text.
+      setAgent(null)
       followAnswerRef.current = false
       setNewText(false)
       setLast({
@@ -1493,7 +1492,7 @@ export function App() {
             ) : (
               <span className="agent-dot" aria-hidden />
             )}
-            <span className="agent-label">{agentSummary}</span>
+            <span className="agent-label">{finishedSummary}</span>
           </div>
           {agentSteps > 0 && (hasAnswer ? expanded : true) && (
             <div className="agent-history" aria-label="Действия агента">
