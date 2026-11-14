@@ -36,14 +36,34 @@ public struct AXSnapshot: Sendable {
     static func identityKeys(of nodes: [AXNode]) -> [String] {
         var seen: [String: Int] = [:]
         return nodes.map { node in
-            let base = [
-                node.role, node.subrole ?? "", node.identifier ?? "",
-                node.title ?? "", node.label ?? "",
-            ].joined(separator: "|")
+            let base = identityBase(of: node)
             let occurrence = seen[base, default: 0]
             seen[base] = occurrence + 1
             return "\(base)|\(occurrence)"
         }
+    }
+
+    /// What a node is, without the occurrence counter that separates identical
+    /// siblings.
+    ///
+    /// The value is part of the answer only where it names the element: a chat,
+    /// table or log row is identified by its text, and rows with the same role
+    /// and no title are otherwise indistinguishable, so the occurrence counter
+    /// would hand out positional identities that move as soon as a row is
+    /// inserted above. The exception is any role whose value is not a name —
+    /// editable fields (the value is what the user changes) and controls such
+    /// as checkboxes, sliders and pop-ups (the value is state). Including those
+    /// would make every edit or toggle look like a different control and kill
+    /// the number the model already has.
+    static func identityBase(of node: AXNode) -> String {
+        var parts = [
+            node.role, node.subrole ?? "", node.identifier ?? "",
+            node.title ?? "", node.label ?? "",
+        ]
+        if ValueRole.isIdentity(node.role) {
+            parts.append(node.value ?? "")
+        }
+        return parts.joined(separator: "|")
     }
 
     /// The smallest node whose frame contains a point, in screen coordinates.
@@ -81,9 +101,10 @@ public struct AXSnapshot: Sendable {
 
     /// What changed since an earlier snapshot of the same window.
     ///
-    /// Identity is content-based, so a node that merely changed its value is
-    /// reported as changed rather than as one node disappearing and an
-    /// identical one appearing.
+    /// Identity is content-based: a node keeps its identity while the thing
+    /// that names it stays the same. Editing a text field or toggling a
+    /// checkbox therefore shows up as one changed node, while a row whose text
+    /// is its name is a different row when that text differs.
     public func diff(from previous: AXSnapshot) -> AXSnapshotDiff {
         let previousIDs = previous.identityKeys()
         let currentIDs = identityKeys()
