@@ -31,7 +31,7 @@ describe('keyPolicy: Escape while a run owns the card', () => {
     // The agent is blocked on this answer, so Escape has to *be* an answer. If it
     // closed the card instead, the run would stay blocked on a question that is
     // no longer on screen — the one state the card must never reach.
-    expect(keyPolicy(key({ key: 'Escape', agentPhase: 'asking' }))).toBe('stopAgent')
+    expect(keyPolicy(key({ key: 'Escape', agentPhase: 'asking' }))).toBe('deny')
   })
 
   it('stops the run while it is arming or acting', () => {
@@ -56,8 +56,9 @@ describe('keyPolicy: Escape while a run owns the card', () => {
 
 describe('keyPolicy: the question in the card', () => {
   it('approves with Enter and remembers with Command+Enter', () => {
-    expect(keyPolicy(key({ key: 'Enter', agentPhase: 'asking' }))).toBe('approve')
-    expect(keyPolicy(key({ key: 'Enter', agentPhase: 'asking', meta: true }))).toBe('approveAlways')
+    expect(keyPolicy(key({ key: 'Enter', agentPhase: 'asking', tagName: 'BODY' }))).toBe('approve')
+    expect(keyPolicy(key({ key: 'Enter', agentPhase: 'asking', meta: true, tagName: 'BODY' })))
+      .toBe('approveAlways')
   })
 
   it('leaves Enter to a focused approval button', () => {
@@ -66,7 +67,16 @@ describe('keyPolicy: the question in the card', () => {
   })
 
   it('refuses the question with Escape', () => {
-    expect(keyPolicy(key({ key: 'Escape', agentPhase: 'asking' }))).toBe('stopAgent')
+    expect(keyPolicy(key({ key: 'Escape', agentPhase: 'asking' }))).toBe('deny')
+  })
+
+  it('does not send from a textarea that happens to be under the question', () => {
+    expect(keyPolicy(key({ key: 'Enter', agentPhase: 'asking', tagName: 'TEXTAREA' }))).toBeNull()
+  })
+
+  it('still remembers with Command+Enter when a button has focus', () => {
+    expect(keyPolicy(key({ key: 'Enter', agentPhase: 'asking', meta: true, tagName: 'BUTTON' })))
+      .toBe('approveAlways')
   })
 })
 

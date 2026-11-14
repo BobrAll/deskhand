@@ -466,6 +466,7 @@ export function createAgentController(host: AgentHost) {
     const token = ++generation
     running = true
     activeTrace = runTrace
+    ignoreMouseUntil = 0
     const actions: AgentActionRow[] = []
     const total = settings.agent.maxSteps
     const provider = withAgentBudget(input.provider)
@@ -822,7 +823,9 @@ export function createAgentController(host: AgentHost) {
       if (!pending || pending.request.id !== request.id) return
       clearTimeout(pending.timer)
       active.pending = null
-      if (allow) ignoreMouseUntil = Date.now() + APPROVAL_MOUSE_GRACE_MS
+      // Leaving the button moves the mouse; neither answer should turn that into
+      // a stop before the run has had a chance to act on the decision.
+      ignoreMouseUntil = Date.now() + APPROVAL_MOUSE_GRACE_MS
       if (allow && remember && request.fingerprint) {
         // Stored as a digest, not as the agent's readable fingerprint: the
         // settings file keeps a fixed-size, opaque list, and the readable form
@@ -840,10 +843,10 @@ export function createAgentController(host: AgentHost) {
         allow,
         allow ? undefined : (reason ?? 'Пользователь отклонил действие.')
       )
+      // The panel had the mouse and the focus for a moment; the agent's next
+      // click must not land on it, whether the answer was yes or no.
+      host.setPassthrough(true)
       if (allow) {
-        // The panel had the mouse and the focus for a moment; the agent's next
-        // click must not land on it.
-        host.setPassthrough(true)
         publish({ phase: 'acting', approval: null, actions: actionRows() })
       } else {
         publish({
@@ -895,6 +898,7 @@ export function createAgentController(host: AgentHost) {
       activeTrace?.record('stop', { message })
     }
     generation += 1
+    ignoreMouseUntil = 0
     const active = current
     if (active?.pending) {
       const pending = active.pending

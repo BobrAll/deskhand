@@ -176,7 +176,7 @@ export function AgentTab({ agent, onChange, onEnabledChange }: AgentTabProps) {
           <Row
             stacked
             title="Запомненные разрешения"
-            hint="Сбрось решения «Разрешить всегда», чтобы агент снова спрашивал перед этими действиями."
+            hint="Сбрось решения «Больше не спрашивать», чтобы агент снова спрашивал перед этими действиями."
           >
             <div className="row-actions">
               <button

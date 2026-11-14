@@ -27,6 +27,7 @@ export type KeyAction =
   | 'stopAgent'
   | 'approve'
   | 'approveAlways'
+  | 'deny'
   | 'paste'
   | 'copy'
   | 'send'
@@ -62,11 +63,10 @@ export function keyPolicy(input: KeyInput): KeyAction {
     // hide the very row that reports what was interrupted, and the user pressing
     // Escape is watching the screen, not the card.
     if (input.agentPhase === 'asking') {
-      // A question is a stop point like any other: Escape refuses it. It is not
-      // `cancel` — the card has no request of its own to abort here — and it is
-      // not `close` either, because closing the card would leave the agent
+      // A question is a stop point like any other: Escape refuses it, exactly as
+      // the «Отменить» button does. Closing the card would leave the agent
       // blocked on a question nobody can see any more.
-      return 'stopAgent'
+      return 'deny'
     }
     if (input.agentPhase === 'arming' || input.agentPhase === 'acting') return 'stopAgent'
     // A running answer is not a reason to close the card: the first Escape
@@ -80,11 +80,15 @@ export function keyPolicy(input: KeyInput): KeyAction {
   /**
    * The approval question owns Enter while it is on screen.
    *
-   * A focused button keeps its own Enter: the card must not turn a deliberate
-   * «Отменить» into an approval because the window handler heard the key first.
+   * A focused button keeps its own plain Enter: the card must not turn a
+   * deliberate «Отменить» into an approval because the window handler heard the
+   * key first. Command+Enter is never a button's gesture, so it still means
+   * "remember this" even when a button has focus.
    */
-  if (input.agentPhase === 'asking' && input.tagName !== 'BUTTON') {
-    if (input.key === 'Enter') return meta ? 'approveAlways' : 'approve'
+  if (input.agentPhase === 'asking' && input.key === 'Enter') {
+    if (meta) return 'approveAlways'
+    if (input.tagName === 'BUTTON' || input.tagName === 'TEXTAREA') return null
+    return 'approve'
   }
 
   // ⌘⏎ pastes the answer — the same thing the «Вставить» button does.

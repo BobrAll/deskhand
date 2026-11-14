@@ -1627,10 +1627,14 @@ export function createOverlayController(host: OverlayHost) {
 
   async function paste(text: string): Promise<PasteResult> {
     const target = session?.target ?? null
+    const startedIn = generation
     // The card stays on screen until the paste has actually landed. Hiding it
     // first meant a failure was reported into an invisible window: the answer
     // was in the clipboard, but the person saw only that nothing happened.
     const result = await pasteAnswer(text, target)
+    // The card can be closed while the target app is taking its time. Bringing
+    // it back with a failure notice would undo the user's dismissal.
+    if (startedIn !== generation) return result
     if (!result.ok) {
       host.show(INITIAL_HEIGHT)
       return result

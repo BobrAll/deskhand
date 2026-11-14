@@ -224,6 +224,18 @@ describe('card: resizing at the anchor', () => {
     expect(after.x).toBe(200)
   })
 
+  it('grows down from the top edge a moved card was dropped on', () => {
+    // This card had been placed above the pointer, as any card opened in the
+    // lower half of the screen is. After a move, that side is history: the top
+    // edge is what the user put where they wanted it.
+    const above: CardAnchor = { ...base, above: true, point: at(700, 700) }
+    const dropped: ScreenRect = { x: 200, y: 300, width: 112, height: 31 }
+    const moved = resizeAnchor({ anchor: above, bounds: dropped, height: 31, width: 112, workAreaAt: () => SCREEN })
+
+    expect(moved.above).toBe(false)
+    expect(boundsFor(moved, 200, 360).y).toBe(300)
+  })
+
   it('moves a wide card aside instead of parking it over the pointer', () => {
     // The side was chosen when the card was 112 wide and still fitted to the
     // right. The answer grew to 360, that side no longer fits, and the clamped
@@ -234,6 +246,16 @@ describe('card: resizing at the anchor', () => {
 
     expect(next.x).toBe(1200 - GAP - 360)
     expect(next.right).toBe(false)
+  })
+
+  it('does not jump to the other side while the folded field is being typed into', () => {
+    const nearEdge: CardAnchor = { ...base, point: at(1200, 400), x: 1210 }
+    const inPlace: ScreenRect = { x: 1210, y: 410, width: 112, height: 31 }
+    const next = resizeAnchor({ anchor: nearEdge, bounds: inPlace, height: 31, width: 360, workAreaAt: () => SCREEN })
+
+    // The far edge is clamped as before; the side stays where the typing is.
+    expect(next.x).toBe(1440 - 360 - MIN)
+    expect(next.right).toBe(true)
   })
 
   it('pulls a dragged card back when growing wider would carry it off screen', () => {

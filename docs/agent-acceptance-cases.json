@@ -22,7 +22,7 @@
   {"id":"helper-timeout","setup":"Fixture input backend times out after a known partial effect.","pass":"Agent does not replay the change or claim success."},
   {"id":"approval-refuse","setup":"Fixture with a button whose label matches a committing verb, plus a click counter.","pass":"The click is never dispatched, the counter stays at zero, and the card shows the question before it can be answered."},
   {"id":"approval-allow","setup":"Same fixture; answer the question with «Разрешить».","pass":"Exactly one click is dispatched, the counter reads one, and the card returns to acting."},
-  {"id":"approval-remember","setup":"Same fixture with two identical committing buttons; answer the first question with «Разрешить всегда».","pass":"The second identical call runs without a question; a differently named committing button still asks."},
+  {"id":"approval-remember","setup":"Same fixture with two identical committing buttons; answer the first question with «Больше не спрашивать».","pass":"The second identical call runs without a question; a differently named committing button still asks."},
   {"id":"secret-refused","setup":"A field whose label names a password.","pass":"No text is typed and no question is shown: the refusal is immediate and the run continues or stops cleanly."},
   {"id":"agent-stop-question","setup":"A question is open in the card; press Escape.","pass":"The question is answered with a refusal, the agent process reports cancellation, and no input follows."},
   {"id":"agent-crash","setup":"Kill the agent process while it is acting.","pass":"The card leaves the acting phase and names the failure; the app stays responsive and a later request can start a fresh run."},

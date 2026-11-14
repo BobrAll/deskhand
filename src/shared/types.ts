@@ -227,7 +227,7 @@ export interface AgentToolRequest {
   /**
    * A stable fingerprint of what this call would do, computed by the agent.
    *
-   * "Разрешить всегда" stores this, not the sentence around it: the same button
+   * "Больше не спрашивать" stores this, not the sentence around it: the same button
    * in the same app is the same decision, while the same word in another app is
    * a different one. Typed text is deliberately not part of it.
    */

@@ -262,6 +262,11 @@ export function App() {
     setAnswer('')
     setFailure(null)
     setNotice(null)
+    setCopied(false)
+    if (copiedTimerRef.current !== null) {
+      window.clearTimeout(copiedTimerRef.current)
+      copiedTimerRef.current = null
+    }
     setBusy(false)
     setDrawn(0)
     setTyping(typing)
@@ -857,7 +862,12 @@ export function App() {
   const paste = useCallback(async () => {
     const text = answerTextRef.current
     if (!text.trim()) return
+    const sessionId = stateRef.current?.sessionId
     const result = await window.deskhand.overlay.paste(text)
+    // The card can be closed (or replaced) while the paste is still waiting for
+    // the target app. A notice about the previous card must not land in the next
+    // one — or in a card the user already dismissed.
+    if (stateRef.current?.sessionId !== sessionId) return
     if (!result.ok && result.message) setNotice(result.message)
   }, [])
 
@@ -976,7 +986,7 @@ export function App() {
     setNotice(null)
     spokenPromptRef.current = false
     const question = last?.prompt ?? ''
-    if (question && !promptRef.current) {
+    if (question && !promptRef.current.trim()) {
       setPrompt(question)
       promptRef.current = question
       setTyping(true)
@@ -1008,9 +1018,17 @@ export function App() {
         cancelRequest()
         return
       }
-      if (action === 'approve' || action === 'approveAlways') {
+      if (action === 'approve' || action === 'approveAlways' || action === 'deny') {
         const request = agentRef.current?.approval
-        if (request) void answerAgent(request, true, action === 'approveAlways')
+        if (request) {
+          void answerAgent(request, action !== 'deny', action === 'approveAlways')
+          return
+        }
+        // No question on screen: Escape's only remaining job is to stop the run.
+        if (action === 'deny') {
+          stoppedByUserRef.current = true
+          void window.deskhand.agent.stop()
+        }
         return
       }
       if (action === 'paste') {

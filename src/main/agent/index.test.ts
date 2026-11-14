@@ -676,6 +676,12 @@ describe('the question in the card', () => {
 
     expect(state.approvals).toEqual([{ id: 'call-1', allow: false, reason: 'Пользователь отклонил действие.' }])
     expect(h.last()).toMatchObject({ phase: 'aborted', approval: null, message: 'Действие отклонено.' })
+    // The hand leaves the button too; that movement must not overwrite the
+    // refusal with «Остановлено: ты взял мышь.»
+    state.abort('mousemove')
+    expect(state.cancels).toBe(0)
+    // The run is no longer the one holding the mouse.
+    expect(h.passthrough.at(-1)).toBe(true)
 
     state.emit({ kind: 'cancelled' })
     const result = await running

@@ -39,6 +39,7 @@ import { applyHistorySettings } from './history'
 import { delay } from '../util'
 import { consumeTurnStream } from '../turnStream'
 import { pasteAnswer } from '../paste'
+import { hideAnnotations } from '../drawing'
 import type { OverlayHost } from './host'
 
 const state = vi.hoisted(() => ({
@@ -69,7 +70,11 @@ const state = vi.hoisted(() => ({
   collectGate: null as Promise<void> | null
 }))
 
-vi.mock('electron', () => ({ app: {}, BrowserWindow: {}, systemPreferences: { isTrustedAccessibilityClient: () => true } }))
+vi.mock('electron', () => ({
+  app: { hide: vi.fn() },
+  BrowserWindow: { getAllWindows: () => [] },
+  systemPreferences: { isTrustedAccessibilityClient: () => true }
+}))
 vi.mock('electron-store', () => ({ default: class { store = {} } }))
 vi.mock('../settings/store', () => ({
   getSettings: () => state.settings,
@@ -227,6 +232,7 @@ describe('pasting the answer', () => {
       message: 'Не удалось вернуться в исходное приложение — ответ скопирован в буфер обмена.'
     })
 
+    vi.mocked(hideAnnotations).mockClear()
     const result = await h.controller.paste('Ответ')
 
     expect(result).toMatchObject({ ok: false, copiedOnly: true })
@@ -234,16 +240,36 @@ describe('pasting the answer', () => {
     // an invisible window.
     expect(h.host.hide).not.toHaveBeenCalled()
     expect(h.host.show).toHaveBeenCalled()
+    // The arrow is still pointing at the thing that was not pasted.
+    expect(hideAnnotations).not.toHaveBeenCalled()
   })
 
   it('hides only after the answer has actually been pasted', async () => {
     const h = await harness()
     vi.mocked(pasteAnswer).mockResolvedValueOnce({ ok: true, copiedOnly: false })
+    vi.mocked(hideAnnotations).mockClear()
 
     const result = await h.controller.paste('Ответ')
 
     expect(result).toMatchObject({ ok: true })
     expect(h.host.hide).toHaveBeenCalledOnce()
+    expect(hideAnnotations).toHaveBeenCalled()
+  })
+
+  it('does not resurrect a card the user closed while the paste was running', async () => {
+    const h = await harness()
+    const pending = gate()
+    vi.mocked(pasteAnswer).mockImplementationOnce(async () => {
+      await pending.wait
+      return { ok: false, copiedOnly: true, message: 'Не удалось вставить.' }
+    })
+    const pasting = h.controller.paste('Ответ')
+    h.controller.close()
+    pending.release()
+
+    await pasting
+
+    expect(h.host.show).not.toHaveBeenCalled()
   })
 })
 

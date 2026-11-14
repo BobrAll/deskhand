@@ -180,6 +180,10 @@ function coversPoint(rect: ScreenRect, point: ScreenPoint): boolean {
  * anything.
  */
 function keepPointerClear(placed: CardAnchor, height: number, width: number): CardAnchor {
+  // A folded card is the line being typed into: moving it to the other side of
+  // the pointer mid-sentence is worse than the pointer sitting under a one-line
+  // panel. Once there is an answer to read, the cursor matters again.
+  if (height <= CARD_FOLDED_HEIGHT) return placed
   if (!coversPoint(boundsFor(placed, height, width), placed.point)) return placed
 
   const min = placed.area.x + CARD_MARGIN
@@ -247,10 +251,11 @@ export function resizeAnchor(options: ResizeAnchorOptions): CardAnchor {
     const min = placed.area.x + CARD_MARGIN
     const max = Math.max(min, placed.area.x + placed.area.width - width - CARD_MARGIN)
     placed.x = clamp(bounds.x, min, max)
-    placed.point = {
-      x: placed.point.x,
-      y: placed.above ? bounds.y + bounds.height + CARD_GAP : bounds.y - CARD_GAP
-    }
+    // The top edge is what the user dropped. Growing down from it is the
+    // direction a window grows; the old side was about which side of the pointer
+    // it had been placed on, which no longer means anything after a move.
+    placed.above = false
+    placed.point = { x: placed.point.x, y: bounds.y - CARD_GAP }
     // From here on the horizontal edge belongs to the user, including a resize
     // that happens after the drag has ended. A moved window is as much their
     // choice as a dragged edge, so both pin it.
