@@ -98,18 +98,14 @@ public enum WindowCapture {
                 && $0.frame.width > Self.minimumWindowSide
                 && $0.frame.height > Self.minimumWindowSide
         }
-        let largest = usable.max {
-            $0.frame.width * $0.frame.height < $1.frame.width * $1.frame.height
-        }
         let matching = preferredFrame.flatMap { frame in
             usable.min {
                 distance(from: $0.frame, to: frame) < distance(from: $1.frame, to: frame)
             }.flatMap { distance(from: $0.frame, to: frame) <= Self.frameMatchTolerance ? $0 : nil }
         }
-        let candidate = matching ?? largest
-            ?? windows.max { lhs, rhs in lhs.frame.width * lhs.frame.height < rhs.frame.width * rhs.frame.height }
-
-        guard let window = candidate else { throw CaptureError.windowNotFound }
+        guard let window = matching ?? largestWindow(in: usable) ?? largestWindow(in: windows) else {
+            throw CaptureError.windowNotFound
+        }
 
         let filter = SCContentFilter(desktopIndependentWindow: window)
         let target = downscaledSize(
@@ -152,6 +148,16 @@ public enum WindowCapture {
             windowFrame: window.frame,
             encodeMilliseconds: encodeMilliseconds
         )
+    }
+
+    /// The biggest window in a list, by area.
+    ///
+    /// The size heuristic is the fallback for a caller with no tree frame: the
+    /// largest layer-0 window is usually, but not always, the app's main window.
+    private static func largestWindow(in windows: [SCWindow]) -> SCWindow? {
+        windows.max { lhs, rhs in
+            lhs.frame.width * lhs.frame.height < rhs.frame.width * rhs.frame.height
+        }
     }
 
     /// How far apart two window frames are, in points.

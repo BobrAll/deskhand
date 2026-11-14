@@ -217,7 +217,7 @@ public final class ToolExecutor: @unchecked Sendable {
         guard verify else {
             return ToolResult(
                 content: [.text(message)],
-                stateFingerprint: session.snapshot.map { fingerprint(of: $0) })
+                stateFingerprint: currentFingerprint(of: session))
         }
         let (diff, timings) = session.previewDiff()
 
@@ -228,7 +228,7 @@ public final class ToolExecutor: @unchecked Sendable {
                     .text(noChangeExplanation(actionLabel, session: session, point: point)),
                 ],
                 timings: timings,
-                stateFingerprint: session.snapshot.map { fingerprint(of: $0) })
+                stateFingerprint: currentFingerprint(of: session))
         }
 
         let diffText = "Changed after \(actionLabel) (\(diff.summary)):\n" + diff.text()
@@ -246,7 +246,7 @@ public final class ToolExecutor: @unchecked Sendable {
             return ToolResult(
                 content: [.text(message), .text(text)],
                 timings: timings,
-                stateFingerprint: session.snapshot.map { fingerprint(of: $0) })
+                stateFingerprint: currentFingerprint(of: session))
         }
         return ToolResult(
             content: [
@@ -261,6 +261,14 @@ public final class ToolExecutor: @unchecked Sendable {
             ],
             timings: timings,
             stateFingerprint: fingerprint(of: snapshot))
+    }
+
+    /// The fingerprint of the tree the session is currently holding.
+    ///
+    /// Guards the callers below from repeating `session.snapshot.map { … }`,
+    /// which is easy to write against the wrong snapshot after an adoption.
+    private func currentFingerprint(of session: AppSession) -> String? {
+        session.snapshot.map { fingerprint(of: $0) }
     }
 
     /// The identity of "this screen, in this state", as the loop sees it.
@@ -715,12 +723,16 @@ public final class ToolExecutor: @unchecked Sendable {
 
     private func click(_ args: JSONValue, verify: Bool) async throws -> ToolResult {
         let appQuery = try requireApp(args)
+        // Read once: the index decides which branch of the click runs, whether
+        // pixels are the target at all, and what the result message says about
+        // a container. Reading it again is how those answers drift apart.
+        let elementIndex = optionalInt(args, "element_index")
         // Validate model-supplied pixels before resolving the app: garbage must
         // not launch anything, refresh a tree or reach the message formatting.
         // A usable element index wins over pixels, so only validate when the
         // coordinates are the target.
         let pixelPoint: CGPoint?
-        if optionalInt(args, "element_index") == nil, args["x"] != nil || args["y"] != nil {
+        if elementIndex == nil, args["x"] != nil || args["y"] != nil {
             pixelPoint = CGPoint(
                 x: try requireCoordinate(args, "x"),
                 y: try requireCoordinate(args, "y"))
@@ -745,7 +757,7 @@ public final class ToolExecutor: @unchecked Sendable {
         let isPlainLeftClick = button == .left && count == 1 && modifiers.isEmpty
 
         let point: CGPoint
-        if let index = optionalInt(args, "element_index") {
+        if let index = elementIndex {
             let node = try session.node(at: index)
             // A text field is clicked to put the caret in it, not to press it.
             // Reaching it through accessibility works whether or not the window
@@ -783,7 +795,7 @@ public final class ToolExecutor: @unchecked Sendable {
 
         let warning = bringToFrontChecked(session, actionLabel: "the click")
         Mouse.click(at: point, button: button, count: count, modifiers: modifiers)
-        let clickedPoint = optionalInt(args, "element_index") == nil ? point : nil
+        let clickedPoint = elementIndex == nil ? point : nil
         var message = "Clicked \(button.rawValue) at screen "
             + "\(integerText(point.x)),\(integerText(point.y)) x\(count)."
             + (warning ?? "")
@@ -791,7 +803,7 @@ public final class ToolExecutor: @unchecked Sendable {
         // index carried no target of its own, so whatever sat under the
         // point is what reacted. Say so, otherwise a step that happened to
         // work looks like the index did something meaningful.
-        if let index = optionalInt(args, "element_index"),
+        if let index = elementIndex,
            let clicked = try? session.node(at: index), clicked.childrenRefused {
             if let count = clicked.declaredItemCount {
                 message += " Element \(index) is a container holding \(count)"

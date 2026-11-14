@@ -210,14 +210,13 @@ public enum ElementActions {
         let nsRange = utf16Range(range, in: fullText)
         // Try the precise accessibility range first: it is instant and does not
         // disturb the user's selection elsewhere.
-        if let selected = element.setSelectedTextRange(nsRange) {
+        if element.setSelectedTextRange(nsRange) != nil {
             if mode == .text { return }
             // For caret placement, collapse the selection.
             let caret = mode == .cursorBefore ? nsRange.location : nsRange.location + nsRange.length
             if element.setSelectedTextRange(NSRange(location: caret, length: 0)) != nil {
                 return
             }
-            _ = selected
         }
 
         // Fallback: keyboard navigation from a known caret position. Arrow keys
