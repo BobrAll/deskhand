@@ -833,8 +833,10 @@ export function createAgentController(host: AgentHost) {
     }
     if (decision.kind === 'deny') {
       trace('agent.approval', { outcome: 'denied' })
+      // The model reads `reason` as a tool result, so it is English; the row the
+      // card lists keeps the user's language.
       approve(request.id, false, decision.reason)
-      active.actions.push({ tool: request.tool, label: decision.reason, ok: false })
+      active.actions.push({ tool: request.tool, label: decision.label, ok: false })
       publish({ phase: 'acting', actions: actionRows(), code: 'secret' })
       return
     }

@@ -698,14 +698,19 @@ describe('the question in the card', () => {
       request: call({ id: 'call-1', tool: 'type_text', title: 'Пароль', fingerprint: '' })
     })
 
+    // The model reads the tool result, so that sentence is English; the row the
+    // card lists stays Russian.
     expect(state.approvals).toEqual([
-      { id: 'call-1', allow: false, reason: 'Секреты и пароли введи вручную.' }
+      { id: 'call-1', allow: false, reason: 'Secrets and passwords must be typed by the user.' }
     ])
     // A refusal that is not the user's decision must not lift the click-through.
     expect(h.passthrough).toEqual([true])
 
     state.emit({ kind: 'done', complete: true, answer: '' })
-    await running
+    const result = await running
+    expect(result.actions).toEqual([
+      { tool: 'type_text', label: 'Секреты и пароли введи вручную.', ok: false }
+    ])
   })
 
   it('ignores an answer for a question that is no longer open', async () => {
