@@ -76,15 +76,34 @@ function coordinate(value: number): number {
 }
 
 /**
- * A token without the comma some models put between coordinates.
+ * Splits the part after the marker into tokens.
  *
- * "@point arrow, 0.5, 0.8" is still the documented line with commas used as
- * separators, so a trailing comma is dropped before a token is read as a kind
- * or a number. A comma *inside* a number is a decimal comma and stays for the
- * caller to normalise.
+ * A comma between two digits is a decimal comma ("0,5"), so it belongs to the
+ * number — unless that number already has a decimal point, where it can only
+ * separate ("0.5,0.8"). Every other comma separates as well, so the spaced form
+ * with trailing commas ("arrow, 0.5, 0.8"), the compact list ("0.5,0.8,0.3,0.4")
+ * and the decimal comma all read as the same line.
  */
-function bareToken(token: string | undefined): string {
-  return (token ?? '').replace(/,+$/, '')
+function markerTokens(rest: string): string[] {
+  const tokens: string[] = []
+  let current = ''
+  for (let index = 0; index < rest.length; index += 1) {
+    const char = rest[index]
+    if (char === ',') {
+      const betweenDigits = /\d/.test(rest[index - 1] ?? '') && /\d/.test(rest[index + 1] ?? '')
+      if (betweenDigits && !current.includes('.')) {
+        current += '.'
+        continue
+      }
+    } else if (!/[\s;]/.test(char)) {
+      current += char
+      continue
+    }
+    tokens.push(current)
+    current = ''
+  }
+  tokens.push(current)
+  return tokens.filter(Boolean)
 }
 
 function cleanLabel(raw: string): string | undefined {
@@ -125,15 +144,14 @@ export function parseAnnotationLine(line: string): ParsedLine | null {
   const trimmed = line.trim()
   if (!MARKER.test(trimmed)) return null
 
-  // Everything after the leading marker, split on whitespace and semicolons. A
-  // comma is *not* a separator: "0,5" is a decimal comma, and splitting it would
-  // read the line as "0 5" and draw a ring somewhere else entirely.
+  // Everything after the leading marker, as the model may write it: spaced, with
+  // commas between values, compact, or with a decimal comma.
   const rest = trimmed.replace(/^@[A-Za-z]+\s*/, '')
-  const tokens = rest.split(/[\s;]+/).filter(Boolean)
+  const tokens = markerTokens(rest)
 
   let kind: AnnotationKind = 'circle'
   let index = 0
-  const first = bareToken(tokens[0]).toLowerCase()
+  const first = tokens[0]?.toLowerCase()
   if (first && (KINDS as string[]).includes(first)) {
     kind = first as AnnotationKind
     index = 1
@@ -141,7 +159,7 @@ export function parseAnnotationLine(line: string): ParsedLine | null {
 
   const numbers: number[] = []
   while (index < tokens.length && numbers.length < 4) {
-    const value = Number.parseFloat(bareToken(tokens[index]).replace(',', '.'))
+    const value = Number.parseFloat(tokens[index])
     if (!Number.isFinite(value)) break
     numbers.push(value)
     index += 1

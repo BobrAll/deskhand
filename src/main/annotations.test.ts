@@ -125,6 +125,25 @@ describe('parseAnnotationLine: numbers', () => {
     expect(parseAnnotationLine('@point arrow;0.5;0.8;0.82;0.11')?.annotations[0]).toEqual(expected)
   })
 
+  it('reads a compact list where the commas separate numbers', () => {
+    // No space after a comma: the comma is a separator, not a decimal one, so
+    // the line is the same shape the spaced form asks for.
+    const arrow = {
+      kind: 'arrow',
+      from: { x: 0.5, y: 0.8 },
+      to: { x: 0.82, y: 0.11 },
+      label: undefined
+    }
+    expect(parseAnnotationLine('@point 0.5,0.8,0.3,0.4')?.annotations[0]).toEqual({
+      kind: 'circle',
+      from: { x: 0.5, y: 0.8 },
+      to: { x: 0.3, y: 0.4 },
+      label: undefined
+    })
+    expect(parseAnnotationLine('@point arrow,0.5 0.8 0.82 0.11')?.annotations[0]).toEqual(arrow)
+    expect(parseAnnotationLine('@point arrow,0.5,0.8,0.82,0.11')?.annotations[0]).toEqual(arrow)
+  })
+
   it('reads a decimal comma instead of splitting the number in two', () => {
     // Splitting on commas read this line as "0 5 0 2" and drew a tiny ring in
     // the top-left corner instead of the shape the model asked for.
@@ -134,6 +153,13 @@ describe('parseAnnotationLine: numbers', () => {
       to: { x: 0.3, y: 0.4 },
       label: undefined
     })
+  })
+
+  it('reads a decimal comma next to a decimal point', () => {
+    // "0.5,0.8" cannot be one number, so its comma separates; "0,5,0,8" is two
+    // numbers, so the first comma is decimal and the second one separates.
+    expect(parseAnnotationLine('@point 0.5,0.8')?.annotations[0].from).toEqual({ x: 0.5, y: 0.8 })
+    expect(parseAnnotationLine('@point 0,5,0,8')?.annotations[0].from).toEqual({ x: 0.5, y: 0.8 })
   })
 
   it('drops a line whose numbers do not parse', () => {
