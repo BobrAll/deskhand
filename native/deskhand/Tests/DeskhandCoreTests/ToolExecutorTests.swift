@@ -166,19 +166,6 @@ final class ToolExecutorTests: XCTestCase {
         )
     }
 
-    func testScrollPagesAreCappedAndNonPositiveRejected() {
-        // Pages are 12 wheel lines each, emitted in chunks 20 ms apart, so an
-        // uncapped 10 000 is minutes on a tool the host treats as harmless.
-        XCTAssertEqual(ToolExecutor.effectiveScrollPages(0.5), 0.5)
-        XCTAssertEqual(ToolExecutor.effectiveScrollPages(1), 1)
-        XCTAssertEqual(ToolExecutor.effectiveScrollPages(20), 20)
-        XCTAssertEqual(ToolExecutor.effectiveScrollPages(10_000), 20)
-        XCTAssertNil(ToolExecutor.effectiveScrollPages(0))
-        XCTAssertNil(ToolExecutor.effectiveScrollPages(-3))
-        XCTAssertNil(ToolExecutor.effectiveScrollPages(.nan))
-        XCTAssertNil(ToolExecutor.effectiveScrollPages(.infinity))
-    }
-
     func testScrollRejectsNonPositivePagesBeforeTouchingTheApp() async {
         for pages in [0.0, -1.0] {
             let executor = ToolExecutor()

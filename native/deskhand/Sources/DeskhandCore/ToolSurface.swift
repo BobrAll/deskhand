@@ -139,7 +139,8 @@ public enum ToolSurface {
                     "direction": enumProperty(
                         ["up", "down", "left", "right"], description: "Scroll direction."),
                     "pages": numberProperty(
-                        "Number of pages, greater than 0 and at most 20. Defaults to 1."),
+                        "Number of pages, greater than 0 and at most"
+                            + " \(Int(Mouse.maxScrollPages)). Defaults to 1."),
                 ], required: ["app", "direction"])
             ),
             ToolDefinition(

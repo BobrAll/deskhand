@@ -15,11 +15,19 @@ final class MouseTests: XCTestCase {
         XCTAssertEqual(Mouse.clampedClickCount(10_000), 3)
     }
 
-    func testScrollGestureIsBoundedAtTheSharedMaximum() {
-        // The tool surface clamps too; the bound is repeated at this layer so
-        // no direct caller can turn one call into minutes of wheel events.
+    func testScrollPagesAreCappedAndNonPositiveRejected() {
+        // Pages are 12 wheel lines each, emitted in chunks 20 ms apart, so an
+        // uncapped 10 000 is minutes on a tool the host treats as harmless.
+        // The cap and its validation live together here; the executor only
+        // turns the nil answer into a tool error.
         XCTAssertEqual(Mouse.maxScrollPages, 20)
-        XCTAssertEqual(ToolExecutor.effectiveScrollPages(Mouse.maxScrollPages), Mouse.maxScrollPages)
-        XCTAssertEqual(ToolExecutor.effectiveScrollPages(Mouse.maxScrollPages * 100), Mouse.maxScrollPages)
+        XCTAssertEqual(Mouse.effectiveScrollPages(0.5), 0.5)
+        XCTAssertEqual(Mouse.effectiveScrollPages(1), 1)
+        XCTAssertEqual(Mouse.effectiveScrollPages(Mouse.maxScrollPages), Mouse.maxScrollPages)
+        XCTAssertEqual(Mouse.effectiveScrollPages(10_000), Mouse.maxScrollPages)
+        XCTAssertNil(Mouse.effectiveScrollPages(0))
+        XCTAssertNil(Mouse.effectiveScrollPages(-3))
+        XCTAssertNil(Mouse.effectiveScrollPages(.nan))
+        XCTAssertNil(Mouse.effectiveScrollPages(.infinity))
     }
 }
