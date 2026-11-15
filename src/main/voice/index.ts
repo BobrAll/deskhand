@@ -110,27 +110,30 @@ export function createVoiceController(host: VoiceHost) {
    * into) the new one.
    */
   let turn = 0
+  // Timing and warm-up need to ask whether a recognition is in flight, while the
+  // recorder needs both of them. The callbacks only run after the wiring below.
+  let recording: ReturnType<typeof createVoiceRecording> | null = null
   const timing = createVoiceTiming({
     currentTurn: () => turn,
-    recognizing: () => recording.isBusy(),
+    recognizing: () => recording?.isBusy() ?? false,
     expire: abortTurnWithError,
     emit: (event) => host.emit(CH.voice.event, event),
     fieldLevel: (value) => host.fieldLevel(value)
   })
   const { setPhase, longEnough } = timing
-  const warmup = createRecognizerWarmup(() => timing.phase() === 'idle' && !recording.isBusy())
+  const warmup = createRecognizerWarmup(() => timing.phase() === 'idle' && !(recording?.isBusy() ?? false))
   const { scheduleWarmup, stopWarmup } = warmup
-  const recording = createVoiceRecording({ currentTurn: () => turn, timing, warmup, finishIdle, applyTranscript })
-  const { abortRecognition } = recording
+  recording = createVoiceRecording({ currentTurn: () => turn, timing, warmup, finishIdle, applyTranscript })
+  const { abortRecognition, handleRecording, failed, isBusy: recognitionBusy } = recording
   const hotkeys = createVoiceHotkeys({
     handleTapEvent,
     onModel: warmup.updateModel,
     onDisabled: () => {
       if (timing.phase() !== 'idle' || turnAction !== null) void onCancel()
     },
-    onStopped: scheduleWarmup,
+    onTapsStopped: scheduleWarmup,
     onUnavailable: stopWarmup,
-    onReady: () => {
+    onTapsReady: () => {
       host.prewarm()
       scheduleWarmup()
     }
@@ -366,7 +369,7 @@ export function createVoiceController(host: VoiceHost) {
 
   /** Exists for tests: nothing outside them needs "is a turn running" as a single flag. */
   function isBusy(): boolean {
-    return recording.isBusy() || timing.phase() !== 'idle'
+    return recognitionBusy() || timing.phase() !== 'idle'
   }
 
   /**
@@ -405,8 +408,8 @@ export function createVoiceController(host: VoiceHost) {
     stop,
     suspend: hotkeys.suspend,
     status,
-    handleRecording: recording.handleRecording,
-    failed: recording.failed,
+    handleRecording,
+    failed,
     setLevel: timing.setLevel,
     mode,
     isBusy,

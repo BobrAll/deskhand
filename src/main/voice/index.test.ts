@@ -665,6 +665,35 @@ describe('createVoiceController: recognition', () => {
     expect(voice.phase()).toBe('listening')
   })
 
+  it('stays busy when a superseded recognition resolves after the next one started', async () => {
+    const gates: Array<() => void> = []
+    state.transcribed = async () => {
+      await new Promise<void>((resolve) => gates.push(resolve))
+      return { ok: true, text: 'фраза', ms: 1 }
+    }
+    const { voice } = await listening()
+
+    const superseded = voice.handleRecording({ wavBase64: 'AAAA', durationMs: 800 })
+    voice.press()
+    state.now += 500
+    voice.release()
+    const current = voice.handleRecording({ wavBase64: 'AAAA', durationMs: 800 })
+    expect(voice.isBusy()).toBe(true)
+
+    gates[0]()
+    await superseded
+
+    // The late answer's `finally` used to clear the flag the newer recognition
+    // had just set, so the card looked idle while the new phrase was still
+    // being recognised.
+    expect(voice.isBusy()).toBe(true)
+    expect(voice.phase()).toBe('transcribing')
+
+    gates[1]()
+    await current
+    expect(voice.isBusy()).toBe(false)
+  })
+
   it('reports busy while a turn runs', async () => {
     const { voice } = await listening()
 

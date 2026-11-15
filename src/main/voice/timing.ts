@@ -148,7 +148,6 @@ export function createVoiceTiming({ currentTurn, recognizing, expire, emit, fiel
     return Date.now() - startedAt >= getSettings().voice.minDurationMs
   }
 
-  /** Dispatches one tap edge; `ready`/`reenabled` need nothing from the controller. */
   /** Loudness tick from the renderer, forwarded as-is into the overlay event. */
   function setLevel(value: number): void {
     if (phase !== 'listening') return

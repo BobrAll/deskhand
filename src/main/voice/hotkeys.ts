@@ -19,18 +19,18 @@ interface HotkeyHost {
   handleTapEvent(event: TapEvent, binding: VoiceBinding): void
   onModel(model: string): void
   onDisabled(): void
-  onStopped(): void
+  onTapsStopped(): void
   onUnavailable(): void
-  onReady(): void
+  onTapsReady(): void
 }
 
 export function createVoiceHotkeys({
   handleTapEvent,
   onModel,
   onDisabled,
-  onStopped,
+  onTapsStopped,
   onUnavailable,
-  onReady
+  onTapsReady
 }: HotkeyHost) {
   const taps: Record<VoiceBinding, TapBinding> = {
     primary: { listener: null, error: null },
@@ -76,7 +76,7 @@ export function createVoiceHotkeys({
       dictation.stop()
       taps.primary.error = null
       taps.dictation.error = null
-      onStopped()
+      onTapsStopped()
       return
     }
     const primaryError = primary.start(settings.voice.hotkey)
@@ -105,7 +105,7 @@ export function createVoiceHotkeys({
     // key press. This covers a voice mode that was enabled in the settings window
     // during this run as well as the startup path — a window created by the first
     // press would lose that turn's animation and transcript.
-    onReady()
+    onTapsReady()
   }
 
   function suspend(): void {

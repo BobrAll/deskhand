@@ -124,8 +124,12 @@ export function createVoiceRecording({ currentTurn, timing, warmup, finishIdle, 
       if (mine === currentTurn()) finishIdle({ error: message, code: 'transcribeFailed' })
       return { ok: false, text: '', ms: 0, message }
     } finally {
-      busy = false
-      if (abort === controller) abort = null
+      // A recognition that replaced this one already cleared `busy` through
+      // `abortRecognition()`; clearing it here would report the new one as idle.
+      if (abort === controller) {
+        abort = null
+        busy = false
+      }
     }
   }
 
