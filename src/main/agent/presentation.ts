@@ -27,12 +27,7 @@
 import { BrowserWindow, screen } from 'electron'
 import { CH } from '@shared/ipc'
 import type { AgentEvent, AgentPointerFrame, AgentPresentation, ScreenRect } from '@shared/types'
-import {
-  createLayerWindow,
-  ensureLayerWindow,
-  placeLayer,
-  type LayerWindowState
-} from '../layerWindow'
+import { createLayerWindow, ensureLayerWindow, placeLayer, type LayerWindowState } from '../layerWindow'
 
 /** The renderer's fade-out; the window is hidden right after it. */
 const POINTER_FADE_MS = 240
@@ -179,6 +174,29 @@ export function paintAgentPresentation(action: AgentPresentation): void {
   void paint(action, point)
 }
 
+/**
+ * Where the pointer should travel from, when it must be told.
+ *
+ * The first frame of a run starts at the real cursor if it is on the same
+ * display, so the arrow does not appear out of nowhere. A frame after the layer
+ * moved to another display starts at the last target, clamped into the new one
+ * so the arrow enters from an edge. On any normal step there is no origin: the
+ * renderer transitions from wherever the arrow already is.
+ */
+function travelOrigin(bounds: ScreenRect, moved: boolean): { x: number; y: number } | null {
+  if (!visible) {
+    const cursor = screen.getCursorScreenPoint()
+    const inside =
+      cursor.x >= bounds.x &&
+      cursor.x <= bounds.x + bounds.width &&
+      cursor.y >= bounds.y &&
+      cursor.y <= bounds.y + bounds.height
+    return inside ? toLayerPoint(cursor, bounds) : null
+  }
+  if (moved && lastPoint) return clampToLayer(toLayerPoint(lastPoint, bounds), bounds)
+  return null
+}
+
 async function paint(action: AgentPresentation, point: { x: number; y: number }): Promise<void> {
   cancelExit()
   const token = ++paintToken
@@ -187,21 +205,7 @@ async function paint(action: AgentPresentation, point: { x: number; y: number })
 
   const bounds = displayBounds(point)
   const moved = place(target, bounds)
-  const cursor = screen.getCursorScreenPoint()
-  const cursorInside =
-    cursor.x >= bounds.x &&
-    cursor.x <= bounds.x + bounds.width &&
-    cursor.y >= bounds.y &&
-    cursor.y <= bounds.y + bounds.height
-
-  // Start where the eye already is: the real pointer on the first frame, or the
-  // last target when the layer had to move to another display. On a normal step
-  // there is no `from`; the renderer transitions from its current position.
-  const from = !visible
-    ? (cursorInside ? toLayerPoint(cursor, bounds) : null)
-    : moved && lastPoint
-      ? clampToLayer(toLayerPoint(lastPoint, bounds), bounds)
-      : null
+  const from = travelOrigin(bounds, moved)
 
   send(target, {
     visible: true,

@@ -15,11 +15,18 @@
  * Verbs that ask for something to be done. Russian is inflected, so these are
  * stems, not words: «нажм» covers нажми/нажать/нажму/нажмите.
  *
- * `[^а-яё]` stands in for a word boundary — `\b` is ASCII-only and would treat
- * every Cyrillic letter as a boundary.
+ * One list, two matchers: a stem added here is recognised both mid-sentence and
+ * before the question filter. Written once because the two regexes used to carry
+ * their own copy, and a verb added to one of them silently changed the rule.
  */
-const ACTION =
-  /(^|[^а-яё])(нажм|жми|откр|запуст|включ|выключ|переключ|закр|сохран|впиш|введ|набер|выбер|постав|перемест|перетащ|прокрут|обнов|удали|скача|отправ|подтверд|созда|добав|перейд|загруз)/i
+const ACTION_STEMS =
+  'нажм|жми|откр|запуст|включ|выключ|переключ|закр|сохран|впиш|введ|набер|выбер|постав|перемест|перетащ|прокрут|обнов|удали|скача|отправ|подтверд|созда|добав|перейд|загруз'
+
+/**
+ * A stem anywhere in the text. `[^а-яё]` stands in for a word boundary — `\b` is
+ * ASCII-only and would treat every Cyrillic letter as a boundary.
+ */
+const ACTION = new RegExp(`(^|[^а-яё])(${ACTION_STEMS})`, 'i')
 
 /**
  * Opening an action with the verb is the least ambiguous form there is:
@@ -27,8 +34,7 @@ const ACTION =
  * so that an imperative is not defeated by a question word later in the same
  * sentence («открой вкладку и скажи, где я»).
  */
-const ACTION_AT_START =
-  /^(пожалуйста[,\s]+|давай[,\s]+)?(нажм|жми|откр|запуст|включ|выключ|переключ|закр|сохран|впиш|введ|набер|выбер|постав|перемест|перетащ|прокрут|обнов|удали|скача|отправ|подтверд|созда|добав|перейд|загруз|сделай)/i
+const ACTION_AT_START = new RegExp(`^(пожалуйста[,\\s]+|давай[,\\s]+)?(${ACTION_STEMS}|сделай)`, 'i')
 
 /**
  * «Сделай» asks for the thing to be done, wherever it stands.
@@ -73,8 +79,7 @@ export function looksLikeAction(text: string): boolean {
  * Only the start of the text or a clause after "and"/"then" counts, so a verb
  * merely mentioned inside an English sentence is not enough.
  */
-const BROWSER_COMMAND =
-  /(?:^|\b(?:and|then)\s+)(?:please\s+)?(?:open|launch|click|press|go to|navigate to)\b/i
+const BROWSER_COMMAND = /(?:^|\b(?:and|then)\s+)(?:please\s+)?(?:open|launch|click|press|go to|navigate to)\b/i
 
 /**
  * A Russian imperative that follows a question in the same sentence
@@ -84,8 +89,7 @@ const BROWSER_COMMAND =
  * consulted — its question filter returns before the general action match — so
  * without this the trailing request would be treated as background search.
  */
-const FOLLOWING_ACTION =
-  /\s(?:и|затем|потом)\s+(?:открой|нажми|запусти|перейди|скачай|отправь)(?![а-яё])/i
+const FOLLOWING_ACTION = /\s(?:и|затем|потом)\s+(?:открой|нажми|запусти|перейди|скачай|отправь)(?![а-яё])/i
 
 /**
  * Whether a background web lookup is appropriate: true only when the prompt asks

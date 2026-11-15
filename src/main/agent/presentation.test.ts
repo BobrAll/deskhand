@@ -117,9 +117,11 @@ describe('paintAgentPresentation: painting an action', () => {
   })
 
   it('carries the element frame in the same coordinates as the point', async () => {
-    layer.paintAgentPresentation(action({
-      target: { x: 100, y: 290, width: 40, height: 20 }
-    }))
+    layer.paintAgentPresentation(
+      action({
+        target: { x: 100, y: 290, width: 40, height: 20 }
+      })
+    )
     await settle()
 
     expect(win().sent.at(-1)?.target).toEqual({ x: 100, y: 290, width: 40, height: 20 })
@@ -138,12 +140,14 @@ describe('paintAgentPresentation: painting an action', () => {
   it('aims at the middle of the window when the call has no element', async () => {
     // A key press or a scroll with no element is aimed at the window, not at an
     // invented pixel.
-    layer.paintAgentPresentation(action({
-      tool: 'press_key',
-      gesture: 'key',
-      point: undefined,
-      window: { x: 100, y: 100, width: 400, height: 300 }
-    }))
+    layer.paintAgentPresentation(
+      action({
+        tool: 'press_key',
+        gesture: 'key',
+        point: undefined,
+        window: { x: 100, y: 100, width: 400, height: 300 }
+      })
+    )
     await settle()
 
     expect(win().sent.at(-1)?.point).toEqual({ x: 300, y: 250 })

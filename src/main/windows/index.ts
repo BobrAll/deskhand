@@ -4,34 +4,25 @@
  * window loads its own page.
  */
 
-import { join } from 'node:path'
 import { app, BrowserWindow, screen } from 'electron'
-import {
-  CARD_MAX_WIDTH,
-  CARD_MIN_WIDTH,
-  CARD_NARROW_WIDTH,
-  CARD_VOICE_WIDTH,
-  CARD_WIDTH
-} from '@shared/metrics'
+import { CARD_MAX_WIDTH, CARD_MIN_WIDTH, CARD_NARROW_WIDTH, CARD_VOICE_WIDTH, CARD_WIDTH } from '@shared/metrics'
+import type { ScreenRect } from '@shared/types'
 import type { OverlayHost } from '../overlay/host'
-import {
-  boundsFor,
-  placeAnchor,
-  resizeAnchor,
-  type CardAnchor
-} from '../card'
+import { boundsFor, CARD_FOLDED_HEIGHT, placeAnchor, resizeAnchor, type CardAnchor } from '../card'
+import { hideFieldHighlight, showFieldHighlight } from '../fieldHighlight'
 import { clamp } from '../util'
 import { denyExternalLinks } from '../denyExternalLinks'
 import { loadPage } from '../pageLoad'
-import { openAppWindows } from './settings'
-import { setWindowBlur } from './windowBlur'
+import { preloadPath } from '../preloadPath'
+import { openAppWindows, setAppWindowsFocusable } from './settings'
 
 export {
   openSettingsWindow,
   openOnboardingWindow,
   closeOnboardingWindow,
   closeSettingsWindow,
-  setSettingsHeld
+  setSettingsHeld,
+  setSettingsWindowClosedHandler
 } from './settings'
 
 /**
@@ -43,12 +34,10 @@ export {
  * numbers to decide where a line wraps and how wide a card to ask for. Height and
  * the placement gap are main's business only, so they stay here.
  */
-const OVERLAY_MIN_HEIGHT = 31
+const OVERLAY_MIN_HEIGHT = CARD_FOLDED_HEIGHT
 const OVERLAY_MAX_HEIGHT = 520
 
-const CARD_BLUR_RADIUS = 40
-
-const preload = join(__dirname, '../preload/index.js')
+const CARD_VIBRANCY = 'under-window' as const
 
 let overlayWindow: BrowserWindow | null = null
 let overlayVisible = false
@@ -77,7 +66,11 @@ let passthroughActive = false
 function applyWindowChrome(): void {
   const win = overlayWindow
   if (!win || win.isDestroyed()) return
-  setWindowBlur(win, drawingActive || voiceActive ? 0 : CARD_BLUR_RADIUS)
+  // The vibrancy view is clipped to the window's rounded corners by macOS, so
+  // the blur follows the card's silhouette. A plain WindowServer blur does not
+  // and shows a translucent square behind the rounded panel — see
+  // `roundedCorners` below.
+  win.setVibrancy(drawingActive || voiceActive ? null : CARD_VIBRANCY)
 }
 
 function createOverlayWindow(): BrowserWindow {
@@ -94,11 +87,18 @@ function createOverlayWindow(): BrowserWindow {
     maximizable: false,
     fullscreenable: false,
     acceptFirstMouse: true,
-    // The renderer draws the inset silhouette and its shadow.
-    roundedCorners: false,
+    // The renderer draws the card edge-to-edge, and macOS clips both the window
+    // shape and the vibrancy view to the same rounded rectangle. Without this
+    // the square window would show its blur in the four rounded-off corners.
+    roundedCorners: true,
     hasShadow: false,
+    // Real frosting: `backdrop-filter` in a transparent window only has the
+    // page's own (empty) backdrop to sample, so the glass would just show the
+    // app behind it unblurred. The vibrancy view blurs the desktop instead.
+    vibrancy: drawingActive || voiceActive ? undefined : CARD_VIBRANCY,
+    visualEffectState: 'active',
     webPreferences: {
-      preload,
+      preload: preloadPath,
       sandbox: false,
       contextIsolation: true,
       nodeIntegration: false,
@@ -118,9 +118,7 @@ function createOverlayWindow(): BrowserWindow {
   win.webContents.session.setPermissionRequestHandler((_contents, permission, callback) => {
     callback(permission === 'media')
   })
-  win.webContents.session.setPermissionCheckHandler(
-    (_contents, permission) => permission === 'media'
-  )
+  win.webContents.session.setPermissionCheckHandler((_contents, permission) => permission === 'media')
 
   win.on('closed', () => {
     overlayWindow = null
@@ -152,7 +150,9 @@ function createOverlayWindow(): BrowserWindow {
     pendingShow = null
     if (pending) performShow(pending.height, pending.width, pending.activate)
   })
-  win.on('will-move', () => { resizeBounds = null })
+  win.on('will-move', () => {
+    resizeBounds = null
+  })
   loadPage(win, 'overlay')
   return win
 }
@@ -179,7 +179,7 @@ function positionOverlay(win: BrowserWindow, height: number, width: number): voi
  * Re-applies the remembered anchor to a new size, or places the card for the
  * first time when there is no anchor yet.
  */
-function resizeAtAnchor(win: BrowserWindow, height: number, width: number, pin = false): void {
+function resizeAtAnchor(win: BrowserWindow, height: number, width: number, pin = false, typing = false): void {
   if (!anchor) {
     positionOverlay(win, height, width)
     return
@@ -190,7 +190,8 @@ function resizeAtAnchor(win: BrowserWindow, height: number, width: number, pin =
     height,
     width,
     workAreaAt,
-    pin
+    pin,
+    typing
   })
   resizeBounds = boundsFor(anchor, height, width)
   // Native animation is right for a card that grows as text arrives — one small
@@ -215,9 +216,9 @@ function performShow(height: number, width: number, activate: boolean): void {
   if (!win || win.isDestroyed()) return
   // A card that is already on screen keeps its own size.
   //
-  // Both numbers passed here are guesses: the folded card is 31 points tall until
-  // the renderer lays itself out, and 112 wide until the user types something. The
-  // renderer reports the real size a frame later and resizes the window itself, so
+  // Both numbers passed here are guesses: until the renderer lays itself out the
+  // card is one folded line tall and one narrow width wide, still empty. The renderer
+  // reports the real size a frame later and resizes the window itself, so
   // re-applying a guess over a card that is already being typed into would shrink
   // it back to the empty pill between two keystrokes. Keep the position when the
   // visible card takes focus after context collection.
@@ -276,15 +277,13 @@ function performShow(height: number, width: number, activate: boolean): void {
 function presentOverlay(height: number, width: number, activate: boolean): void {
   const safeHeight = Math.round(clamp(height, OVERLAY_MIN_HEIGHT, OVERLAY_MAX_HEIGHT))
   // A voice turn is bars only, and the caller's width describes a card that is
-  // not there: the overlay shows itself mid-turn at `INITIAL_HEIGHT` with its
+  // not there: the overlay shows itself mid-turn at `CARD_FOLDED_HEIGHT` with its
   // default narrow width, which would leave the invisible window 32 points wider
   // than the few pixels it paints. That extra strip is invisible but still
   // belongs to the window, so it sits between the pointer and whatever is under
   // it. The renderer asks for `CARD_VOICE_WIDTH` throughout the turn; this is
   // the same number applied at the moment the window is actually shown.
-  const safeWidth = Math.round(
-    clamp(voiceActive ? CARD_VOICE_WIDTH : width, CARD_MIN_WIDTH, CARD_WIDTH)
-  )
+  const safeWidth = Math.round(clamp(voiceActive ? CARD_VOICE_WIDTH : width, CARD_MIN_WIDTH, CARD_WIDTH))
 
   if (!overlayWindow) {
     // The window is created here and the show is remembered: the first paint can
@@ -308,7 +307,7 @@ function presentOverlay(height: number, width: number, activate: boolean): void 
 
 /**
  * Drops the floating level a running plan raised, so the card goes back to being
- * an ordinary window. Called when the plan ends and when the card is hidden.
+ * an ordinary window. Called when the card is hidden.
  */
 function clearAlwaysOnTop(): void {
   const win = overlayWindow
@@ -339,7 +338,7 @@ export const overlayHost: OverlayHost = {
     presentOverlay(height, width, false)
   },
 
-  resize(height: number, width = CARD_WIDTH, pin = false): void {
+  resize(height: number, width = CARD_WIDTH, pin = false, typing = false): void {
     const win = overlayWindow
     if (!win || win.isDestroyed()) return
     const safeHeight = Math.round(clamp(height, OVERLAY_MIN_HEIGHT, OVERLAY_MAX_HEIGHT))
@@ -349,7 +348,7 @@ export const overlayHost: OverlayHost = {
     const safeWidth = Math.round(clamp(width, CARD_MIN_WIDTH, CARD_MAX_WIDTH))
     const bounds = resizeBounds ?? win.getBounds()
     if (bounds.height === safeHeight && bounds.width === safeWidth && !pin) return
-    resizeAtAnchor(win, safeHeight, safeWidth, pin)
+    resizeAtAnchor(win, safeHeight, safeWidth, pin, typing)
   },
 
   /** Clears blur while a drawing needs to reveal detail behind the card. */
@@ -364,6 +363,27 @@ export const overlayHost: OverlayHost = {
     if (voiceActive !== active) {
       voiceActive = active
       applyWindowChrome()
+    }
+  },
+
+  /** Paints the insertion-field border on its own transparent layer. */
+  showField(frame: ScreenRect | null): void {
+    void showFieldHighlight(frame)
+  },
+
+  hideField(): void {
+    hideFieldHighlight()
+  },
+
+  /** Takes the keyboard for an approval question. */
+  focus(): void {
+    const win = overlayWindow
+    if (!win || win.isDestroyed() || !overlayVisible) return
+    win.focus()
+    try {
+      app.focus({ steal: true })
+    } catch {
+      /* keeping the current focus is acceptable */
     }
   },
 
@@ -396,11 +416,16 @@ export const overlayHost: OverlayHost = {
     win.setAlwaysOnTop(active, 'floating')
     if (active) {
       // Focus must leave the card too: a focused window still owns the keyboard,
-      // so `@type` would type into our own input field.
+      // so `@type` would type into our own input field. Parking the app's other
+      // windows for exactly this hand-off stops macOS from giving the key to the
+      // settings window behind the user's work; they come back right after.
+      setAppWindowsFocusable(false)
       try {
         win.blur()
       } catch {
         /* blurring is best effort */
+      } finally {
+        setAppWindowsFocusable(true)
       }
     }
   },
@@ -428,7 +453,18 @@ export const overlayHost: OverlayHost = {
     // moved since this card appeared.
     anchor = null
     resizeBounds = null
-    if (overlayWindow && !overlayWindow.isDestroyed()) overlayWindow.hide()
+    const win = overlayWindow
+    if (win && !win.isDestroyed()) {
+      // Hiding the key window is the moment macOS looks for the next one. A
+      // settings window parked behind the user's app must not be that candidate;
+      // it is released right after, so the next deliberate click still reaches it.
+      setAppWindowsFocusable(false)
+      try {
+        win.hide()
+      } finally {
+        setAppWindowsFocusable(true)
+      }
+    }
   },
 
   window(): BrowserWindow | null {
@@ -446,10 +482,9 @@ export const overlayHost: OverlayHost = {
 export function showActiveWindow(): void {
   const candidates = [overlayWindow, ...openAppWindows()]
   for (const win of candidates) {
-    if (win && !win.isDestroyed() && win.isVisible()) {
-      win.show()
-      win.focus()
-      return
-    }
+    if (!win || win.isDestroyed() || !win.isVisible()) continue
+    win.show()
+    win.focus()
+    return
   }
 }

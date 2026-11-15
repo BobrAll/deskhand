@@ -2,7 +2,7 @@
  * The overlay session: everything between "hotkey pressed" and "overlay hidden".
  *
  * Flow (ТЗ §4): remember the frontmost app -> collect context -> show the
- * overlay next to the cursor -> stream the answer -> paste / copy / retry / close.
+ * overlay next to the cursor -> stream the answer -> copy / retry / close.
  */
 
 import { createHash, randomUUID } from 'node:crypto'
@@ -20,7 +20,6 @@ import type {
   ContextFlags,
   ContextSnapshot,
   OverlayState,
-  PasteResult,
   ScreenshotInfo,
   ScreenRect,
   SendRequest,
@@ -38,9 +37,11 @@ import { captureScreenshot } from '../context/screenshot'
 import { getProvider, resolveChatModel } from '../llm'
 import { ProviderError, type ChatMessage } from '../llm/provider'
 import { searchWeb } from '../llm/webSearch'
-import { copyText, pasteAnswer } from '../paste'
+import { CARD_FOLDED_HEIGHT } from '../card'
+import { copyText } from '../paste'
 import { hideAnnotations, showAnnotations } from '../drawing'
-import { buildTurnRequest, type Exchange } from './request'
+import { buildTurnRequest, type Exchange, type TurnRequest } from './request'
+import { captureTargetFor } from './captureTarget'
 import { readPreviousCommand, saveCommand } from './history'
 import { timed, trace, traceTurn } from '../agent/trace'
 import { emptyAnswerFallback } from './emptyAnswer'
@@ -48,7 +49,15 @@ import { groundAnnotation } from '../annotationGrounding'
 import type { OverlayHost } from './host'
 import { consumeTurnStream } from '../turnStream'
 import { sameObservedWindow } from '../agent/observation'
-import { helperActivate, helperFrontApplication, helperFrontWindow, helperWindow, type RawFrontApp } from '../native/helper'
+import {
+  helperActivate,
+  helperFocused,
+  helperFrontApplication,
+  helperFrontWindow,
+  helperVisibleBundleIds,
+  helperWindow,
+  type RawFrontApp
+} from '../native/helper'
 import { getApiKey } from '../settings/secrets'
 import { getSettings, patchSettings } from '../settings/store'
 import { sameScreenRect } from '../layerWindow'
@@ -81,6 +90,12 @@ interface TurnResult {
   reason: string
   /** The agent reported success without anything to say. */
   acknowledged: boolean
+}
+
+/** One `open()` that is still collecting context, and the generation it started in. */
+interface OpenRun {
+  generation: number
+  promise: Promise<void>
 }
 
 interface Session {
@@ -123,12 +138,13 @@ interface Session {
 }
 
 /**
- * Size the card is placed with before the renderer has laid itself out: the
- * folded card — one input line and the chevron. Only placement uses it; the
- * renderer reports the real size a frame later, so a slightly generous guess here
- * just keeps the first placement from flipping sides afterwards.
+ * Size the card is placed with before the renderer has laid itself out.
+ *
+ * Only placement uses it; the renderer reports the real size a frame later, so a
+ * slightly generous guess here just keeps the first placement from flipping
+ * sides afterwards.
  */
-const INITIAL_HEIGHT = 31
+const INITIAL_HEIGHT = CARD_FOLDED_HEIGHT
 
 /**
  * Shown when the provider refuses the screenshot.
@@ -137,8 +153,15 @@ const INITIAL_HEIGHT = 31
  * arrives, and the only thing that changed is that the model could not see the
  * screen and therefore did not draw on it.
  */
-const MODEL_REFUSED_IMAGE =
-  'Модель не принимает изображения — ответ получен без скриншота и рисунка.'
+const MODEL_REFUSED_IMAGE = 'Модель не принимает изображения — ответ получен без скриншота и рисунка.'
+
+/**
+ * Shown when the card's app is on the exclusion list.
+ *
+ * The card normally never opens for such an app; this is the race where the
+ * target changes while the card is already on screen.
+ */
+const EXCLUDED_APP = 'Приложение входит в список исключений — запрос не отправлен.'
 
 /**
  * How long a spoken transcript stays on screen while its request is already
@@ -172,6 +195,12 @@ const MAX_HISTORY_CHARS = 1_500
 const STOP_AGENT = Symbol('stop-agent')
 const TURN_DEADLINE_MS = 120_000
 
+/** Time the compositor needs to start excluding the card from screen captures. */
+const CONTENT_PROTECTION_SETTLE_MS = 45
+
+/** The agent's exact reply for success without caveats. */
+const AGENT_DONE_MARKER = '[[ACTION_DONE]]'
+
 /** What OpenRouter wants on every request to attribute the traffic to this app. */
 const OPENROUTER_ATTRIBUTION = {
   'HTTP-Referer': 'https://github.com/BobrAll/deskhand',
@@ -186,15 +215,26 @@ const OPENROUTER_ATTRIBUTION = {
  */
 function describeRunOutcome(run: AgentRunResult, acknowledged: boolean): { outcome: string; reason: string } {
   const spoke = run.answer.trim().length > 0
-  const outcome = run.blocked ? 'blocked'
-    : run.aborted ? 'cancelled'
-      : run.incomplete ? 'incomplete'
-        : spoke && !acknowledged ? 'agent-report' : 'agent-silent'
-  const reason = run.blocked ? 'agent-unavailable'
-    : run.aborted ? 'agent-stop'
-      : run.incomplete ? 'agent-incomplete'
-        : acknowledged ? 'agent-acknowledged'
-          : spoke ? 'agent-answer' : 'no-answer'
+  const outcome = run.blocked
+    ? 'blocked'
+    : run.aborted
+      ? 'cancelled'
+      : run.incomplete
+        ? 'incomplete'
+        : spoke && !acknowledged
+          ? 'agent-report'
+          : 'agent-silent'
+  const reason = run.blocked
+    ? 'agent-unavailable'
+    : run.aborted
+      ? 'agent-stop'
+      : run.incomplete
+        ? 'agent-incomplete'
+        : acknowledged
+          ? 'agent-acknowledged'
+          : spoke
+            ? 'agent-answer'
+            : 'no-answer'
   return { outcome, reason }
 }
 
@@ -203,23 +243,33 @@ export function createOverlayController(host: OverlayHost) {
   /** Whether the user is writing in the card right now (see `syncDrawing`). */
   let typing = false
   /**
-   * Bumped by every `close()`. `open()` takes a long time (app, selection and
-   * screenshot) and the user can finish speaking, and release the key, while it
-   * is still collecting; without this the card would appear *after* the turn was
-   * already closed — an empty panel left floating at the pointer with nothing
-   * ever going to fill it.
+   * Which card owns the screen, as a counter.
+   *
+   * Bumped by every `close()` and by every fresh `open()`. `open()` takes a long
+   * time (app, selection and screenshot) and the user can finish speaking, and
+   * release the key, while it is still collecting; without this the card would
+   * appear *after* the turn was already closed — an empty panel left floating at
+   * the pointer with nothing ever going to fill it. The same number is what
+   * tells a slow follow-up (a focus hand-back, a doomed collection) that a newer
+   * card has taken over.
    */
   let generation = 0
 
   /**
-   * The `open()` currently collecting context, if any.
+   * The `open()` currently collecting context, if any, with the generation it
+   * was started in.
    *
    * A voice transcript can be ready before the card is: the window is shown
    * immediately on the key press, but the app and the selection still have to be
    * read. Delivering into that gap would put the phrase into the *previous*
    * session (or into no session at all), so `deliver` waits for this to settle.
+   *
+   * The generation travels with the record because a `close()` during collection
+   * dooms the open that is already running: joining it on the next press would
+   * hand that press a card which is about to be taken down by its own generation
+   * check. See `currentOpen`.
    */
-  let opening: Promise<void> | null = null
+  let opening: OpenRun | null = null
   /**
    * The spoken turn still in flight.
    *
@@ -228,10 +278,134 @@ export function createOverlayController(host: OverlayHost) {
    * saying the next thing, and the old turn must not keep acting underneath them.
    */
   let voiceTurn: AbortController | null = null
+  /**
+   * The app a dictation hold is typing into.
+   *
+   * Kept apart from `session.target`: a dictation never opens a card, and a card
+   * from an earlier question may remember a different app or none at all. Read
+   * at press time, before any of our windows is on screen, because the
+   * frontmost app after that may be us.
+   */
+  let dictationTarget: ActiveAppInfo | null = null
+  /**
+   * Which dictation hold is reading the screen right now.
+   *
+   * Reading the app is a helper round trip, and a short hold can end before it
+   * answers. The bump in `endDictation` is what keeps that late answer from
+   * becoming the target of the next hold.
+   */
+  let dictationRead = 0
+  /**
+   * Whether the assistant card owned the keyboard when the hold began.
+   *
+   * Such a hold ends by closing the card, which is also what hands focus back
+   * to its app. An indicator-only hold just hides the bars and leaves the app
+   * the user is typing in untouched.
+   */
+  let dictationOwnsCard = false
+  /**
+   * True while a dictation owns the screen.
+   *
+   * A card that was already collecting context when the hold began must not
+   * finish by focusing itself, and its own `generation` check cannot see that:
+   * the open is legitimate, it is only the moment that is wrong.
+   */
+  let dictating = false
 
   function setVoice(active: boolean): void {
     if (active) voiceTurn?.abort()
     host.setVoice(active)
+  }
+
+  /**
+   * Remembers where a dictation hold has to paste, without opening the card.
+   *
+   * Opening the card means reading the selection with a synthetic ⌘C and then
+   * focusing the window — both take the user out of the field they are still
+   * typing in. Dictation therefore captures only the application that owns the
+   * keyboard right now, which is enough for the paste and costs no context work.
+   */
+  async function beginDictation(): Promise<void> {
+    dictating = true
+    // A card still collecting context would focus itself in the middle of the
+    // hold. Bumping the generation cancels that focus; `dictating` keeps its
+    // cleanup from hiding the bars once they are up.
+    if (opening) generation += 1
+    const mine = ++dictationRead
+    const front = await helperFrontApplication()
+    // A newer hold, or the end of this one, owns the answer by now.
+    if (mine !== dictationRead) return
+    const cardVisible = cardOnScreen()
+    const ours = front?.pid === process.pid
+    dictationOwnsCard = ours && cardVisible
+    if (ours) {
+      // The card itself was in front: the app it belongs to is the one the user
+      // came from. Without a visible card (settings is frontmost) there is no
+      // field behind us worth typing into.
+      dictationTarget = cardVisible ? (session?.target ?? null) : null
+    } else {
+      dictationTarget =
+        front && front.pid > 0
+          ? {
+              bundleId: front.bundleId,
+              name: front.name,
+              pid: front.pid,
+              windowTitle: front.windowTitle,
+              windowId: front.windowId,
+              bounds: front.bounds
+            }
+          : null
+    }
+    if (!dictationTarget) {
+      host.showField(null)
+      return
+    }
+    // The field itself, not just the app: the border has to sit on the control
+    // the keyboard is in. The read is deliberately not awaited — the bars must
+    // appear at once, and a slow Accessibility tree may only cost the border.
+    void markDictationField(dictationTarget, mine)
+  }
+
+  /**
+   * Finds the focused control and draws its border, if it can take text.
+   *
+   * A non-editable focused element (a button, a web view that does not expose
+   * its editor) gets no border rather than a misleading rectangle around the
+   * whole window. The token check drops a late answer from a hold that has
+   * already ended.
+   */
+  async function markDictationField(target: ActiveAppInfo, mine: number): Promise<void> {
+    const focused = await helperFocused(target.pid).catch(() => null)
+    if (mine !== dictationRead) return
+    // The system-wide answer can belong to the card itself when the card was in
+    // front at press time while the target is the app behind it. That is our
+    // own input, not the field the words will go into.
+    const ownElement = focused?.pid === process.pid
+    host.showField(!ownElement && focused?.editable && focused.frame ? focused.frame : null)
+  }
+
+  /**
+   * Puts the screen back after a dictation hold.
+   *
+   * The remembered app is dropped here: the next hold starts wherever the user
+   * is by then, and a stale target would paste one sentence into the window
+   * before.
+   */
+  function endDictation(closeCard = false): void {
+    const ownsCard = closeCard || dictationOwnsCard
+    dictating = false
+    dictationRead += 1
+    dictationTarget = null
+    dictationOwnsCard = false
+    host.hideField()
+    if (ownsCard) {
+      // `close()` bumps the generation, so an in-flight `openInternal` cannot
+      // focus an empty card after the key is already up. That is also what
+      // returns focus to the app behind a primary-hotkey dictation turn.
+      close()
+      return
+    }
+    host.hide()
   }
 
   /**
@@ -244,13 +418,21 @@ export function createOverlayController(host: OverlayHost) {
    */
   const agent = createAgentController({
     setPassthrough: (active) => host.setPassthrough(active),
+    focus: () => host.focus(),
+    hasFocus: () => Boolean(host.window()?.isFocused()),
     emit: (event: AgentEvent) => publishAgent(event),
     present: (action) => paintAgentPresentation(action)
   })
 
   /** Keeps the card and the display layer in sync with the agent's state. */
   function publishAgent(event: AgentEvent): void {
-    trace('agent.phase', { phase: event.phase, step: event.step, total: event.total, completed: event.completed === true, calls: event.actions?.length ?? 0 })
+    trace('agent.phase', {
+      phase: event.phase,
+      step: event.step,
+      total: event.total,
+      completed: event.completed === true,
+      calls: event.actions?.length ?? 0
+    })
     sendToWindow(CH.agent.event, event)
     updateAgentCursor(event)
     // The ghost pointer follows the run, not the step: it is present from
@@ -311,6 +493,34 @@ export function createOverlayController(host: OverlayHost) {
     const win = host.window()
     if (!win || win.isDestroyed()) return
     win.webContents.send(channel, payload)
+  }
+
+  /** Whether the card is on screen right now, session and window together. */
+  function cardOnScreen(): boolean {
+    const win = host.window()
+    return Boolean(session && win && !win.isDestroyed() && win.isVisible())
+  }
+
+  /**
+   * Whether `owner` is still the generation that owns the screen.
+   *
+   * Both `close()` and a fresh `open()` bump the counter, so this one comparison
+   * answers "did anything take the card away while the slow work was running".
+   */
+  function isCurrentGeneration(owner: number): boolean {
+    return owner === generation
+  }
+
+  /**
+   * The open a press or a transcript may join, if there is one.
+   *
+   * Only an open of the current generation is joinable: one that was already
+   * running when the card closed is doomed — it will find itself outdated and
+   * hide the window — so a press after Escape starts a fresh collection instead
+   * of inheriting that one.
+   */
+  function currentOpen(): OpenRun | null {
+    return opening && isCurrentGeneration(opening.generation) ? opening : null
   }
 
   function publishState(): void {
@@ -405,11 +615,16 @@ export function createOverlayController(host: OverlayHost) {
   /**
    * Takes a new picture of the screen *right now*.
    *
-   * The whole display, not the active window: the drawing tool has to be able to
-   * point at the menu bar, the Dock or a second app, and a window-sized capture
-   * would make those targets impossible to show. The painting layer is pinned over
-   * exactly the rectangle recorded in `ScreenshotInfo.area`, so display-wide
-   * coordinates stay honest.
+   * Normally the whole display, not the active window: the drawing tool has to
+   * be able to point at the menu bar, the Dock or a second app, and a
+   * window-sized capture would make those targets impossible to show. The
+   * painting layer is pinned over exactly the rectangle recorded in
+   * `ScreenshotInfo.area`, so display-wide coordinates stay honest.
+   *
+   * With excluded apps configured the display is safe only while none of them
+   * has a window on screen; once one does, or when that cannot be checked, the
+   * capture is limited to the observed window and never falls back to the whole
+   * screen (`captureTargetFor`).
    *
    * The overlay's own window is temporarily excluded from the capture: without
    * that, the `-R` / full-screen fallbacks would photograph our own card, and a
@@ -424,69 +639,81 @@ export function createOverlayController(host: OverlayHost) {
         trace('screen.captureJoined')
         return captureInFlight.promise
       }
-      const next = (): Promise<ScreenshotInfo | null> | null => session === target ? captureFor(target) : null
+      const next = (): Promise<ScreenshotInfo | null> | null => (session === target ? captureFor(target) : null)
       return captureInFlight.promise.then(next, next)
     }
 
-    const run = (async (): Promise<ScreenshotInfo | null> => {
-      const win = host.window()
-      const visible = Boolean(win && !win.isDestroyed() && win.isVisible())
-      const settings = getSettings()
-      try {
-        if (visible && win) {
-          win.setContentProtection(true)
-          // Give the compositor a beat to apply the new sharing state.
-          await delay(45)
-        }
-        const front = settings.agent.enabled ? await helperFrontWindow() : null
-        const underOverlay = front?.pid === process.pid
-        // Under our own card the frontmost window is not the one being acted on:
-        // read the remembered target's window instead.
-        const observed = underOverlay
-          ? (target.target ? await helperWindow(target.target.pid) : null)
-          : front
-        if (observed && settings.excludedApps.includes(observed.bundleId)) {
-          target.snapshot.screenshot = null
-          return null
-        }
-        const shot = await timed('screen.capture', () => captureScreenshot(
-          {
-            windowId: observed?.windowId ?? target.target?.windowId ?? null,
-            bounds: observed?.bounds ?? target.target?.bounds ?? null,
-            // The whole display, not one window: drawing is a tool the assistant
-            // reaches for on its own, and a pointer that could only aim inside one
-            // window would make "нажми на иконку в доке" impossible to show. The
-            // painting layer is pinned over exactly the captured rectangle.
-            fullDisplay: true
-          },
-          { maxSide: settings.screenshotMaxSide, quality: settings.screenshotQuality }
-        ))
-        if (shot && observed) {
-          if (await windowStillMatches(observed)) {
-            observedApps.set(shot, observed)
-          }
-          // The comparison above already recorded which field disagreed; this
-          // line records only that the shot was dropped, without the window text.
-          else trace('screen.observationRejected', { reason: 'window-changed-during-capture' })
-        }
-        if (session === target) {
-          if (shot) target.snapshot.screenshot = shot
-          target.snapshot.screenshotPending = false
-          publishContext(target)
-        }
-        return shot
-      } finally {
-        if (visible && win && !win.isDestroyed()) win.setContentProtection(false)
-      }
-    })()
-
-    const entry = { sessionId: target.id, promise: run }
+    const entry = { sessionId: target.id, promise: captureNow(target) }
     captureInFlight = entry
     const clear = (): void => {
       if (captureInFlight === entry) captureInFlight = null
     }
-    void run.then(clear, clear)
-    return run
+    void entry.promise.then(clear, clear)
+    return entry.promise
+  }
+
+  /** One capture: shutter, observation check, and the session's new picture. */
+  async function captureNow(target: Session): Promise<ScreenshotInfo | null> {
+    const win = host.window()
+    const visible = Boolean(win && !win.isDestroyed() && win.isVisible())
+    const settings = getSettings()
+    try {
+      if (visible && win) {
+        win.setContentProtection(true)
+        await delay(CONTENT_PROTECTION_SETTLE_MS)
+      }
+      // The front window is read even when the agent is off if exclusions are
+      // configured: otherwise a window the user switched to could never be
+      // checked against the list before the shutter opens. The visible apps are
+      // read in parallel and only when exclusions exist: with none configured
+      // the whole display is always safe, so that call would be pure cost.
+      const excludedApps = settings.excludedApps
+      const [front, visibleBundleIds] = await Promise.all([
+        settings.agent.enabled || excludedApps.length > 0 ? helperFrontWindow() : Promise.resolve(null),
+        excludedApps.length > 0 ? helperVisibleBundleIds() : Promise.resolve(null)
+      ])
+      const underOverlay = front?.pid === process.pid
+      // Under our own card the frontmost window is not the one being acted on:
+      // read the remembered target's window instead.
+      const observed = underOverlay ? (target.target ? await helperWindow(target.target.pid) : null) : front
+      const capture = captureTargetFor({
+        observed,
+        remembered: target.target,
+        excludedApps,
+        visibleBundleIds
+      })
+      if (!capture) {
+        // Nothing may be photographed, so the session has no picture any more.
+        // The card is still showing the last one and has to be told, or its
+        // thumbnail keeps promising a frame the model will never receive.
+        target.snapshot.screenshot = null
+        target.snapshot.screenshotPending = false
+        // The shapes were measured against that frame: keeping them would leave
+        // an arrow pointing at a screen that is no longer shown.
+        if (session === target) discardAnnotations()
+        publishContext(target)
+        return null
+      }
+      const shot = await timed('screen.capture', () =>
+        captureScreenshot(capture, { maxSide: settings.screenshotMaxSide, quality: settings.screenshotQuality })
+      )
+      if (shot && observed) {
+        if (await windowStillMatches(observed)) {
+          observedApps.set(shot, observed)
+        }
+        // The comparison above already recorded which field disagreed; this
+        // line records only that the shot was dropped, without the window text.
+        else trace('screen.observationRejected', { reason: 'window-changed-during-capture' })
+      }
+      if (session === target) {
+        if (shot) target.snapshot.screenshot = shot
+        target.snapshot.screenshotPending = false
+        publishContext(target)
+      }
+      return shot
+    } finally {
+      if (visible && win && !win.isDestroyed()) win.setContentProtection(false)
+    }
   }
 
   /**
@@ -495,11 +722,19 @@ export function createOverlayController(host: OverlayHost) {
    * instant as a live tick does not pay for a second capture; anything older is
    * re-taken, because the whole point is that the model sees the screen as it is
    * now and not as it was when the overlay opened.
+   *
+   * A refresh that fails yields `null`, never the previous frame: after a Screen
+   * Recording refusal the old picture would be presented as the current screen
+   * and the prompt would describe it as such, so the model would confidently
+   * answer about a minutes-old one. The turn knows how to go on without an image.
    */
   async function ensureFreshScreenshot(target: Session, requireObserved = false): Promise<ScreenshotInfo | null> {
     const current = target.snapshot.screenshot
-    if (current && Date.now() - current.capturedAt < MAX_SHOT_AGE_MS &&
-        (!requireObserved || observedApps.has(current))) {
+    if (
+      current &&
+      Date.now() - current.capturedAt < MAX_SHOT_AGE_MS &&
+      (!requireObserved || observedApps.has(current))
+    ) {
       trace('screen.cacheHit', { ageMs: Date.now() - current.capturedAt })
       return current
     }
@@ -510,12 +745,10 @@ export function createOverlayController(host: OverlayHost) {
       target.snapshot.screenshotPending = true
       publishContext(target)
     }
-    const shot = await captureFor(target)
-    if (session === target && (showPending || !shot)) {
-      target.snapshot.screenshotPending = false
-      publishContext(target)
-    }
-    return shot ?? (requireObserved ? null : target.snapshot.screenshot)
+    // `captureFor` publishes the settled context itself, including the cleared
+    // state when nothing may be photographed. Sending it again here would make
+    // the card redraw the same frame twice.
+    return captureFor(target)
   }
 
   /** Re-captures on a timer while the card is on screen. */
@@ -526,7 +759,7 @@ export function createOverlayController(host: OverlayHost) {
         stopLive(target)
         return
       }
-      // The card is hidden (closed, or hidden for a paste): nothing to preview and
+      // The card is hidden: nothing to preview and
       // nothing that could be asked about, so idle instead of capturing the screen
       // every couple of seconds in the background.
       const win = host.window()
@@ -566,21 +799,74 @@ export function createOverlayController(host: OverlayHost) {
    *
    * The hotkey, push-to-talk and the tray all want the same card; running
    * `collectContext` twice at once would show the second session over the first.
+   * Only an open that still owns the screen is shared (see `currentOpen`); a
+   * press after Escape starts a fresh collection and leaves the doomed one to
+   * settle on its own — it can no longer clear `opening`, which belongs to the
+   * newer open.
    */
   function open(): Promise<void> {
-    if (opening) {
+    const joined = currentOpen()
+    if (joined) {
       // A second press joining an open that is still collecting still gets the
       // card on screen immediately: the session can arrive later.
       host.showInactive(INITIAL_HEIGHT)
-      return opening
+      return joined.promise
     }
-    const task = openInternal()
-    opening = task
+    // A fresh open starts a new card on the screen. Its own generation is what
+    // tells a close from the previous one (a focus hand-back still in flight,
+    // for instance) that its work is no longer current.
+    generation += 1
+    const startedIn = generation
+    const task = openInternal(startedIn)
+    opening = { generation: startedIn, promise: task }
     const done = (): void => {
-      if (opening === task) opening = null
+      if (opening?.promise === task) opening = null
     }
     void task.then(done, done)
     return task
+  }
+
+  /**
+   * Brings an already open card up to date and gives it the keyboard.
+   *
+   * The picture is refreshed, and so is *the app the card is about*: while the
+   * card sat on screen the user moved to another window, and the question they
+   * are about to type is about that one. Keeping the app from the first open is
+   * how a plan ends up clicking in the window the user left — `agent.execute`
+   * brings the target to the front before the first step, so a stale target does
+   * not just mislabel the answer, it physically raises the wrong window over the
+   * one on screen.
+   *
+   * The context has to be read before the focus is taken: our own card is what
+   * the frontmost app becomes a moment later.
+   */
+  async function refreshOpenCard(startedIn: number, win: BrowserWindow): Promise<void> {
+    const front = await helperFrontApplication()
+    const elsewhere = front && front.pid > 0 && front.pid !== process.pid
+    if (elsewhere) {
+      const settings = getSettings()
+      const { snapshot, flags } = await collectContext({
+        excludedApps: settings.excludedApps,
+        wantsScreenshot: settings.captureScreenshotByDefault
+      })
+      if (isCurrentGeneration(startedIn) && session && snapshot.excluded) {
+        session.target = null
+        close()
+        return
+      }
+      if (isCurrentGeneration(startedIn) && session) {
+        session.snapshot = snapshot
+        session.target = snapshot.activeApp
+        session.flags = flags
+        // The drawing belonged to the previous screen.
+        discardAnnotations()
+      }
+    } else if (session && session.snapshot.activeApp) {
+      void ensureFreshScreenshot(session)
+    }
+    if (!isCurrentGeneration(startedIn) || dictating || !session) return
+    win.focus()
+    startLive(session)
   }
 
   /**
@@ -601,48 +887,10 @@ export function createOverlayController(host: OverlayHost) {
    * window. So the card is shown with `showInactive`, the context is read from the
    * app behind it, and only then does the window take the keyboard.
    */
-  async function openInternal(): Promise<void> {
-    const startedIn = generation
+  async function openInternal(startedIn: number): Promise<void> {
     const win = host.window()
     if (session && win?.isVisible()) {
-      // Coming back to an already open card. The picture is refreshed, and so is
-      // *the app the card is about*: while the card sat on screen the user moved
-      // to another window, and the question they are about to type is about that
-      // one. Keeping the app from the first open is how a plan ends up clicking
-      // in the window the user left — `agent.execute` brings the target to the
-      // front before the first step, so a stale target does not just mislabel
-      // the answer, it physically raises the wrong window over the one on screen.
-      //
-      // The context has to be read before the focus is taken: our own card is
-      // what the frontmost app becomes a moment later.
-      const front = await helperFrontApplication()
-      const elsewhere = front && front.pid > 0 && front.pid !== process.pid
-      if (elsewhere) {
-        const settings = getSettings()
-        const { snapshot, flags } = await collectContext({
-          excludedApps: settings.excludedApps,
-          wantsScreenshot: settings.captureScreenshotByDefault
-        })
-        if (startedIn === generation && session && snapshot.excluded) {
-          session.target = null
-          close()
-          return
-        }
-        if (startedIn === generation && session) {
-          session.snapshot = snapshot
-          session.target = snapshot.activeApp
-          session.flags = flags
-          // The drawing belonged to the previous screen.
-          hideAnnotations()
-          session.annotations = []
-          emitAnnotations()
-        }
-      } else if (session.snapshot.activeApp) {
-        void ensureFreshScreenshot(session)
-      }
-      if (startedIn !== generation) return
-      win.focus()
-      startLive(session)
+      await refreshOpenCard(startedIn, win)
       return
     }
 
@@ -673,14 +921,20 @@ export function createOverlayController(host: OverlayHost) {
       excludedApps: settings.excludedApps,
       wantsScreenshot: settings.captureScreenshotByDefault,
       onCopySent: () => {
-        if (startedIn === generation) host.show(INITIAL_HEIGHT)
+        if (!dictating && isCurrentGeneration(startedIn)) host.show(INITIAL_HEIGHT)
       }
     })
 
-    // The turn ended while the context was being collected: showing the card now
-    // would leave an empty panel on screen with no way to dismiss it.
-    if (startedIn !== generation) {
-      host.hide()
+    // The turn ended while the context was being collected, or a dictation took
+    // the screen: showing the card now would leave an empty panel on screen with
+    // no way to dismiss it, or take the keyboard from the user's own field. A
+    // dictation is the one case that hides nothing — the same window is already
+    // showing its bars.
+    if (!isCurrentGeneration(startedIn) || dictating) {
+      // A newer open may already own the window (the press that followed the
+      // close that doomed this one): hiding it here would take down the card
+      // that press just put up. Only the newest open may hide what it showed.
+      if (!dictating && opening?.generation === startedIn) host.hide()
       return
     }
 
@@ -737,12 +991,13 @@ export function createOverlayController(host: OverlayHost) {
 
   function close(): void {
     generation += 1
+    const closedIn = generation
     // Remembered before the session is torn down: this is the app the keyboard
     // has to go back to (see `returnFocusTo`). The flag matters because `close()`
     // is also called for a card that was never open (a voice turn that ends in
     // dictation mode), and stealing focus then would be the opposite of help.
     const target = session?.target ?? null
-    const wasOpen = Boolean(session && host.window()?.isVisible())
+    const wasOpen = cardOnScreen()
     // A plan outlives the card if it is not stopped here: closing the overlay
     // while the assistant is mid-click must return the machine to the user.
     agent.stop()
@@ -766,7 +1021,7 @@ export function createOverlayController(host: OverlayHost) {
     // with an application that no longer has a window, so the user types into
     // nothing. Escape means "done, back to my work", not "the assistant is in the
     // way" — so focus is handed back explicitly.
-    void returnFocusTo(target)
+    void returnFocusTo(target, closedIn)
   }
 
   /**
@@ -778,13 +1033,20 @@ export function createOverlayController(host: OverlayHost) {
    * - the remembered target still exists — it is activated, which is exactly what
    *   "return me where I was" means;
    * - there is no target (the app was on the exclusion list, or the frontmost app
-   *   could not be read) — then hiding ourselves is the only honest move: macOS
-   *   hands the keyboard to the next application instead of to a windowless app.
-   *   `app.hide()` is skipped while another of our windows is visible, because it
-   *   hides those too — and a settings window the user opened on purpose is not
-   *   something to close on their behalf.
+   *   could not be read) — then the keyboard goes to one of our own windows when
+   *   one is visible, and to the next application otherwise. The hand-off took
+   *   those windows out of the candidate set, so it has to be explicit; a
+   *   settings window the user opened on purpose is not something to close on
+   *   their behalf.
+   *
+   * `closedIn` is the generation of the close that asked for this, because both
+   * moves outlive it: the helper activation is a process round trip, and the
+   * press that reopens the card can land inside that window. The new card took
+   * the keyboard on purpose, so raising the old app over it — or hiding the
+   * window it is in — would swallow the press.
    */
-  async function returnFocusTo(target: ActiveAppInfo | null): Promise<void> {
+  async function returnFocusTo(target: ActiveAppInfo | null, closedIn: number): Promise<void> {
+    if (!isCurrentGeneration(closedIn)) return
     if (target && (target.bundleId || target.pid > 0)) {
       try {
         if (await helperActivate({ bundleId: target.bundleId, pid: target.pid })) return
@@ -792,11 +1054,27 @@ export function createOverlayController(host: OverlayHost) {
         /* fall through to hiding ourselves */
       }
     }
+    // A reopen moved the generation while the helper was loading the app.
+    if (!isCurrentGeneration(closedIn)) return
     const overlay = host.window()
-    const others = BrowserWindow.getAllWindows().some(
-      (win) => win !== overlay && !win.isDestroyed() && win.isVisible()
+    const fallback = BrowserWindow.getAllWindows().find(
+      (win) =>
+        win !== overlay &&
+        !win.isDestroyed() &&
+        win.isVisible() &&
+        // Painting layers (the ghost pointer, drawings, the field mark) are
+        // visible BrowserWindows that can never take the keyboard.
+        win.isFocusable()
     )
-    if (others) return
+    if (fallback) {
+      // The hand-off took this window out of the keyboard candidate set, so the
+      // automatic return no longer reaches it. Hand it back explicitly: the user
+      // asked for this window, and with nothing to return to it is the honest
+      // place for focus.
+      fallback.show()
+      fallback.focus()
+      return
+    }
     app.hide()
   }
 
@@ -809,12 +1087,22 @@ export function createOverlayController(host: OverlayHost) {
     sendToWindow(CH.overlay.annotations, { count })
   }
 
+  /**
+   * Takes the shapes off the screen and out of the session.
+   *
+   * The two always move together: a shape the display still paints after the
+   * session forgot it would outlive the answer it was drawn for.
+   */
+  function discardAnnotations(): void {
+    if (session) session.annotations = []
+    hideAnnotations()
+    emitAnnotations()
+  }
+
   /** Removes the drawings but keeps the card and the answer. */
   function clearAnnotations(): void {
     if (!session) return
-    session.annotations = []
-    hideAnnotations()
-    emitAnnotations()
+    discardAnnotations()
   }
 
   function setFlags(flags: ContextFlags): void {
@@ -837,14 +1125,12 @@ export function createOverlayController(host: OverlayHost) {
       // No image means no drawing tool: the model cannot point at a screen it was
       // never shown, and a stale arrow must not outlive the image behind it.
       stopLive(session)
-      session.annotations = []
-      hideAnnotations()
-      emitAnnotations()
+      discardAnnotations()
     }
   }
 
-  function resize(height: number, width?: number, pin?: boolean): void {
-    host.resize(height, width, pin)
+  function resize(height: number, width?: number, pin?: boolean, writing?: boolean): void {
+    host.resize(height, width, pin, writing)
   }
 
   /**
@@ -887,13 +1173,15 @@ export function createOverlayController(host: OverlayHost) {
       const next = [...session.annotations, ...shapes]
       session.annotations = next
       emitAnnotations()
-      painting = painting.then(() => {
-        if (dismissed) return
-        return showAnnotations(area, next, () => {
-          dismissed = true
-          clearAnnotations()
+      painting = painting
+        .then(() => {
+          if (dismissed) return
+          return showAnnotations(area, next, () => {
+            dismissed = true
+            clearAnnotations()
+          })
         })
-      }).catch(() => undefined)
+        .catch(() => undefined)
     }
 
     const append = (delta: string): void => {
@@ -909,24 +1197,36 @@ export function createOverlayController(host: OverlayHost) {
 
     // Everything that is not about this window — parsing, filtering, the tail —
     // lives in `consumeTurnStream`, so it can be driven by a fake provider.
-    const result = await timed('model.round', () => consumeTurnStream({
-      provider: getProvider(settings.provider),
-      messages,
-      apiKey,
-      streamOptions: {
+    const result = await timed(
+      'model.round',
+      () =>
+        consumeTurnStream({
+          provider: getProvider(settings.provider),
+          messages,
+          apiKey,
+          streamOptions: {
+            model: resolveChatModel(settings) ?? '',
+            temperature: settings.temperature,
+            maxTokens,
+            baseUrl: resolveBaseUrl(settings.provider, settings.baseUrls[settings.provider]),
+            extraBody: parseExtraBody(settings.extraBody[settings.provider]) ?? undefined,
+            signal
+          },
+          isAlive: () => !signal.aborted && Boolean(session),
+          onAnnotations: paint,
+          onText: append
+        }),
+      {
+        provider: settings.provider,
         model: resolveChatModel(settings) ?? '',
-        temperature: settings.temperature,
-        maxTokens,
-        baseUrl: resolveBaseUrl(settings.provider, settings.baseUrls[settings.provider]),
-        extraBody: parseExtraBody(settings.extraBody[settings.provider]) ?? undefined,
-        signal
-      },
-      isAlive: () => !signal.aborted && Boolean(session),
-      onAnnotations: paint,
-      onText: append
-    }), { provider: settings.provider, model: resolveChatModel(settings) ?? '', withImage: Boolean(area),
-      imageBase64Bytes: messages.reduce((size, message) => size + message.parts.reduce(
-        (total, part) => total + (part.type === 'image' ? part.base64.length : 0), 0), 0) })
+        withImage: Boolean(area),
+        imageBase64Bytes: messages.reduce(
+          (size, message) =>
+            size + message.parts.reduce((total, part) => total + (part.type === 'image' ? part.base64.length : 0), 0),
+          0
+        )
+      }
+    )
     return result
   }
 
@@ -936,30 +1236,46 @@ export function createOverlayController(host: OverlayHost) {
     // A short digest of everything that changes what a run does, so the trace can
     // group runs by configuration without recording any of the values — a model
     // name and a temperature are the user's business, not the log's.
-    const config = createHash('sha256').update(JSON.stringify([
-      settings.provider, resolveChatModel(settings), settings.temperature, settings.maxTokens,
-      settings.agent.enabled, settings.agent.maxSteps, settings.agent.verifyResult,
-      settings.agent.abortOnMouseMove,
-      settings.screenshotMaxSide, settings.screenshotQuality
-    ])).digest('hex').slice(0, 12)
+    const config = createHash('sha256')
+      .update(
+        JSON.stringify([
+          settings.provider,
+          resolveChatModel(settings),
+          settings.temperature,
+          settings.maxTokens,
+          settings.agent.enabled,
+          settings.agent.maxSteps,
+          settings.agent.verifyResult,
+          settings.agent.abortOnMouseMove,
+          settings.screenshotMaxSide,
+          settings.screenshotQuality
+        ])
+      )
+      .digest('hex')
+      .slice(0, 12)
     return traceTurn({ voice: request.voice === true, provider: settings.provider, config }, () => sendTurn(request))
   }
 
   async function sendTurn(request: SendRequest): Promise<void> {
     if (!session) return
     const settings = getSettings()
-    if (isExcluded(session.target, settings.excludedApps)) {
-      trace('turn.outcome', { outcome: 'blocked', reason: 'excluded-app' })
-      return
-    }
-    const model = resolveChatModel(settings)
-    const apiKey = getApiKey(settings.provider)
 
     const fail = (message: string, retryable: boolean, code?: StreamEventCode): void => {
       const event: StreamEvent = { type: 'error', requestId: request.requestId, message, retryable, code }
       sendToWindow(CH.overlay.stream, event)
       if (request.voice) host.showInactive(INITIAL_HEIGHT)
     }
+
+    // The card normally closes before a turn can start in an excluded app, but
+    // the target can change while it is already on screen. The error is what
+    // clears the busy state; a bare return left the card waiting forever.
+    if (isExcluded(session.target, settings.excludedApps)) {
+      trace('turn.outcome', { outcome: 'blocked', reason: 'excluded-app' })
+      fail(EXCLUDED_APP, false)
+      return
+    }
+    const model = resolveChatModel(settings)
+    const apiKey = getApiKey(settings.provider)
 
     if (!model) {
       fail('Модель не выбрана. Открой настройки и укажи модель.', false)
@@ -1021,9 +1337,7 @@ export function createOverlayController(host: OverlayHost) {
      * the model round trip starts now.
      */
     let previewHide: ReturnType<typeof setTimeout> | undefined
-    const previewUntil = request.voice && host.window()?.isVisible()
-      ? Date.now() + VOICE_PREVIEW_MS
-      : 0
+    const previewUntil = request.voice && host.window()?.isVisible() ? Date.now() + VOICE_PREVIEW_MS : 0
     try {
       // A spoken request is routed immediately. The transcript stays in the
       // composer while the turn is busy (the renderer keeps it until the first
@@ -1031,18 +1345,17 @@ export function createOverlayController(host: OverlayHost) {
       // instead of the card sitting still for two seconds first.
       deadline = setTimeout(() => abort.abort('deadline'), TURN_DEADLINE_MS)
       const bundleId = turnSession.target?.bundleId || null
-      const currentSettings = getSettings()
-      if (isExcluded(turnSession.target, currentSettings.excludedApps)) {
-        if (request.voice) host.hide()
-        return
-      }
-      const useHistory = settings.rememberConversation && currentSettings.rememberConversation
+      // The exclusion list was already checked before the turn was registered,
+      // and nothing has been awaited since: the same `settings` still describe
+      // this turn.
+      const useHistory = settings.rememberConversation
       const history = turnSession.history.filter(
-        (entry) => !entry.bundleId || !currentSettings.excludedApps.includes(entry.bundleId)
+        (entry) => !entry.bundleId || !settings.excludedApps.includes(entry.bundleId)
       )
-      const previousCommand = useHistory && !refine && turnSession.history.length === 0
-        ? readPreviousCommand(currentSettings.excludedApps)
-        : undefined
+      const previousCommand =
+        useHistory && !refine && turnSession.history.length === 0
+          ? readPreviousCommand(settings.excludedApps)
+          : undefined
 
       if (request.voice && !isActionRequest) {
         // The request is already under way. Give the reader the transcript for
@@ -1064,11 +1377,7 @@ export function createOverlayController(host: OverlayHost) {
       // replaces that answer, so old arrows must not stay behind as if they
       // explained the new one. A rewrite ("короче") keeps them — it is the same
       // answer in other words.
-      if (!refine) {
-        session.annotations = []
-        hideAnnotations()
-        emitAnnotations()
-      }
+      if (!refine) discardAnnotations()
 
       const turn: TurnContext = {
         request,
@@ -1085,11 +1394,13 @@ export function createOverlayController(host: OverlayHost) {
       const result = isActionRequest ? await runAgentTurn(turn) : await runWriterTurn(turn)
       if (!result) return
 
-      session.answer = result.answer
+      // The turn's own session, not the module-level one: the runner returned
+      // only because both still point at the same card.
+      turnSession.answer = result.answer
       outcome = result.outcome
       reason = result.reason
 
-      const entry = remember(turnSession, request, result.acknowledged ? 'Готово.' : session.answer, bundleId)
+      const entry = remember(turnSession, request, result.acknowledged ? 'Готово.' : result.answer, bundleId)
       const latestSettings = getSettings()
       if (entry && !refine && useHistory && latestSettings.rememberConversation) {
         saveCommand(entry.question, bundleId, latestSettings.excludedApps)
@@ -1098,11 +1409,11 @@ export function createOverlayController(host: OverlayHost) {
       const done: StreamEvent = {
         type: 'done',
         requestId: request.requestId,
-        text: session.answer,
-        annotations: session.annotations.length
+        text: result.answer,
+        annotations: turnSession.annotations.length
       }
       sendToWindow(CH.overlay.stream, done)
-      if (result.acknowledged || session.answer.trim()) {
+      if (result.acknowledged || result.answer.trim()) {
         // A voice turn, an agent turn and a card that was hidden while it waited
         // all end with the answer arriving rather than streaming: the card has to
         // be brought back to show it.
@@ -1137,10 +1448,20 @@ export function createOverlayController(host: OverlayHost) {
         if (session === turnSession && turnSession.abort === abort) {
           if (outcome === 'timeout') fail('Время выполнения истекло. Результат не подтверждён.', true, 'timeout')
           else if (abort.signal.reason === STOP_AGENT) {
-            if (agent.last().phase !== 'aborted') publishAgent({
-              phase: 'aborted', step: 0, total: 0, label: '', message: 'Остановлено.'
-            })
-            sendToWindow(CH.overlay.stream, { type: 'done', requestId: request.requestId, text: '', annotations: 0 } satisfies StreamEvent)
+            if (agent.last().phase !== 'aborted')
+              publishAgent({
+                phase: 'aborted',
+                step: 0,
+                total: 0,
+                label: '',
+                message: 'Остановлено.'
+              })
+            sendToWindow(CH.overlay.stream, {
+              type: 'done',
+              requestId: request.requestId,
+              text: '',
+              annotations: 0
+            } satisfies StreamEvent)
           }
         }
       }
@@ -1153,6 +1474,24 @@ export function createOverlayController(host: OverlayHost) {
   }
 
   /**
+   * Stops the agent when the turn that started it is aborted.
+   *
+   * The card's Stop button, the turn deadline, a new voice press and a closed
+   * card all abort the turn's controller, while the run itself only knows about
+   * Escape and the mouse. Without this the agent keeps clicking after the card
+   * said the turn was over. The listener lives exactly as long as the run it
+   * guards, so aborting a writer turn cannot reach a run that is not its own.
+   *
+   * Returns the cleanup; a listener left on an old signal would stop a later
+   * turn's run.
+   */
+  function stopAgentOnAbort(abort: AbortController): () => void {
+    const stop = (): void => agent.stop()
+    abort.signal.addEventListener('abort', stop, { once: true })
+    return () => abort.signal.removeEventListener('abort', stop)
+  }
+
+  /**
    * The agent's half of a turn: hand the request to the plan runner and translate
    * what it did into the text the card shows and the verdict the trace records.
    *
@@ -1162,6 +1501,7 @@ export function createOverlayController(host: OverlayHost) {
   async function runAgentTurn(turn: TurnContext): Promise<TurnResult | null> {
     const { request, session: turnSession, settings, apiKey, history, previousCommand, useHistory, abort } = turn
     trace('tool.route', { backend: 'agent', reason: 'action-request' })
+    if (abort.signal.aborted) return null
     if (!host.window()?.isVisible()) host.showInactive(INITIAL_HEIGHT)
     // The card shows the screen the agent is about to work on. The agent
     // takes its own captures — this one is for the person watching, and it
@@ -1171,20 +1511,27 @@ export function createOverlayController(host: OverlayHost) {
     // The agent is given the same conversation the writer would get. «Сделай»
     // is not a task on its own: it means "the thing that was just discussed",
     // and that sentence lives in the turns above it.
-    const agentHistory = useHistory
-      ? history.map(({ question, answer }) => ({ question, answer }))
-      : []
+    const agentHistory = useHistory ? history.map(({ question, answer }) => ({ question, answer })) : []
     if (agentHistory.length === 0 && previousCommand) {
       agentHistory.push({ question: previousCommand, answer: '' })
     }
 
-    const run = await timed('agent.run', () => agent.run({
-      prompt: request.prompt,
-      appName: turnSession.target?.name ?? null,
-      windowTitle: turnSession.target?.windowTitle ?? null,
-      history: agentHistory,
-      provider: agentProvider(settings, apiKey)
-    }))
+    const stopOnAbort = stopAgentOnAbort(abort)
+    let run: AgentRunResult
+    try {
+      run = await timed('agent.run', () =>
+        agent.run({
+          prompt: request.prompt,
+          appName: turnSession.target?.name ?? null,
+          windowTitle: turnSession.target?.windowTitle ?? null,
+          history: agentHistory,
+          provider: agentProvider(settings, apiKey),
+          excludedApps: settings.excludedApps
+        })
+      )
+    } finally {
+      stopOnAbort()
+    }
     if (abort.signal.aborted || session !== turnSession) return null
 
     // What the loop had to work around — a refused screenshot is the case that
@@ -1197,12 +1544,8 @@ export function createOverlayController(host: OverlayHost) {
     }
 
     const report = run.answer.trim()
-    // The agent uses this exact reply for success without caveats.
-    const acknowledged = report === '[[ACTION_DONE]]' && !run.message &&
-      !run.blocked && !run.aborted && !run.incomplete
-    const answer = acknowledged ? '' : run.incomplete
-      ? (run.message ?? '')
-      : report || (run.message ?? '')
+    const acknowledged = report === AGENT_DONE_MARKER && !run.message && !run.blocked && !run.aborted && !run.incomplete
+    const answer = acknowledged ? '' : run.incomplete ? (run.message ?? '') : report || (run.message ?? '')
     const { outcome, reason } = describeRunOutcome(run, acknowledged)
     const nothingToShow = !acknowledged && run.actions.length === 0 && !run.blocked && !run.incomplete
     return {
@@ -1222,8 +1565,15 @@ export function createOverlayController(host: OverlayHost) {
    */
   async function runWriterTurn(turn: TurnContext): Promise<TurnResult | null> {
     const {
-      request, session: turnSession, settings, apiKey, refine, history, previousCommand,
-      availability, abort
+      request,
+      session: turnSession,
+      settings,
+      apiKey,
+      refine,
+      history,
+      previousCommand,
+      availability,
+      abort
     } = turn
     let observedApp: RawFrontApp | undefined
     let drawingTargets: AxElementInfo[] = []
@@ -1240,6 +1590,30 @@ export function createOverlayController(host: OverlayHost) {
       return false
     }
 
+    /**
+     * One model round for a request built here.
+     *
+     * The two rounds of a turn differ only in their frame: the retry after a
+     * refused image has neither a picture nor the names measured against one.
+     * Everything that identifies the turn — its id, its abort signal, whether the
+     * text is spoken — stays the same, so it is passed once.
+     */
+    const streamBuilt = (
+      turnRequest: TurnRequest,
+      frame: { canDraw: boolean; area: ScreenRect | null; drawingTargets: AxElementInfo[] }
+    ): Promise<{ text: string; webLookup?: boolean }> =>
+      streamRound({
+        messages: turnRequest.messages,
+        requestId: request.requestId,
+        maxTokens: turnRequest.maxTokens,
+        signal: abort.signal,
+        canDraw: frame.canDraw,
+        area: frame.area,
+        apiKey,
+        drawingTargets: frame.drawingTargets,
+        revealText: request.voice
+      })
+
     const built = await buildTurnRequest({
       request,
       session: turnSession,
@@ -1254,9 +1628,14 @@ export function createOverlayController(host: OverlayHost) {
       },
       describeScreen: async (pid, bounds, area) => {
         if (!(await observationHolds())) return null
-        const outline = await readScreenOutline(observedApp?.pid ?? pid, observedApp?.bounds ?? bounds, area, (targets) => {
-          drawingTargets = targets
-        })
+        const outline = await readScreenOutline(
+          observedApp?.pid ?? pid,
+          observedApp?.bounds ?? bounds,
+          area,
+          (targets) => {
+            drawingTargets = targets
+          }
+        )
         if (!(await observationHolds())) {
           drawingTargets = []
           return null
@@ -1271,16 +1650,10 @@ export function createOverlayController(host: OverlayHost) {
 
     let round: { text: string; webLookup?: boolean }
     try {
-      round = await streamRound({
-        messages: built.messages,
-        requestId: request.requestId,
-        maxTokens: built.maxTokens,
-        signal: abort.signal,
+      round = await streamBuilt(built, {
         canDraw: built.canDraw,
         area: built.area,
-        apiKey,
-        drawingTargets,
-        revealText: request.voice
+        drawingTargets
       })
     } catch (error) {
       // The provider refused the picture. Whether a model takes images is not
@@ -1307,23 +1680,15 @@ export function createOverlayController(host: OverlayHost) {
       })
       if (retried.abandoned || abort.signal.aborted || session !== turnSession) return null
       drawingTargets = []
-      round = await streamRound({
-        messages: retried.messages,
-        requestId: request.requestId,
-        maxTokens: retried.maxTokens,
-        signal: abort.signal,
-        canDraw: false,
-        area: null,
-        apiKey,
-        drawingTargets,
-        revealText: request.voice
-      })
+      round = await streamBuilt(retried, { canDraw: false, area: null, drawingTargets })
     }
     if (abort.signal.aborted || session !== turnSession) return null
 
     const webLookup = !refine && round.webLookup && allowsWebLookup(request.prompt)
-    trace('tool.route', { backend: webLookup ? 'web-search' : 'text',
-      reason: webLookup ? 'search-marker' : 'plain-response' })
+    trace('tool.route', {
+      backend: webLookup ? 'web-search' : 'text',
+      reason: webLookup ? 'search-marker' : 'plain-response'
+    })
     const webAnswer = webLookup
       ? await timed('web.search', () => searchWeb(request.prompt, settings, apiKey, abort.signal))
       : ''
@@ -1377,20 +1742,20 @@ export function createOverlayController(host: OverlayHost) {
    * is the same answer in other words, and remembering both would have the model
    * follow up on a text that is no longer on screen.
    */
-  function remember(turnSession: Session, request: SendRequest, answer: string, bundleId: string | null): CardExchange | null {
+  function remember(
+    turnSession: Session,
+    request: SendRequest,
+    answer: string,
+    bundleId: string | null
+  ): CardExchange | null {
     const question = request.prompt.trim()
     const reply = answer.trim()
     if (!question || !reply) return null
 
     const entry: CardExchange = {
       bundleId,
-      question: question.length > MAX_HISTORY_CHARS
-        ? `${question.slice(0, MAX_HISTORY_CHARS)}…`
-        : question,
-      answer:
-        reply.length > MAX_HISTORY_CHARS
-          ? `${reply.slice(0, MAX_HISTORY_CHARS)}…`
-          : reply
+      question: question.length > MAX_HISTORY_CHARS ? `${question.slice(0, MAX_HISTORY_CHARS)}…` : question,
+      answer: reply.length > MAX_HISTORY_CHARS ? `${reply.slice(0, MAX_HISTORY_CHARS)}…` : reply
     }
     const last = turnSession.history[turnSession.history.length - 1]
     if (request.refine && last?.question === entry.question) {
@@ -1411,17 +1776,6 @@ export function createOverlayController(host: OverlayHost) {
     return { ok: true }
   }
 
-  async function paste(text: string): Promise<PasteResult> {
-    const target = session?.target ?? null
-    // The drawing pointed at something the user has now acted on: leaving it up
-    // would cover the very text we are pasting.
-    if (session) session.annotations = []
-    hideAnnotations()
-    emitAnnotations()
-    host.hide()
-    return pasteAnswer(text, target)
-  }
-
   /**
    * Puts recognised speech into the card.
    *
@@ -1430,11 +1784,23 @@ export function createOverlayController(host: OverlayHost) {
    * once its state is ready — that wiring lives in the voice controller's host.
    * If the open is still collecting context, the transcript waits for it: the
    * renderer would otherwise ask the *previous* session (or no session at all).
+   *
+   * A phrase whose card is gone by the time it is recognised is dropped. Escape
+   * closes the card without cancelling recognition (the native tap reports a
+   * cancel only while the key is held), so the transcript arrives after the user
+   * already dismissed the question: typing it into the hidden renderer would
+   * bring the card back with an answer to the phrase they just closed.
    */
   function deliver(text: string, { submit }: { submit: boolean }): void {
-    const push = (): void => sendToWindow(CH.voice.transcript, { text, send: submit })
-    if (opening) {
-      void opening.then(push, push)
+    const push = (): void => {
+      // A close while the open was still collecting dooms it: the wait ends with
+      // no card on screen, and the text has nowhere honest to go.
+      if (!cardOnScreen()) return
+      sendToWindow(CH.voice.transcript, { text, send: submit })
+    }
+    const joined = currentOpen()
+    if (joined) {
+      void joined.promise.then(push, push)
       return
     }
     push()
@@ -1448,12 +1814,13 @@ export function createOverlayController(host: OverlayHost) {
     clearDrawing: clearAnnotations,
     setTyping,
     setVoice,
+    beginDictation,
+    endDictation,
     showVoiceIndicator: () => host.showInactive(INITIAL_HEIGHT),
     resize,
     send,
     cancel,
     copy,
-    paste,
     deliver,
     emit: sendToWindow,
     agentAvailability: () => agent.availability(),
@@ -1469,9 +1836,11 @@ export function createOverlayController(host: OverlayHost) {
       agent.stop()
       if (session?.abort) session.abort.abort(STOP_AGENT)
     },
-    target: (): ActiveAppInfo | null => session?.target ?? null,
-    isOpen: (): boolean => Boolean(session && host.window()?.isVisible()),
-    hasSession: (): boolean => session !== null
+    // While a dictation is reading the front app, the old card target is not a
+    // fallback: a partial window that arrives in that gap must wait rather than
+    // paste into the app a previous card happened to belong to.
+    target: (): ActiveAppInfo | null => (dictating ? dictationTarget : (session?.target ?? null)),
+    isOpen: (): boolean => cardOnScreen()
   }
 }
 

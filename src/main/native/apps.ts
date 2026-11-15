@@ -26,6 +26,16 @@ export interface RawFrontApp {
   accessibility: boolean
 }
 
+/**
+ * A bundle id is placed inside an AppleScript string literal, and it is not
+ * trusted input: a quote ends the literal, and a backslash reinterprets the
+ * character after it (so `\"` would bring the quote back). Stripping both is
+ * safer than escaping, and a bundle id never contains either.
+ */
+function appleScriptLiteral(value: string): string {
+  return value.replace(/[\\"]/g, '')
+}
+
 function mapFront(payload: HelperPayload | null): RawFrontApp | null {
   if (!payload?.ok) return null
   const bundleId = typeof payload.bundleId === 'string' ? payload.bundleId : ''
@@ -57,11 +67,12 @@ export async function helperFrontWindow(): Promise<RawFrontApp | null> {
     'tell application "System Events" to get bundle identifier of first application process whose frontmost is true'
   ])
   if (!bundleId) return null
+  const escaped = appleScriptLiteral(bundleId)
   const name = await runOsascript([
-    `tell application "System Events" to get name of first application process whose bundle identifier is "${bundleId.replace(/"/g, '')}"`
+    `tell application "System Events" to get name of first application process whose bundle identifier is "${escaped}"`
   ])
   const pidRaw = await runOsascript([
-    `tell application "System Events" to get unix id of first application process whose bundle identifier is "${bundleId.replace(/"/g, '')}"`
+    `tell application "System Events" to get unix id of first application process whose bundle identifier is "${escaped}"`
   ])
   const pid = pidRaw ? Number(pidRaw) : Number.NaN
   return {
@@ -87,6 +98,21 @@ export async function helperFrontApplication(): Promise<RawFrontApp | null> {
   return mapFront(await runHelper(['front-quick']))
 }
 
+/**
+ * Bundle ids of the applications that have a window on screen right now.
+ *
+ * `null` means the helper could not answer (missing binary, timeout, malformed
+ * payload). Callers deciding whether a screenshot is safe treat that as "the
+ * screen cannot be proven clean", not as "nothing is visible".
+ */
+export async function helperVisibleBundleIds(): Promise<string[] | null> {
+  const payload = await runHelper(['visible-apps'])
+  const ids = payload?.visibleBundleIds
+  if (payload?.ok !== true || !Array.isArray(ids)) return null
+  if (!ids.every((id): id is string => typeof id === 'string' && id.length > 0)) return null
+  return ids
+}
+
 /** Brings a previously remembered application back to the front. */
 export async function helperActivate(target: { bundleId: string; pid: number }, signal?: AbortSignal): Promise<boolean> {
   if (signal) {
@@ -101,7 +127,7 @@ export async function helperActivate(target: { bundleId: string; pid: number }, 
     if (byPid?.ok) return true
   }
   if (!target.bundleId) return false
-  const escaped = target.bundleId.replace(/"/g, '')
+  const escaped = appleScriptLiteral(target.bundleId)
   const result = await runOsascript([`tell application id "${escaped}" to activate`])
   return result !== null
 }

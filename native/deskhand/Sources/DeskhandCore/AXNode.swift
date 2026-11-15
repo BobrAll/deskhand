@@ -1,6 +1,6 @@
-import Foundation
-import CoreGraphics
 import ApplicationServices
+import CoreGraphics
+import Foundation
 
 /// One node of the flattened accessibility tree that gets handed to the model.
 /// Indices come from the session's `IndexBook`, so a number belongs to the same
@@ -138,7 +138,8 @@ public enum AXTreeRenderer {
     }
 
     static func clip(_ s: String, limit: Int = 180) -> String {
-        let collapsed = s
+        let collapsed =
+            s
             .replacingOccurrences(of: "\n", with: "\\n")
             .replacingOccurrences(of: "\t", with: " ")
             .replacingOccurrences(of: "\"", with: "'")
@@ -193,7 +194,8 @@ public enum AXTreeRenderer {
             // model can actually type into.
             let what = node.declaredItemCount.map { "\($0) item\($0 == 1 ? "" : "s")" }
             if let entry, entry.index != node.index {
-                let field = entry.focused
+                let field =
+                    entry.focused
                     ? "element \(entry.index) (focused) is the way in"
                     : "type into element \(entry.index) to reach them"
                 out += " (\(what ?? "contents") not exposed: \(field), or click coordinates)"
@@ -266,7 +268,8 @@ public struct AXSnapshotDiff: Sendable {
             lines.append("+ \(node.index) " + AXTreeRenderer.describe(node, includeFrames: false))
         }
         for change in changed.prefix(limit) {
-            var line = "~ \(change.after.index) "
+            var line =
+                "~ \(change.after.index) "
                 + AXTreeRenderer.describe(change.after, includeFrames: false)
             if change.before.value != change.after.value {
                 let before = AXTreeRenderer.clip(change.before.value ?? "∅", limit: 60)

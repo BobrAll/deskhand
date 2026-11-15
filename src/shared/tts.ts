@@ -22,6 +22,18 @@ export const RECORDED = {
 export const TTS_MAX_CHARS = 600
 
 /**
+ * The system voice, in the card and in the settings preview.
+ *
+ * Chromium can populate the voice list a frame or two after the first call, so
+ * both places poll. They also share the reading pace, because the preview is
+ * meant to sound like the card.
+ */
+export const SPEECH_VOICE_RETRY_MS = 200
+export const SPEECH_VOICE_RETRIES = 10
+/** Faster than the macOS default, which reads slower than a person scans the card. */
+export const SPEECH_RATE = 1.3
+
+/**
  * The voices of the optional Silero engine.
  *
  * Silero names its speakers in English, and the service takes those names as
@@ -41,10 +53,12 @@ export function sileroSpeaker(voice: string): string {
  * What the settings pane plays when the user asks to hear the voice.
  *
  * A fixed line, not user text: it has to be short enough to judge a voice by and
- * stable enough to be cached. The neural engine and the macOS voice read the
- * same sentence, so the two choices can be compared on equal terms.
+ * stable enough to be cached. It contains English terms because answers do, and
+ * a voice that reads them badly is not the voice the user wants. The neural
+ * engine and the macOS voice read the same sentence, so the two choices can be
+ * compared on equal terms.
  */
-export const PREVIEW_LINE = 'Так, посмотрим. Сейчас разберусь и всё сделаю.'
+export const PREVIEW_LINE = 'Так, посмотрим. Проверю README и pull request — сейчас разберусь.'
 
 export type TtsResult =
   /** `mime` is what the clip actually is; the remote engine returns MP3, the local one a WAV. */

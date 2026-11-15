@@ -24,16 +24,22 @@ const state = vi.hoisted(() => ({
   remembered: [] as string[],
   maxSteps: 8,
   abortOnMouseMove: true,
+  focused: true,
   verifyResult: true,
   showActions: true,
+  saveRunTraces: false,
   /** Events the controller will receive, pushed by each test. */
   emit: (_event: unknown) => {},
   runRejects: null as Error | null,
+  /** Holds a run in flight, as the sidecar does while it starts. */
+  runGate: null as Promise<void> | null,
   approvals: [] as { id: string; allow: boolean; reason?: string }[],
   cancels: 0,
   runs: [] as unknown[],
   /** Everything the controller asked the trace to record. */
-  traceEvents: [] as Record<string, unknown>[]
+  traceEvents: [] as Record<string, unknown>[],
+  /** The callback the run registered with the Escape/mouse watcher. */
+  abort: (_reason: 'escape' | 'mousemove') => {}
 }))
 
 vi.mock('./trace', () => ({
@@ -50,7 +56,10 @@ vi.mock('electron', () => ({
 }))
 vi.mock('../native/helper', () => ({
   helperBinary: () => state.helper,
-  watchForAbort: () => ({ stop: vi.fn() })
+  watchForAbort: (_mode: string, onAbort: (reason: 'escape' | 'mousemove') => void) => {
+    state.abort = onAbort
+    return { stop: vi.fn() }
+  }
 }))
 vi.mock('../settings/store', () => ({
   getSettings: () => ({
@@ -60,6 +69,7 @@ vi.mock('../settings/store', () => ({
       abortOnMouseMove: state.abortOnMouseMove,
       verifyResult: state.verifyResult,
       showActions: state.showActions,
+      saveRunTraces: state.saveRunTraces,
       rememberedApprovals: state.remembered
     }
   }),
@@ -78,6 +88,7 @@ vi.mock('./sidecar', () => ({
     }
     async run(options: unknown) {
       state.runs.push(options)
+      if (state.runGate) await state.runGate
       if (state.runRejects) throw state.runRejects
     }
     approve(id: string, allow: boolean, reason?: string) {
@@ -106,17 +117,24 @@ function call(overrides: Partial<AgentToolRequest> = {}): AgentToolRequest {
 }
 
 const PROVIDER = {
-  wire: 'openai' as const, baseUrl: 'https://example.test', model: 'm',
-  apiKey: 'k', maxTokens: 1024, temperature: 0
+  wire: 'openai' as const,
+  baseUrl: 'https://example.test',
+  model: 'm',
+  apiKey: 'k',
+  maxTokens: 1024,
+  temperature: 0
 }
 
 function harness(options: { maxTokens?: number } = {}) {
   const events: AgentEvent[] = []
   const passthrough: boolean[] = []
   const presentations: AgentPresentation[] = []
+  const focuses: number[] = []
   const controller = createAgentController({
     emit: (event) => events.push(event),
     setPassthrough: (active) => passthrough.push(active),
+    focus: () => focuses.push(focuses.length + 1),
+    hasFocus: () => state.focused,
     present: (action) => presentations.push(action)
   })
   return {
@@ -124,17 +142,19 @@ function harness(options: { maxTokens?: number } = {}) {
     events,
     passthrough,
     presentations,
+    focuses,
     /** The last thing the card was told. */
     last: () => events.at(-1)!,
     /** Everything this run asked the trace to record. */
     trace: () => state.traceEvents.filter((line) => line.event !== 'agent.start'),
-    run: (prompt = 'Нажми «Купить»', history?: { question: string; answer: string }[]) => controller.run({
-      prompt,
-      appName: 'Safari',
-      windowTitle: 'Магазин',
-      ...(history ? { history } : {}),
-      provider: { ...PROVIDER, ...(options.maxTokens ? { maxTokens: options.maxTokens } : {}) }
-    })
+    run: (prompt = 'Нажми «Купить»', history?: { question: string; answer: string }[]) =>
+      controller.run({
+        prompt,
+        appName: 'Safari',
+        windowTitle: 'Магазин',
+        ...(history ? { history } : {}),
+        provider: { ...PROVIDER, ...(options.maxTokens ? { maxTokens: options.maxTokens } : {}) }
+      })
   }
 }
 
@@ -146,14 +166,18 @@ beforeEach(() => {
   state.remembered = []
   state.maxSteps = 8
   state.abortOnMouseMove = true
+  state.focused = true
   state.verifyResult = true
   state.showActions = true
+  state.saveRunTraces = false
   state.emit = () => {}
   state.runRejects = null
+  state.runGate = null
   state.approvals = []
   state.cancels = 0
   state.runs = []
   state.traceEvents = []
+  state.abort = () => {}
 })
 
 describe('availability: three separate reasons, three separate fixes', () => {
@@ -162,7 +186,9 @@ describe('availability: three separate reasons, three separate fixes', () => {
     const { controller } = harness()
 
     expect(controller.availability()).toEqual({
-      enabled: false, ready: false, reason: 'Агентный режим выключен в настройках.'
+      enabled: false,
+      ready: false,
+      reason: 'Агентный режим выключен в настройках.'
     })
   })
 
@@ -179,7 +205,9 @@ describe('availability: three separate reasons, three separate fixes', () => {
     const { controller } = harness()
 
     expect(controller.availability()).toMatchObject({
-      enabled: true, ready: false, needsAccessibility: true
+      enabled: true,
+      ready: false,
+      needsAccessibility: true
     })
     expect(controller.availability().reason).toContain('Универсальный доступ')
   })
@@ -250,7 +278,11 @@ describe('a run that gave up', () => {
   })
 
   it('says what happened in Russian, with the ending the number needs', async () => {
-    for (const [total, ending] of [[1, '1 шаг'], [3, '3 шага'], [8, '8 шагов']] as const) {
+    for (const [total, ending] of [
+      [1, '1 шаг'],
+      [3, '3 шага'],
+      [8, '8 шагов']
+    ] as const) {
       state.maxSteps = total
       state.runs = []
       const h = harness()
@@ -289,8 +321,9 @@ describe('a run that gave up', () => {
     state.emit({ kind: 'done', answer: 'Готово.', complete: true })
     await running
 
-    expect(h.trace().find((line) => line.event === 'agent.warned'))
-      .toMatchObject({ reason: 'the same call repeated without a change' })
+    expect(h.trace().find((line) => line.event === 'agent.warned')).toMatchObject({
+      reason: 'the same call repeated without a change'
+    })
     expect(h.trace().some((line) => line.event === 'agent.stopped')).toBe(false)
   })
 
@@ -365,8 +398,10 @@ describe('a run that gave up', () => {
     state.emit({ kind: 'done', complete: false, answer: 'Stopped.' })
     await running
 
-    expect(h.trace().find((line) => line.event === 'agent.stopped'))
-      .toMatchObject({ reason: 'the step budget ran out', step: 3 })
+    expect(h.trace().find((line) => line.event === 'agent.stopped')).toMatchObject({
+      reason: 'the step budget ran out',
+      step: 3
+    })
   })
 })
 
@@ -398,6 +433,27 @@ describe('a run that works', () => {
     expect(result.actions).toEqual([{ tool: 'click', label: 'Нажимаю «Купить»', ok: true }])
   })
 
+  it('cuts a narration to the same caption the streamed prose gets', async () => {
+    // The model's narration can be a paragraph. The streamed path already
+    // clamped it to the status row; the narration event published the whole
+    // sentence, and one step could widen the card to full width.
+    const h = harness()
+    const running = h.run()
+    await vi.waitFor(() => expect(state.runs).toHaveLength(1))
+
+    const text = 'Открываю вкладку, нахожу поле поиска, ввожу запрос и смотрю на результаты. '.repeat(3)
+    state.emit({ kind: 'stream', step: 1, text })
+    const streamed = h.last().label
+    state.emit({ kind: 'narration', step: 1, text })
+
+    expect(h.last().label).toBe(streamed)
+    expect(h.last().label.length).toBeLessThanOrEqual(120)
+    expect(h.last().label.endsWith('…')).toBe(true)
+
+    state.emit({ kind: 'done', complete: true, answer: '' })
+    await running
+  })
+
   it('passes the task, the step budget and the verification flag through', async () => {
     state.maxSteps = 5
     state.verifyResult = false
@@ -415,6 +471,23 @@ describe('a run that works', () => {
       // where to look by calling its own tool.
       task: 'Приложение: Safari\nОкно: Магазин\n\nНажми «Купить»'
     })
+  })
+
+  it('passes the exclusions the caller configured', async () => {
+    const h = harness()
+    const running = h.controller.run({
+      prompt: 'Нажми «Купить»',
+      appName: 'Safari',
+      windowTitle: 'Магазин',
+      provider: PROVIDER,
+      excludedApps: ['com.apple.finder']
+    })
+
+    await vi.waitFor(() => expect(state.runs).toHaveLength(1))
+    state.emit({ kind: 'done', complete: true, answer: '' })
+    await running
+
+    expect(state.runs[0]).toMatchObject({ excludedApps: ['com.apple.finder'] })
   })
 
   it('gives the agent the turns a follow-up refers to', async () => {
@@ -546,6 +619,135 @@ describe('the question in the card', () => {
     await running
   })
 
+  it('takes the keyboard when it asks, and only then', async () => {
+    const h = harness()
+    const running = h.run()
+    await vi.waitFor(() => expect(h.passthrough).toEqual([true]))
+    expect(h.focuses).toHaveLength(0)
+
+    state.emit({ kind: 'approval', request: call() })
+
+    expect(h.focuses).toHaveLength(1)
+    h.controller.answer('call-1', false, false)
+    state.emit({ kind: 'cancelled' })
+    await running
+  })
+
+  it('does not stop the run when the hand moves toward the answer', async () => {
+    const h = harness()
+    const running = h.run()
+    await vi.waitFor(() => expect(state.runs).toHaveLength(1))
+
+    state.emit({ kind: 'approval', request: call() })
+    expect(h.last().phase).toBe('asking')
+
+    // The pointer is on its way to «Разрешить». Reaching for the card is not
+    // taking control back; the watcher used to stop the run here.
+    state.abort('mousemove')
+
+    expect(state.cancels).toBe(0)
+    expect(h.last().phase).toBe('asking')
+
+    h.controller.answer('call-1', false, false)
+    state.emit({ kind: 'cancelled' })
+    await running
+  })
+
+  it('leaves the refusal on Escape to the focused card', async () => {
+    const h = harness()
+    const running = h.run()
+    await vi.waitFor(() => expect(state.runs).toHaveLength(1))
+
+    state.emit({ kind: 'approval', request: call() })
+    // The native watcher sees the same Escape. It must not answer the question
+    // itself: the renderer's keydown does, and a second answer would stop the run.
+    state.abort('escape')
+
+    expect(state.approvals).toEqual([])
+    expect(state.cancels).toBe(0)
+    expect(h.last().phase).toBe('asking')
+
+    h.controller.answer('call-1', false, false)
+    state.emit({ kind: 'cancelled' })
+    await running
+  })
+
+  it('answers the question itself when the card lost the keyboard', async () => {
+    state.focused = false
+    const h = harness()
+    const running = h.run()
+    await vi.waitFor(() => expect(state.runs).toHaveLength(1))
+
+    state.emit({ kind: 'approval', request: call() })
+    state.abort('escape')
+
+    expect(state.approvals).toEqual([{ id: 'call-1', allow: false, reason: 'The user declined the action.' }])
+    expect(state.cancels).toBe(0)
+    expect(h.last()).toMatchObject({ phase: 'acting', label: 'Действие отклонено.' })
+
+    state.emit({ kind: 'cancelled' })
+    await running
+  })
+
+  it('ignores the renderer’s Escape after the question is already answered', async () => {
+    const h = harness()
+    const running = h.run()
+    await vi.waitFor(() => expect(state.runs).toHaveLength(1))
+
+    state.emit({ kind: 'approval', request: call() })
+    h.controller.answer('call-1', false, false)
+    state.abort('escape')
+
+    expect(state.cancels).toBe(0)
+    state.emit({ kind: 'cancelled' })
+    await running
+  })
+
+  it('still lets Escape stop the run right after an approval', async () => {
+    const h = harness()
+    const running = h.run()
+    await vi.waitFor(() => expect(state.runs).toHaveLength(1))
+
+    state.emit({ kind: 'approval', request: call() })
+    h.controller.answer('call-1', true, false)
+    state.abort('escape')
+
+    expect(state.cancels).toBe(1)
+    expect(h.last()).toMatchObject({ phase: 'aborted', message: 'Остановлено по Escape.' })
+
+    state.emit({ kind: 'cancelled' })
+    const result = await running
+    expect(result.aborted).toBe(true)
+  })
+
+  it('lets the hand leave the button before the mouse can stop the run', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    try {
+      const started = new Date('2026-01-01T00:00:00Z')
+      vi.setSystemTime(started)
+      const h = harness()
+      const running = h.run()
+      await vi.waitFor(() => expect(state.runs).toHaveLength(1))
+
+      state.emit({ kind: 'approval', request: call() })
+      h.controller.answer('call-1', true, false)
+
+      state.abort('mousemove')
+      expect(state.cancels).toBe(0)
+      expect(h.last().phase).toBe('acting')
+
+      vi.setSystemTime(new Date(started.getTime() + 1300))
+      state.abort('mousemove')
+
+      expect(state.cancels).toBe(1)
+      expect(h.last().phase).toBe('aborted')
+      const result = await running
+      expect(result.aborted).toBe(true)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('remembers a "разрешить всегда" by fingerprint, and nothing else', async () => {
     const h = harness()
     const running = h.run()
@@ -571,7 +773,7 @@ describe('the question in the card', () => {
     await running
   })
 
-  it('turns a refusal into a stop, with the reason on the card', async () => {
+  it('keeps the run going after a refusal, with the reason on the card', async () => {
     const h = harness()
     const running = h.run()
     await vi.waitFor(() => expect(h.passthrough).toEqual([true]))
@@ -579,12 +781,54 @@ describe('the question in the card', () => {
     state.emit({ kind: 'approval', request: call() })
     h.controller.answer('call-1', false, false)
 
-    expect(state.approvals).toEqual([{ id: 'call-1', allow: false, reason: 'Пользователь отклонил действие.' }])
-    expect(h.last()).toMatchObject({ phase: 'aborted', approval: null, message: 'Действие отклонено.' })
+    expect(state.approvals).toEqual([{ id: 'call-1', allow: false, reason: 'The user declined the action.' }])
+    // The agent turns the refusal into a failed call and takes another step, so
+    // the run is not over: a terminal phase here said «остановлено» over a run
+    // that was still working, and left the card in front of the window the next
+    // click was aimed at.
+    expect(h.last()).toMatchObject({ phase: 'acting', approval: null, label: 'Действие отклонено.' })
+    // The card takes the mouse back whether the question was allowed or
+    // refused: otherwise the agent's next click lands on the panel.
+    expect(h.passthrough).toEqual([true, false, true])
+    // The hand leaves the button too; that movement must not stop the run.
+    state.abort('mousemove')
+    expect(state.cancels).toBe(0)
 
-    state.emit({ kind: 'cancelled' })
+    state.emit({ kind: 'done', complete: true, answer: 'Готово.' })
     const result = await running
-    expect(result.aborted).toBe(true)
+    expect(result).toEqual({ answer: 'Готово.', actions: [] })
+  })
+
+  it('gives the mouse back when nobody answers the question', async () => {
+    const h = harness()
+    const running = h.run()
+    await vi.waitFor(() => expect(h.passthrough).toEqual([true]))
+
+    vi.useFakeTimers()
+    try {
+      state.emit({ kind: 'approval', request: call() })
+      expect(h.passthrough).toEqual([true, false])
+      // The five minutes the host allows a question to stay open.
+      vi.runAllTimers()
+    } finally {
+      vi.useRealTimers()
+    }
+
+    // The agent receives the refusal and keeps going; the card must not stay
+    // clickable-free until the next answered question. The reason is the tool
+    // result the model reads, so it is English; the card's sentence is Russian.
+    expect(state.approvals).toEqual([
+      { id: 'call-1', allow: false, reason: 'The action was not confirmed by the user.' }
+    ])
+    expect(h.passthrough).toEqual([true, false, true])
+    expect(h.last()).toMatchObject({
+      phase: 'acting',
+      approval: null,
+      label: 'Подтверждение не получено.'
+    })
+
+    state.emit({ kind: 'done', complete: true, answer: 'Готово.' })
+    await running
   })
 
   it('answers harmless calls itself, without troubling the user', async () => {
@@ -613,14 +857,17 @@ describe('the question in the card', () => {
       request: call({ id: 'call-1', tool: 'type_text', title: 'Пароль', fingerprint: '' })
     })
 
+    // The model reads the tool result, so that sentence is English; the row the
+    // card lists stays Russian.
     expect(state.approvals).toEqual([
-      { id: 'call-1', allow: false, reason: 'Секреты и пароли введи вручную.' }
+      { id: 'call-1', allow: false, reason: 'Secrets and passwords must be typed by the user.' }
     ])
     // A refusal that is not the user's decision must not lift the click-through.
     expect(h.passthrough).toEqual([true])
 
     state.emit({ kind: 'done', complete: true, answer: '' })
-    await running
+    const result = await running
+    expect(result.actions).toEqual([{ tool: 'type_text', label: 'Секреты и пароли введи вручную.', ok: false }])
   })
 
   it('ignores an answer for a question that is no longer open', async () => {
@@ -651,13 +898,47 @@ describe('stopping', () => {
 
     // A stop that did not answer the question would be a stop that never lands:
     // the agent is blocked on it.
-    expect(state.approvals).toEqual([{ id: 'call-1', allow: false, reason: 'Отменено.' }])
+    // The refusal reaches the model as a tool result, so that sentence is
+    // English; the card keeps its own Russian one, published by `stop()`.
+    expect(state.approvals).toEqual([{ id: 'call-1', allow: false, reason: 'The run was cancelled by the user.' }])
     expect(state.cancels).toBe(1)
     expect(h.last()).toMatchObject({ phase: 'aborted', message: 'Остановлено: ты взял мышь.' })
 
     const result = await running
     expect(result.aborted).toBe(true)
     expect(h.passthrough).toEqual([true, false, false])
+  })
+
+  it('does not accept a run stopped while the sidecar was starting', async () => {
+    let release = (): void => {}
+    state.runGate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const h = harness()
+    const running = h.run()
+    await vi.waitFor(() => expect(state.runs).toHaveLength(1))
+
+    h.controller.stop('Остановлено по Escape.')
+
+    // The card hears about the stop immediately, even while the sidecar is
+    // still starting.
+    expect(h.last()).toMatchObject({ phase: 'aborted', message: 'Остановлено по Escape.' })
+
+    release()
+    const result = await running
+    expect(result).toMatchObject({ aborted: true, message: 'Остановлено по Escape.' })
+    // The run never reached the agent, so there is no acceptance to record.
+    expect(h.trace().some((line) => line.event === 'agent.accepted')).toBe(false)
+    expect(h.passthrough).toEqual([true, false])
+
+    // The controller is free again: the next request is not refused as
+    // "a run is already in progress".
+    state.runGate = null
+    const next = h.run()
+    await vi.waitFor(() => expect(state.runs).toHaveLength(2))
+    state.emit({ kind: 'done', complete: true, answer: 'Готово.' })
+
+    expect((await next).answer).toBe('Готово.')
   })
 
   it('is safe with nothing running', () => {
@@ -689,7 +970,30 @@ describe('the agent dying mid-run', () => {
     const result = await h.run()
 
     expect(result).toMatchObject({ blocked: true, message: 'Компонент агента не собран.' })
+    // Nothing else follows a failed start, so the card must not be left on
+    // `arming` with a live «Подготовка» over a run that never began.
+    expect(h.last()).toMatchObject({
+      phase: 'error',
+      code: 'blocked',
+      message: 'Компонент агента не собран.'
+    })
     expect(h.passthrough).toEqual([true, false])
+  })
+
+  it('names the start failure the same way on the card and in the result', async () => {
+    // A rejection that is not an `Error` has no message of its own; the card
+    // and the answer must still agree on the sentence.
+    state.runRejects = 'broken pipe' as unknown as Error
+    const h = harness()
+
+    const result = await h.run()
+
+    expect(result.message).toBe('Не удалось запустить агента.')
+    expect(h.last()).toMatchObject({
+      phase: 'error',
+      code: 'blocked',
+      message: 'Не удалось запустить агента.'
+    })
   })
 })
 
@@ -713,7 +1017,11 @@ describe('the trace a run leaves behind', () => {
     })
     state.emit({ kind: 'tool', step: 1, name: 'get_app_state', args: { app: 'Finder' } })
     state.emit({
-      kind: 'result', step: 1, name: 'get_app_state', ok: true, text: 'tree',
+      kind: 'result',
+      step: 1,
+      name: 'get_app_state',
+      ok: true,
+      text: 'tree',
       timing: { wallMs: 493.02, treeMs: 476.35, captureMs: 12.1, imageBytes: 151812 }
     })
     state.emit({
@@ -733,16 +1041,26 @@ describe('the trace a run leaves behind', () => {
 
     const llm = lines.find((line) => line.event === 'agent.llm')!
     expect(llm).toMatchObject({
-      step: 1, llmMs: 1432.5, promptBytes: 20823, history: 4, calls: 1,
-      inputTokens: 900, outputTokens: 40
+      step: 1,
+      llmMs: 1432.5,
+      promptBytes: 20823,
+      history: 4,
+      calls: 1,
+      inputTokens: 900,
+      outputTokens: 40
     })
 
     // The phases are what makes a 493 ms call diagnosable: without the split it
     // is indistinguishable from a slow model, and the fix is in a different file.
     const call = lines.find((line) => line.event === 'agent.call')!
     expect(call).toMatchObject({
-      step: 1, tool: 'get_app_state', ok: true,
-      wallMs: 493, treeMs: 476.4, captureMs: 12.1, imageBytes: 151812
+      step: 1,
+      tool: 'get_app_state',
+      ok: true,
+      wallMs: 493,
+      treeMs: 476.4,
+      captureMs: 12.1,
+      imageBytes: 151812
     })
     // A phase that did not run is absent, not zero.
     expect('encodeMs' in call).toBe(false)

@@ -9,10 +9,10 @@ interface CtorOptions {
 }
 
 const fake = vi.hoisted(() => ({
-  /** How many upcoming constructor calls throw before one succeeds. */
-  failCtorTimes: 0,
-  /** When true every constructor call throws. */
-  failCtorAlways: false,
+  /** The file on disk cannot be parsed. */
+  corrupt: false,
+  /** Every constructor call throws: the profile directory itself is unusable. */
+  ctorThrows: false,
   ctorOptions: [] as CtorOptions[],
   data: {} as Record<string, unknown>,
   getThrows: false,
@@ -21,28 +21,41 @@ const fake = vi.hoisted(() => ({
 
 vi.mock('electron-store', () => {
   class FakeStore {
-    constructor(options: CtorOptions) {
+    private parsed = false
+
+    constructor(private readonly options: CtorOptions) {
       fake.ctorOptions.push(options)
-      if (fake.failCtorAlways) throw new Error('corrupt file')
-      if (fake.failCtorTimes > 0) {
-        fake.failCtorTimes -= 1
-        throw new Error('corrupt file')
-      }
+      // `conf` reads the file either in the constructor or on the first access,
+      // and only the read honours `clearInvalidConfig`. Parsing in `get` here is
+      // what exercises the recovery path: a throwing constructor alone would
+      // leave the read path — and the second store — untested.
+      if (fake.ctorThrows) throw new Error('profile is read-only')
     }
 
     get(key: string): unknown {
+      this.parse()
       if (fake.getThrows) throw new Error('unreadable')
-      return key in fake.data ? fake.data[key] : this.defaultsFor(key)
+      return key in fake.data ? fake.data[key] : this.options.defaults[key]
     }
 
     set(key: string, value: unknown): void {
+      this.parse()
       if (fake.setThrows) throw new Error('read-only')
       fake.data[key] = value
     }
 
-    private defaultsFor(key: string): unknown {
-      const last = fake.ctorOptions[fake.ctorOptions.length - 1]
-      return last?.defaults?.[key]
+    /**
+     * In this fake `conf` reads the file on the first access, which is where
+     * `clearInvalidConfig` applies: the broken file is replaced with an empty
+     * one. This is the path a successful constructor would hide.
+     */
+    private parse(): void {
+      if (this.parsed) return
+      this.parsed = true
+      if (!fake.corrupt) return
+      if (!this.options.clearInvalidConfig) throw new Error('SyntaxError: Unexpected token')
+      fake.corrupt = false
+      fake.data = {}
     }
   }
 
@@ -56,8 +69,8 @@ async function loadStore(): Promise<typeof import('./store')> {
 }
 
 beforeEach(() => {
-  fake.failCtorTimes = 0
-  fake.failCtorAlways = false
+  fake.corrupt = false
+  fake.ctorThrows = false
   fake.ctorOptions = []
   fake.data = {}
   fake.getThrows = false
@@ -92,11 +105,23 @@ describe('settings/store: opening the file', () => {
     expect(settings.provider).toBe(DEFAULT_SETTINGS.provider)
     expect(store.settingsWereRecovered()).toBe(false)
   })
+
+  it('keeps the plain store when the file parses, without asking for a reset', async () => {
+    fake.data.settings = { temperature: 1.1 }
+    const store = await loadStore()
+    store.getSettings()
+
+    expect(fake.ctorOptions).toHaveLength(1)
+    expect(fake.ctorOptions[0].clearInvalidConfig).toBeUndefined()
+  })
 })
 
 describe('settings/store: a corrupt file is recreated', () => {
   it('retries with clearInvalidConfig and flags the recovery', async () => {
-    fake.failCtorTimes = 1
+    // The parse happens on the first read here, where `clearInvalidConfig`
+    // applies; the constructor succeeds and used to hide the recovery path.
+    fake.corrupt = true
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     const store = await loadStore()
 
     expect(store.getSettings()).toEqual(DEFAULT_SETTINGS)
@@ -104,10 +129,11 @@ describe('settings/store: a corrupt file is recreated', () => {
     expect(fake.ctorOptions[0].clearInvalidConfig).toBeUndefined()
     expect(fake.ctorOptions[1].clearInvalidConfig).toBe(true)
     expect(store.settingsWereRecovered()).toBe(true)
+    warn.mockRestore()
   })
 
   it('warns once rather than throwing', async () => {
-    fake.failCtorTimes = 1
+    fake.corrupt = true
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     const store = await loadStore()
 
@@ -116,19 +142,36 @@ describe('settings/store: a corrupt file is recreated', () => {
     warn.mockRestore()
   })
 
+  it('keeps saving after the file was recreated', async () => {
+    fake.corrupt = true
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const store = await loadStore()
+
+    const saved = store.patchSettings({ temperature: 1.4 })
+
+    expect(saved.temperature).toBe(1.4)
+    expect(fake.data.settings).toMatchObject({ temperature: 1.4 })
+    expect(store.settingsWriteFailed()).toBe(false)
+    expect(store.getSettings().temperature).toBe(1.4)
+    warn.mockRestore()
+  })
+
   it('falls back to memory when even a reset store cannot be opened', async () => {
-    fake.failCtorAlways = true
+    fake.ctorThrows = true
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     const error = vi.spyOn(console, 'error').mockImplementation(() => {})
     const store = await loadStore()
 
     expect(store.getSettings()).toEqual(DEFAULT_SETTINGS)
     expect(store.settingsWereRecovered()).toBe(true)
     expect(error).toHaveBeenCalled()
+    warn.mockRestore()
     error.mockRestore()
   })
 
   it('keeps a patch in memory when there is no store to write to', async () => {
-    fake.failCtorAlways = true
+    fake.ctorThrows = true
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     const error = vi.spyOn(console, 'error').mockImplementation(() => {})
     const store = await loadStore()
 
@@ -138,6 +181,9 @@ describe('settings/store: a corrupt file is recreated', () => {
     // The next read comes from the in-memory copy, not from the defaults.
     expect(store.getSettings().temperature).toBe(1.5)
     expect(store.getSettings().hotkey).toBe('Ctrl+P')
+    // A write that never reached a file is reported, not swallowed.
+    expect(store.settingsWriteFailed()).toBe(true)
+    warn.mockRestore()
     error.mockRestore()
   })
 })
@@ -146,11 +192,13 @@ describe('settings/store: unreadable settings inside a working file', () => {
   it('falls back to the defaults and flags the recovery', async () => {
     fake.getThrows = true
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {})
     const store = await loadStore()
 
     expect(store.getSettings()).toEqual(DEFAULT_SETTINGS)
     expect(store.settingsWereRecovered()).toBe(true)
     warn.mockRestore()
+    error.mockRestore()
   })
 })
 
@@ -163,6 +211,7 @@ describe('settings/store: patchSettings', () => {
     expect(saved.temperature).toBe(1.2)
     expect(saved.hotkey).toBe(DEFAULT_SETTINGS.hotkey)
     expect(fake.data.settings).toEqual(saved)
+    expect(store.settingsWriteFailed()).toBe(false)
   })
 
   it('normalizes the merged result', async () => {
@@ -185,10 +234,7 @@ describe('settings/store: patchSettings', () => {
     })
   })
 
-  // KNOWN BUG: characterization — `memoryFallback` is only consulted when the
-  // store itself could not be opened, so a failed write returns the new value
-  // once and then reverts to whatever the file still holds.
-  it('returns the new value but does not keep it when the write fails (known bug)', async () => {
+  it('keeps the value and reports the write that was dropped', async () => {
     const store = await loadStore()
     fake.setThrows = true
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
@@ -196,8 +242,25 @@ describe('settings/store: patchSettings', () => {
     const saved = store.patchSettings({ temperature: 0.9 })
 
     expect(saved.temperature).toBe(0.9)
-    expect(store.getSettings().temperature).toBe(DEFAULT_SETTINGS.temperature)
+    // The user's edit must not silently revert to the stale file.
+    expect(store.getSettings().temperature).toBe(0.9)
+    expect(store.settingsWriteFailed()).toBe(true)
     expect(warn).toHaveBeenCalled()
+    warn.mockRestore()
+  })
+
+  it('clears the failure flag once a later write lands', async () => {
+    const store = await loadStore()
+    fake.setThrows = true
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    store.patchSettings({ temperature: 0.9 })
+
+    fake.setThrows = false
+    const saved = store.patchSettings({ temperature: 1.1 })
+
+    expect(store.settingsWriteFailed()).toBe(false)
+    expect(fake.data.settings).toEqual(saved)
+    expect(store.getSettings().temperature).toBe(1.1)
     warn.mockRestore()
   })
 })

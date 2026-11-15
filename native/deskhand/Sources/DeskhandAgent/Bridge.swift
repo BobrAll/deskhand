@@ -1,9 +1,9 @@
-import Foundation
 import AppKit
 import ApplicationServices
+import DeskhandAgentKit
 import DeskhandCore
 import DeskhandLLM
-import DeskhandAgentKit
+import Foundation
 
 /// The sidecar protocol.
 ///
@@ -27,8 +27,24 @@ final class Bridge: @unchecked Sendable {
 
     /// The run in flight, if any. One at a time: two agents driving the same
     /// pointer would interleave clicks, and the second would be acting on a
-    /// screen the first had already changed.
-    private var activeRun: CancelToken?
+    /// screen the first had already changed. A cancelled run keeps the slot
+    /// until it has actually unwound — a drag, a scroll or a `type_text` is
+    /// already in the window server when the token is raised.
+    private var activeRun: ActiveRun?
+
+    /// A run and the signal that it has let go of the machine.
+    ///
+    /// The token stops the loop; the semaphore tells the next `run` when the
+    /// stopped task has finished its last call and released the slot.
+    private struct ActiveRun {
+        let token: CancelToken
+        let finished: DispatchSemaphore
+
+        /// Waits, bounded, for the run's task to let go of the machine.
+        func waitUntilUnwound() -> Bool {
+            finished.wait(timeout: .now() + Bridge.runUnwindTimeout) == .success
+        }
+    }
 
     /// Approvals waiting for the app's answer, keyed by request id.
     private var pendingApprovals: [String: ApprovalWait] = [:]
@@ -38,6 +54,29 @@ final class Bridge: @unchecked Sendable {
     private static let approvalTimeout: TimeInterval = 600
     /// How often the wait wakes up, so a cancel lands while a question is open.
     private static let approvalPollInterval: TimeInterval = 0.1
+
+    /// How long a new run waits for a cancelled one to finish its last call.
+    ///
+    /// The loop checks the token between steps and tool calls, so a cancel can
+    /// land in the middle of a drag, a scroll or a `type_text` that is already
+    /// inside the window server. The wait only has to cover one such call; if
+    /// it expires, the new run is rejected as before, which is safer than two
+    /// agents on one pointer. Five seconds stays well inside the host's own
+    /// ten-second wait for `started`.
+    private static let runUnwindTimeout: TimeInterval = 5
+
+    /// What a run request is told when another run still owns the machine.
+    ///
+    /// Reached only for a genuinely concurrent run, or when a stopped one took
+    /// longer than `runUnwindTimeout` to let go.
+    private static let runBusyMessage = "a run is already in progress"
+
+    /// The model-facing refusal when the user stops the run.
+    ///
+    /// English like every other tool result: the model reads this string, not
+    /// the user, and a Russian refusal in an English conversation is noise the
+    /// model has to interpret.
+    private static let cancelledMessage = "The run was cancelled by the user."
 
     private final class ApprovalWait: @unchecked Sendable {
         let semaphore = DispatchSemaphore(value: 0)
@@ -88,9 +127,12 @@ final class Bridge: @unchecked Sendable {
 
     private func handleRequest(_ line: String) {
         guard let value = try? JSONValue.parse(line), let message = value.objectValue else {
-            emit(["event": .string("error"), "params": .object([
-                "message": .string("could not parse a request line"),
-            ])])
+            emit([
+                "event": .string("error"),
+                "params": .object([
+                    "message": .string("could not parse a request line")
+                ]),
+            ])
             return
         }
         let id = message["id"]
@@ -102,10 +144,12 @@ final class Bridge: @unchecked Sendable {
             respond(id: id, result: .object(["pong": .bool(true)]))
         case "permissions":
             let status = SystemPermissions.current()
-            respond(id: id, result: .object([
-                "accessibility": .bool(status.accessibility),
-                "screen_recording": .bool(status.screenRecording),
-            ]))
+            respond(
+                id: id,
+                result: .object([
+                    "accessibility": .bool(status.accessibility),
+                    "screen_recording": .bool(status.screenRecording),
+                ]))
         case "run":
             startRun(id: id, params: params)
         case "cancel":
@@ -130,15 +174,11 @@ final class Bridge: @unchecked Sendable {
             return
         }
 
-        lock.lock()
-        if activeRun != nil {
-            lock.unlock()
-            respond(id: id, error: "a run is already in progress")
+        guard let run = claimRunSlot() else {
+            respond(id: id, error: Self.runBusyMessage)
             return
         }
-        let handle = CancelToken()
-        activeRun = handle
-        lock.unlock()
+        let handle = run.token
 
         let config: ProviderConfig
         do {
@@ -152,16 +192,22 @@ final class Bridge: @unchecked Sendable {
         let permissions = SystemPermissions.current()
         guard permissions.accessibility else {
             finishRun(handle)
-            emit(["event": .string("error"), "params": .object([
-                "message": .string("Нет разрешения «Универсальный доступ»."),
-                "code": .string("accessibility"),
-            ])])
+            emit([
+                "event": .string("error"),
+                "params": .object([
+                    "message": .string("Нет разрешения «Универсальный доступ»."),
+                    "code": .string("accessibility"),
+                ]),
+            ])
             respond(id: id, error: "accessibility permission is required")
             return
         }
 
         let options = loopOptions(from: params["options"])
-        let executor = ToolExecutor()
+        let excluded = Set(
+            (params["options"]?["excluded_apps"]?.arrayValue ?? [])
+                .compactMap(\.stringValue))
+        let executor = ToolExecutor(excludedBundleIds: excluded)
         let provider = ProviderFactory.make(config: config)
         let loop = AgentLoop(provider: provider, executor: executor, options: options)
         loop.observer = BridgeObserver(bridge: self)
@@ -180,20 +226,28 @@ final class Bridge: @unchecked Sendable {
         // deliver their replies to it, and parking the main thread turns every
         // activation into a one-second timeout.
         let traceRunID = params["options"]?["trace_run_id"]?.stringValue
-        let record: (@Sendable (String, [String: JSONValue]) -> Void)?
-        if traceRunID != nil {
-            record = { [weak self] event, fields in
-                self?.emit(["event": .string(event), "params": .object(fields)])
-            }
-        } else {
-            record = nil
-        }
+        let record = modelTraceRecorder(runID: traceRunID)
         Task.detached { [weak self] in
             await Self.$traceRunID.withValue(traceRunID) {
                 await ModelTrace.$record.withValue(record) {
                     await self?.executeRun(loop: loop, executor: executor, handle: handle, task: task)
                 }
             }
+        }
+    }
+
+    /// Where the providers report what they sent and received, or nil when the
+    /// host did not ask for a per-run trace.
+    ///
+    /// The recorder is the same event pipe as everything else, so the trace
+    /// arrives with the run's own `trace_run_id` and the host can file it in the
+    /// right run without a second protocol.
+    private func modelTraceRecorder(
+        runID: String?
+    ) -> (@Sendable (String, [String: JSONValue]) -> Void)? {
+        guard runID != nil else { return nil }
+        return { [weak self] event, fields in
+            self?.emit(["event": .string(event), "params": .object(fields)])
         }
     }
 
@@ -224,36 +278,85 @@ final class Bridge: @unchecked Sendable {
             // only had the text could not tell "the model finished" from
             // "the budget ran out" — and the app drew a checkmark over the
             // second one.
-            self.emit(["event": .string("done"), "params": .object([
-                "answer": .string(answer),
-                "complete": .bool(loop.finished),
-            ])])
+            self.emit([
+                "event": .string("done"),
+                "params": .object([
+                    "answer": .string(answer),
+                    "complete": .bool(loop.finished),
+                ]),
+            ])
         } else if let failure {
-            self.emit(["event": .string("error"), "params": .object([
-                "message": .string(failure),
-            ])])
+            self.emit([
+                "event": .string("error"),
+                "params": .object([
+                    "message": .string(failure)
+                ]),
+            ])
         } else {
             self.emit(["event": .string("cancelled"), "params": .object([:])])
         }
     }
 
+    /// Takes the run slot, or returns nil when another run still owns it.
+    ///
+    /// A cancelled run keeps the slot until its task has actually unwound: the
+    /// loop checks the token between steps and calls, so a drag, a scroll or a
+    /// `type_text` can still be in flight. Waiting that out is what lets the
+    /// user start a new run right after Escape.
+    private func claimRunSlot() -> ActiveRun? {
+        lock.lock()
+        if let running = activeRun, running.token.isCancelled {
+            lock.unlock()
+            guard running.waitUntilUnwound() else { return nil }
+            lock.lock()
+        }
+        defer { lock.unlock() }
+        guard activeRun == nil else { return nil }
+        let claimed = ActiveRun(token: CancelToken(), finished: DispatchSemaphore(value: 0))
+        activeRun = claimed
+        return claimed
+    }
+
+    /// Releases the slot, but only for the run that still owns it.
+    ///
+    /// A cancelled run unwinds asynchronously, so by the time it finishes the
+    /// user may already have started another one; clearing the slot then would
+    /// hand the machine to two runs.
     private func finishRun(_ handle: CancelToken) {
         lock.lock()
-        if activeRun === handle { activeRun = nil }
+        guard activeRun?.token === handle else {
+            lock.unlock()
+            return
+        }
+        let finished = activeRun?.finished
+        activeRun = nil
         let waits = pendingApprovals
         pendingApprovals.removeAll()
         lock.unlock()
         // A run that ended while a question was open must not leave the app
         // waiting for an answer that will never come.
         for (_, wait) in waits { wait.resolve(.deny("The run ended.")) }
+        // Wakes a `run` that is waiting for this one to let go of the machine.
+        // Signalled outside the lock: the waiter takes the same lock next.
+        finished?.signal()
     }
 
-    private func cancelRun() {
+    /// The token of the run in flight, if any.
+    private func activeToken() -> CancelToken? {
         lock.lock()
-        let running = activeRun
-        lock.unlock()
-        running?.cancel()
-        resolveAllApprovals(.deny("Отменено."))
+        defer { lock.unlock() }
+        return activeRun?.token
+    }
+
+    /// Stops the run.
+    ///
+    /// The slot stays with the cancelled run until its task has actually
+    /// unwound: the loop checks the token between steps and calls, so a drag,
+    /// a scroll or a `type_text` can still be in flight. `startRun` waits that
+    /// out (bounded) rather than pointing a second agent at the same pointer.
+    private func cancelRun() {
+        activeToken()?.cancel()
+        resolveAllApprovals(.deny(Self.cancelledMessage))
     }
 
     // MARK: - Approval
@@ -262,7 +365,48 @@ final class Bridge: @unchecked Sendable {
         _ context: ToolCallContext,
         cancel: CancelToken
     ) -> ToolPolicyDecision {
+        // A stopped run must not put a question in front of the user: it would
+        // be for a call nobody is waiting on any more.
+        if cancel.isCancelled { return .deny(Self.cancelledMessage) }
+
         let id = nextApprovalId()
+        let wait = ApprovalWait()
+        lock.lock()
+        pendingApprovals[id] = wait
+        lock.unlock()
+
+        emit(["event": .string("approval"), "params": .object(approvalParams(context, id: id))])
+
+        // A question nobody answers must not hang the run forever: the app is
+        // the only one who can answer it, and if it stopped, so did the reason
+        // to keep waiting. The poll exists so a cancel lands within 100 ms.
+        let deadline = Date().addingTimeInterval(Self.approvalTimeout)
+        while Date() < deadline {
+            if cancel.isCancelled {
+                forgetApproval(id)
+                return .deny(Self.cancelledMessage)
+            }
+            if wait.semaphore.wait(timeout: .now() + Self.approvalPollInterval) == .success {
+                forgetApproval(id)
+                return wait.value
+            }
+        }
+        forgetApproval(id)
+        return .deny("The user did not answer in time.")
+    }
+
+    private func forgetApproval(_ id: String) {
+        lock.lock()
+        pendingApprovals.removeValue(forKey: id)
+        lock.unlock()
+    }
+
+    /// What the card needs to ask the question, in the field names
+    /// `AgentToolRequest` reads on the other side of the pipe.
+    ///
+    /// A field is present only when the tool resolved it: an absent `role` means
+    /// "the call was not about an element", which is different from an empty one.
+    private func approvalParams(_ context: ToolCallContext, id: String) -> [String: JSONValue] {
         var params: [String: JSONValue] = [
             "id": .string(id),
             "tool": .string(context.tool),
@@ -278,36 +422,7 @@ final class Bridge: @unchecked Sendable {
         if let narration = context.narration, !narration.isEmpty {
             params["narration"] = .string(narration)
         }
-
-        let wait = ApprovalWait()
-        lock.lock()
-        pendingApprovals[id] = wait
-        lock.unlock()
-
-        emit(["event": .string("approval"), "params": .object(params)])
-
-        // A question nobody answers must not hang the run forever: the app is
-        // the only one who can answer it, and if it stopped, so did the reason
-        // to keep waiting. The poll exists so a cancel lands within 100 ms.
-        let deadline = Date().addingTimeInterval(Self.approvalTimeout)
-        while Date() < deadline {
-            if cancel.isCancelled {
-                lock.lock()
-                pendingApprovals.removeValue(forKey: id)
-                lock.unlock()
-                return .deny("Отменено.")
-            }
-            if wait.semaphore.wait(timeout: .now() + Self.approvalPollInterval) == .success {
-                lock.lock()
-                pendingApprovals.removeValue(forKey: id)
-                lock.unlock()
-                return wait.value
-            }
-        }
-        lock.lock()
-        pendingApprovals.removeValue(forKey: id)
-        lock.unlock()
-        return .deny("The user did not answer in time.")
+        return params
     }
 
     private func resolveApproval(params: JSONValue) {
@@ -353,9 +468,13 @@ final class Bridge: @unchecked Sendable {
             emit(["event": .string("error"), "params": .object(["message": .string(error)])])
             return
         }
-        writer.write(JSONValue.object(["id": id, "error": .object([
-            "message": .string(error),
-        ])]).serialized())
+        writer.write(
+            JSONValue.object([
+                "id": id,
+                "error": .object([
+                    "message": .string(error)
+                ]),
+            ]).serialized())
     }
 
     // MARK: - Configuration
@@ -437,27 +556,36 @@ private final class BridgeObserver: AgentObserver, @unchecked Sendable {
     }
 
     func stepStarted(_ step: Int, of total: Int) {
-        bridge.emit(["event": .string("step"), "params": .object([
-            "step": .number(Double(step)),
-            "total": .number(Double(total)),
-        ])])
+        bridge.emit([
+            "event": .string("step"),
+            "params": .object([
+                "step": .number(Double(step)),
+                "total": .number(Double(total)),
+            ]),
+        ])
     }
 
     func stepStreamed(_ step: Int, text: String) {
         guard !text.isEmpty else { return }
         streamedSteps.insert(step)
-        bridge.emit(["event": .string("stream"), "params": .object([
-            "step": .number(Double(step)),
-            "text": .string(text),
-        ])])
+        bridge.emit([
+            "event": .string("stream"),
+            "params": .object([
+                "step": .number(Double(step)),
+                "text": .string(text),
+            ]),
+        ])
     }
 
     func stepAnswered(_ step: Int, narration: String, calls: [ToolCall]) {
         guard !calls.isEmpty, !narration.isEmpty, !streamedSteps.contains(step) else { return }
-        bridge.emit(["event": .string("narration"), "params": .object([
-            "step": .number(Double(step)),
-            "text": .string(narration),
-        ])])
+        bridge.emit([
+            "event": .string("narration"),
+            "params": .object([
+                "step": .number(Double(step)),
+                "text": .string(narration),
+            ]),
+        ])
     }
 
     func toolStarted(_ step: Int, call: ToolCall, narration: String) {
@@ -509,15 +637,21 @@ private final class BridgeObserver: AgentObserver, @unchecked Sendable {
     }
 
     func loopWarned(_ reason: String) {
-        bridge.emit(["event": .string("warning"), "params": .object([
-            "reason": .string(reason),
-        ])])
+        bridge.emit([
+            "event": .string("warning"),
+            "params": .object([
+                "reason": .string(reason)
+            ]),
+        ])
     }
 
     func loopStopped(_ reason: String) {
-        bridge.emit(["event": .string("stopped"), "params": .object([
-            "reason": .string(reason),
-        ])])
+        bridge.emit([
+            "event": .string("stopped"),
+            "params": .object([
+                "reason": .string(reason)
+            ]),
+        ])
     }
 
     func runFinished(_ report: RunReport) {

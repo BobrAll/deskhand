@@ -26,18 +26,15 @@ describe('classifyCall: the actions the mode exists for', () => {
   )
 
   it('lets typing through: preparing text commits nothing', () => {
-    expect(classifyCall(request({ tool: 'type_text', title: 'Поиск' }), []))
-      .toEqual({ kind: 'allow' })
+    expect(classifyCall(request({ tool: 'type_text', title: 'Поиск' }), [])).toEqual({ kind: 'allow' })
   })
 
   it('lets a click into a text field through', () => {
-    expect(classifyCall(request({ tool: 'click', textField: true }), []))
-      .toEqual({ kind: 'allow' })
+    expect(classifyCall(request({ tool: 'click', textField: true }), [])).toEqual({ kind: 'allow' })
   })
 
   it('lets an ordinary click through', () => {
-    expect(classifyCall(request({ tool: 'click', title: 'Вкладка' }), []))
-      .toEqual({ kind: 'allow' })
+    expect(classifyCall(request({ tool: 'click', title: 'Вкладка' }), [])).toEqual({ kind: 'allow' })
   })
 })
 
@@ -71,10 +68,7 @@ describe('classifyCall: what commits something', () => {
   it('reads the narration too, not just the title', () => {
     // A button called "Продолжить" that the model described as "оплатить заказ"
     // is an order, and the model's own words are the evidence available.
-    const decision = classifyCall(
-      request({ title: 'Продолжить', narration: 'Оплатить заказ' }),
-      []
-    )
+    const decision = classifyCall(request({ title: 'Продолжить', narration: 'Оплатить заказ' }), [])
     expect(decision.kind).toBe('confirm')
   })
 })
@@ -83,7 +77,13 @@ describe('classifyCall: secrets', () => {
   it('refuses to type a password, without asking', () => {
     const decision = classifyCall(request({ tool: 'type_text', title: 'Пароль' }), [])
 
-    expect(decision).toEqual({ kind: 'deny', reason: 'Секреты и пароли введи вручную.' })
+    // Two readers, two languages: the card lists the row in Russian, the model
+    // reads the tool result in English.
+    expect(decision).toEqual({
+      kind: 'deny',
+      label: 'Секреты и пароли введи вручную.',
+      reason: 'Secrets and passwords must be typed by the user.'
+    })
   })
 
   it('refuses an API key and a token as well', () => {
@@ -98,45 +98,41 @@ describe('classifyCall: secrets', () => {
 
 describe('classifyCall: keys', () => {
   it('asks about Enter in a message field: it sends', () => {
-    const decision = classifyCall(
-      request({ tool: 'press_key', arguments: { key: 'Return' }, title: 'Сообщение' }),
-      []
-    )
+    const decision = classifyCall(request({ tool: 'press_key', arguments: { key: 'Return' }, title: 'Сообщение' }), [])
     expect(decision.kind).toBe('confirm')
   })
 
   it('lets a plain Enter in a search field through', () => {
-    expect(classifyCall(
-      request({ tool: 'press_key', arguments: { key: 'Return' }, title: 'Поиск' }),
-      []
-    ).kind).toBe('allow')
+    expect(classifyCall(request({ tool: 'press_key', arguments: { key: 'Return' }, title: 'Поиск' }), []).kind).toBe(
+      'allow'
+    )
   })
 
   it('asks about ⌘⌫ in Finder, which deletes', () => {
-    expect(classifyCall(
-      request({ tool: 'press_key', arguments: { key: 'super+BackSpace' }, bundleId: 'com.apple.finder' }),
-      []
-    ).kind).toBe('confirm')
+    expect(
+      classifyCall(
+        request({ tool: 'press_key', arguments: { key: 'super+BackSpace' }, bundleId: 'com.apple.finder' }),
+        []
+      ).kind
+    ).toBe('confirm')
   })
 })
 
 describe('classifyCall: remembered approvals', () => {
   it('does not ask twice for the same fingerprint', () => {
-    expect(classifyCall(request({ title: 'Оплатить' }), [rememberKey(FP)]))
-      .toEqual({ kind: 'allow' })
+    expect(classifyCall(request({ title: 'Оплатить' }), [rememberKey(FP)])).toEqual({ kind: 'allow' })
   })
 
   it('does not remember a secret away', () => {
     // The deny is checked first on purpose: "разрешить всегда" must never be able
     // to cover typing a password.
-    expect(classifyCall(request({ tool: 'type_text', title: 'Пароль' }), [rememberKey(FP)]).kind)
-      .toBe('deny')
+    expect(classifyCall(request({ tool: 'type_text', title: 'Пароль' }), [rememberKey(FP)]).kind).toBe('deny')
   })
 
   it('does not leak one remembered call into another', () => {
-    expect(classifyCall(
-      request({ title: 'Оплатить', fingerprint: 'b'.repeat(64) }), [rememberKey(FP)]
-    ).kind).toBe('confirm')
+    expect(classifyCall(request({ title: 'Оплатить', fingerprint: 'b'.repeat(64) }), [rememberKey(FP)]).kind).toBe(
+      'confirm'
+    )
   })
 })
 
@@ -157,11 +153,13 @@ describe('rememberKey', () => {
 
 describe('describeCall', () => {
   it('names the element, never the typed text', () => {
-    const line = describeCall(request({
-      tool: 'type_text',
-      title: 'Поиск',
-      arguments: { text: 'очень личное' }
-    }))
+    const line = describeCall(
+      request({
+        tool: 'type_text',
+        title: 'Поиск',
+        arguments: { text: 'очень личное' }
+      })
+    )
 
     expect(line).toBe('Печатаю в «Поиск»')
     expect(line).not.toContain('очень личное')

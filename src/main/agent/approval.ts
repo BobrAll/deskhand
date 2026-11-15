@@ -23,22 +23,26 @@ import type { AgentToolRequest } from '@shared/types'
 
 export type ApprovalDecision =
   | { kind: 'allow' }
-  /** Refused outright, without a question: the user's secrets are not the agent's to type. */
-  | { kind: 'deny'; reason: string }
+  /**
+   * Refused outright, without a question: the user's secrets are not the agent's
+   * to type.
+   *
+   * Two sentences, because it reaches two readers: `label` is the row the card
+   * lists in Russian, `reason` is the tool result the model reads, and text the
+   * model reads is English.
+   */
+  | { kind: 'deny'; label: string; reason: string }
   /** Ask the user, and show them this. */
   | { kind: 'confirm'; detail: string }
 
 /**
  * Risk signals, not a model of the interface.
  *
- * Inflected Russian, so these are stems. `[^а-яё]` stands in for a word boundary
- * because `\b` is ASCII-only and treats every Cyrillic letter as a boundary.
- *
- * Grouped by what the action commits to, because that is the judgement this list
- * encodes: money leaves, something is said in public, something is destroyed,
- * access is granted, a credential changes, an agreement is signed. The groups are
- * joined into one expression, since the classifier only asks whether any of them
- * is present.
+ * Inflected Russian, so these are stems, matched as substrings. Grouped by what
+ * the action commits to, because that is the judgement this list encodes: money
+ * leaves, something is said in public, something is destroyed, access is granted,
+ * a credential changes, an agreement is signed. The groups are joined into one
+ * expression, since the classifier only asks whether any of them is present.
  */
 const PAYMENT_WORDS =
   'оплат|купить|покупк|оформить заказ|подтвердить заказ|подписаться|продлить подписк|' +
@@ -56,22 +60,15 @@ const ENGLISH_WORDS =
   'accept terms|install)\\b'
 
 const COMMITTING_ACTION = new RegExp(
-  [
-    PAYMENT_WORDS,
-    SENDING_WORDS,
-    DELETION_WORDS,
-    ACCESS_WORDS,
-    PASSWORD_WORDS,
-    AGREEMENT_WORDS,
-    ENGLISH_WORDS
-  ].join('|'),
+  [PAYMENT_WORDS, SENDING_WORDS, DELETION_WORDS, ACCESS_WORDS, PASSWORD_WORDS, AGREEMENT_WORDS, ENGLISH_WORDS].join(
+    '|'
+  ),
   'i'
 )
 
 const MESSAGE_FIELD = /сообщени|письмо|комментари|\b(?:message|reply|comment|chat)\b/i
 
-const SECRET =
-  /api[- ]?key|api[- ]?ключ|парол|password|seed phrase|секретн\S* ключ|passphrase|токен|token/i
+const SECRET = /api[- ]?key|api[- ]?ключ|парол|password|seed phrase|секретн\S* ключ|passphrase|токен|token/i
 
 /** Keys that submit something, in the xdotool grammar the agent uses. */
 const SUBMIT_KEY = /(^|\+)(Return|KP_Enter|enter)$/i
@@ -91,13 +88,7 @@ const FINDER_BUNDLE_ID = 'com.apple.finder'
  * about them at all. These are the ones it does ask about and the answer is
  * usually yes.
  */
-const HARMLESS = new Set([
-  'scroll',
-  'drag',
-  'select_text',
-  'activate_app',
-  'perform_secondary_action'
-])
+const HARMLESS = new Set(['scroll', 'drag', 'select_text', 'activate_app', 'perform_secondary_action'])
 
 function text(value: unknown): string {
   return typeof value === 'string' ? value : ''
@@ -106,14 +97,7 @@ function text(value: unknown): string {
 /** Everything the call is about, for the keyword match to look at. */
 function matchableText(request: AgentToolRequest): string {
   const args = request.arguments
-  return [
-    request.title,
-    request.label,
-    text(args.label),
-    text(args.name),
-    text(args.action),
-    request.narration
-  ]
+  return [request.title, request.label, text(args.label), text(args.name), text(args.action), request.narration]
     .filter(Boolean)
     .join(' ')
     .normalize('NFKC')
@@ -190,6 +174,25 @@ function confirmationSubject(request: AgentToolRequest): string {
 }
 
 /**
+ * Whether a keystroke itself commits something.
+ *
+ * A key is judged by what it sends, not by what it is called: Return submits
+ * only behind a command modifier, on a recognised message field, or on an
+ * element the labels already call critical. ⌘⌫ deletes only in Finder, and a
+ * plain character never commits at all, whatever the narration says.
+ */
+function keyCommits(context: string, request: AgentToolRequest): boolean {
+  const key = text(request.arguments.key)
+  const submit = SUBMIT_KEY.test(key)
+  const command = COMMAND_MODIFIER.test(key)
+  return (
+    (submit && COMMITTING_ACTION.test(context)) ||
+    (submit && (command || MESSAGE_FIELD.test(context))) ||
+    (request.bundleId === FINDER_BUNDLE_ID && command && FINDER_DELETE_KEY.test(key))
+  )
+}
+
+/**
  * Decides whether one call needs the user.
  *
  * `rememberedKeys` holds the digests of the fingerprints the user already allowed
@@ -203,7 +206,11 @@ export function classifyCall(request: AgentToolRequest, rememberedKeys: string[]
 
   // Never: a password typed by an assistant is a password in a transcript.
   if (request.tool === 'type_text' && SECRET.test(context)) {
-    return { kind: 'deny', reason: 'Секреты и пароли введи вручную.' }
+    return {
+      kind: 'deny',
+      label: 'Секреты и пароли введи вручную.',
+      reason: 'Secrets and passwords must be typed by the user.'
+    }
   }
 
   if (request.fingerprint && rememberedKeys.includes(rememberKey(request.fingerprint))) {
@@ -215,24 +222,17 @@ export function classifyCall(request: AgentToolRequest, rememberedKeys: string[]
   if (request.tool === 'type_text' || request.tool === 'set_value') return { kind: 'allow' }
   if (request.tool === 'click' && request.textField) return { kind: 'allow' }
 
-  let critical = COMMITTING_ACTION.test(context)
-  if (request.tool === 'press_key') {
-    const key = text(request.arguments.key)
-    const submit = SUBMIT_KEY.test(key)
-    const command = COMMAND_MODIFIER.test(key)
-    critical = (submit && critical) ||
-      (submit && (command || MESSAGE_FIELD.test(context))) ||
-      (request.bundleId === FINDER_BUNDLE_ID && command && FINDER_DELETE_KEY.test(key))
-  }
+  const critical = request.tool === 'press_key' ? keyCommits(context, request) : COMMITTING_ACTION.test(context)
   if (!critical) return { kind: 'allow' }
 
   const subject = confirmationSubject(request)
 
   return {
     kind: 'confirm',
-    detail: `${subject}${request.app ? ` — ${request.app}` : ''}\n\n` +
+    detail:
+      `${subject}${request.app ? ` — ${request.app}` : ''}\n\n` +
       'Проверь последствия в приложении: для оплаты — продавца, сумму и подписку; ' +
-      'для отправки — получателя и содержимое. «Разрешить всегда» запомнит это действие ' +
+      'для отправки — получателя и содержимое. «Больше не спрашивать» запомнит это действие ' +
       'для этого приложения.'
   }
 }

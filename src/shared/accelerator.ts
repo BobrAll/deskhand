@@ -17,7 +17,9 @@ export const MODIFIER_FLAGS: Record<string, number> = {
   alt: 0x00080000,
   option: 0x00080000,
   opt: 0x00080000,
-  shift: 0x00020000
+  shift: 0x00020000,
+  // kCGEventFlagMaskSecondaryFn: the Fn/Globe key on a Mac keyboard.
+  fn: 0x00800000
 }
 
 /** `Control+Alt` as a person reads it: `⌃ ⌥`. */
@@ -30,6 +32,7 @@ export function prettyAccelerator(accelerator: string): string {
       if (name === 'control' || name === 'ctrl') return '⌃'
       if (name === 'alt' || name === 'option' || name === 'opt') return '⌥'
       if (name === 'shift') return '⇧'
+      if (name === 'fn') return 'fn'
       return part.trim()
     })
     .join(' ')

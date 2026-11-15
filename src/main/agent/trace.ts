@@ -66,21 +66,24 @@ export function trace(event: string, fields: Fields = {}): void {
   const current = currentTurn()
   if (!current) return
   const { id, path, started } = current
-  const line = JSON.stringify({
-    time: new Date().toISOString(),
-    turn: id,
-    elapsedMs: Math.round(performance.now() - started),
-    event,
-    ...fields
-  }) + '\n'
-  writeQueue = writeQueue.then(async () => {
-    const size = (await stat(path).catch(() => null))?.size ?? 0
-    if (size + Buffer.byteLength(line) > MAX_BYTES) await rename(path, path + '.previous')
-    await appendFile(path, line, { mode: 0o600 })
-  }).catch(() => {
-    if (!warnedOnce) console.warn('[agent trace] Unable to write the local trace')
-    warnedOnce = true
-  })
+  const line =
+    JSON.stringify({
+      time: new Date().toISOString(),
+      turn: id,
+      elapsedMs: Math.round(performance.now() - started),
+      event,
+      ...fields
+    }) + '\n'
+  writeQueue = writeQueue
+    .then(async () => {
+      const size = (await stat(path).catch(() => null))?.size ?? 0
+      if (size + Buffer.byteLength(line) > MAX_BYTES) await rename(path, path + '.previous')
+      await appendFile(path, line, { mode: 0o600 })
+    })
+    .catch(() => {
+      if (!warnedOnce) console.warn('[agent trace] Unable to write the local trace')
+      warnedOnce = true
+    })
 }
 
 export function traceEnd(event: string, fields: Fields = {}): () => void {
@@ -123,14 +126,20 @@ export function traceTurn<T>(fields: Fields, work: () => Promise<T>): Promise<T>
   const revision = process.env.DESKHAND_TRACE_REVISION
   const turnRecord: Turn = { id: randomUUID(), path, started: performance.now(), nextSpan: 0 }
   openTurns.add(turnRecord)
-  return turn.run(turnRecord, () => timed('turn', work, {
-    ...fields, schema: TRACE_SCHEMA, build: app.getVersion?.() ?? 'unknown',
-    revision: revision && /^[a-f0-9]{7,40}$/.test(revision) ? revision : null
-  // Closed only after the turn's own end event is written, so the last line is
-  // not the one that loses its turn.
-  })).finally(() => {
-    openTurns.delete(turnRecord)
-  })
+  return turn
+    .run(turnRecord, () =>
+      timed('turn', work, {
+        ...fields,
+        schema: TRACE_SCHEMA,
+        build: app.getVersion?.() ?? 'unknown',
+        revision: revision && /^[a-f0-9]{7,40}$/.test(revision) ? revision : null
+        // Closed only after the turn's own end event is written, so the last line is
+        // not the one that loses its turn.
+      })
+    )
+    .finally(() => {
+      openTurns.delete(turnRecord)
+    })
 }
 
 /**

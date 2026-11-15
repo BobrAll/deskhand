@@ -7,9 +7,9 @@
 // `null` at runtime.
 //
 // Only the read-only commands are exercised — `ping`, `permissions`, `front`,
-// `apps`, `cursor`. Nothing here moves the mouse, presses a key, types, pastes,
-// activates another app, records voice or asks for permissions: those are
-// deliberately absent to keep this contract check read-only.
+// `apps`, `visible-apps`, `cursor`. Nothing here moves the mouse, presses a key,
+// types, pastes, activates another app, records voice or asks for permissions:
+// those are deliberately absent to keep this contract check read-only.
 //
 // Not part of `npm test`: it needs macOS, the built binary and a real session.
 // Run it with `npm run test:native`.
@@ -27,6 +27,7 @@ const READ_ONLY = [
   ['permissions', 'reads the TCC state without prompting (request=false)'],
   ['front', 'reads the frontmost app and its window'],
   ['apps', 'lists Dock-visible apps'],
+  ['visible-apps', 'lists bundle ids with a window on screen'],
   ['cursor', 'reads the mouse position']
 ]
 
@@ -103,10 +104,10 @@ console.log('\nfront')
   check('bundleId is a string', typeof json.bundleId === 'string')
   check('name is a string', typeof json.name === 'string')
   check('pid is a number', typeof json.pid === 'number')
-  // KNOWN BUG: `front` prints `accessibility` as 1/0, not as a JSON boolean, so
-  // `helperFront()`'s strict `payload.accessibility === true` is always false.
+  // `front` prints `accessibility` as 0/1, not as a JSON boolean; TypeScript
+  // normalises both with `flag()`.
   check(
-    'accessibility is a number 0/1 (known: not a boolean)',
+    'accessibility is a number 0/1',
     json.accessibility === 0 || json.accessibility === 1,
     String(json.accessibility)
   )
@@ -128,9 +129,30 @@ console.log('\napps')
   const { json } = run('apps')
   check('apps is an array', Array.isArray(json.apps))
   const list = Array.isArray(json.apps) ? json.apps : []
-  check('every entry has bundleId and name', list.every((app) => typeof app.bundleId === 'string' && typeof app.name === 'string'))
+  check(
+    'every entry has bundleId and name',
+    list.every((app) => typeof app.bundleId === 'string' && typeof app.name === 'string')
+  )
   // The list is the settings picker: it must not be empty on a normal desktop.
   check('is not empty', list.length > 0, `${list.length} apps`)
+}
+
+console.log('\nvisible-apps')
+{
+  const { json } = run('visible-apps')
+  check('visibleBundleIds is an array', Array.isArray(json.visibleBundleIds))
+  const list = Array.isArray(json.visibleBundleIds) ? json.visibleBundleIds : []
+  check(
+    'every entry is a non-empty string',
+    list.every((id) => typeof id === 'string' && id.length > 0)
+  )
+  check('entries are unique', new Set(list).size === list.length)
+  check(
+    'entries are sorted',
+    list.every((id, index) => index === 0 || list[index - 1] <= id)
+  )
+  // An empty list is valid: every window may be on another Space, and the
+  // screenshot policy then treats the screen as safe.
 }
 
 console.log('\ncursor')

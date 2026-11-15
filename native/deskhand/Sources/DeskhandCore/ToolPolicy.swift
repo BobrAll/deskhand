@@ -1,5 +1,5 @@
-import Foundation
 import ApplicationServices
+import Foundation
 
 /// One tool call offered to the policy, with everything a decision needs.
 ///
@@ -51,18 +51,39 @@ public struct ToolCallContext: Sendable {
 
     /// A stable fingerprint of what this call would do, so "разрешить всегда"
     /// can remember the action and not the sentence around it.
+    ///
+    /// Returns an empty string when the call names no target that could be
+    /// remembered. A coordinate click or a drag is identified by its point, and
+    /// an approval remembered without one would cover every later plain click
+    /// in the app — the host treats an empty fingerprint as unrememberable.
     public var fingerprint: String {
         var parts: [String] = [tool]
         if let bundleIdentifier { parts.append(bundleIdentifier) }
         if let role { parts.append(role) }
-        if let title, !title.isEmpty { parts.append(title) }
-        else if let label, !label.isEmpty { parts.append(label) }
+        if let title, !title.isEmpty { parts.append(title) } else if let label, !label.isEmpty { parts.append(label) }
         switch tool {
         case "press_key":
             if let key = arguments["key"]?.stringValue { parts.append(key) }
         case "click":
             if let count = arguments["click_count"]?.intValue { parts.append("x\(count)") }
             if let button = arguments["button"]?.stringValue { parts.append(button) }
+            if arguments["element_index"]?.intValue == nil {
+                // A coordinate click names no element, so the point is the
+                // only thing that identifies its target. Without a usable
+                // point there is nothing to remember. An element click keeps
+                // the fingerprint it always had: the resolved role and title
+                // already identify it.
+                guard let point = Self.quantisedPoint(arguments, x: "x", y: "y") else {
+                    return ""
+                }
+                parts.append("@\(point)")
+            }
+        case "drag":
+            guard let from = Self.quantisedPoint(arguments, x: "from_x", y: "from_y"),
+                let to = Self.quantisedPoint(arguments, x: "to_x", y: "to_y")
+            else { return "" }
+            parts.append("from@\(from)")
+            parts.append("to@\(to)")
         case "type_text", "set_value":
             // The text itself is never part of the fingerprint: it is the user's
             // content, and it must not be remembered, logged, or used to decide
@@ -72,6 +93,27 @@ public struct ToolCallContext: Sendable {
             break
         }
         return parts.joined(separator: "\u{1}")
+    }
+
+    /// A model-supplied point, snapped to a grid.
+    ///
+    /// Coordinates are screenshot pixels, so the same control asked about twice
+    /// is rarely named by the same integer and a click beside it is not far
+    /// away. A 10-pixel grid keeps an approval attached to the control while
+    /// keeping its neighbour a different action. Returns nil for a missing,
+    /// non-finite or absurd coordinate rather than trapping on conversion.
+    static func quantisedPoint(
+        _ arguments: JSONValue,
+        x xKey: String,
+        y yKey: String
+    ) -> String? {
+        guard let x = arguments[xKey]?.doubleValue,
+            let y = arguments[yKey]?.doubleValue,
+            x.isFinite, y.isFinite,
+            abs(x) <= 1_000_000, abs(y) <= 1_000_000
+        else { return nil }
+        let step = 10.0
+        return "\(Int((x / step).rounded())),\(Int((y / step).rounded()))"
     }
 }
 

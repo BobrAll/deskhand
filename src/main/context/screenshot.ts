@@ -15,14 +15,17 @@
  * enumerate sources and would still need the user to pick one, so the native CLI
  * is the better fit here. When the window id is unavailable (helper binary
  * missing / no Automation rights) we crop the window bounds with `-R`, and only
- * as a last resort take a full-screen `-x` capture.
+ * as a last resort take a full-screen `-x` capture. Callers that must not show
+ * excluded applications disable that last resort with
+ * `allowFullScreenFallback: false`: they get the window they asked for, or
+ * `null`, never the display.
  *
  * Every call takes a *fresh* picture: the same function serves the preview shown
  * when the overlay opens and the capture re-taken right before a request is
  * sent, so the model sees the screen as it is now, not as it was minutes ago.
- * Our own overlay window never ends up in the image — see `setContentProtection`
- * in `windows.ts`, which keeps it out of every capture path, including the
- * full-screen fallback.
+ * Our own overlay window never ends up in the image: its content protection is
+ * switched on for every capture (`overlay/index.ts`), which keeps it out of every
+ * capture path, including the full-screen fallback.
  */
 
 import { execFile } from 'node:child_process'
@@ -43,6 +46,13 @@ export interface CaptureTarget {
    * capture would show the model only a part of what the user actually sees.
    */
   fullDisplay?: boolean
+  /**
+   * Allow the last-resort whole-screen `-x` capture when neither the window id
+   * nor its bounds produced an image. Disabled when excluded apps are
+   * configured: the display may contain one of them, so a failed window capture
+   * has to stay failed instead of quietly photographing the whole screen.
+   */
+  allowFullScreenFallback?: boolean
 }
 
 /** Which rectangle the image covers, and whether it is the whole display. */
@@ -60,13 +70,7 @@ const READ_ATTEMPTS = 12
 const READ_RETRY_MS = 40
 const SCREENCAPTURE_TIMEOUT_MS = 8000
 
-/**
- * Where the image sits on the real screen, in *points*.
- *
- * A window capture covers the window rectangle; a display capture covers the
- * whole display the cursor is on. `null` only when Electron cannot answer, in
- * which case nothing is drawn rather than drawing something wrong.
- */
+/** The window rectangle, in points, rounded to what `screencapture` accepts. */
 function areaFromBounds(bounds: NonNullable<CaptureTarget['bounds']>): ScreenRect {
   return {
     x: Math.round(bounds.x),
@@ -76,16 +80,15 @@ function areaFromBounds(bounds: NonNullable<CaptureTarget['bounds']>): ScreenRec
   }
 }
 
-function resolveArea(target: CaptureTarget): Placement {
-  try {
-    if (target.fullDisplay) return { area: displayUnderCursor(), fullScreen: true }
-    if (target.bounds) {
-      return { area: areaFromBounds(target.bounds), fullScreen: false }
-    }
-    return { area: displayUnderCursor(), fullScreen: true }
-  } catch {
-    return { area: null, fullScreen: target.bounds == null }
-  }
+/**
+ * Which rectangle a window capture covers.
+ *
+ * `null` when the window bounds are unknown: the display under the cursor is a
+ * different rectangle, and claiming it would measure every coordinate the model
+ * returns against a picture of something else.
+ */
+function windowPlacement(bounds: CaptureTarget['bounds']): Placement {
+  return { area: bounds ? areaFromBounds(bounds) : null, fullScreen: false }
 }
 
 /** Bounds of the display the mouse is on, in global points. */
@@ -130,9 +133,7 @@ async function captureRectangle(rect: ScreenRect, file: string, options: { omitS
   const height = Math.round(rect.height)
   if (width < MIN_CAPTURE_SIDE || height < MIN_CAPTURE_SIDE) return false
   const region = `${Math.round(rect.x)},${Math.round(rect.y)},${width},${height}`
-  const args = options.omitShadow
-    ? ['-x', '-o', '-R', region, file]
-    : ['-x', '-R', region, file]
+  const args = options.omitShadow ? ['-x', '-o', '-R', region, file] : ['-x', '-R', region, file]
   try {
     await run('screencapture', args)
     return true
@@ -234,7 +235,7 @@ export async function captureScreenshot(
       }
     }
     if (!placement && target.windowId !== null) {
-      if (await captureWindow(target.windowId, file)) placement = resolveArea(target)
+      if (await captureWindow(target.windowId, file)) placement = windowPlacement(target.bounds)
     }
     // The window may have been closed since it was remembered: fall back to its
     // last known bounds before giving up and grabbing the whole screen.
@@ -243,7 +244,7 @@ export async function captureScreenshot(
         placement = { area: areaFromBounds(target.bounds), fullScreen: false }
       }
     }
-    if (!placement) {
+    if (!placement && target.allowFullScreenFallback !== false) {
       if (await captureFullScreen(file)) placement = { area: displayUnderCursor(), fullScreen: true }
     }
     if (!placement) return null
@@ -271,4 +272,3 @@ export async function captureScreenshot(
     await rm(dir, { recursive: true, force: true }).catch(() => undefined)
   }
 }
-

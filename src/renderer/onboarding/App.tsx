@@ -4,11 +4,13 @@
  */
 
 import { useCallback, useEffect, useState } from 'react'
+import type { ReactNode } from 'react'
 import type { PermissionState, ProviderId } from '@shared/types'
 import { PROVIDERS, normalizeBaseUrl, providerInfo } from '@shared/defaults'
 import type { SettingsBundle } from '@shared/api'
 import { prettyAccelerator } from '@shared/accelerator'
 import { WindowBrand } from '../styles/WindowBrand'
+import { saveConnection } from './connection'
 
 type Step = 0 | 1 | 2
 
@@ -16,6 +18,40 @@ const STEPS = ['Разрешения', 'Подключение', 'Готово']
 
 /** How often the permission state is re-read while this window is open. */
 const PERMISSION_POLL_MS = 1500
+
+/** One macOS permission: what it is for, and the one way to ask for it. */
+function PermissionItem({
+  title,
+  hint,
+  granted,
+  actionLabel,
+  primary = false,
+  onRequest
+}: {
+  title: string
+  hint: ReactNode
+  granted: boolean
+  actionLabel: string
+  /** The grant without which the assistant cannot work at all. */
+  primary?: boolean
+  onRequest(): void
+}) {
+  return (
+    <div className="perm">
+      <div>
+        <div className="perm-title">
+          {title} {granted ? <span className="ok">✓</span> : null}
+        </div>
+        <div className="hint">{hint}</div>
+      </div>
+      {!granted && (
+        <button className={primary ? 'primary' : undefined} onClick={onRequest}>
+          {actionLabel}
+        </button>
+      )}
+    </div>
+  )
+}
 
 export function App() {
   const [step, setStep] = useState<Step>(0)
@@ -74,18 +110,15 @@ export function App() {
         setNotice({ kind: 'err', text: test.message })
         return
       }
-      await window.deskhand.settings.setKey(provider, key)
-      // The bundle may still be loading: onboarding step 1 is reachable before
-      // the first `load()` resolves. Writing a partial `AppSettings` in that
-      // window would let the store fill the gaps from defaults and overwrite
-      // what is already on disk, so the current values are read first.
-      const settings = bundle?.settings ?? (await window.deskhand.settings.load()).settings
-      await window.deskhand.settings.save({
-        ...settings,
+      // The store answers with the bundle it now holds: that is what the panel
+      // shows, and what the next provider's save builds on.
+      const saved = await saveConnection(window.deskhand.settings, {
         provider,
-        models: { ...settings.models, [provider]: model.trim() },
-        baseUrls: { ...settings.baseUrls, [provider]: root }
+        key,
+        model,
+        baseUrl: root
       })
+      setBundle(saved)
       setKeyInput('')
       setNotice({ kind: 'ok', text: test.message })
     } catch {
@@ -93,7 +126,7 @@ export function App() {
     } finally {
       setBusy(false)
     }
-  }, [bundle, baseUrl, keyInput, model, provider])
+  }, [baseUrl, keyInput, model, provider])
 
   const completeOnboarding = useCallback(async () => {
     await window.deskhand.onboarding.complete()
@@ -124,56 +157,40 @@ export function App() {
         <section className="panel">
           <h1>Разрешения macOS</h1>
           <p className="lead">
-            Deskhand читает выделенный текст и вставляет ответ в активное приложение. Без этих
-            разрешений он работать не сможет.
+            Deskhand читает выделенный текст и вставляет ответ в активное приложение. Без этих разрешений он работать не
+            сможет.
           </p>
 
           <div className="permission-list">
-            <div className="perm">
-              <div>
-                <div className="perm-title">
-                  Универсальный доступ {permissions.accessibility ? <span className="ok">✓</span> : null}
-                </div>
-                <div className="hint">Выделение текста и автоматическая вставка (⌘C / ⌘V).</div>
-              </div>
-              {!permissions.accessibility && (
-                <button className="primary" onClick={() => void requestPermissions()}>
-                  Открыть запрос
-                </button>
-              )}
-            </div>
+            <PermissionItem
+              title="Универсальный доступ"
+              hint="Выделение текста и автоматическая вставка (⌘C / ⌘V)."
+              granted={permissions.accessibility}
+              actionLabel="Открыть запрос"
+              primary
+              onRequest={() => void requestPermissions()}
+            />
 
-            <div className="perm">
-              <div>
-                <div className="perm-title">
-                  Запись экрана {permissions.screenRecording ? <span className="ok">✓</span> : null}
-                </div>
-                <div className="hint">Скриншот активного окна, когда текст не выделен.</div>
-              </div>
-              {!permissions.screenRecording && (
-                <button onClick={() => void requestPermissions()}>Запросить доступ</button>
-              )}
-            </div>
+            <PermissionItem
+              title="Запись экрана"
+              hint="Скриншот активного окна, когда текст не выделен."
+              granted={permissions.screenRecording}
+              actionLabel="Запросить доступ"
+              onRequest={() => void requestPermissions()}
+            />
 
-            <div className="perm">
-              <div>
-                <div className="perm-title">
-                  Микрофон {permissions.microphone ? <span className="ok">✓</span> : null}
-                </div>
-                <div className="hint">
-                  Голосовой ввод: удерживай хоткей или три пальца на трекпаде и говори.
-                  Необязательно — без него всё работает с клавиатуры.
-                </div>
-              </div>
-              {!permissions.microphone && (
-                <button onClick={() => void requestMicrophone()}>Разрешить</button>
-              )}
-            </div>
+            <PermissionItem
+              title="Микрофон"
+              hint="Голосовой ввод: удерживай хоткей или три пальца на трекпаде и говори. Необязательно — без него всё работает с клавиатуры."
+              granted={permissions.microphone}
+              actionLabel="Разрешить"
+              onRequest={() => void requestMicrophone()}
+            />
           </div>
 
           <div className="hint">
-            После выдачи «Универсального доступа» приложение нужно перезапустить — macOS применяет
-            разрешение только к новому процессу.
+            После выдачи «Универсального доступа» приложение нужно перезапустить — macOS применяет разрешение только к
+            новому процессу.
           </div>
 
           <div className="actions">
@@ -192,8 +209,7 @@ export function App() {
         <section className="panel">
           <h1>Подключение</h1>
           <p className="lead">
-            Модель, ключ и адрес API. Ключ хранится в связке ключей macOS и отправляется только
-            выбранному провайдеру.
+            Модель, ключ и адрес API. Ключ хранится в связке ключей macOS и отправляется только выбранному провайдеру.
           </p>
 
           <div className="providers">
@@ -298,17 +314,14 @@ export function App() {
         <section className="panel">
           <h1>Всё готово</h1>
           <p className="lead">
-            Нажми <kbd>{prettyAccelerator(hotkey)}</kbd> в любой момент, чтобы открыть ассистента рядом
-            с курсором.
+            Нажми <kbd>{prettyAccelerator(hotkey)}</kbd> в любой момент, чтобы открыть ассистента рядом с курсором.
           </p>
 
           <ul className="tips">
             <li>Есть выделенный текст — ассистент использует его. Нет — смотрит на экран.</li>
             <li>Если проще показать, чем описать, он сам обведёт кнопку или нарисует стрелку.</li>
-            <li>Enter отправляет запрос, ⌘Enter вставляет ответ в активное приложение.</li>
-            <li>
-              Три пальца на трекпаде: касание открывает карточку, удержание записывает голос.
-            </li>
+            <li>Enter отправляет запрос, а готовый ответ можно скопировать кнопкой под ним.</li>
+            <li>Три пальца на трекпаде: касание открывает карточку, удержание записывает голос.</li>
             <li>Esc закрывает оверлей, ничего не отправляя.</li>
             <li>Пароли и банковские приложения по умолчанию исключены.</li>
           </ul>

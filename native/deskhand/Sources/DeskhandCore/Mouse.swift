@@ -1,6 +1,6 @@
-import Foundation
-import CoreGraphics
 import ApplicationServices
+import CoreGraphics
+import Foundation
 
 /// Mouse input: clicks, drags and scrolls, posted as real HID events so that
 /// apps which ignore accessibility actions (games, canvases, most web content)
@@ -64,14 +64,26 @@ public enum Mouse {
 
     public static func move(to point: CGPoint) {
         WindowServer.prepare()
-        guard let event = CGEvent(
-            mouseEventSource: SyntheticEvent.eventSource(),
-            mouseType: .mouseMoved,
-            mouseCursorPosition: point,
-            mouseButton: .left
-        ) else { return }
+        guard
+            let event = CGEvent(
+                mouseEventSource: SyntheticEvent.eventSource(),
+                mouseType: .mouseMoved,
+                mouseCursorPosition: point,
+                mouseButton: .left
+            )
+        else { return }
         SyntheticEvent.mark(event)
         event.post(tap: .cghidEventTap)
+    }
+
+    /// The number of clicks a mouse event can carry.
+    ///
+    /// macOS encodes a multiple click as a count of 1...3, and a value outside
+    /// that range is not a gesture it can express. Callers clamp once through
+    /// this and report the same number they sent, so a model's `click_count: 5`
+    /// is honestly described as a triple click rather than as five clicks.
+    static func clampedClickCount(_ count: Int) -> Int {
+        max(1, min(count, 3))
     }
 
     public static func click(
@@ -81,23 +93,26 @@ public enum Mouse {
         modifiers: CGEventFlags = []
     ) {
         WindowServer.prepare()
-        let clicks = max(1, min(count, 3))
+        let clicks = clampedClickCount(count)
         move(to: point)
         // A short settle lets hover/focus handlers run before the press.
         Thread.sleep(forTimeInterval: Pace.hoverSettle)
 
         for index in 1...clicks {
-            guard let down = CGEvent(
-                mouseEventSource: SyntheticEvent.eventSource(),
-                mouseType: button.downType,
-                mouseCursorPosition: point,
-                mouseButton: button.cgButton
-            ), let up = CGEvent(
-                mouseEventSource: SyntheticEvent.eventSource(),
-                mouseType: button.upType,
-                mouseCursorPosition: point,
-                mouseButton: button.cgButton
-            ) else { continue }
+            guard
+                let down = CGEvent(
+                    mouseEventSource: SyntheticEvent.eventSource(),
+                    mouseType: button.downType,
+                    mouseCursorPosition: point,
+                    mouseButton: button.cgButton
+                ),
+                let up = CGEvent(
+                    mouseEventSource: SyntheticEvent.eventSource(),
+                    mouseType: button.upType,
+                    mouseCursorPosition: point,
+                    mouseButton: button.cgButton
+                )
+            else { continue }
 
             down.flags = modifiers
             up.flags = modifiers
@@ -127,12 +142,14 @@ public enum Mouse {
         move(to: start)
         Thread.sleep(forTimeInterval: Pace.dragStartSettle)
 
-        guard let down = CGEvent(
-            mouseEventSource: SyntheticEvent.eventSource(),
-            mouseType: button.downType,
-            mouseCursorPosition: start,
-            mouseButton: button.cgButton
-        ) else { return }
+        guard
+            let down = CGEvent(
+                mouseEventSource: SyntheticEvent.eventSource(),
+                mouseType: button.downType,
+                mouseCursorPosition: start,
+                mouseButton: button.cgButton
+            )
+        else { return }
         SyntheticEvent.mark(down)
         down.post(tap: .cghidEventTap)
         Thread.sleep(forTimeInterval: Pace.dragPressSettle)
@@ -147,26 +164,55 @@ public enum Mouse {
                 x: start.x + (end.x - start.x) * eased,
                 y: start.y + (end.y - start.y) * eased
             )
-            guard let dragged = CGEvent(
-                mouseEventSource: SyntheticEvent.eventSource(),
-                mouseType: button.dragType,
-                mouseCursorPosition: point,
-                mouseButton: button.cgButton
-            ) else { continue }
+            guard
+                let dragged = CGEvent(
+                    mouseEventSource: SyntheticEvent.eventSource(),
+                    mouseType: button.dragType,
+                    mouseCursorPosition: point,
+                    mouseButton: button.cgButton
+                )
+            else { continue }
             SyntheticEvent.mark(dragged)
             dragged.post(tap: .cghidEventTap)
             Thread.sleep(forTimeInterval: Pace.dragStep)
         }
 
         Thread.sleep(forTimeInterval: Pace.dragEndSettle)
-        guard let up = CGEvent(
-            mouseEventSource: SyntheticEvent.eventSource(),
-            mouseType: button.upType,
-            mouseCursorPosition: end,
-            mouseButton: button.cgButton
-        ) else { return }
+        guard
+            let up = CGEvent(
+                mouseEventSource: SyntheticEvent.eventSource(),
+                mouseType: button.upType,
+                mouseCursorPosition: end,
+                mouseButton: button.cgButton
+            )
+        else { return }
         SyntheticEvent.mark(up)
         up.post(tap: .cghidEventTap)
+    }
+
+    /// The most pages one scroll gesture may move.
+    ///
+    /// A page is 12 wheel lines emitted in chunks 20 ms apart, so a page count
+    /// is a duration as much as a distance: 10 000 pages is roughly 13 minutes
+    /// of events. The bound is applied here as well as at the tool surface, so
+    /// even a direct caller cannot turn one call into an unbounded gesture.
+    static let maxScrollPages = 20.0
+
+    /// The page count a scroll may actually move.
+    ///
+    /// A non-positive or non-finite request is malformed rather than a small
+    /// scroll, so it has no answer; anything above `maxScrollPages` is the
+    /// gesture the tool reports back to the model. `maxScrollPages` explains why
+    /// the cap is a duration as much as a distance.
+    static func effectiveScrollPages(_ requested: Double) -> Double? {
+        guard requested.isFinite, requested > 0 else { return nil }
+        return min(requested, maxScrollPages)
+    }
+
+    /// A signed page count, clamped so no direct caller can emit an unbounded
+    /// gesture.
+    private static func boundedScrollPages(_ pages: Double) -> Double {
+        min(max(pages, -maxScrollPages), maxScrollPages)
     }
 
     /// Scrolls at a point. `pages` is a scroll wheel unit count where 1 page
@@ -181,7 +227,7 @@ public enum Mouse {
         Thread.sleep(forTimeInterval: Pace.scrollSettle)
 
         let linesPerPage = 12.0
-        let total = pages * linesPerPage
+        let total = Self.boundedScrollPages(pages) * linesPerPage
         let chunk = 3.0
         var remaining = abs(total)
         let sign: Double = total >= 0 ? 1 : -1
@@ -190,14 +236,16 @@ public enum Mouse {
             let step = min(chunk, remaining)
             remaining -= step
             let (dy, dx) = direction.delta(amount: step * sign)
-            guard let event = CGEvent(
-                scrollWheelEvent2Source: SyntheticEvent.eventSource(),
-                units: .line,
-                wheelCount: 2,
-                wheel1: Int32(dy),
-                wheel2: Int32(dx),
-                wheel3: 0
-            ) else { continue }
+            guard
+                let event = CGEvent(
+                    scrollWheelEvent2Source: SyntheticEvent.eventSource(),
+                    units: .line,
+                    wheelCount: 2,
+                    wheel1: Int32(dy),
+                    wheel2: Int32(dx),
+                    wheel3: 0
+                )
+            else { continue }
             event.location = point
             SyntheticEvent.mark(event)
             event.post(tap: .cghidEventTap)

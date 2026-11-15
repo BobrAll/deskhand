@@ -1,6 +1,6 @@
-import Foundation
 import DeskhandCore
 import DeskhandLLM
+import Foundation
 
 /// What happened during a run, as it happens.
 ///
@@ -119,14 +119,14 @@ public struct RunReport: Sendable {
     }
 }
 
-public extension AgentObserver {
-    func stepStarted(_ step: Int, of total: Int) {}
-    func stepStreamed(_ step: Int, text: String) {}
-    func stepAnswered(_ step: Int, narration: String, calls: [ToolCall]) {}
-    func stepTimed(_ step: Int, timing: StepTiming) {}
-    func toolStarted(_ step: Int, call: ToolCall, narration: String) {}
-    func toolFinished(_ step: Int, call: ToolCall, text: String, didFail: Bool, timings: ToolTimings) {}
-    func loopStopped(_ reason: String) {}
-    func loopWarned(_ reason: String) {}
-    func runFinished(_ report: RunReport) {}
+extension AgentObserver {
+    public func stepStarted(_ step: Int, of total: Int) {}
+    public func stepStreamed(_ step: Int, text: String) {}
+    public func stepAnswered(_ step: Int, narration: String, calls: [ToolCall]) {}
+    public func stepTimed(_ step: Int, timing: StepTiming) {}
+    public func toolStarted(_ step: Int, call: ToolCall, narration: String) {}
+    public func toolFinished(_ step: Int, call: ToolCall, text: String, didFail: Bool, timings: ToolTimings) {}
+    public func loopStopped(_ reason: String) {}
+    public func loopWarned(_ reason: String) {}
+    public func runFinished(_ report: RunReport) {}
 }

@@ -25,25 +25,54 @@ const EVENTS: Record<string, unknown>[] = [
   { event: 'agent.start', elapsedMs: 4, maxSteps: 8, verify: true, hasApp: true },
   { event: 'agent.step', elapsedMs: 120, step: 1, total: 8 },
   {
-    event: 'agent.llm', elapsedMs: 1980, step: 1,
-    llmMs: 1860.4, promptBytes: 4821, history: 2, calls: 2, inputTokens: 1204, outputTokens: 62
+    event: 'agent.llm',
+    elapsedMs: 1980,
+    step: 1,
+    llmMs: 1860.4,
+    promptBytes: 4821,
+    history: 2,
+    calls: 2,
+    inputTokens: 1204,
+    outputTokens: 62
   },
   { event: 'agent.tool', elapsedMs: 1990, step: 1, tool: 'get_app_state' },
   {
-    event: 'agent.call', elapsedMs: 2510, step: 1, tool: 'get_app_state', ok: true,
-    wallMs: 518.1, treeMs: 476.4, captureMs: 12.1, encodeMs: 4.6, imageBytes: 151812
+    event: 'agent.call',
+    elapsedMs: 2510,
+    step: 1,
+    tool: 'get_app_state',
+    ok: true,
+    wallMs: 518.1,
+    treeMs: 476.4,
+    captureMs: 12.1,
+    encodeMs: 4.6,
+    imageBytes: 151812
   },
   { event: 'agent.tool', elapsedMs: 2520, step: 1, tool: 'click' },
   { event: 'agent.approval', elapsedMs: 2600, outcome: 'asked', tool: 'click' },
   { event: 'agent.call', elapsedMs: 7400, step: 1, tool: 'click', ok: true, wallMs: 31.2, treeMs: 28.4 },
   { event: 'agent.step', elapsedMs: 7420, step: 2, total: 8 },
   {
-    event: 'agent.llm', elapsedMs: 9200, step: 2,
-    llmMs: 1770.8, promptBytes: 21044, history: 5, calls: 0, inputTokens: 5210, outputTokens: 48
+    event: 'agent.llm',
+    elapsedMs: 9200,
+    step: 2,
+    llmMs: 1770.8,
+    promptBytes: 21044,
+    history: 5,
+    calls: 0,
+    inputTokens: 5210,
+    outputTokens: 48
   },
   {
-    event: 'agent.report', elapsedMs: 9210,
-    steps: 2, calls: 2, failedCalls: 0, totalMs: 9188.2, llmMs: 3631.2, toolMs: 549.3, modelShare: 40
+    event: 'agent.report',
+    elapsedMs: 9210,
+    steps: 2,
+    calls: 2,
+    failedCalls: 0,
+    totalMs: 9188.2,
+    llmMs: 3631.2,
+    toolMs: 549.3,
+    modelShare: 40
   },
   { event: 'turn.outcome', elapsedMs: 9213, outcome: 'agent-report', reason: 'agent-answer' },
   { event: 'turn.end', elapsedMs: 9215, durationMs: 9215 }
@@ -59,11 +88,16 @@ function report(...flags: string[]): string {
 beforeEach(() => {
   directory = mkdtempSync(join(tmpdir(), 'deskhand-report-'))
   tracePath = join(directory, 'agent-trace.jsonl')
-  writeFileSync(tracePath, EVENTS.map((event) => JSON.stringify({
-    time: new Date(Date.UTC(2026, 10, 8, 19, 0, 0) + (event.elapsedMs as number)).toISOString(),
-    turn: TURN,
-    ...event
-  })).join('\n') + '\n')
+  writeFileSync(
+    tracePath,
+    EVENTS.map((event) =>
+      JSON.stringify({
+        time: new Date(Date.UTC(2026, 10, 8, 19, 0, 0) + (event.elapsedMs as number)).toISOString(),
+        turn: TURN,
+        ...event
+      })
+    ).join('\n') + '\n'
+  )
 })
 
 afterEach(() => {
@@ -85,7 +119,9 @@ describe('the timeline', () => {
   })
 
   it('shows what the round trip cost, and what it was asked with', () => {
-    const line = report('--timeline').split('\n').find((entry) => entry.includes('model 1.86s'))
+    const line = report('--timeline')
+      .split('\n')
+      .find((entry) => entry.includes('model 1.86s'))
 
     expect(line).toBeDefined()
     expect(line).toContain('2 msg')
@@ -113,16 +149,29 @@ describe('the timeline', () => {
   })
 
   it('marks a failed call as failed', () => {
-    writeFileSync(tracePath, [
-      JSON.stringify({ time: '2026-11-08T19:00:00.000Z', turn: TURN, event: 'turn.start', elapsedMs: 0 }),
-      JSON.stringify({
-        time: '2026-11-08T19:00:01.000Z', turn: TURN, event: 'agent.call',
-        elapsedMs: 1000, step: 1, tool: 'click', ok: false, wallMs: 12.5
-      }),
-      JSON.stringify({
-        time: '2026-11-08T19:00:02.000Z', turn: TURN, event: 'turn.end', elapsedMs: 2000, durationMs: 2000
-      })
-    ].join('\n') + '\n')
+    writeFileSync(
+      tracePath,
+      [
+        JSON.stringify({ time: '2026-11-08T19:00:00.000Z', turn: TURN, event: 'turn.start', elapsedMs: 0 }),
+        JSON.stringify({
+          time: '2026-11-08T19:00:01.000Z',
+          turn: TURN,
+          event: 'agent.call',
+          elapsedMs: 1000,
+          step: 1,
+          tool: 'click',
+          ok: false,
+          wallMs: 12.5
+        }),
+        JSON.stringify({
+          time: '2026-11-08T19:00:02.000Z',
+          turn: TURN,
+          event: 'turn.end',
+          elapsedMs: 2000,
+          durationMs: 2000
+        })
+      ].join('\n') + '\n'
+    )
 
     expect(report('--timeline')).toContain('FAIL click 13ms')
   })
@@ -170,19 +219,36 @@ describe('the aggregate', () => {
   it('counts a failed call without failing the run', () => {
     // A call that errored is data, not a verdict: the agent may recover, and a
     // report that treated one bad click as a broken run would be useless.
-    writeFileSync(tracePath, [
-      JSON.stringify({ time: '2026-11-08T19:00:00.000Z', turn: TURN, event: 'turn.start', elapsedMs: 0 }),
-      JSON.stringify({
-        time: '2026-11-08T19:00:01.000Z', turn: TURN, event: 'agent.call',
-        elapsedMs: 1000, step: 1, tool: 'click', ok: false, wallMs: 12.5
-      }),
-      JSON.stringify({
-        time: '2026-11-08T19:00:02.000Z', turn: TURN, event: 'turn.outcome', elapsedMs: 2000, outcome: 'agent-report'
-      }),
-      JSON.stringify({
-        time: '2026-11-08T19:00:02.100Z', turn: TURN, event: 'turn.end', elapsedMs: 2100, durationMs: 2100
-      })
-    ].join('\n') + '\n')
+    writeFileSync(
+      tracePath,
+      [
+        JSON.stringify({ time: '2026-11-08T19:00:00.000Z', turn: TURN, event: 'turn.start', elapsedMs: 0 }),
+        JSON.stringify({
+          time: '2026-11-08T19:00:01.000Z',
+          turn: TURN,
+          event: 'agent.call',
+          elapsedMs: 1000,
+          step: 1,
+          tool: 'click',
+          ok: false,
+          wallMs: 12.5
+        }),
+        JSON.stringify({
+          time: '2026-11-08T19:00:02.000Z',
+          turn: TURN,
+          event: 'turn.outcome',
+          elapsedMs: 2000,
+          outcome: 'agent-report'
+        }),
+        JSON.stringify({
+          time: '2026-11-08T19:00:02.100Z',
+          turn: TURN,
+          event: 'turn.end',
+          elapsedMs: 2100,
+          durationMs: 2100
+        })
+      ].join('\n') + '\n'
+    )
 
     const result = aggregate()
     expect(result.all.failedCalls).toBe(1)

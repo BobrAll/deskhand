@@ -8,6 +8,7 @@ function settings(overrides: Record<string, unknown> = {}): { voice: Record<stri
     voice: {
       enabled: true,
       hotkey: 'Alt+Shift+Space',
+      dictationHotkey: 'Fn+Control',
       model: 'small-q5_1',
       language: 'ru',
       action: 'command',
@@ -26,12 +27,28 @@ const state = vi.hoisted(() => ({
   now: 1_000_000,
   /** What the tap listener does when it starts. */
   startError: null as string | null,
-  listenerOptions: null as Record<string, unknown> | null,
+  listeners: [] as Array<{
+    options: Record<string, unknown>
+    accelerator: string | null
+    stopped: boolean
+  }>,
   stopped: 0,
+  warmed: 0,
+  warmCancels: 0,
+  /** When set, the warm-up waits for it instead of reporting success at once. */
+  warmGate: null as Promise<boolean> | null,
+  /** Whether `voiceStatus()` reports an installed model and binary. */
+  ready: true,
   pasted: [] as Array<{ text: string; target: ActiveAppInfo | null }>,
   transcribed: null as
     | null
-    | ((options: { wav: Buffer }) => Promise<{ ok: boolean; text: string; ms: number; message?: string }>)
+    | ((options: { wav: Buffer }) => Promise<{
+        ok: boolean
+        text: string
+        ms: number
+        message?: string
+        spawned?: boolean
+      }>)
 }))
 
 vi.mock('../native/helper', () => ({ helperBinary: () => state.binary }))
@@ -47,9 +64,18 @@ vi.mock('../paste', () => ({
 
 vi.mock('./recognizer', () => ({
   transcribe: (options: { wav: Buffer }) =>
-    state.transcribed?.(options) ?? Promise.resolve({ ok: true, text: 'привет', ms: 5 }),
+    state.transcribed?.(options) ?? Promise.resolve({ ok: true, text: 'привет', ms: 5, spawned: true }),
+  warmRecognizer: () => {
+    state.warmed += 1
+    const gate = state.warmGate
+    state.warmGate = null
+    return gate ?? Promise.resolve(true)
+  },
+  cancelWarmRecognizer: () => {
+    state.warmCancels += 1
+  },
   voiceStatus: async () => ({
-    ready: true,
+    ready: state.ready,
     detail: null,
     modelPath: '/m',
     binaryPath: '/b',
@@ -59,30 +85,41 @@ vi.mock('./recognizer', () => ({
   })
 }))
 
-vi.mock('./listen', () => ({
-  VoiceKeyListener: class {
-    listening = true
-    lastError: string | null = null
-    constructor(options: Record<string, unknown>) {
-      state.listenerOptions = options
-    }
-    start(accelerator: string): string | null {
-      void accelerator
-      return state.startError
-    }
-    stop(): void {
-      state.stopped += 1
-    }
-    emit(event: string): void {
-      const handler = state.listenerOptions?.onEvent as (event: string) => void
-      handler(event)
-    }
-    fail(message: string): void {
-      const handler = state.listenerOptions?.onError as (message: string) => void
-      handler(message)
+vi.mock('./listen', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./listen')>()
+  return {
+    ...actual,
+    VoiceKeyListener: class {
+      listening = true
+      lastError: string | null = null
+      private readonly entry: {
+        options: Record<string, unknown>
+        accelerator: string | null
+        stopped: boolean
+      }
+      constructor(options: Record<string, unknown>) {
+        this.entry = { options, accelerator: null, stopped: false }
+        state.listeners.push(this.entry)
+      }
+      start(accelerator: string): string | null {
+        this.entry.accelerator = accelerator
+        return state.startError
+      }
+      stop(): void {
+        this.entry.stopped = true
+        state.stopped += 1
+      }
+      emit(event: string): void {
+        const handler = this.entry.options.onEvent as (event: string) => void
+        handler(event)
+      }
+      fail(message: string): void {
+        const handler = this.entry.options.onError as (message: string) => void
+        handler(message)
+      }
     }
   }
-}))
+})
 
 import { createVoiceController } from './index'
 
@@ -93,12 +130,24 @@ function makeHost() {
     opened: 0,
     openResult: true,
     delivered: [] as Array<{ text: string; submit: boolean }>,
-    hidden: 0,
+    dictationsBegun: 0,
+    dictationsEnded: 0,
+    dictationCloseCards: [] as boolean[],
     targetValue: null as ActiveAppInfo | null,
     prewarmed: 0,
+    indicators: 0,
+    fieldLevels: [] as number[],
     target: () => host.targetValue,
     isOpen: () => host.openResult,
-    showIndicator: () => {},
+    beginDictation: async () => {
+      host.dictationsBegun += 1
+    },
+    showIndicator: () => {
+      host.indicators += 1
+    },
+    fieldLevel: (value: number) => {
+      host.fieldLevels.push(value)
+    },
     prewarm: () => {
       host.prewarmed += 1
     },
@@ -108,8 +157,9 @@ function makeHost() {
     deliver: (text: string, options: { submit: boolean }) => {
       host.delivered.push({ text, submit: options.submit })
     },
-    hide: () => {
-      host.hidden += 1
+    endDictation: (closeCard = false) => {
+      host.dictationsEnded += 1
+      host.dictationCloseCards.push(closeCard)
     },
     emit: (channel: string, payload: unknown) => {
       host.emitted.push({ channel, payload })
@@ -144,8 +194,12 @@ beforeEach(() => {
   state.binary = '/bin/helper'
   state.now = 1_000_000
   state.startError = null
-  state.listenerOptions = null
+  state.listeners = []
   state.stopped = 0
+  state.warmed = 0
+  state.warmCancels = 0
+  state.warmGate = null
+  state.ready = true
   state.pasted = []
   state.transcribed = null
   vi.spyOn(Date, 'now').mockImplementation(() => state.now)
@@ -215,6 +269,124 @@ describe('createVoiceController: press and release', () => {
     expect(voice.phase()).toBe('idle')
   })
 
+  it('stops the recorder when the card throws instead of opening', async () => {
+    const host = makeHost()
+    host.openResult = false
+    host.open = async () => {
+      host.opened += 1
+      throw new Error('renderer died')
+    }
+    const voice = createVoiceController(host)
+    voice.applySettings()
+
+    voice.press()
+    await vi.advanceTimersByTimeAsync(0)
+
+    // A rejected open used to leave the turn `listening` with the microphone
+    // live until maxDurationMs, plus an unhandled rejection.
+    expect(host.emitted).toContainEqual({ channel: 'voice:stop', payload: { transcribe: false } })
+    expect(voice.phase()).toBe('idle')
+  })
+
+  it('starts a dictation hold without opening the card', async () => {
+    const host = makeHost()
+    host.openResult = false
+    const voice = createVoiceController(host)
+    voice.applySettings()
+
+    voice.press('dictation')
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect(host.opened).toBe(0)
+    expect(host.dictationsBegun).toBe(1)
+    expect(host.emitted).toContainEqual({
+      channel: 'voice:record',
+      payload: { maxDurationMs: 120_000 }
+    })
+    expect(voice.phase()).toBe('listening')
+    voice.cancel()
+  })
+
+  it('reveals the dictation bars only after the target app is known', async () => {
+    let release = (): void => undefined
+    const targetRead = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const host = makeHost()
+    host.beginDictation = async () => {
+      host.dictationsBegun += 1
+      await targetRead
+    }
+    const voice = createVoiceController(host)
+    voice.applySettings()
+
+    voice.press('dictation')
+    await vi.advanceTimersByTimeAsync(0)
+    expect(host.indicators).toBe(0)
+
+    release()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(host.indicators).toBe(1)
+    voice.cancel()
+  })
+
+  it('does not reveal dictation bars after the hold has ended', async () => {
+    let release = (): void => undefined
+    const targetRead = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const host = makeHost()
+    host.beginDictation = async () => {
+      host.dictationsBegun += 1
+      await targetRead
+    }
+    const voice = createVoiceController(host)
+    voice.applySettings()
+
+    voice.press('dictation')
+    state.now += 100
+    voice.release()
+    release()
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect(host.indicators).toBe(0)
+  })
+
+  it('frees the voice surface when a command press supersedes a dictation', async () => {
+    const host = makeHost()
+    host.openResult = false
+    host.open = async () => {
+      host.opened += 1
+      host.openResult = true
+    }
+    const voice = createVoiceController(host)
+    voice.applySettings()
+    voice.press('dictation')
+    state.now += 500
+    voice.release()
+    expect(voice.phase()).toBe('transcribing')
+
+    voice.press()
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect(host.dictationsEnded).toBe(1)
+    expect(host.opened).toBe(1)
+    voice.cancel()
+  })
+
+  it('opens the card for the main hold and never prepares a dictation', () => {
+    const host = makeHost()
+    host.openResult = false
+    const voice = createVoiceController(host)
+    voice.applySettings()
+
+    voice.press()
+    voice.cancel()
+
+    expect(host.opened).toBe(1)
+    expect(host.dictationsBegun).toBe(0)
+  })
+
   it('ignores a second press while already listening', () => {
     const host = makeHost()
     const voice = createVoiceController(host)
@@ -263,6 +435,42 @@ describe('createVoiceController: press and release', () => {
 
     expect(voice.phase()).toBe('transcribing')
     expect(host.emitted).toContainEqual({ channel: 'voice:stop', payload: { transcribe: true } })
+  })
+
+  it('ignores a release from the hold that did not start the turn', () => {
+    const host = makeHost()
+    const voice = createVoiceController(host)
+    voice.applySettings()
+    const primary = state.listeners[0].options.onEvent as (event: string) => void
+    const dictation = state.listeners[1].options.onEvent as (event: string) => void
+
+    primary('press')
+    state.now += 500
+
+    // Both holds can be down at once; the dictation chord coming up says
+    // nothing about the primary one that is recording.
+    dictation('release')
+    expect(voice.phase()).toBe('listening')
+
+    primary('release')
+    expect(voice.phase()).toBe('transcribing')
+  })
+
+  it('ignores a cancel from the hold that did not start the turn', () => {
+    const host = makeHost()
+    const voice = createVoiceController(host)
+    voice.applySettings()
+    const primary = state.listeners[0].options.onEvent as (event: string) => void
+    const dictation = state.listeners[1].options.onEvent as (event: string) => void
+
+    primary('press')
+    dictation('cancel')
+
+    expect(voice.phase()).toBe('listening')
+    expect(host.emitted).not.toContainEqual({
+      channel: 'voice:stop',
+      payload: { transcribe: false }
+    })
   })
 
   it('reads minDurationMs at release time, not at press time', () => {
@@ -337,7 +545,37 @@ describe('createVoiceController: recognition', () => {
 
     expect(state.pasted).toEqual([{ text: 'привет', target }])
     expect(host.delivered).toEqual([])
-    expect(host.hidden).toBeGreaterThan(0)
+    expect(host.dictationsEnded).toBeGreaterThan(0)
+    // The primary hotkey opened the card; dictation must close it, not hide it.
+    expect(host.dictationCloseCards).toEqual([true])
+  })
+
+  it('dictates from its own hotkey even when the main action is command', async () => {
+    const target: ActiveAppInfo = {
+      bundleId: 'com.apple.TextEdit',
+      name: 'TextEdit',
+      pid: 9,
+      windowTitle: null,
+      windowId: null,
+      bounds: null
+    }
+    const host = makeHost()
+    const voice = createVoiceController(host)
+    voice.applySettings()
+    voice.press('dictation')
+    host.targetValue = target
+    state.now += 500
+    voice.release()
+
+    await voice.handleRecording({ wavBase64: 'AAAA', durationMs: 800 })
+
+    expect(state.pasted).toEqual([{ text: 'привет', target }])
+    expect(host.delivered).toEqual([])
+    expect(host.opened).toBe(0)
+    expect(host.dictationsBegun).toBe(1)
+    expect(host.dictationsEnded).toBeGreaterThan(0)
+    // The dedicated hold never opened a card, so it only hides the bars.
+    expect(host.dictationCloseCards).toEqual([false])
   })
 
   it('refuses a recording that arrives outside `transcribing`', async () => {
@@ -462,11 +700,64 @@ describe('createVoiceController: cancel and failures', () => {
     expect(voice.phase()).toBe('idle')
   })
 
+  it('does not finish the same turn twice when it is cancelled during recognition', async () => {
+    let finishRecognition = (): void => undefined
+    const gate = new Promise<void>((resolve) => {
+      finishRecognition = resolve
+    })
+    state.transcribed = async () => {
+      await gate
+      return { ok: true, text: 'старая фраза', ms: 1 }
+    }
+    state.settings = settings({ action: 'dictate' })
+    const host = makeHost()
+    const voice = createVoiceController(host)
+    voice.applySettings()
+    voice.press()
+    state.now += 500
+    voice.release()
+
+    const pending = voice.handleRecording({ wavBase64: 'AAAA', durationMs: 800 })
+    await vi.advanceTimersByTimeAsync(0)
+    voice.cancel()
+    const afterCancel = host.emitted.length
+    expect(host.dictationsEnded).toBe(1)
+
+    finishRecognition()
+    await pending
+
+    // The answer belongs to a turn that no longer exists: applying it ended the
+    // idle card a second time and closed the dictation twice.
+    expect(host.emitted).toHaveLength(afterCancel)
+    expect(host.dictationsEnded).toBe(1)
+    expect(host.delivered).toEqual([])
+  })
+
+  it('leaves the last error on the card when a cancel arrives with nothing in flight', async () => {
+    state.transcribed = async () => ({ ok: false, text: '', ms: 3, message: 'Речь не распознана.' })
+    const host = makeHost()
+    const voice = createVoiceController(host)
+    voice.applySettings()
+    voice.press()
+    state.now += 500
+    voice.release()
+    await voice.handleRecording({ wavBase64: 'AAAA', durationMs: 800 })
+    const afterTurn = host.emitted.length
+
+    voice.cancel()
+
+    // A stray cancel must not answer for a turn that is already over: it would
+    // push an idle event that clears the error and code the turn left behind.
+    expect(host.emitted).toHaveLength(afterTurn)
+    expect(lastEvent(host).error).toBe('Речь не распознана.')
+  })
+
   it('reports the listener error on cancel', () => {
     const host = makeHost()
     state.startError = 'Комбинация «x» не подходит для удержания.'
     const voice = createVoiceController(host)
     voice.applySettings()
+    voice.press()
 
     voice.cancel()
 
@@ -489,7 +780,7 @@ describe('createVoiceController: cancel and failures', () => {
     const host = makeHost()
     const voice = createVoiceController(host)
     voice.applySettings()
-    const emit = state.listenerOptions?.onEvent as (event: string) => void
+    const emit = state.listeners[0].options.onEvent as (event: string) => void
 
     emit('ready')
     emit('reenabled')
@@ -502,7 +793,7 @@ describe('createVoiceController: cancel and failures', () => {
     const voice = createVoiceController(host)
     voice.applySettings()
 
-    ;(state.listenerOptions?.onError as (message: string) => void)('нет прав')
+    ;(state.listeners[0].options.onError as (message: string) => void)('нет прав')
 
     expect((await voice.status()).listenerError).toBe('нет прав')
   })
@@ -527,6 +818,8 @@ describe('createVoiceController: the level meter', () => {
     voice.setLevel(0.4)
     vi.advanceTimersByTime(100)
     expect(lastEvent(host).level).toBe(0.4)
+    // The field strip gets the same clamped values, without waiting for the tick.
+    expect(host.fieldLevels).toEqual([1, 0, 0.4])
   })
 
   it('ignores a level tick outside `listening`', () => {
@@ -550,6 +843,161 @@ describe('createVoiceController: the level meter', () => {
 
     expect(host.emitted.length).toBeGreaterThan(before + 1)
     expect(phases(host).every((phase) => phase === 'listening')).toBe(true)
+  })
+})
+
+describe('createVoiceController: recognizer warm-up', () => {
+  it('loads the recognizer after the launch has settled, once per model', async () => {
+    const voice = createVoiceController(makeHost())
+    voice.applySettings()
+
+    expect(state.warmed).toBe(0)
+    await vi.advanceTimersByTimeAsync(3_000)
+    expect(state.warmed).toBe(1)
+
+    voice.applySettings()
+    await vi.advanceTimersByTimeAsync(3_000)
+    expect(state.warmed).toBe(1)
+  })
+
+  it('cancels the warm-up when the key goes down', async () => {
+    const voice = createVoiceController(makeHost())
+    voice.applySettings()
+
+    voice.press()
+    await vi.advanceTimersByTimeAsync(3_000)
+
+    expect(state.warmed).toBe(0)
+    expect(state.warmCancels).toBeGreaterThan(0)
+  })
+
+  it('warms the model that replaced the previous one', async () => {
+    const voice = createVoiceController(makeHost())
+    voice.applySettings()
+    await vi.advanceTimersByTimeAsync(3_000)
+
+    state.settings = settings({ model: 'base' })
+    voice.applySettings()
+    await vi.advanceTimersByTimeAsync(3_000)
+
+    expect(state.warmed).toBe(2)
+  })
+
+  it('tries again after a tap too short to recognise', async () => {
+    const voice = createVoiceController(makeHost())
+    voice.applySettings()
+    voice.press()
+    state.now += 100
+    voice.release()
+
+    await vi.advanceTimersByTimeAsync(1_500)
+
+    expect(state.warmed).toBe(1)
+  })
+
+  it('does not warm anything while voice is disabled', async () => {
+    state.settings = settings({ enabled: false })
+    const voice = createVoiceController(makeHost())
+    voice.applySettings()
+
+    await vi.advanceTimersByTimeAsync(3_000)
+
+    expect(state.warmed).toBe(0)
+  })
+
+  it('counts a real recognition as having loaded the model', async () => {
+    const host = makeHost()
+    const voice = createVoiceController(host)
+    voice.applySettings()
+    voice.press()
+    state.now += 500
+    voice.release()
+
+    await voice.handleRecording({ wavBase64: 'AAAA', durationMs: 800 })
+    await vi.advanceTimersByTimeAsync(3_000)
+
+    expect(state.warmed).toBe(0)
+  })
+
+  it('does not mark the model warm when the recognizer never spawned', async () => {
+    state.transcribed = () =>
+      Promise.resolve({
+        ok: false,
+        text: '',
+        ms: 0,
+        message: 'нет модели',
+        spawned: false
+      })
+    const voice = createVoiceController(makeHost())
+    voice.applySettings()
+    voice.press()
+    state.now += 500
+    voice.release()
+
+    await voice.handleRecording({ wavBase64: 'AAAA', durationMs: 800 })
+    await vi.advanceTimersByTimeAsync(3_000)
+
+    expect(state.warmed).toBe(1)
+  })
+
+  it('tries again after a warm-up that was cancelled mid-load', async () => {
+    const voice = createVoiceController(makeHost())
+    voice.applySettings()
+    let finishWarm: (loaded: boolean) => void = () => undefined
+    state.warmGate = new Promise<boolean>((resolve) => {
+      finishWarm = resolve
+    })
+    await vi.advanceTimersByTimeAsync(3_000)
+    expect(state.warmed).toBe(1)
+
+    // The key goes down while the model is still loading: the warm-up is
+    // cancelled, and the interrupted load must not count as warm.
+    voice.press()
+    finishWarm(false)
+    await vi.advanceTimersByTimeAsync(0)
+
+    // A tap too short to recognise ends the turn and schedules the next warm-up.
+    state.now += 100
+    voice.release()
+    await vi.advanceTimersByTimeAsync(1_500)
+
+    expect(state.warmed).toBe(2)
+  })
+
+  it('marks the model warm only when the warm-up reports a real load', async () => {
+    const voice = createVoiceController(makeHost())
+    state.warmGate = Promise.resolve(false)
+    voice.applySettings()
+    await vi.advanceTimersByTimeAsync(3_000)
+    expect(state.warmed).toBe(1)
+
+    // Nothing was loaded, so the next idle moment has to try again.
+    voice.press()
+    state.now += 100
+    voice.release()
+    await vi.advanceTimersByTimeAsync(1_500)
+
+    expect(state.warmed).toBe(2)
+  })
+
+  it('does not start a warm-up when the tap did not start', async () => {
+    state.startError = 'Комбинация «space» не подходит для удержания.'
+    const voice = createVoiceController(makeHost())
+    voice.applySettings()
+
+    await vi.advanceTimersByTimeAsync(3_000)
+
+    expect(state.warmed).toBe(0)
+  })
+
+  it('does not warm a model that is not installed', async () => {
+    state.ready = false
+    const voice = createVoiceController(makeHost())
+    voice.applySettings()
+
+    await vi.advanceTimersByTimeAsync(3_000)
+
+    expect(state.warmed).toBe(0)
   })
 })
 
@@ -625,6 +1073,27 @@ describe('createVoiceController: the watchdogs', () => {
     expect(lastEvent(host).error).toBe('Распознавание не ответило — попробуй ещё раз.')
   })
 
+  it('scales the recognition budget with the length of the recording', async () => {
+    state.transcribed = () => new Promise(() => undefined)
+    const host = makeHost()
+    const voice = createVoiceController(host)
+    voice.applySettings()
+    voice.press()
+    state.now += 500
+    voice.release()
+
+    // Four minutes of audio: the flat 30 s ceiling aborted this turn in the
+    // middle of recognition and discarded the recording.
+    void voice.handleRecording({ wavBase64: 'AAAA', durationMs: 240_000 })
+    await vi.advanceTimersByTimeAsync(30_000)
+    expect(voice.phase()).toBe('transcribing')
+
+    await vi.advanceTimersByTimeAsync(450_000)
+
+    expect(voice.phase()).toBe('idle')
+    expect(lastEvent(host).error).toBe('Распознавание не ответило — попробуй ещё раз.')
+  })
+
   it('drops the watchdog of a superseded turn', () => {
     const host = makeHost()
     const voice = createVoiceController(host)
@@ -648,18 +1117,32 @@ describe('createVoiceController: settings and lifecycle', () => {
 
     voice.applySettings()
 
-    expect(state.listenerOptions).toBeNull()
+    expect(state.listeners).toHaveLength(0)
     expect(host.prewarmed).toBe(0)
   })
 
-  it('stops the listener when voice is switched off', () => {
+  it('stops both listeners when voice is switched off', () => {
     state.settings = settings({ enabled: false })
     const host = makeHost()
     const voice = createVoiceController(host)
 
     voice.applySettings()
 
-    expect(state.stopped).toBe(1)
+    expect(state.stopped).toBe(2)
+  })
+
+  it('ends an active dictation when voice is switched off mid-hold', async () => {
+    const host = makeHost()
+    const voice = createVoiceController(host)
+    voice.applySettings()
+    voice.press('dictation')
+
+    state.settings = settings({ enabled: false })
+    voice.applySettings()
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect(host.dictationsEnded).toBeGreaterThan(0)
+    expect(voice.phase()).toBe('idle')
   })
 
   it('prewarms the card once the tap is up', () => {
@@ -681,15 +1164,47 @@ describe('createVoiceController: settings and lifecycle', () => {
     expect(host.prewarmed).toBe(0)
   })
 
-  it('reuses one listener across repeated calls', () => {
+  it('reuses the two listeners across repeated calls', () => {
     const host = makeHost()
     const voice = createVoiceController(host)
 
     voice.applySettings()
-    const first = state.listenerOptions
+    const first = state.listeners.map((entry) => entry.options)
     voice.applySettings()
 
-    expect(state.listenerOptions).toBe(first)
+    expect(state.listeners.map((entry) => entry.options)).toEqual(first)
+    expect(state.listeners).toHaveLength(2)
+  })
+
+  it('binds the main and dictation hotkeys to separate listeners', () => {
+    const host = makeHost()
+    const voice = createVoiceController(host)
+
+    voice.applySettings()
+
+    expect(state.listeners.map((entry) => entry.accelerator)).toEqual(['Alt+Shift+Space', 'Fn+Control'])
+  })
+
+  it('leaves the dictation listener stopped when both hotkeys are the same', () => {
+    state.settings = settings({ hotkey: 'Control+Alt', dictationHotkey: 'Control+Alt' })
+    const host = makeHost()
+    const voice = createVoiceController(host)
+
+    voice.applySettings()
+
+    expect(state.listeners[1].accelerator).toBeNull()
+    expect(state.listeners[1].stopped).toBe(true)
+  })
+
+  it('treats different spellings of the same chord as shared', () => {
+    state.settings = settings({ hotkey: 'Control+Alt', dictationHotkey: 'Alt+Control' })
+    const host = makeHost()
+    const voice = createVoiceController(host)
+
+    voice.applySettings()
+
+    expect(state.listeners[1].accelerator).toBeNull()
+    expect(state.listeners[1].stopped).toBe(true)
   })
 
   it('reports the mode the overlay needs', () => {
@@ -723,7 +1238,7 @@ describe('createVoiceController: settings and lifecycle', () => {
 
     expect(voice.phase()).toBe('idle')
     expect(voice.isBusy()).toBe(false)
-    expect(state.stopped).toBe(1)
+    expect(state.stopped).toBe(2)
   })
 
   it('stop() clears the timers, so nothing fires afterwards', () => {
@@ -745,9 +1260,16 @@ describe('voice indicator presentation', () => {
   it('chooses a fresh session before revealing the old window', () => {
     const host = makeHost()
     const calls: string[] = []
-    host.isOpen = () => { calls.push('isOpen'); return false }
-    host.open = async () => { calls.push('open') }
-    host.showIndicator = () => { calls.push('indicator') }
+    host.isOpen = () => {
+      calls.push('isOpen')
+      return false
+    }
+    host.open = async () => {
+      calls.push('open')
+    }
+    host.showIndicator = () => {
+      calls.push('indicator')
+    }
     const voice = createVoiceController(host)
     voice.press()
     expect(calls).toEqual(['isOpen', 'open', 'indicator'])

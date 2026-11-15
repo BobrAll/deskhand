@@ -16,6 +16,7 @@ import type {
   ContextFlags,
   ContextSnapshot,
   DownloadProgress,
+  FieldHighlightEvent,
   OverlayState,
   DrawingPayload,
   ProviderId,
@@ -56,12 +57,11 @@ const api: DeskhandApi = {
     send: (request: SendRequest) => ipcRenderer.send(CH.overlay.send, request),
     cancel: (requestId: string) => ipcRenderer.send(CH.overlay.cancel, requestId),
     copy: (text: string) => ipcRenderer.invoke(CH.overlay.copy, text),
-    paste: (text: string) => ipcRenderer.invoke(CH.overlay.paste, text),
     clearDrawing: () => ipcRenderer.send(CH.overlay.clearDrawing),
     setTyping: (typing: boolean) => ipcRenderer.send(CH.overlay.typing, typing),
     close: () => ipcRenderer.send(CH.overlay.close),
-    resize: (height: number, width?: number, pin?: boolean) =>
-      ipcRenderer.send(CH.overlay.resize, height, width, pin)
+    resize: (height: number, width?: number, pin?: boolean, typing?: boolean) =>
+      ipcRenderer.send(CH.overlay.resize, height, width, pin, typing)
   },
   drawing: {
     onDraw: (handler) => subscribe<DrawingPayload>(CH.drawing.draw, handler)
@@ -69,11 +69,9 @@ const api: DeskhandApi = {
   agent: {
     onEvent: (handler) => subscribe<AgentEvent>(CH.agent.event, handler),
     availability: () => ipcRenderer.invoke(CH.agent.availability) as Promise<AgentAvailability>,
-    setEnabled: (enabled: boolean) =>
-      ipcRenderer.invoke(CH.agent.setEnabled, enabled) as Promise<AgentAvailability>,
+    setEnabled: (enabled: boolean) => ipcRenderer.invoke(CH.agent.setEnabled, enabled) as Promise<AgentAvailability>,
     stop: () => ipcRenderer.invoke(CH.agent.stop),
-    answer: (id: string, allow: boolean, remember: boolean) =>
-      ipcRenderer.invoke(CH.agent.answer, id, allow, remember),
+    answer: (id: string, allow: boolean, remember: boolean) => ipcRenderer.invoke(CH.agent.answer, id, allow, remember),
     clearApprovals: () => ipcRenderer.invoke(CH.agent.clearApprovals)
   },
   agentCursor: {
@@ -85,8 +83,7 @@ const api: DeskhandApi = {
   settings: {
     load: () => ipcRenderer.invoke(CH.settings.load),
     save: (settings: AppSettings) => ipcRenderer.invoke(CH.settings.save, settings),
-    setKey: (provider: ProviderId, key: string) =>
-      ipcRenderer.invoke(CH.settings.setKey, provider, key),
+    setKey: (provider: ProviderId, key: string) => ipcRenderer.invoke(CH.settings.setKey, provider, key),
     deleteKey: (provider: ProviderId) => ipcRenderer.invoke(CH.settings.deleteKey, provider),
     testKey: (provider: ProviderId, key: string, baseUrl?: string) =>
       ipcRenderer.invoke(CH.settings.testKey, provider, key, baseUrl),
@@ -111,11 +108,11 @@ const api: DeskhandApi = {
   },
   voice: {
     onEvent: (handler) => subscribe<VoiceEvent>(CH.voice.event, handler),
+    onFieldHighlight: (handler) => subscribe<FieldHighlightEvent>(CH.voice.fieldHighlight, handler),
     onRecord: (handler) => subscribe<{ maxDurationMs: number }>(CH.voice.record, handler),
     onStop: (handler) => subscribe<{ transcribe: boolean }>(CH.voice.stop, handler),
     attach: () => ipcRenderer.invoke(CH.voice.attach),
-    recorded: (wavBase64: string, durationMs: number) =>
-      ipcRenderer.invoke(CH.voice.recorded, wavBase64, durationMs),
+    recorded: (wavBase64: string, durationMs: number) => ipcRenderer.invoke(CH.voice.recorded, wavBase64, durationMs),
     onTranscript: (handler) => subscribe<{ text: string; send: boolean }>(CH.voice.transcript, handler),
     failed: (message: string) => ipcRenderer.send(CH.voice.failed, message),
     level: (level: number) => ipcRenderer.send(CH.voice.level, level),
@@ -129,14 +126,16 @@ const api: DeskhandApi = {
   tts: {
     speak: (text: string, localOnly?: boolean) =>
       ipcRenderer.invoke(CH.tts.speak, text, localOnly === true) as Promise<TtsResult>,
+    prefetch: (text: string) => ipcRenderer.send(CH.tts.prefetch, text),
     status: () => ipcRenderer.invoke(CH.tts.status) as Promise<TtsStatus>,
     setKey: (key: string) => ipcRenderer.invoke(CH.tts.setKey, key) as Promise<TtsStatus>,
     deleteKey: () => ipcRenderer.invoke(CH.tts.deleteKey) as Promise<TtsStatus>,
     preview: () => ipcRenderer.invoke(CH.tts.preview) as Promise<TtsResult>,
-    installSilero: () => ipcRenderer.invoke(CH.tts.installSilero) as Promise<{
-      status: TtsStatus
-      error: string | null
-    }>,
+    installSilero: () =>
+      ipcRenderer.invoke(CH.tts.installSilero) as Promise<{
+        status: TtsStatus
+        error: string | null
+      }>,
     removeSilero: () => ipcRenderer.invoke(CH.tts.removeSilero) as Promise<TtsStatus>,
     onSetupProgress: (handler) => subscribe<TtsSetupProgress>(CH.tts.setupProgress, handler)
   }

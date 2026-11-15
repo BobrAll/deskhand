@@ -83,12 +83,7 @@ describe('buildTurnRequest: the message list', () => {
       })
     )
 
-    expect(turn.messages.map((message) => message.role)).toEqual([
-      'system',
-      'user',
-      'assistant',
-      'user'
-    ])
+    expect(turn.messages.map((message) => message.role)).toEqual(['system', 'user', 'assistant', 'user'])
     expect(turn.messages[1]?.parts[0]).toEqual({ type: 'text', text: 'А это?' })
     expect(turn.messages[2]?.parts[0]).toEqual({ type: 'text', text: 'Кнопка.' })
   })
@@ -124,9 +119,7 @@ describe('buildTurnRequest: the message list', () => {
       hasHistory: false,
       outline: null
     })
-    const turn = await buildTurnRequest(
-      input({ availability: { ready: false, reason: null } })
-    )
+    const turn = await buildTurnRequest(input({ availability: { ready: false, reason: null } }))
 
     expect(turn.messages.at(-1)?.parts.at(-1)).toEqual({
       type: 'text',
@@ -136,14 +129,9 @@ describe('buildTurnRequest: the message list', () => {
 
   it('puts the image before the text, and only when there is one', async () => {
     const withImage = await buildTurnRequest(input())
-    const withoutImage = await buildTurnRequest(
-      input({ request: request({ includeScreenshot: false }) })
-    )
+    const withoutImage = await buildTurnRequest(input({ request: request({ includeScreenshot: false }) }))
 
-    expect(withImage.messages.at(-1)?.parts.map((part) => part.type)).toEqual([
-      'image',
-      'text'
-    ])
+    expect(withImage.messages.at(-1)?.parts.map((part) => part.type)).toEqual(['image', 'text'])
     expect(withoutImage.messages.at(-1)?.parts.map((part) => part.type)).toEqual(['text'])
   })
 })
@@ -210,9 +198,7 @@ describe('buildTurnRequest: refine', () => {
 
 describe('buildTurnRequest: tools are a capability', () => {
   it('offers neither tool without an image', async () => {
-    const turn = await buildTurnRequest(
-      input({ request: request({ includeScreenshot: false }) })
-    )
+    const turn = await buildTurnRequest(input({ request: request({ includeScreenshot: false }) }))
 
     expect(turn.canDraw).toBe(false)
     // The rectangle is still reported: it is the frame of the snapshot, and the
@@ -228,18 +214,14 @@ describe('buildTurnRequest: tools are a capability', () => {
   })
 
   it('draws but names the reason when acting is unavailable', async () => {
-    const turn = await buildTurnRequest(
-      input({ availability: { ready: false, reason: 'нет доступа' } })
-    )
+    const turn = await buildTurnRequest(input({ availability: { ready: false, reason: 'нет доступа' } }))
 
     expect(turn.canDraw).toBe(true)
     expect(turn.area).toEqual(AREA)
   })
 
   it('mentions the reason only when there is an image to draw on', async () => {
-    const withImage = await buildTurnRequest(
-      input({ availability: { ready: false, reason: 'нет доступа' } })
-    )
+    const withImage = await buildTurnRequest(input({ availability: { ready: false, reason: 'нет доступа' } }))
     const noImage = await buildTurnRequest(
       input({
         request: request({ includeScreenshot: false }),
@@ -249,8 +231,7 @@ describe('buildTurnRequest: tools are a capability', () => {
 
     // The note lives in the system message: it qualifies the tool, it is not part
     // of the question.
-    const instructionOf = (turn: typeof withImage): string =>
-      (turn.messages[0]?.parts[0] as { text: string }).text
+    const instructionOf = (turn: typeof withImage): string => (turn.messages[0]?.parts[0] as { text: string }).text
 
     expect(instructionOf(withImage)).toContain('нет доступа')
     expect(instructionOf(noImage)).not.toContain('нет доступа')
@@ -272,9 +253,7 @@ describe('buildTurnRequest: the two awaits', () => {
   it('asks for a fresh screenshot only when an image is going out', async () => {
     const ensure = vi.fn(async () => null)
     await buildTurnRequest(input({ ensureFreshScreenshot: ensure }))
-    await buildTurnRequest(
-      input({ ensureFreshScreenshot: ensure, request: request({ includeScreenshot: false }) })
-    )
+    await buildTurnRequest(input({ ensureFreshScreenshot: ensure, request: request({ includeScreenshot: false }) }))
     await buildTurnRequest(input({ ensureFreshScreenshot: ensure, omitImage: true }))
 
     expect(ensure).toHaveBeenCalledTimes(1)

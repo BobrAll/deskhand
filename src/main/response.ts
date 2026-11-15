@@ -19,7 +19,33 @@
  */
 
 import type { Annotation } from '@shared/types'
-import { parseAnnotationLine } from './annotations'
+import { couldStartMarker, parseAnnotationLine } from './annotations'
+
+/** The lookup marker is a stream directive, not a drawing; it is decided here. */
+const WEB_MARKER = '@web'
+
+/**
+ * A line that opens with the lookup marker, whatever follows it.
+ *
+ * The prompt asks for the bare marker, and most answers give it, but a model
+ * that restates the request after it — `@web Найди игру…` — is still asking for
+ * a lookup. Reading only the exact line meant that asking for a game by
+ * description showed the user the raw `@web` plus their own words and never ran
+ * the search. What follows the marker is redundant: the search is built from the
+ * user's prompt, so the rest of the line is dropped with the marker.
+ */
+const WEB_LINE = /^@web(?![\p{L}\p{N}_])/iu
+
+/**
+ * Whether a line the model is still writing can turn into the marker.
+ *
+ * Two shapes: `@w`/`@we`, which are not markers yet but are on their way, and
+ * `@web …`, which is decided and only waits for its newline so the raw directive
+ * never reaches the card.
+ */
+function couldBecomeWebMarker(text: string): boolean {
+  return WEB_LINE.test(text) || WEB_MARKER.startsWith(text.toLowerCase())
+}
 
 export interface ParsedChunk {
   /** Answer text with every marker removed. */
@@ -29,6 +55,8 @@ export interface ParsedChunk {
 
 export class ResponseStream {
   private pending = ''
+  /** Whether the line being accumulated has produced no answer text yet. */
+  private atLineStart = true
   webLookup = false
 
   /** Feeds one delta; returns everything that can be acted on right now. */
@@ -40,16 +68,19 @@ export class ResponseStream {
     while (newline !== -1) {
       const line = this.pending.slice(0, newline)
       this.pending = this.pending.slice(newline + 1)
-      this.consume(line, result)
+      this.completeLine(line, result)
       newline = this.pending.indexOf('\n')
     }
 
+    if (this.pending === '') return result
+
     // A tail that still looks like the start of a marker waits for its newline;
     // flushing it would print "@po" into the answer and then lose the annotation.
-    if (this.pending.trimStart().startsWith('@')) return result
+    if (this.atLineStart && this.couldBecomeMarker()) return result
 
     result.text += this.pending
     this.pending = ''
+    this.atLineStart = false
     return result
   }
 
@@ -59,20 +90,44 @@ export class ResponseStream {
     this.pending = ''
     const result: ParsedChunk = { text: '', annotations: [] }
     if (!tail) return result
-    this.consume(tail, result)
+    // `push()` only holds a tail at a line start, so it is either a marker or
+    // prose returned exactly as it arrived — without a newline it never had.
+    if (!this.applyMarker(tail, result)) result.text = tail
     return result
   }
 
-  private consume(line: string, result: ParsedChunk): void {
-    if (line.trim() === '@web') {
+  /** Whether the held tail could still turn into a marker line. */
+  private couldBecomeMarker(): boolean {
+    const trimmed = this.pending.trimStart()
+    // Whitespace alone is held so that an indented marker — the prompt's own
+    // example is written with two leading spaces — is dropped whole instead of
+    // leaking its indent into the answer.
+    if (trimmed === '') return true
+    return couldStartMarker(trimmed) || couldBecomeWebMarker(trimmed)
+  }
+
+  /**
+   * Handles one complete line: as a marker when it opens the line, otherwise as
+   * answer text. Once the line has produced text, an `@point` later in it is
+   * prose — which is why the answer cannot depend on where the network cut the
+   * chunk.
+   */
+  private completeLine(line: string, result: ParsedChunk): void {
+    if (!this.atLineStart || !this.applyMarker(line, result)) result.text += `${line}\n`
+    this.atLineStart = true
+  }
+
+  /** Applies a protocol line. Returns false when the line is ordinary prose. */
+  private applyMarker(line: string, result: ParsedChunk): boolean {
+    if (WEB_LINE.test(line.trim())) {
       this.webLookup = true
-      return
+      return true
     }
     const annotation = parseAnnotationLine(line)
     if (annotation) {
       result.annotations.push(...annotation.annotations)
-      return
+      return true
     }
-    result.text += `${line}\n`
+    return false
   }
 }

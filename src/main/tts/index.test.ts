@@ -16,6 +16,7 @@ import type { TtsResult } from '@shared/tts'
 const fake = vi.hoisted(() => ({
   settings: {} as AppSettings,
   key: null as string | null,
+  keyUnreadable: false,
   cache: new Map<string, Buffer>(),
   calls: [] as Array<Record<string, unknown>>
 }))
@@ -25,6 +26,22 @@ const silero = vi.hoisted(() => ({
   models: false,
   calls: [] as Array<[string, string]>,
   result: { ok: true, audio: '', cached: false, mime: 'audio/wav' } as TtsResult
+}))
+
+const pronounce = vi.hoisted(() => ({
+  hints: {} as Record<string, string>,
+  calls: [] as string[],
+  prefetch: [] as string[]
+}))
+
+vi.mock('./pronounce', () => ({
+  resolvePronunciations: async (text: string) => {
+    pronounce.calls.push(text)
+    return pronounce.hints
+  },
+  prefetchHints: async (text: string) => {
+    pronounce.prefetch.push(text)
+  }
 }))
 
 vi.mock('./silero', () => ({
@@ -47,7 +64,9 @@ vi.mock('node:fs/promises', async (importOriginal) => {
   return {
     ...actual,
     mkdir: async () => undefined,
-    writeFile: async (path: string, data: Buffer) => { fake.cache.set(path, data) },
+    writeFile: async (path: string, data: Buffer) => {
+      fake.cache.set(path, data)
+    },
     readFile: async (path: string) => {
       const hit = fake.cache.get(path)
       if (!hit) throw new Error('ENOENT')
@@ -55,12 +74,19 @@ vi.mock('node:fs/promises', async (importOriginal) => {
     },
     readdir: async () => [...fake.cache.keys()].map((path) => path.split('/').pop() as string),
     stat: async () => ({ mtimeMs: 0 }),
-    unlink: async (path: string) => { fake.cache.delete(path) }
+    unlink: async (path: string) => {
+      fake.cache.delete(path)
+    }
   }
 })
 
 vi.mock('../settings/store', () => ({ getSettings: () => fake.settings }))
-vi.mock('../settings/secrets', () => ({ getTtsKey: () => fake.key }))
+vi.mock('../settings/secrets', () => ({
+  getTtsKey: () => {
+    if (fake.keyUnreadable) throw new Error('the secrets store is unreadable')
+    return fake.key
+  }
+}))
 
 async function load() {
   return import('./index')
@@ -75,7 +101,8 @@ const CONFIGURED: AppSettings = {
     model: 'tts-model',
     voice: 'Kore',
     style: 'дружный',
-    sileroVoice: 'xenia'
+    sileroVoice: 'xenia',
+    pronunciationLookup: true
   }
 }
 
@@ -91,19 +118,26 @@ const SILERO: AppSettings = {
 beforeEach(() => {
   fake.settings = CONFIGURED
   fake.key = 'sk-test'
+  fake.keyUnreadable = false
   fake.cache.clear()
   fake.calls = []
   silero.runtime = false
   silero.models = false
   silero.calls = []
   silero.result = { ok: true, audio: '', cached: false, mime: 'audio/wav' }
-  vi.stubGlobal('fetch', vi.fn(async (url: string, init: RequestInit) => {
-    fake.calls.push({ url, body: JSON.parse(String(init.body)) })
-    return new Response(new Uint8Array([1, 2, 3]), {
-      status: 200,
-      headers: { 'Content-Type': 'audio/mpeg' }
+  pronounce.hints = {}
+  pronounce.calls = []
+  pronounce.prefetch = []
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (url: string, init: RequestInit) => {
+      fake.calls.push({ url, body: JSON.parse(String(init.body)) })
+      return new Response(new Uint8Array([1, 2, 3]), {
+        status: 200,
+        headers: { 'Content-Type': 'audio/mpeg' }
+      })
     })
-  }))
+  )
 })
 
 afterEach(() => {
@@ -115,19 +149,15 @@ describe('live synthesis', () => {
   it('is off until every part of the configuration is present', async () => {
     const { ttsBlockReason } = await load()
     expect(ttsBlockReason(CONFIGURED)).toBeNull()
-    expect(ttsBlockReason({ ...CONFIGURED, tts: { ...CONFIGURED.tts, enabled: false } }))
-      .toContain('выключен')
-    expect(ttsBlockReason({ ...CONFIGURED, tts: { ...CONFIGURED.tts, baseUrl: '' } }))
-      .toContain('адрес')
-    expect(ttsBlockReason({ ...CONFIGURED, tts: { ...CONFIGURED.tts, model: '' } }))
-      .toContain('модель')
-    expect(ttsBlockReason({ ...CONFIGURED, tts: { ...CONFIGURED.tts, voice: '' } }))
-      .toContain('голос')
+    expect(ttsBlockReason({ ...CONFIGURED, tts: { ...CONFIGURED.tts, enabled: false } })).toContain('выключен')
+    expect(ttsBlockReason({ ...CONFIGURED, tts: { ...CONFIGURED.tts, baseUrl: '' } })).toContain('адрес')
+    expect(ttsBlockReason({ ...CONFIGURED, tts: { ...CONFIGURED.tts, model: '' } })).toContain('модель')
+    expect(ttsBlockReason({ ...CONFIGURED, tts: { ...CONFIGURED.tts, voice: '' } })).toContain('голос')
     fake.key = null
     expect(ttsBlockReason(CONFIGURED)).toContain('ключ')
   })
 
-  it('sends the user\'s endpoint, model, voice and style, and nothing else', async () => {
+  it("sends the user's endpoint, model, voice and style, and nothing else", async () => {
     const { synthesize } = await load()
     const result = await synthesize('Готово.')
     expect(result.ok).toBe(true)
@@ -156,7 +186,10 @@ describe('live synthesis', () => {
   })
 
   it('degrades instead of throwing when the service refuses', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => new Response('nope', { status: 400 })))
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('nope', { status: 400 }))
+    )
     const { synthesize } = await load()
     const result = await synthesize('Готово.')
     expect(result.ok).toBe(false)
@@ -166,6 +199,20 @@ describe('live synthesis', () => {
   it('does not call the service at all when it is not configured', async () => {
     fake.key = null
     const { synthesize } = await load()
+    const result = await synthesize('Готово.')
+    expect(result.ok).toBe(false)
+    expect(fake.calls).toHaveLength(0)
+  })
+
+  it('treats an unreadable key as a missing one instead of throwing', async () => {
+    fake.keyUnreadable = true
+    const { synthesize, ttsBlockReason, ttsStatus } = await load()
+
+    expect(ttsBlockReason(CONFIGURED)).toContain('ключ')
+    const status = ttsStatus()
+    expect(status.keyConfigured).toBe(false)
+    expect(status.configured).toBe(false)
+
     const result = await synthesize('Готово.')
     expect(result.ok).toBe(false)
     expect(fake.calls).toHaveLength(0)
@@ -208,6 +255,20 @@ describe('the Silero engine', () => {
     expect(silero.calls).toHaveLength(1)
   })
 
+  it('does not reuse a clip spoken before a pronunciation hint arrived', async () => {
+    silero.runtime = true
+    silero.models = true
+    fake.settings = SILERO
+
+    const { synthesize } = await load()
+    await synthesize('localhost')
+    expect(silero.calls).toHaveLength(1)
+
+    pronounce.hints = { localhost: 'локалх+ост' }
+    await synthesize('localhost')
+    expect(silero.calls).toHaveLength(2)
+  })
+
   it('reports the engine and the installed state to the settings pane', async () => {
     fake.settings = SILERO
     silero.runtime = true
@@ -218,5 +279,37 @@ describe('the Silero engine', () => {
     expect(status.silero).toEqual({ installed: false })
     expect(status.configured).toBe(false)
     expect(status.reason).toContain('Нет модели')
+  })
+})
+
+describe('prefetching pronunciation hints', () => {
+  it('does not ask while the local engine cannot synthesise', async () => {
+    fake.settings = SILERO
+    silero.runtime = true
+    silero.models = false
+
+    const { prefetchPronunciations } = await load()
+    prefetchPronunciations('Открой Figma')
+    expect(pronounce.prefetch).toEqual([])
+  })
+
+  it('does not ask when synthesis is switched off', async () => {
+    fake.settings = { ...SILERO, tts: { ...SILERO.tts, enabled: false } }
+    silero.runtime = true
+    silero.models = true
+
+    const { prefetchPronunciations } = await load()
+    prefetchPronunciations('Открой Figma')
+    expect(pronounce.prefetch).toEqual([])
+  })
+
+  it('warms the cache when the local engine is ready', async () => {
+    fake.settings = SILERO
+    silero.runtime = true
+    silero.models = true
+
+    const { prefetchPronunciations } = await load()
+    prefetchPronunciations('Открой Figma')
+    expect(pronounce.prefetch).toEqual(['Открой Figma'])
   })
 })

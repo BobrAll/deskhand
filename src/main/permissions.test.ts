@@ -288,17 +288,13 @@ describe('openPermissionPane: which System Settings page', () => {
   it('opens the Accessibility pane', async () => {
     const { openPermissionPane } = await loadPermissions()
     openPermissionPane('accessibility')
-    expect(env.opened).toEqual([
-      'x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility'
-    ])
+    expect(env.opened).toEqual(['x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility'])
   })
 
   it('opens the Screen Recording pane', async () => {
     const { openPermissionPane } = await loadPermissions()
     openPermissionPane('screenRecording')
-    expect(env.opened).toEqual([
-      'x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture'
-    ])
+    expect(env.opened).toEqual(['x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture'])
   })
 
   it('opens the Microphone pane, through the same path as `openMicrophonePane`', async () => {

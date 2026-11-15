@@ -56,13 +56,11 @@ function isOurs(argv) {
 function stale() {
   const all = processes()
   const protectedPids = new Set([process.pid])
-  for (let pid = process.ppid; pid > 1; ) {
+  for (let pid = process.ppid; pid > 1;) {
     protectedPids.add(pid)
     pid = all.find((entry) => entry.pid === pid)?.ppid ?? 0
   }
-  return all
-    .filter(({ pid, argv }) => !protectedPids.has(pid) && isOurs(argv))
-    .map(({ pid }) => pid)
+  return all.filter(({ pid, argv }) => !protectedPids.has(pid) && isOurs(argv)).map(({ pid }) => pid)
 }
 
 function stop(pids, signal) {

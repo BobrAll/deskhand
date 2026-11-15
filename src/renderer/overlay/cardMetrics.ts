@@ -9,7 +9,8 @@
  * re-exported here. Everything below is the renderer's own business.
  *
  * A layout change is a change to this file, and it is checked by eye:
- * the card at rest and unfolded, line wrapping at 112/80/360, and the agent row.
+ * the card at rest and unfolded, line wrapping at the narrow/voice/full widths,
+ * and the agent row.
  */
 
 /** Outer padding, border and the answer's text-column indent. */
@@ -25,13 +26,21 @@ export const AGENT_ROW_CHROME = 8 * 2 + 2 + 18
 export const AGENT_STATUS_INSET = 12 + 8 * 2
 
 /**
+ * The close button and the gap before it.
+ *
+ * It is on the line in every state that has the bar: the card can be dismissed
+ * with the mouse as well as with Escape.
+ */
+export const CLOSE_CHROME = 16 + 6
+
+/**
  * Everything on the line that is not the question itself, in points.
  *
- * The card's `padding: 6px 8px` and its 1px edge are 18; the bar spends 6 on the gap
- * and 16 on the chevron — 40 points of chrome
- * before the field gets a single point of its own.
+ * The card's `padding: 6px 8px` and its 1px edge are 18; the bar spends 6 on the
+ * gap before the chevron, 16 on the chevron, and another 6 + 16 on the close
+ * button — 62 points of chrome before the field gets a point of its own.
  */
-export const CHROME_WIDTH = 8 * 2 + 2 + 6 + 16
+export const CHROME_WIDTH = 8 * 2 + 2 + 6 + 16 + CLOSE_CHROME
 
 /**
  * The stop button, which exists only while an answer streams: its own 18 points
@@ -62,8 +71,7 @@ export const MAX_FIELD_HEIGHT = 84
  * through `fieldRef`, so this only covers a measurement taken before the first
  * paint — and the two are the same value.
  */
-export const FIELD_FONT =
-  "13px -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', Arial, sans-serif"
+export const FIELD_FONT = "13px -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', Arial, sans-serif"
 
 /**
  * The two places the card prints smaller than the field it measured.

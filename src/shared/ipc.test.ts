@@ -45,8 +45,7 @@ describe('CH: the channel set is a wire protocol', () => {
     for (const [path, channel] of channels) {
       const [namespace, key] = path.split('.')
       // Both halves are kebab-cased: `voice.downloadProgress` is `voice:download-progress`.
-      const kebab = (part: string): string =>
-        part.replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`)
+      const kebab = (part: string): string => part.replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`)
       expect(channel, path).toBe(`${kebab(namespace)}:${kebab(key)}`)
     }
   })

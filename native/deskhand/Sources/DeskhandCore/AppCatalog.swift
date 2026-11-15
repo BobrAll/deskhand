@@ -1,5 +1,5 @@
-import Foundation
 import AppKit
+import Foundation
 
 /// A running (or launchable) macOS application, resolved from a user-supplied
 /// string: display name, full path, or bundle identifier.
@@ -53,7 +53,8 @@ public enum AppCatalog {
 
         if let exact = running.first(where: { $0.bundleIdentifier == trimmed })
             ?? running.first(where: { $0.name.caseInsensitiveCompare(trimmed) == .orderedSame })
-            ?? running.first(where: { $0.path == trimmed }) {
+            ?? running.first(where: { $0.path == trimmed })
+        {
             return exact
         }
 
@@ -129,9 +130,7 @@ public enum AppCatalog {
             "/System/Applications",
             "/System/Applications/Utilities",
         ]
-        if let home = fm.homeDirectoryForCurrentUser as URL? {
-            roots.append(home.appendingPathComponent("Applications").path)
-        }
+        roots.append(fm.homeDirectoryForCurrentUser.appendingPathComponent("Applications").path)
 
         var seen = Set<String>()
         var result: [AppHandle] = []
@@ -141,7 +140,8 @@ public enum AppCatalog {
                 let path = (root as NSString).appendingPathComponent(entry)
                 guard seen.insert(path).inserted else { continue }
                 guard let bundle = Bundle(path: path) else { continue }
-                let name = (bundle.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String)
+                let name =
+                    (bundle.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String)
                     ?? (bundle.object(forInfoDictionaryKey: "CFBundleName") as? String)
                     ?? (entry as NSString).deletingPathExtension
                 let handle = AppHandle(
@@ -167,8 +167,9 @@ public enum AppCatalog {
     @discardableResult
     public static func ensureRunning(_ handle: AppHandle) throws -> AppHandle {
         if handle.pid > 0,
-           let running = NSRunningApplication(processIdentifier: handle.pid),
-           !running.isTerminated {
+            let running = NSRunningApplication(processIdentifier: handle.pid),
+            !running.isTerminated
+        {
             return handle
         }
         guard let path = handle.path else {
@@ -226,7 +227,7 @@ public enum AppCatalog {
             // The window server processes a raise asynchronously; give it a
             // chance to land before the synthetic event is posted, or the click
             // races the raise and lands in the window that is still in front.
-            MainRunLoop.wait(until: { false }, deadline: Date().addingTimeInterval(0.03))
+            MainRunLoop.pump(for: 0.03)
         }
         return elapsed
     }

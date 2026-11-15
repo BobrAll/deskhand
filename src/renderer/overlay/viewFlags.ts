@@ -78,8 +78,7 @@ export function deriveView(state: ViewState): ViewFlags {
 
   // A blocked agent explains itself in the same line as a warning: the card has
   // one place for "this will not work", and the reason is what belongs there.
-  const hint = state.session?.warnings.filter(Boolean)[0] ??
-    (agentBlocked ? (agent?.reason ?? null) : null)
+  const hint = state.session?.warnings.filter(Boolean)[0] ?? (agentBlocked ? (agent?.reason ?? null) : null)
 
   return {
     blocked,

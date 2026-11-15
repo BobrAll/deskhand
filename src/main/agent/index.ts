@@ -38,13 +38,27 @@ import { accessibilityTrusted } from '../permissions'
 import { getSettings, patchSettings } from '../settings/store'
 import { AGENT_MIN_OUTPUT_TOKENS } from '@shared/defaults'
 import { classifyCall, describeCall, rememberKey } from './approval'
-import { agentBinary, AgentSidecar, type AgentProvider, type AgentSidecarEvent } from './sidecar'
+import { agentBinary, AgentSidecar, type AgentProvider, type AgentSidecarEvent, type AgentToolTiming } from './sidecar'
 import { trace, traceWithin } from './trace'
 import { createRunTrace } from './run-trace'
 
 export interface AgentHost {
   /** Makes the card ignore the mouse while the agent works, and take it back while it asks. */
   setPassthrough(active: boolean): void
+  /**
+   * Takes the keyboard for an approval question.
+   *
+   * Optional so a headless host can ignore it. The run is blocked on the answer,
+   * so focusing the card cannot interrupt an action.
+   */
+  focus?(): void
+  /**
+   * Whether the card owns the keyboard for the approval question.
+   *
+   * When it does, Escape is handled by the renderer's keydown; when it does not,
+   * the native watcher has to answer the question itself.
+   */
+  hasFocus?(): boolean
   /** Reports progress to the card. */
   emit(event: AgentEvent): void
   /**
@@ -82,6 +96,8 @@ export interface AgentRunInput {
   history?: AgentExchange[]
   /** The model the user configured, with the key only the main process holds. */
   provider: AgentProvider
+  /** Bundle ids the agent must never read or act on. */
+  excludedApps?: string[]
 }
 
 const IDLE_EVENT: AgentEvent = { phase: 'idle', step: 0, total: 0, label: '' }
@@ -94,6 +110,67 @@ const IDLE_EVENT: AgentEvent = { phase: 'idle', step: 0, total: 0, label: '' }
  * for the rest of the day. The agent has its own ceiling; this one is the host's.
  */
 const APPROVAL_TIMEOUT_MS = 5 * 60_000
+
+/**
+ * How long after an approval the mouse is allowed to move without stopping the run.
+ *
+ * The hand is already on the mouse when it answers the question, and letting go of
+ * the button moves it a few points. Without this grace, the run the user just
+ * allowed would stop on the way back to the keyboard.
+ */
+const APPROVAL_MOUSE_GRACE_MS = 1_200
+
+/**
+ * How long the native watcher ignores an Escape that belongs to a refusal.
+ *
+ * Denying a question and stopping the run are both "Escape". The renderer's
+ * keydown denies the question, and the same keystroke reaches the native watcher;
+ * this window is just long enough to let that second copy arrive and be ignored.
+ * It is not used for an approval: Escape after "Разрешить" is a new decision.
+ */
+const APPROVAL_ESCAPE_GRACE_MS = 200
+
+/**
+ * Why a question was refused, in the two languages it has to be said in.
+ *
+ * The same decision reaches two readers: the card, which speaks Russian to the
+ * user, and the model, which receives the refusal as a tool result and reads
+ * English (`AGENTS.md`, "Copy and tone"). Keeping both sentences in one value
+ * is what stops them from drifting apart.
+ */
+interface Refusal {
+  /** What the card shows: Russian, «ты». */
+  label: string
+  /** What the agent gets as the tool result: English, like all model-facing text. */
+  reason: string
+}
+
+/**
+ * The user said no to the call the agent is blocked on.
+ *
+ * Not a stop: the agent receives the refusal as a failed call and takes another
+ * step, so the run is still alive. The card's sentence names the one thing that
+ * happened instead of claiming the whole run ended.
+ */
+const REFUSED: Refusal = {
+  label: 'Действие отклонено.',
+  reason: 'The user declined the action.'
+}
+
+/** Nobody answered the question before the host's ceiling. */
+const NOT_CONFIRMED: Refusal = {
+  label: 'Подтверждение не получено.',
+  reason: 'The action was not confirmed by the user.'
+}
+
+/**
+ * What the agent is told when the user stops the run on a pending question.
+ *
+ * Model-facing, so English: this string becomes the tool result the model reads
+ * on its next step, and text the model reads is English by contract. The card's
+ * own sentence is the `message` `stop()` publishes.
+ */
+const CANCELLED_REASON = 'The run was cancelled by the user.'
 
 /**
  * Milliseconds, at one decimal.
@@ -178,23 +255,29 @@ const UNKNOWN_STOP = 'incomplete'
  */
 function stopMessage(reason: string, total: number): string {
   if (reason.includes(STOP_BUDGET)) {
-    return `Не успел за ${total} ${plural(total, 'шаг', 'шага', 'шагов')} — задача осталась ` +
+    return (
+      `Не успел за ${total} ${plural(total, 'шаг', 'шага', 'шагов')} — задача осталась ` +
       'невыполненной. Увеличь лимит шагов в настройках или уточни запрос.'
+    )
   }
   if (reason.includes(STOP_TOKEN_LIMIT)) {
     // Not the same problem as running out of steps: the run had budget left, but
     // every answer was cut in half, so the model never got to say what it wanted
     // to do. Raising the step limit would not help — the fix is the output
     // length.
-    return 'Остановился: ответ модели обрывался по лимиту длины. Увеличь максимум ' +
+    return (
+      'Остановился: ответ модели обрывался по лимиту длины. Увеличь максимум ' +
       'токенов в настройках — задача осталась невыполненной.'
+    )
   }
   if (reason.includes(STOP_RETURNING_TO_SCREEN)) {
     // Not the same as a repeated call: the run tried different things and kept
     // arriving at the same screen. Raising the step limit would only buy more of
     // the same, so the honest answer names the loop instead.
-    return 'Остановился: несколько шагов подряд экран не менялся — задача пошла по кругу. ' +
+    return (
+      'Остановился: несколько шагов подряд экран не менялся — задача пошла по кругу. ' +
       'Задача осталась невыполненной.'
+    )
   }
   return 'Задача осталась невыполненной.'
 }
@@ -218,13 +301,7 @@ function withAgentBudget(provider: AgentProvider): AgentProvider {
 }
 
 /** The same rounding, applied to the phases a tool call may have reported. */
-function roundedTiming(timing: {
-  wallMs?: number
-  treeMs?: number
-  captureMs?: number
-  encodeMs?: number
-  imageBytes?: number
-}): Record<string, number> {
+function roundedTiming(timing: AgentToolTiming): Record<string, number> {
   const fields: Record<string, number> = {}
   if (timing.wallMs !== undefined) fields.wallMs = ms(timing.wallMs)
   if (timing.treeMs !== undefined) fields.treeMs = ms(timing.treeMs)
@@ -247,6 +324,10 @@ export function createAgentController(host: AgentHost) {
   /** Bumped by `stop()`; a run compares it and gives up. */
   let generation = 0
   let running = false
+  /** Mouse movements before this instant belong to the answer, not to a stop. */
+  let ignoreMouseUntil = 0
+  /** The same for the Escape that the renderer may have handled already. */
+  let ignoreEscapeUntil = 0
   /** The last event the card was told about. */
   let lastPublished: AgentEvent = IDLE_EVENT
 
@@ -255,6 +336,8 @@ export function createAgentController(host: AgentHost) {
     actions: AgentActionRow[]
     step: number
     total: number
+    /** Labels captured when a tool starts, paired with its result later. */
+    callLabels: Array<{ step: number; name: string; label: string }>
     /**
      * Why the loop gave up, when it did.
      *
@@ -285,7 +368,7 @@ export function createAgentController(host: AgentHost) {
     pending: {
       request: AgentToolRequest
       timer: ReturnType<typeof setTimeout>
-      settle(allow: boolean, remember: boolean, reason?: string): void
+      settle(allow: boolean, remember: boolean, refusal?: Refusal): void
     } | null
     finish(result: AgentRunResult): void
   } | null = null
@@ -353,16 +436,61 @@ export function createAgentController(host: AgentHost) {
   }
 
   /**
+   * The model's own words in the status row.
+   *
+   * The streamed prefix and the finished narration are the same sentence about
+   * the same step, so they are cut and drawn the same way; a paragraph in the
+   * status row would widen the card. A question on screen turns back into
+   * `acting` here, because the agent's prose means it has moved on.
+   */
+  function publishProse(text: string, step: number, total: number): void {
+    publish({
+      phase: lastPublished.phase === 'asking' ? 'acting' : lastPublished.phase,
+      step,
+      total,
+      label: caption(text),
+      actions: actionRows()
+    })
+  }
+
+  /**
+   * Opens the run's state and returns the promise its verdict settles.
+   *
+   * The assignment happens synchronously inside the executor, so the `publish`
+   * that follows already sees the run it is describing.
+   */
+  function beginRun(actions: AgentActionRow[], total: number): Promise<AgentRunResult> {
+    let settled = false
+    return new Promise<AgentRunResult>((resolve) => {
+      current = {
+        actions,
+        step: 0,
+        total,
+        callLabels: [],
+        stopped: null,
+        notice: null,
+        firstToken: false,
+        pending: null,
+        finish: (result) => {
+          if (settled) return
+          settled = true
+          resolve(result)
+        }
+      }
+    })
+  }
+
+  /**
    * Answers the pending question.
    *
-   * Called from the card through IPC, and from `stop()` with a refusal. Idempotent
-   * on purpose: a second click on a button that was already handled, or an Escape
-   * arriving in the same tick as an answer, must not decide twice.
+   * Called from the card through IPC. Idempotent on purpose: a second click on
+   * a button that was already handled, or an Escape arriving in the same tick
+   * as an answer, must not decide twice.
    */
-  function answer(id: string, allow: boolean, remember: boolean, reason?: string): void {
+  function answer(id: string, allow: boolean, remember: boolean): void {
     const pending = current?.pending
     if (!pending || pending.request.id !== id) return
-    pending.settle(allow, remember, reason)
+    pending.settle(allow, remember)
   }
 
   /**
@@ -378,7 +506,7 @@ export function createAgentController(host: AgentHost) {
     // that does not trace would otherwise be invisible — and an invisible run
     // is indistinguishable from one that never happened.
     const request = traceWithin({ source: 'agent-controller' }, async () => {
-      const runTrace = createRunTrace()
+      const runTrace = createRunTrace({ detailed: getSettings().agent.saveRunTraces })
       runTrace.record('start', {
         prompt: input.prompt,
         appName: input.appName,
@@ -413,33 +541,21 @@ export function createAgentController(host: AgentHost) {
     const state = availability()
     if (!state.ready) {
       const message = state.reason ?? 'Агентный режим недоступен.'
-      publish({ phase: 'error', step: 0, total: 0, label: '', message, code: 'blocked' })
+      // A blocked run has no actions of its own. Without this, a previous run's
+      // history survives in `lastPublished` and appears under the new error.
+      publish({ phase: 'error', step: 0, total: 0, label: '', actions: [], message, code: 'blocked' })
       return { answer: '', actions: [], message, blocked: true }
     }
 
     const token = ++generation
     running = true
     activeTrace = runTrace
+    ignoreMouseUntil = 0
+    ignoreEscapeUntil = 0
     const actions: AgentActionRow[] = []
     const total = settings.agent.maxSteps
     const provider = withAgentBudget(input.provider)
-    let settled = false
-    const done = new Promise<AgentRunResult>((resolve) => {
-      current = {
-        actions,
-        step: 0,
-        total,
-        stopped: null,
-        notice: null,
-        firstToken: false,
-        pending: null,
-        finish: (result) => {
-          if (settled) return
-          settled = true
-          resolve(result)
-        }
-      }
-    })
+    const done = beginRun(actions, total)
 
     publish({ phase: 'arming', step: 0, total, label: 'Приготовился', actions: [], approval: null })
     trace('agent.start', {
@@ -470,16 +586,28 @@ export function createAgentController(host: AgentHost) {
         // Presentation only: the same run either way. `showActions` is the
         // switch a background mode will turn off, and the agent treats it as
         // "describe what you are about to do", not as "do it differently".
-        visualize: settings.agent.showActions !== false
+        visualize: settings.agent.showActions !== false,
+        excludedApps: input.excludedApps ?? []
       })
-      trace('agent.accepted', { maxSteps: total })
+      // A stop can land while the sidecar is starting, before this run reaches
+      // the pipe. `done` is already settled with the stop; recording an
+      // acceptance would put a start in the trace for an agent that never ran.
+      if (token === generation) trace('agent.accepted', { maxSteps: total })
     } catch (error) {
-      settleRun({
-        answer: '',
-        actions: actionRows(),
-        message: error instanceof Error ? error.message : 'Не удалось запустить агента.',
-        blocked: true
-      })
+      // The same for a start that failed after the stop: the card already says
+      // what happened, and a second verdict would replace the user's message.
+      if (token === generation) {
+        const message = error instanceof Error ? error.message : 'Не удалось запустить агента.'
+        // A start that failed has no further event to come: leaving the card on
+        // `arming` would show «Подготовка» for a run that is already over.
+        publish({ phase: 'error', step: 0, total: 0, label: '', message, code: 'blocked' })
+        settleRun({
+          answer: '',
+          actions: actionRows(),
+          message,
+          blocked: true
+        })
+      }
     }
 
     const result = await done
@@ -504,6 +632,21 @@ export function createAgentController(host: AgentHost) {
     // control back before the next click lands. Escape works always.
     watcher = watchForAbort(options.abortOnMouseMove ? 'mouse' : 'key', (reason) => {
       if (token !== generation) return
+      // Reaching for the answer is not taking control back. A question makes the
+      // card clickable, and the hand on the mouse is on its way to «Разрешить»;
+      // stopping the run there was the bug.
+      if (reason === 'mousemove' && (current?.pending || Date.now() < ignoreMouseUntil)) return
+      // An open question owns Escape. The focused card answers it itself; only
+      // when the user clicked away does the native watcher answer, so Escape
+      // cannot be swallowed by the app behind the question.
+      if (reason === 'escape' && current?.pending) {
+        if (host.hasFocus?.() !== false) return
+        current.pending.settle(false, false, REFUSED)
+        return
+      }
+      // The renderer may have answered the question a moment ago; its keydown
+      // reaches us in the same keystroke.
+      if (reason === 'escape' && Date.now() < ignoreEscapeUntil) return
       trace('agent.abort', { reason })
       stop(reason === 'mousemove' ? 'Остановлено: ты взял мышь.' : 'Остановлено по Escape.')
     })
@@ -557,54 +700,44 @@ export function createAgentController(host: AgentHost) {
         })
         return
       case 'stream':
-        // The same caption as `narration`, but while the model is still writing
-        // it. This is what turns the first two seconds of every step from a
-        // spinner into the model's own words.
+        // The same caption `publishProse` draws for the narration, but while the
+        // model is still writing it. This is what turns the first two seconds of
+        // every step from a spinner into the model's own words.
         if (event.text.trim()) {
           if (!active.firstToken) {
             active.firstToken = true
             trace('agent.firstToken', { step: active.step, chars: event.text.length })
           }
-          publish({
-            phase: lastPublished.phase === 'asking' ? 'acting' : lastPublished.phase,
-            step: active.step,
-            total: active.total,
-            label: caption(event.text),
-            actions: actionRows()
-          })
+          publishProse(event.text, active.step, active.total)
         }
         return
       case 'narration':
         // The model's own sentence about what it is doing is a better caption
         // than anything this file could invent from a tool name.
-        if (event.text.trim()) {
-          publish({
-            phase: lastPublished.phase === 'asking' ? 'acting' : lastPublished.phase,
-            step: active.step,
-            total: active.total,
-            label: event.text.trim(),
-              actions: actionRows()
-          })
-        }
+        if (event.text.trim()) publishProse(event.text, active.step, active.total)
         return
       case 'tool':
         // The start is recorded separately from the result so a call that never
         // finished — cancelled mid-flight, or the process killed — still appears
         // in the timeline as a call that began.
         trace('agent.tool', { step: event.step, tool: event.name })
-        publish({
-          phase: 'acting',
-          step: event.step,
-          total: active.total,
-          label: describeCall({
+        {
+          const label = describeCall({
             id: '',
             tool: event.name,
             arguments: event.args,
             fingerprint: '',
             narration: event.narration
-          }),
-          actions: actionRows()
-        })
+          })
+          active.callLabels.push({ step: event.step, name: event.name, label })
+          publish({
+            phase: 'acting',
+            step: event.step,
+            total: active.total,
+            label,
+            actions: actionRows()
+          })
+        }
         return
       case 'present':
         // A picture, not a phase: the card's caption and the run's verdict do
@@ -628,9 +761,14 @@ export function createAgentController(host: AgentHost) {
         })
         return
       case 'result': {
+        const pendingLabel = active.callLabels.findIndex(
+          (entry) => entry.step === event.step && entry.name === event.name
+        )
+        const label =
+          pendingLabel >= 0 ? active.callLabels.splice(pendingLabel, 1)[0].label : lastPublished.label || event.name
         active.actions.push({
           tool: event.name,
-          label: lastPublished.label || event.name,
+          label,
           ok: event.ok
         })
         // The phases are recorded separately because they have different fixes;
@@ -698,8 +836,8 @@ export function createAgentController(host: AgentHost) {
           publish({
             phase: 'done',
             completed: false,
-            step: 0,
-            total: 0,
+            step: active.step,
+            total: active.total,
             label: explanation,
             actions: actionRows(),
             approval: null,
@@ -711,8 +849,8 @@ export function createAgentController(host: AgentHost) {
         publish({
           phase: 'done',
           completed: true,
-          step: 0,
-          total: 0,
+          step: active.step,
+          total: active.total,
           label: 'Готово',
           actions: actionRows(),
           approval: null
@@ -723,8 +861,8 @@ export function createAgentController(host: AgentHost) {
       case 'cancelled':
         publish({
           phase: 'aborted',
-          step: 0,
-          total: 0,
+          step: active.step,
+          total: active.total,
           label: '',
           actions: actionRows(),
           approval: null,
@@ -764,19 +902,31 @@ export function createAgentController(host: AgentHost) {
     }
     if (decision.kind === 'deny') {
       trace('agent.approval', { outcome: 'denied' })
+      // The model reads `reason` as a tool result, so it is English; the row the
+      // card lists keeps the user's language.
       approve(request.id, false, decision.reason)
-      active.actions.push({ tool: request.tool, label: decision.reason, ok: false })
+      active.actions.push({ tool: request.tool, label: decision.label, ok: false })
       publish({ phase: 'acting', actions: actionRows(), code: 'secret' })
       return
     }
 
     trace('agent.approval', { outcome: 'asked', tool: request.tool })
     host.setPassthrough(false)
-    const settle = (allow: boolean, remember: boolean, reason?: string): void => {
+    // The card is clickable now; the keyboard should reach the answer too.
+    host.focus?.()
+    const settle = (allow: boolean, remember: boolean, refusal: Refusal = REFUSED): void => {
       const pending = active.pending
       if (!pending || pending.request.id !== request.id) return
       clearTimeout(pending.timer)
       active.pending = null
+      // Leaving the button moves the mouse; neither answer should turn that into
+      // a stop before the run has had a chance to act on the decision. Only a
+      // refusal shares its keystroke with the native watcher: the same Escape
+      // denies the question here and must not also stop the run that refusal
+      // already ended. An approval comes from Enter or a click, so an Escape
+      // after it is a new decision and stops the run.
+      ignoreMouseUntil = Date.now() + APPROVAL_MOUSE_GRACE_MS
+      ignoreEscapeUntil = allow ? 0 : Date.now() + APPROVAL_ESCAPE_GRACE_MS
       if (allow && remember && request.fingerprint) {
         // Stored as a digest, not as the agent's readable fingerprint: the
         // settings file keeps a fixed-size, opaque list, and the readable form
@@ -789,29 +939,26 @@ export function createAgentController(host: AgentHost) {
           })
         }
       }
-      approve(
-        request.id,
-        allow,
-        allow ? undefined : (reason ?? 'Пользователь отклонил действие.')
-      )
-      if (allow) {
-        // The panel had the mouse and the focus for a moment; the agent's next
-        // click must not land on it.
-        host.setPassthrough(true)
-        publish({ phase: 'acting', approval: null, actions: actionRows() })
-      } else {
-        publish({
-          phase: 'aborted',
-          label: '',
-          approval: null,
-          actions: actionRows(),
-          message: 'Действие отклонено.'
-        })
-      }
+      approve(request.id, allow, allow ? undefined : refusal.reason)
+      // The panel had the mouse and the focus for a moment; the agent's next
+      // click must not land on it. That is true of a refusal as much as of an
+      // allow: the agent turns the refusal into a failed call and takes another
+      // step, so the run — and its clicks — continue either way.
+      host.setPassthrough(true)
+      // A refusal is not `aborted`: nothing stopped. The run goes on, so a
+      // terminal phase here would say "stopped" over work that is still
+      // happening — and leave the card in front of the window the agent was
+      // about to press.
+      publish({
+        phase: 'acting',
+        approval: null,
+        label: allow ? lastPublished.label : refusal.label,
+        actions: actionRows()
+      })
     }
     const timer = setTimeout(() => {
       trace('agent.approval', { outcome: 'timeout', tool: request.tool })
-      settle(false, false, 'Подтверждение не получено.')
+      settle(false, false, NOT_CONFIRMED)
     }, APPROVAL_TIMEOUT_MS)
     active.pending = { request, timer, settle }
 
@@ -849,12 +996,14 @@ export function createAgentController(host: AgentHost) {
       activeTrace?.record('stop', { message })
     }
     generation += 1
+    ignoreMouseUntil = 0
+    ignoreEscapeUntil = 0
     const active = current
     if (active?.pending) {
       const pending = active.pending
       clearTimeout(pending.timer)
       active.pending = null
-      approve(pending.request.id, false, 'Отменено.')
+      approve(pending.request.id, false, CANCELLED_REASON)
     }
     sidecar.cancel()
     watcher?.stop()
@@ -862,9 +1011,10 @@ export function createAgentController(host: AgentHost) {
     if (!running) return
     publish({
       phase: 'aborted',
-      step: 0,
-      total: 0,
+      step: current?.step ?? 0,
+      total: current?.total ?? 0,
       label: '',
+      actions: actionRows(),
       approval: null,
       message
     })

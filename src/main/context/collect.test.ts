@@ -79,9 +79,7 @@ describe('collectContext: an excluded app', () => {
     const { snapshot } = await collectContext({ excludedApps: ['com.apple.Safari'], wantsScreenshot: true })
 
     expect(snapshot.excluded).toBe(true)
-    expect(snapshot.warnings).toContain(
-      'Приложение входит в список исключений — контекст не собирается.'
-    )
+    expect(snapshot.warnings).toContain('Приложение входит в список исключений — контекст не собирается.')
   })
 
   it('does not read the selection or take a screenshot', async () => {

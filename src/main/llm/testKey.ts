@@ -15,26 +15,20 @@ const TIMEOUT_MS = 12_000
 /** Enough of an unexpected body to identify it, never the whole response. */
 const BODY_PREVIEW_CHARS = 160
 
-/** `fetch` with an abort timer, so a silent gateway still ends the probe. */
-async function fetchWithTimeout(url: string, init: RequestInit): Promise<Response> {
-  const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS)
-  try {
-    return await fetch(url, { ...init, signal: controller.signal })
-  } finally {
-    clearTimeout(timer)
-  }
-}
-
 function apiHeaders(provider: ProviderId, key: string): Record<string, string> {
   return provider === 'anthropic'
     ? { 'x-api-key': key, 'anthropic-version': '2023-06-01' }
     : { Authorization: `Bearer ${key}` }
 }
 
-function describe(status: number, label: string, body: string): string {
+/** The provider as the person reads it in a sentence. */
+function providerLabel(provider: ProviderId): string {
+  return providerInfo(provider)?.label ?? provider
+}
+
+function probeMessage(status: number, provider: ProviderId, body: string): string {
   return describeProviderStatus(status, {
-    label,
+    label: providerLabel(provider),
     detail: body.slice(0, BODY_PREVIEW_CHARS),
     probe: true
   }).message
@@ -44,11 +38,7 @@ function describe(status: number, label: string, body: string): string {
  * @param baseUrl Optional override (usually the unsaved value from the settings
  *   form). An empty string means "use the provider default".
  */
-export async function testApiKey(
-  provider: ProviderId,
-  key: string,
-  baseUrl?: string
-): Promise<TestKeyResult> {
+export async function testApiKey(provider: ProviderId, key: string, baseUrl?: string): Promise<TestKeyResult> {
   const apiKey = key.trim()
   if (!apiKey) return { ok: false, message: 'Введи ключ.' }
 
@@ -58,17 +48,24 @@ export async function testApiKey(
 
   try {
     const path = provider === 'openrouter' ? 'key' : 'models'
-    const response = await fetchWithTimeout(apiEndpoint(root, path).href, {
-      headers: apiHeaders(provider, apiKey)
+    // One deadline for the whole probe: headers and body alike. A gateway that
+    // answers headers and then stalls must not leave the button spinning.
+    const signal = AbortSignal.timeout(TIMEOUT_MS)
+    const response = await fetch(apiEndpoint(root, path).href, {
+      headers: apiHeaders(provider, apiKey),
+      signal
     })
 
     if (response.ok) {
-      const label = providerInfo(provider)?.label ?? provider
-      return { ok: true, message: `Ключ ${label} работает.` }
+      return { ok: true, message: `Ключ ${providerLabel(provider)} работает.` }
     }
-    const body = await response.text().catch(() => '')
-    const label = providerInfo(provider)?.label ?? provider
-    return { ok: false, message: describe(response.status, label, body) }
+    // A body that cannot be read is not an error of its own; a read cut off by
+    // the deadline is, because then the status was never reported.
+    const body = await response.text().catch((error: unknown) => {
+      if (signal.aborted) throw error
+      return ''
+    })
+    return { ok: false, message: probeMessage(response.status, provider, body) }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     if (/abort/i.test(message)) return { ok: false, message: 'Превышено время ожидания ответа.' }
@@ -76,11 +73,7 @@ export async function testApiKey(
   }
 }
 
-export async function listProviderModels(
-  provider: ProviderId,
-  key: string,
-  baseUrl: string
-): Promise<ModelListResult> {
+export async function listProviderModels(provider: ProviderId, key: string, baseUrl: string): Promise<ModelListResult> {
   if (!key.trim()) return { ok: false, message: 'Сохрани ключ API.' }
   if (baseUrl.trim() && !normalizeBaseUrl(baseUrl)) {
     return { ok: false, message: 'Проверь Base URL.' }
@@ -99,13 +92,10 @@ export async function listProviderModels(
         signal
       })
       if (!response.ok) {
-        return {
-          ok: false,
-          message: describe(response.status, providerInfo(provider)?.label ?? provider, '')
-        }
+        return { ok: false, message: probeMessage(response.status, provider, '') }
       }
 
-      const page = await response.json() as { data?: unknown; has_more?: unknown; last_id?: unknown } | null
+      const page = (await response.json()) as { data?: unknown; has_more?: unknown; last_id?: unknown } | null
       if (!Array.isArray(page?.data)) return { ok: false, message: 'Сервис вернул список в неизвестном формате.' }
 
       for (const entry of page.data) {

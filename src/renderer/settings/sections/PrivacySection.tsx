@@ -36,11 +36,14 @@ export function PrivacySection({
     let latest = 0
     const refresh = () => {
       const request = ++latest
-      void window.deskhand.permissions.status().then((next) => {
-        if (request === latest) {
-          setBundle((prev) => (prev ? { ...prev, permissions: next } : prev))
-        }
-      }).catch(() => undefined)
+      void window.deskhand.permissions
+        .status()
+        .then((next) => {
+          if (request === latest) {
+            setBundle((prev) => (prev ? { ...prev, permissions: next } : prev))
+          }
+        })
+        .catch(() => undefined)
     }
     refresh()
     window.addEventListener('focus', refresh)
@@ -53,6 +56,10 @@ export function PrivacySection({
   async function requestSystemPermission(kind: SystemPermissionRequest): Promise<void> {
     const next = await window.deskhand.permissions.request(kind)
     setBundle((prev) => (prev ? { ...prev, permissions: next } : prev))
+  }
+
+  async function pickExcludedApp(): Promise<void> {
+    onAddExcluded(await window.deskhand.settings.pickApp())
   }
 
   return (
@@ -73,11 +80,13 @@ export function PrivacySection({
       </nav>
 
       <div id={`${navId}-permissions`} hidden={view !== 'permissions'}>
-        <Group footnote={
-          permissions && Object.values(permissions).some(Boolean)
-            ? 'Чтобы отозвать доступ, выключи Deskhand в открывшемся разделе macOS.'
-            : undefined
-        }>
+        <Group
+          footnote={
+            permissions && Object.values(permissions).some(Boolean)
+              ? 'Чтобы отозвать доступ, выключи Deskhand в открывшемся разделе macOS.'
+              : undefined
+          }
+        >
           <PermissionRow
             title="Универсальный доступ"
             hint="Читать выделенный текст и вставлять ответ; управлять мышью — только если включён режим «Агент»."
@@ -115,11 +124,23 @@ export function PrivacySection({
             checked={draft.rememberConversation}
             onChange={(rememberConversation) => patch({ rememberConversation })}
           />
+          <ToggleRow
+            title="Подробные журналы запусков"
+            hint={
+              'Пишет промпты, заголовки окон и скриншоты в ' +
+              '~/Library/Application Support/Deskhand/agent-runs и agent-dialogs. ' +
+              'Выключено по умолчанию — включай только для отладки.'
+            }
+            checked={draft.agent.saveRunTraces}
+            onChange={(saveRunTraces) => patch({ agent: { ...draft.agent, saveRunTraces } })}
+          />
           <Row
             title="Ключи API"
-            hint={encryptionAvailable
-              ? 'Шифрование средствами macOS доступно.'
-              : 'Шифрование ключей средствами macOS недоступно.'}
+            hint={
+              encryptionAvailable
+                ? 'Шифрование средствами macOS доступно.'
+                : 'Шифрование ключей средствами macOS недоступно.'
+            }
           />
         </Group>
       </div>
@@ -171,14 +192,7 @@ export function PrivacySection({
                     </option>
                   ))}
               </select>
-              <button
-                onClick={async () => {
-                  const picked = await window.deskhand.settings.pickApp()
-                  onAddExcluded(picked)
-                }}
-              >
-                Выбрать .app…
-              </button>
+              <button onClick={() => void pickExcludedApp()}>Выбрать .app…</button>
             </div>
           </Row>
         </Group>

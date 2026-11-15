@@ -1,6 +1,6 @@
-import Foundation
 import ApplicationServices
 import CoreGraphics
+import Foundation
 
 /// Element-level actions that go through the accessibility API rather than
 /// synthetic mouse events. These are more reliable than pixel clicks when the
@@ -106,7 +106,7 @@ public enum ElementActions {
     /// the model on a long detour of clicks and retries through a field that
     /// one extra call fills.
     public static func setValue(_ element: AXElement, text: String, pid: pid_t? = nil) throws {
-        let isTextEntry = element.role == kAXTextFieldRole || element.role == kAXComboBoxRole
+        let isTextEntry = ValueRole.isTextEntry(element.role)
         if !element.isSettable(kAXValueAttribute), isTextEntry {
             // Focusing can flip the settability, so re-check rather than
             // assume the first answer was final.
@@ -210,24 +210,40 @@ public enum ElementActions {
         let nsRange = utf16Range(range, in: fullText)
         // Try the precise accessibility range first: it is instant and does not
         // disturb the user's selection elsewhere.
-        if let selected = element.setSelectedTextRange(nsRange) {
+        if element.setSelectedTextRange(nsRange) != nil {
             if mode == .text { return }
             // For caret placement, collapse the selection.
             let caret = mode == .cursorBefore ? nsRange.location : nsRange.location + nsRange.length
             if element.setSelectedTextRange(NSRange(location: caret, length: 0)) != nil {
                 return
             }
-            _ = selected
         }
 
         // Fallback: keyboard navigation from a known caret position. Arrow keys
         // move by grapheme cluster, which is the unit `locate` already counted,
         // so this deliberately keeps the Character offsets rather than the
         // UTF-16 range.
-        try navigateToRange(
-            start: range.lowerBound,
-            length: mode == .text ? range.count : 0
-        )
+        let fallback = keyboardFallback(for: range, mode: mode)
+        try navigateToRange(start: fallback.start, length: fallback.length)
+    }
+
+    /// Where the keyboard fallback starts and how far it walks.
+    ///
+    /// A caret after the target starts at its end, so it stops past the target
+    /// instead of before it: starting at `lowerBound` with length 0 made
+    /// `cursor_after` behave exactly like `cursor_before` on every element that
+    /// does not expose `AXSelectedTextRange`. The start is what the
+    /// 400-character cap measures, so for `cursor_after` the cap covers the
+    /// text before the caret — including the target itself.
+    static func keyboardFallback(
+        for range: Range<Int>,
+        mode: TextSelection
+    ) -> (start: Int, length: Int) {
+        switch mode {
+        case .text: return (range.lowerBound, range.count)
+        case .cursorBefore: return (range.lowerBound, 0)
+        case .cursorAfter: return (range.upperBound, 0)
+        }
     }
 
     static func locate(

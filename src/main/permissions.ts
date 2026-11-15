@@ -10,11 +10,9 @@ import { desktopCapturer, shell, systemPreferences } from 'electron'
 import type { PermissionState, SystemPermissionRequest } from '@shared/types'
 import { helperPermissions } from './native/helper'
 
-const ACCESSIBILITY_PANE =
-  'x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility'
+const ACCESSIBILITY_PANE = 'x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility'
 const SCREEN_PANE = 'x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture'
-const MICROPHONE_PANE =
-  'x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone'
+const MICROPHONE_PANE = 'x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone'
 
 /**
  * Reads one permission without letting a missing API take the whole report down.
@@ -58,16 +56,10 @@ export function accessibilityTrusted(): boolean {
 
 export async function readPermissions(): Promise<PermissionState> {
   let accessibility = probeAccessibility()
-  const screenRecording = safe(
-    () => systemPreferences.getMediaAccessStatus('screen') === 'granted',
-    false
-  )
+  const screenRecording = safe(() => systemPreferences.getMediaAccessStatus('screen') === 'granted', false)
   // `unknown` means the microphone was never touched; only `granted` counts,
   // because push-to-talk would otherwise fail on the first key press.
-  const microphone = safe(
-    () => systemPreferences.getMediaAccessStatus('microphone') === 'granted',
-    false
-  )
+  const microphone = safe(() => systemPreferences.getMediaAccessStatus('microphone') === 'granted', false)
 
   // The helper is a fallback for an Electron API that could not answer, not a
   // second opinion on an answer of "no": a `false` from the app is the truth

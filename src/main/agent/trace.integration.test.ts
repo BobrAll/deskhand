@@ -19,20 +19,19 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { AddressInfo } from 'node:net'
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AgentEvent } from '@shared/types'
 import { agentAcceptsRuns } from './grant'
 import { flushTrace } from './trace'
 
-const BINARY = fileURLToPath(
-  new URL('../../../native/deskhand/.build/release/deskhand-agent', import.meta.url)
-)
+const BINARY = fileURLToPath(new URL('../../../native/deskhand/.build/release/deskhand-agent', import.meta.url))
 const REPORT = fileURLToPath(new URL('../../../scripts/agent-trace-report.mjs', import.meta.url))
 const built = existsSync(BINARY)
 const canRun = built && (await agentAcceptsRuns(BINARY))
 
 const state = vi.hoisted(() => ({
   enabled: true,
+  saveRunTraces: false,
   traceDirectory: ''
 }))
 
@@ -55,8 +54,12 @@ vi.mock('../native/helper', () => ({
 vi.mock('../settings/store', () => ({
   getSettings: () => ({
     agent: {
-      enabled: true, maxSteps: 3, abortOnMouseMove: false,
-      verifyResult: false, rememberedApprovals: []
+      enabled: true,
+      maxSteps: 3,
+      abortOnMouseMove: false,
+      verifyResult: false,
+      rememberedApprovals: [],
+      saveRunTraces: state.saveRunTraces
     }
   }),
   patchSettings: () => undefined
@@ -81,22 +84,29 @@ beforeAll(async () => {
     request.on('end', () => {
       modelRequests.push(JSON.parse(Buffer.concat(chunks).toString('utf8')))
       round += 1
-      const message = round === 1
-        ? {
-            role: 'assistant',
-            content: 'Смотрю приложения.',
-            tool_calls: [{
-              id: 'c1', type: 'function', function: { name: 'list_apps', arguments: '{}' }
-            }]
-          }
-        : { role: 'assistant', content: 'Готово: посмотрел.' }
+      const message =
+        round === 1
+          ? {
+              role: 'assistant',
+              content: 'Смотрю приложения.',
+              tool_calls: [
+                {
+                  id: 'c1',
+                  type: 'function',
+                  function: { name: 'list_apps', arguments: '{}' }
+                }
+              ]
+            }
+          : { role: 'assistant', content: 'Готово: посмотрел.' }
       response.writeHead(200, { 'Content-Type': 'application/json' })
-      response.end(JSON.stringify({
-        id: `c${round}`,
-        object: 'chat.completion',
-        choices: [{ index: 0, message, finish_reason: round === 1 ? 'tool_calls' : 'stop' }],
-        usage: { prompt_tokens: 120, completion_tokens: 30, total_tokens: 150 }
-      }))
+      response.end(
+        JSON.stringify({
+          id: `c${round}`,
+          object: 'chat.completion',
+          choices: [{ index: 0, message, finish_reason: round === 1 ? 'tool_calls' : 'stop' }],
+          usage: { prompt_tokens: 120, completion_tokens: 30, total_tokens: 150 }
+        })
+      )
     })
   })
   await new Promise<void>((resolve) => {
@@ -109,6 +119,12 @@ beforeAll(async () => {
 
 afterAll(() => {
   server?.close()
+})
+
+/** Every test starts with detailed traces off, as a fresh install does. */
+beforeEach(() => {
+  state.saveRunTraces = false
+  state.traceDirectory = ''
 })
 
 /** Runs one task through the real chain, with the trace pointed at `directory`. */
@@ -129,8 +145,12 @@ async function runAndReport(): Promise<{ events: AgentEvent[]; lines: Record<str
       appName: 'Finder',
       windowTitle: null,
       provider: {
-        wire: 'openai', baseUrl, model: 'stub',
-        apiKey: 'test', maxTokens: 512, temperature: 0
+        wire: 'openai',
+        baseUrl,
+        model: 'stub',
+        apiKey: 'test',
+        maxTokens: 512,
+        temperature: 0
       }
     })
     await controller.dispose()
@@ -138,16 +158,22 @@ async function runAndReport(): Promise<{ events: AgentEvent[]; lines: Record<str
     const path = join(directory, 'agent-trace.jsonl')
     // The writer queues its appends; give it a moment rather than reading a
     // file that is still being written.
-    await vi.waitFor(() => {
-      expect(existsSync(path)).toBe(true)
-      expect(readFileSync(path, 'utf8')).toContain('agent.report')
-    }, { timeout: 10_000 }).catch((error) => {
-      if (existsSync(path)) console.error('TRACE>>>', readFileSync(path, 'utf8'))
-      throw error
-    })
-    const lines = readFileSync(path, 'utf8').trim().split('\n').map(
-      (line) => JSON.parse(line) as Record<string, unknown>
-    )
+    await vi
+      .waitFor(
+        () => {
+          expect(existsSync(path)).toBe(true)
+          expect(readFileSync(path, 'utf8')).toContain('agent.report')
+        },
+        { timeout: 10_000 }
+      )
+      .catch((error) => {
+        if (existsSync(path)) console.error('TRACE>>>', readFileSync(path, 'utf8'))
+        throw error
+      })
+    const lines = readFileSync(path, 'utf8')
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line) as Record<string, unknown>)
     return { events, lines }
   } finally {
     await flushTrace()
@@ -216,6 +242,7 @@ describe.skipIf(!canRun)('a run’s timings reach the trace file', () => {
   it('records exact request bodies in a separate file for each task on the same sidecar', async () => {
     const directory = mkdtempSync(join(tmpdir(), 'deskhand-detailed-trace-'))
     state.traceDirectory = directory
+    state.saveRunTraces = true
     const controller = createAgentController({
       emit: () => undefined,
       setPassthrough: () => undefined
@@ -232,8 +259,12 @@ describe.skipIf(!canRun)('a run’s timings reach the trace file', () => {
           appName: null,
           windowTitle: null,
           provider: {
-            wire: 'openai', baseUrl, model: 'stub',
-            apiKey: 'fixture-secret', maxTokens: 512, temperature: 0
+            wire: 'openai',
+            baseUrl,
+            model: 'stub',
+            apiKey: 'fixture-secret',
+            maxTokens: 512,
+            temperature: 0
           }
         })
         const filename = readdirSync(runDirectory).find((name) => !seen.has(name))!
@@ -244,24 +275,58 @@ describe.skipIf(!canRun)('a run’s timings reach the trace file', () => {
         expect(raw).toContain('\n    "event": "start"')
         const rows: { event: string; data: Record<string, unknown> }[] = JSON.parse(raw)
         expect(rows[0]).toMatchObject({ event: 'start', data: { prompt } })
-        expect(rows.filter((row) => row.event === 'model-request').map((row) => row.data.body))
-          .toEqual(modelRequests)
+        expect(rows.filter((row) => row.event === 'model-request').map((row) => row.data.body)).toEqual(modelRequests)
         expect(modelRequests).toHaveLength(2)
-        expect(rows.map((row) => row.event)).toEqual(expect.arrayContaining([
-          'model-response', 'model-completion', 'tool', 'result'
-        ]))
+        expect(rows.map((row) => row.event)).toEqual(
+          expect.arrayContaining(['model-response', 'model-completion', 'tool', 'result'])
+        )
         expect(rows.at(-1)).toMatchObject({ event: 'end', data: { answer: 'Готово: посмотрел.' } })
         expect(raw).not.toContain('fixture-secret')
         const dialogue = JSON.parse(readFileSync(join(dialogueDirectory, filename), 'utf8'))
-        expect(dialogue).toEqual(rows.filter(({ event }) =>
-          event === 'model-request' || event === 'model-response'
-        ))
+        expect(dialogue).toEqual(rows.filter(({ event }) => event === 'model-request' || event === 'model-response'))
         expect(dialogue.map(({ event }: { event: string }) => event)).toEqual([
-          'model-request', 'model-response', 'model-request', 'model-response'
+          'model-request',
+          'model-response',
+          'model-request',
+          'model-response'
         ])
       }
       expect(readdirSync(runDirectory)).toHaveLength(2)
       expect(readdirSync(dialogueDirectory).sort()).toEqual([...seen].sort())
+    } finally {
+      await controller.dispose()
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('writes no per-run trace when detailed logging is off', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'deskhand-no-detailed-trace-'))
+    state.traceDirectory = directory
+    const events: AgentEvent[] = []
+    const controller = createAgentController({
+      emit: (event) => events.push(event),
+      setPassthrough: () => undefined
+    })
+    try {
+      const result = await controller.run({
+        prompt: 'Посмотри, что открыто',
+        appName: 'Finder',
+        windowTitle: null,
+        provider: {
+          wire: 'openai',
+          baseUrl,
+          model: 'stub',
+          apiKey: 'test',
+          maxTokens: 512,
+          temperature: 0
+        }
+      })
+
+      // The run is unaffected: only the files that copy the screen are gone.
+      expect(result.answer).toBe('Готово: посмотрел.')
+      expect(events.at(-1)).toMatchObject({ phase: 'done', completed: true })
+      expect(existsSync(join(directory, 'project', 'agent-runs'))).toBe(false)
+      expect(existsSync(join(directory, 'project', 'agent-dialogs'))).toBe(false)
     } finally {
       await controller.dispose()
       rmSync(directory, { recursive: true, force: true })
@@ -283,15 +348,22 @@ describe.skipIf(!canRun)('a run’s timings reach the trace file', () => {
         appName: 'Finder',
         windowTitle: null,
         provider: {
-          wire: 'openai', baseUrl, model: 'stub',
-          apiKey: 'test', maxTokens: 512, temperature: 0
+          wire: 'openai',
+          baseUrl,
+          model: 'stub',
+          apiKey: 'test',
+          maxTokens: 512,
+          temperature: 0
         }
       })
       await controller.dispose()
       const path = join(directory, 'agent-trace.jsonl')
-      await vi.waitFor(() => {
-        expect(existsSync(path) && readFileSync(path, 'utf8').includes('agent.report')).toBe(true)
-      }, { timeout: 10_000 })
+      await vi.waitFor(
+        () => {
+          expect(existsSync(path) && readFileSync(path, 'utf8').includes('agent.report')).toBe(true)
+        },
+        { timeout: 10_000 }
+      )
 
       const output = spawnSync('node', [REPORT, path, '--timeline'])
       // The report reads the file the app just wrote, so this is the whole

@@ -17,11 +17,19 @@ const state = vi.hoisted(() => ({
   sizes: {} as Record<string, number>,
   settings: { voice: { model: 'small-q5_1', language: 'ru', enabled: true } },
   spawned: [] as Array<{ binary: string; args: string[] }>,
+  /** Runs right after the fake child is created, before the abort listener exists. */
+  onSpawn: null as (() => void) | null,
   /** What the fake whisper process prints and how it ends. */
   whisper: { stdout: '', stderr: '', code: 0 as number | null, emitError: false },
   transcript: '',
+  /** Pretend the GigaAM transcript file cannot be read. */
+  readFails: false,
   written: [] as Array<{ path: string; data: Buffer }>,
+  /** Pretend the disk is full before the recognizer can be spawned. */
+  writeFails: false,
   removed: [] as string[],
+  /** Pretend the temp directory cannot be removed. */
+  rmFails: false,
   renamed: [] as Array<[string, string]>,
   copied: [] as Array<[string, string]>,
   madeDirs: [] as string[],
@@ -47,7 +55,10 @@ vi.mock('node:fs', () => ({
 }))
 
 vi.mock('node:fs/promises', () => ({
-  readFile: async () => state.transcript,
+  readFile: async () => {
+    if (state.readFails) throw new Error('ENOENT: transcript')
+    return state.transcript
+  },
   readdir: async (path: string) => {
     const entries = state.dirs[path]
     if (!entries) throw new Error(`ENOENT: ${path}`)
@@ -62,9 +73,11 @@ vi.mock('node:fs/promises', () => ({
     state.madeDirs.push(path)
   },
   writeFile: async (path: string, data: Buffer) => {
+    if (state.writeFails) throw new Error('disk full')
     state.written.push({ path, data })
   },
   rm: async (path: string) => {
+    if (state.rmFails) throw new Error('EBUSY: directory')
     state.removed.push(path)
   },
   rename: async (from: string, to: string) => {
@@ -84,6 +97,7 @@ vi.mock('node:os', () => ({
 vi.mock('node:child_process', () => ({
   spawn: (binary: string, args: string[]) => {
     state.spawned.push({ binary, args })
+    state.onSpawn?.()
     const handlers = new Map<string, (value: never) => void>()
     const child = {
       stdout: {
@@ -138,20 +152,27 @@ beforeEach(async () => {
   state.sizes = {}
   state.settings = { voice: { model: 'small-q5_1', language: 'ru', enabled: true } }
   state.spawned = []
+  state.onSpawn = null
   state.whisper = { stdout: '', stderr: '', code: 0, emitError: false }
   state.transcript = ''
+  state.readFails = false
   state.written = []
+  state.writeFails = false
   state.removed = []
+  state.rmFails = false
   state.renamed = []
   state.copied = []
   state.madeDirs = []
   state.fetchResponses = []
   state.cpuCount = 8
-  vi.stubGlobal('fetch', vi.fn(async () => {
-    const next = state.fetchResponses.shift()
-    if (!next) throw new Error('unexpected fetch')
-    return next()
-  }))
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async () => {
+      const next = state.fetchResponses.shift()
+      if (!next) throw new Error('unexpected fetch')
+      return next()
+    })
+  )
   recognizer = await load()
 })
 
@@ -198,7 +219,10 @@ describe('resolveVoiceModel', () => {
     state.dirs['/userdata/models'] = [GIGAAM_FILE]
 
     expect(await recognizer.voiceStatus()).toMatchObject({
-      ready: true, activeModel: GIGAAM, installed: [GIGAAM], modelPath
+      ready: true,
+      activeModel: GIGAAM,
+      installed: [GIGAAM],
+      modelPath
     })
   })
 
@@ -290,9 +314,7 @@ describe('voiceStatus', () => {
     const status = await recognizer.voiceStatus()
 
     expect(status.ready).toBe(false)
-    expect(status.detail).toBe(
-      'Не найден whisper-cli — пересобери приложение (npm run build:whisper).'
-    )
+    expect(status.detail).toBe('Не найден whisper-cli — пересобери приложение (npm run build:whisper).')
   })
 
   it('names the model the settings point at when it is missing', async () => {
@@ -332,16 +354,21 @@ describe('transcribe', () => {
     state.transcript = 'Открой настройки.'
 
     expect(await recognizer.voiceStatus()).toMatchObject({
-      ready: true, activeModel: GIGAAM, installed: [GIGAAM], modelPath: model
+      ready: true,
+      activeModel: GIGAAM,
+      installed: [GIGAAM],
+      modelPath: model
     })
     expect(await recognizer.transcribe({ wav: WAV })).toMatchObject({
       ok: true,
       text: state.transcript
     })
-    expect(state.spawned).toEqual([{
-      binary,
-      args: ['-m', model, '-l', 'ru', '--timestamps', 'none', '-o', expect.any(String), expect.any(String)]
-    }])
+    expect(state.spawned).toEqual([
+      {
+        binary,
+        args: ['-m', model, '-l', 'ru', '--timestamps', 'none', '-o', expect.any(String), expect.any(String)]
+      }
+    ])
     expect(fetch).not.toHaveBeenCalled()
   })
 
@@ -352,10 +379,15 @@ describe('transcribe', () => {
     state.transcript = 'Открой настройки.'
 
     expect(await recognizer.voiceStatus()).toMatchObject({
-      ready: true, activeModel: GIGAAM, binaryPath: binary
+      ready: true,
+      activeModel: GIGAAM,
+      binaryPath: binary
     })
     expect(await recognizer.transcribe({ wav: WAV })).toMatchObject({ ok: true })
-    expect(state.spawned[0]).toMatchObject({ binary, args: ['-m', model, '-l', 'ru', ...Array(5).fill(expect.any(String))] })
+    expect(state.spawned[0]).toMatchObject({
+      binary,
+      args: ['-m', model, '-l', 'ru', ...Array(5).fill(expect.any(String))]
+    })
   })
 
   it('requires the selected GigaAM weights even when Whisper weights are installed', async () => {
@@ -364,7 +396,9 @@ describe('transcribe', () => {
     state.dirs['/userdata/models'] = ['ggml-small-q5_1.bin']
     state.sizes['/userdata/models/ggml-small-q5_1.bin'] = 181
     expect(await recognizer.voiceStatus()).toMatchObject({
-      ready: false, modelPath: null, detail: expect.stringContaining('В приложении нет модели GigaAM')
+      ready: false,
+      modelPath: null,
+      detail: expect.stringContaining('В приложении нет модели GigaAM')
     })
   })
 
@@ -373,7 +407,8 @@ describe('transcribe', () => {
       ok: false,
       text: '',
       ms: 0,
-      message: 'Не найден whisper-cli.'
+      message: 'Не найден whisper-cli.',
+      spawned: false
     })
   })
 
@@ -384,7 +419,8 @@ describe('transcribe', () => {
       ok: false,
       text: '',
       ms: 0,
-      message: 'Не скачана модель распознавания.'
+      message: 'Не скачана модель распознавания.',
+      spawned: false
     })
   })
 
@@ -470,7 +506,21 @@ describe('transcribe', () => {
     expect(await recognizer.transcribe({ wav: WAV })).toMatchObject({
       ok: false,
       text: '',
-      message: 'Речь не распознана — попробуй ещё раз.'
+      message: 'Речь не распознана — попробуй ещё раз.',
+      spawned: true
+    })
+  })
+
+  it('turns an unreadable GigaAM transcript into the same Russian sentence', async () => {
+    state.settings.voice = { ...DEFAULT_VOICE, language: 'ru' }
+    state.existing = new Set(['/app/resources/transcribe-cli', `/app/resources/speech/${GIGAAM_FILE}`])
+    state.readFails = true
+
+    expect(await recognizer.transcribe({ wav: WAV })).toMatchObject({
+      ok: false,
+      text: '',
+      message: 'Речь не распознана — попробуй ещё раз.',
+      spawned: true
     })
   })
 
@@ -488,9 +538,7 @@ describe('transcribe', () => {
     ready()
     state.whisper = { stdout: '', stderr: '', code: 3, emitError: false }
 
-    expect((await recognizer.transcribe({ wav: WAV })).message).toBe(
-      'whisper-cli завершился с кодом 3.'
-    )
+    expect((await recognizer.transcribe({ wav: WAV })).message).toBe('whisper-cli завершился с кодом 3.')
   })
 
   it('accepts a non-zero exit when whisper printed a transcript anyway', async () => {
@@ -518,8 +566,20 @@ describe('transcribe', () => {
 
     const result = await recognizer.transcribe({ wav: WAV, signal: controller.signal })
 
-    expect(result).toMatchObject({ ok: false, text: '', message: 'Отменено.' })
+    expect(result).toMatchObject({ ok: false, text: '', message: 'Отменено.', spawned: false })
     expect(state.removed).toHaveLength(1)
+  })
+
+  it('does not claim a process that was cancelled mid-run', async () => {
+    ready()
+    state.whisper.stdout = 'поздно'
+    const controller = new AbortController()
+    state.onSpawn = () => controller.abort()
+
+    const result = await recognizer.transcribe({ wav: WAV, signal: controller.signal })
+
+    expect(result).toMatchObject({ ok: false, text: '', message: 'Отменено.', spawned: false })
+    expect(state.spawned).toHaveLength(1)
   })
 
   it('reports the elapsed milliseconds', async () => {
@@ -529,6 +589,102 @@ describe('transcribe', () => {
     const result = await recognizer.transcribe({ wav: WAV })
 
     expect(result.ms).toBeGreaterThanOrEqual(0)
+  })
+
+  it('still answers when the temp directory cannot be removed', async () => {
+    ready()
+    state.whisper.stdout = 'текст'
+    state.rmFails = true
+    const unhandled = vi.fn()
+    process.on('unhandledRejection', unhandled)
+    try {
+      await expect(recognizer.transcribe({ wav: WAV })).resolves.toMatchObject({
+        ok: true,
+        text: 'текст'
+      })
+      // Give the removal's promise time to settle: without a handler of its own
+      // it surfaced as an unhandled rejection in the main process.
+      await new Promise((resolve) => setImmediate(resolve))
+      expect(unhandled).not.toHaveBeenCalled()
+    } finally {
+      process.off('unhandledRejection', unhandled)
+    }
+  })
+})
+
+describe('warmRecognizer', () => {
+  function ready(): void {
+    state.existing = new Set(['/app/resources/whisper-cli', '/userdata/models/ggml-small-q5_1.bin'])
+  }
+
+  it('runs the recognizer on silence and shares one process between callers', async () => {
+    ready()
+
+    await Promise.all([recognizer.warmRecognizer(), recognizer.warmRecognizer()])
+
+    expect(state.spawned).toHaveLength(1)
+    expect(state.spawned[0].binary).toBe('/app/resources/whisper-cli')
+    expect(state.spawned[0].args[3]).toMatch(/^\/tmp\/deskhand-voice-.+\/input\.wav$/)
+    const written = state.written[0]
+    expect(written.data.subarray(0, 4).toString()).toBe('RIFF')
+    // The warm-up is a normal turn: the temp directory is removed as usual.
+    expect(state.removed).toHaveLength(1)
+  })
+
+  it('starts nothing when there is no model to load', async () => {
+    state.existing = new Set(['/app/resources/whisper-cli'])
+
+    await recognizer.warmRecognizer()
+
+    expect(state.spawned).toHaveLength(0)
+    expect(state.written).toHaveLength(0)
+  })
+
+  it('cancels before the recognizer is spawned', async () => {
+    ready()
+
+    const running = recognizer.warmRecognizer()
+    recognizer.cancelWarmRecognizer()
+    await running
+
+    expect(state.spawned).toHaveLength(0)
+  })
+
+  it('reports a warm-up that really loaded the model', async () => {
+    ready()
+
+    await expect(recognizer.warmRecognizer()).resolves.toBe(true)
+  })
+
+  it('does not report a warm-up whose temp file never reached the recognizer', async () => {
+    ready()
+    state.writeFails = true
+
+    await expect(recognizer.warmRecognizer()).resolves.toBe(false)
+    expect(state.spawned).toHaveLength(0)
+  })
+
+  it('reports false when there is nothing to load', async () => {
+    state.existing = new Set(['/app/resources/whisper-cli'])
+
+    await expect(recognizer.warmRecognizer()).resolves.toBe(false)
+  })
+
+  it('reports false for a cancelled warm-up', async () => {
+    ready()
+    const running = recognizer.warmRecognizer()
+    recognizer.cancelWarmRecognizer()
+
+    await expect(running).resolves.toBe(false)
+  })
+
+  it('logs a warm-up that could not start once for every caller', async () => {
+    state.existing = new Set(['/app/resources/whisper-cli'])
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+
+    await Promise.all([recognizer.warmRecognizer(), recognizer.warmRecognizer()])
+
+    expect(warn).toHaveBeenCalledTimes(1)
   })
 })
 
@@ -548,16 +704,12 @@ describe('downloadModel', () => {
   })
 
   it('downloads into a `.part` file and renames it when complete', async () => {
-    state.fetchResponses = [
-      async () => new Response(bodyOf('model-bytes'), { status: 200 })
-    ]
+    state.fetchResponses = [async () => new Response(bodyOf('model-bytes'), { status: 200 })]
     const progress: Array<{ done: boolean; received: number }> = []
 
     await recognizer.downloadModel('tiny', (event) => progress.push(event))
 
-    expect(state.renamed).toEqual([
-      ['/userdata/models/ggml-tiny.bin.part', '/userdata/models/ggml-tiny.bin']
-    ])
+    expect(state.renamed).toEqual([['/userdata/models/ggml-tiny.bin.part', '/userdata/models/ggml-tiny.bin']])
     expect(progress.at(-1)).toMatchObject({ done: true })
   })
 
@@ -567,18 +719,14 @@ describe('downloadModel', () => {
     await recognizer.downloadModel('tiny', () => undefined)
 
     const url = (globalThis.fetch as unknown as { mock: { calls: string[][] } }).mock.calls[0][0]
-    expect(url).toBe(
-      'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin'
-    )
+    expect(url).toBe('https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin')
   })
 
   it('reports an HTTP failure, removes the part file and rethrows', async () => {
     state.fetchResponses = [async () => new Response('nope', { status: 404 })]
     const progress: Array<{ error?: string }> = []
 
-    await expect(
-      recognizer.downloadModel('tiny', (event) => progress.push(event))
-    ).rejects.toThrow('HTTP 404')
+    await expect(recognizer.downloadModel('tiny', (event) => progress.push(event))).rejects.toThrow('HTTP 404')
     expect(state.removed).toContain('/userdata/models/ggml-tiny.bin.part')
     expect(progress.at(-1)?.error).toBe('HTTP 404')
   })
@@ -598,10 +746,12 @@ describe('downloadModel', () => {
 
       await vi.advanceTimersByTimeAsync(30_000)
       await failure
-      expect(report).toHaveBeenLastCalledWith(expect.objectContaining({
-        done: true,
-        error: expect.stringContaining('Сервер загрузки модели не отвечает')
-      }))
+      expect(report).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          done: true,
+          error: expect.stringContaining('Сервер загрузки модели не отвечает')
+        })
+      )
       expect(recognizer.isDownloading('tiny')).toBe(false)
       expect(state.renamed).toHaveLength(0)
 
@@ -641,10 +791,7 @@ describe('deleteModel', () => {
     await recognizer.deleteModel('tiny')
     await recognizer.deleteModel('ggml-custom.bin')
 
-    expect(state.removed).toEqual([
-      '/userdata/models/ggml-tiny.bin',
-      '/userdata/models/ggml-custom.bin'
-    ])
+    expect(state.removed).toEqual(['/userdata/models/ggml-tiny.bin', '/userdata/models/ggml-custom.bin'])
   })
 
   it('does not allow downloading or deleting the bundled model', async () => {

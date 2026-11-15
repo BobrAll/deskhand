@@ -4,9 +4,10 @@
  * One parser reads these tables: `main/voice/listen.ts` turns the user's
  * accelerator ("Alt+Shift+Space") into the key code and modifier mask the native
  * keyboard tap needs. A bare key is never valid there — the parser returns null
- * unless it finds at least one modifier and one key — so only combinations live
- * in the grammar. The parser stays in its own file; only the numbers live here,
- * so a wrong keycode is fixed in one place.
+ * unless it finds at least one modifier — so only combinations live in the
+ * grammar. A hold of two or more modifiers (Control+Alt) is valid as well and
+ * needs no entry here. The parser stays in its own file; only the numbers live
+ * here, so a wrong keycode is fixed in one place.
  *
  * `KEY_CODES` is the full table and the source of truth; `VOICE_KEY_CODES` is the
  * subset that parser accepts. The subset has always been the full table minus

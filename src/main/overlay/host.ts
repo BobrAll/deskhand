@@ -11,6 +11,7 @@
  */
 
 import type { BrowserWindow } from 'electron'
+import type { ScreenRect } from '@shared/types'
 
 export interface OverlayHost {
   /** Creates the window off-screen ahead of the first key press. */
@@ -32,7 +33,7 @@ export interface OverlayHost {
    * pointer, and only the card's own anchor would otherwise decide which side
    * grows.
    */
-  resize(height: number, width?: number, pin?: boolean): void
+  resize(height: number, width?: number, pin?: boolean, typing?: boolean): void
   /**
    * Tells the window whether shapes are painted on the screen right now, so it
    * can drop its native blur while they are: a frosted card over the very spot
@@ -42,10 +43,26 @@ export interface OverlayHost {
   /** Drops the window's blur while a voice turn shows bare bars. */
   setVoice(active: boolean): void
   /**
+   * Marks the field a dictation will fill, or clears the mark with null.
+   *
+   * This is a separate transparent layer, not the overlay itself: the card sits
+   * at the cursor, while the border has to sit on the user's own field.
+   */
+  showField(frame: ScreenRect | null): void
+  /** Removes the field mark, if one is on screen. */
+  hideField(): void
+  /**
    * Makes the card transparent to the mouse and gives up focus, so a synthetic
    * click lands on the app the plan is about instead of on our own panel.
    */
   setPassthrough(active: boolean): void
+  /**
+   * Takes the keyboard for an approval question.
+   *
+   * The run is already blocked on the answer, so this cannot interrupt an action;
+   * it is what makes Enter, Command+Enter and Escape work without a click.
+   */
+  focus(): void
   hide(): void
   window(): BrowserWindow | null
 }

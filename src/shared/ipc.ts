@@ -29,7 +29,6 @@ export const CH = {
     setFlags: 'overlay:set-flags',
     resize: 'overlay:resize',
     copy: 'overlay:copy',
-    paste: 'overlay:paste',
     /** Removes the drawings from the screen without closing the card. */
     clearDrawing: 'overlay:clear-drawing',
     /**
@@ -133,6 +132,8 @@ export const CH = {
   voice: {
     /** main -> renderer: phase changed (listening / transcribing / idle). */
     event: 'voice:event',
+    /** main -> the transparent layer: the target field is or is no longer marked. */
+    fieldHighlight: 'voice:field-highlight',
     /** main -> renderer: start capturing from the microphone. */
     record: 'voice:record',
     /**
@@ -173,6 +174,11 @@ export const CH = {
   tts: {
     /** overlay -> main: `{ ok, audio }` for one line, or a reason to use the system voice. */
     speak: 'tts:speak',
+    /**
+     * overlay -> main: text that is about to be spoken, so its unknown English
+     * words can be looked up while the line is still being generated. No reply.
+     */
+    prefetch: 'tts:prefetch',
     /** Settings window: whether live synthesis is configured, and why not. */
     status: 'tts:status',
     /** Settings window: stores the synthesis key encrypted; never read back. */

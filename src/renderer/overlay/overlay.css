@@ -26,8 +26,8 @@ body,
 @media (prefers-color-scheme: light) {
   :root {
     --panel: rgba(252, 253, 255, 0.66);
-    --panel-edge: rgba(0, 0, 0, 0.10);
-    --panel-drawing: rgba(200, 202, 206, 0.40);
+    --panel-edge: rgba(0, 0, 0, 0.1);
+    --panel-drawing: rgba(200, 202, 206, 0.4);
   }
 }
 
@@ -42,25 +42,61 @@ body,
   flex-direction: column;
   gap: 3px;
   animation: appear 100ms ease-out;
+  /* The whole glass is a handle. Text, controls and the answer opt out below:
+     a window that can only be grabbed by its top six points is a puzzle. */
+  -webkit-app-region: drag;
+  cursor: grab;
 }
 
-/* Leave room for the silhouette inside Electron's clipped viewport. */
+.card :is(textarea, button, input, a, .answer, .meta, .drawer, .foot, .agent, .agent-done, .grip) {
+  -webkit-app-region: no-drag;
+}
+
+/* Holding Option turns the whole card into a handle, including the field and
+   the answer. The plain drag stays off the text so typing and selecting keep
+   working; this is the escape hatch for "move it from here". */
+.card[data-drag-anywhere],
+.card[data-drag-anywhere] * {
+  -webkit-app-region: drag !important;
+  cursor: grab !important;
+}
+
+textarea.prompt {
+  cursor: text;
+}
+
+.card button,
+.card a {
+  cursor: pointer;
+}
+
+.card .answer {
+  cursor: text;
+}
+
+/* The panel is the window: its rounded corners are the window's own, so the
+   native vibrancy blur follows the same silhouette instead of showing a square
+   behind it. `-1px` reaches past the card's transparent border to the window
+   edge. The radius matches the mask macOS puts on a rounded window (9 pt), which
+   keeps the blur from peeking out at the corners. */
 .card::before {
   content: '';
   position: absolute;
-  inset: 0 3px;
+  inset: -1px;
   z-index: -1;
   pointer-events: none;
   border: 1px solid var(--panel-edge);
-  border-radius: 10px;
+  border-radius: 9px;
   background-color: var(--panel);
   background-image: linear-gradient(
     to bottom,
     light-dark(rgb(255 255 255 / 0.16), rgb(255 255 255 / 0.08)),
     transparent 26px
   );
-  box-shadow: 0 0 2px rgb(0 0 0 / 0.16);
-  transition: background-color 180ms ease-out, border-color 180ms ease-out;
+  box-shadow: inset 0 0 2px rgb(0 0 0 / 0.16);
+  transition:
+    background-color 180ms ease-out,
+    border-color 180ms ease-out;
 }
 
 /**
@@ -177,7 +213,9 @@ button.toggle {
   background: transparent;
   border-color: transparent;
   color: var(--text-faint);
-  transition: color 90ms ease-out, background 90ms ease-out;
+  transition:
+    color 90ms ease-out,
+    background 90ms ease-out;
 }
 
 button.toggle svg {
@@ -206,6 +244,41 @@ button.toggle[data-alert] {
 
 button.toggle[data-open] svg {
   transform: rotate(180deg);
+}
+
+/* The mouse's way out. The same quiet register as the chevron: it is a door
+   out of a small panel, not a third thing to read. */
+button.close {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  margin-top: 1px;
+  padding: 0;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  border-color: transparent;
+  color: var(--text-faint);
+  transition:
+    color 90ms ease-out,
+    background 90ms ease-out;
+}
+
+button.close svg {
+  width: 9px;
+  height: 9px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+}
+
+button.close:hover:not(:disabled) {
+  background: var(--surface);
+  border-color: transparent;
+  color: var(--text);
 }
 
 /* While an answer streams the chevron gets company: a long answer that is
@@ -418,6 +491,15 @@ button.tag.clear {
   animation: agent-step-in 150ms ease-out;
 }
 
+/* A stop control cannot live on the card while a plan is click-through; the
+   key that can is worth naming. */
+.agent-hint {
+  flex: none;
+  font-size: 10.5px;
+  color: var(--text-faint);
+  white-space: nowrap;
+}
+
 .agent-dot {
   width: 6px;
   height: 6px;
@@ -447,6 +529,18 @@ button.tag.clear {
   margin-top: 2px;
   padding-top: 6px;
   border-top: 1px solid color-mix(in srgb, var(--accent) 22%, transparent);
+}
+
+.agent-ask-title {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.agent-ask-hint {
+  font-size: 10.5px;
+  line-height: 1.35;
+  color: var(--text-faint);
 }
 
 .agent-ask-detail {
@@ -492,8 +586,12 @@ button.tag.clear {
 }
 
 @keyframes agent-step-in {
-  from { opacity: 0.55; }
-  to { opacity: 1; }
+  from {
+    opacity: 0.55;
+  }
+  to {
+    opacity: 1;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -503,6 +601,32 @@ button.tag.clear {
 }
 
 /* ------------------------------------------------------------------ the answer */
+
+/* The answer scrolls; the "new text" pill belongs to the frame, not to the
+   text, so it stays in place while the reader is above the bottom. */
+.answer-wrap {
+  position: relative;
+}
+
+.new-text {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  padding: 3px 8px;
+  border: 1px solid color-mix(in srgb, var(--accent) 38%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--panel) 96%, transparent);
+  color: var(--accent);
+  font-size: 10.5px;
+  line-height: 1.2;
+  box-shadow: 0 4px 12px rgb(0 0 0 / 0.24);
+}
+
+.new-text:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--text);
+}
 
 .answer {
   font-size: 13px;
@@ -726,8 +850,17 @@ button.tag.clear {
 }
 
 .grip:hover::after,
+.grip:focus-visible::after,
 .grip[data-dragging]::after {
   opacity: 0.55;
+}
+
+/* The edge is reachable with Tab, so the focus has to be visible on a 7px strip
+   that is otherwise only a hover hint. */
+.grip:focus-visible {
+  outline: 2px solid var(--text-dim);
+  outline-offset: -2px;
+  border-radius: 3px;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -766,6 +899,17 @@ button.link.primary {
 
 button.link.primary:hover:not(:disabled) {
   background: var(--accent-soft);
+}
+
+/* Copy is the one action that confirms itself in place; a new line under the
+   card would survive long after the click and push everything around. The tint
+   and the check are the point — a green word alone disappears under the hover
+   that follows the click. */
+button.link[data-copied],
+button.link[data-copied]:hover:not(:disabled) {
+  color: var(--success);
+  background: color-mix(in srgb, var(--success) 14%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--success) 30%, transparent);
 }
 
 /* ------------------------------------------------------- the listening card */
@@ -893,5 +1037,11 @@ button.link.primary:hover:not(:disabled) {
   line-height: 1.5;
   overflow-wrap: anywhere;
 }
-.waiting-label { font-weight: 500; }
-.waiting-caption { display: block; font-weight: 600; margin-bottom: 3px; }
+.waiting-label {
+  font-weight: 500;
+}
+.waiting-caption {
+  display: block;
+  font-weight: 600;
+  margin-bottom: 3px;
+}

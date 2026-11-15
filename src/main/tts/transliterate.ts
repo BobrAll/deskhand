@@ -8,9 +8,9 @@
  *
  * Two layers:
  *
- * - A dictionary of terms that appear in answers constantly. It also carries
- *   the stress mark (`+` before the vowel), because a neural stress model can
- *   guess wrong on a foreign word it has never seen.
+ * - The dictionary in `dictionary.ts`, for terms that appear in answers
+ *   constantly. It also carries the stress mark (`+` before the vowel), because
+ *   a neural stress model can guess wrong on a foreign word it has never seen.
  * - Rules for everything else. They are an approximation, not a phonetic
  *   transcription; an unknown word will sound Russian-accented, which is the
  *   point. The stress model runs after this and places the marks on words the
@@ -20,296 +20,76 @@
  * keep the original text: the user must not see «р+идми» instead of «README».
  */
 
-/** Dictionary values are already Cyrillic; `+` marks the stressed vowel. */
-const WORDS: Record<string, string> = {
-  // Files, apps and the interface
-  readme: 'р+идми',
-  file: 'ф+айл',
-  files: 'ф+айлы',
-  folder: 'ф+олдер',
-  open: '+опен',
-  close: 'кл+оуз',
-  save: 'сейв',
-  delete: 'дел+ит',
-  run: 'ран',
-  stop: 'стоп',
-  start: 'старт',
-  click: 'клик',
-  type: 'тайп',
-  press: 'пресс',
-  select: 'сил+ект',
-  search: 'сёрч',
-  view: 'вью',
-  settings: 'с+еттингс',
-  window: 'у+индоу',
-  screen: 'скрин',
-  app: 'эп',
-  panel: 'пан+ель',
-  menu: 'мен+ю',
-  button: 'б+аттон',
-  tab: 'тэб',
-  page: 'пейдж',
-  link: 'линк',
-  copy: 'к+опи',
-  paste: 'пейст',
-  cut: 'кат',
-  undo: 'анд+у',
-  redo: 'рид+у',
-  note: 'ноут',
-  list: 'лист',
-  item: 'айтем',
-  name: 'нейм',
-  text: 'текст',
-  line: 'лайн',
-  word: 'у+орд',
-  number: 'н+амбер',
-  value: 'в+элью',
-  data: 'д+ейта',
-  image: 'имидж',
-  media: 'м+едиа',
-  video: 'в+идео',
-  audio: '+аудио',
-  voice: 'войс',
-  sound: 'саунд',
-  speech: 'спич',
-  language: 'л+энгвидж',
-  english: 'инглиш',
-  russian: 'р+ашен',
+import { WORDS } from './dictionary'
 
-  // The assistant itself
-  agent: '+ейджент',
-  prompt: 'пр+омпт',
-  model: 'мод+ель',
-  token: 'т+окен',
-  key: 'ки',
-  cache: 'к+эш',
-  server: 'с+ервер',
-  client: 'кли+ент',
-  database: 'д+ейтабейс',
-  code: 'код',
-  script: 'скр+ипт',
-  terminal: 'т+ерминал',
-  command: 'ком+анд',
-  request: 'рикв+ест',
-  response: 'рисп+онс',
-  endpoint: 'эндпоинт',
-  service: 'с+ервис',
-  provider: 'пров+айдер',
-  version: 'в+ерсия',
-  release: 'рил+из',
-  feature: 'ф+ича',
-  bug: 'баг',
-  fix: 'фикс',
-  review: 'ревь+ю',
-  approve: 'апр+ув',
-  deny: 'ден+ай',
-  allow: 'алл+оу',
-  block: 'блок',
-  remember: 'рим+ембер',
-  build: 'б+илд',
-  deploy: 'депл+ой',
-  commit: 'комм+ит',
-  merge: 'мёрж',
-  branch: 'бр+анч',
-  issue: '+ишью',
-  pull: 'пул',
-  push: 'пуш',
-  repo: 'р+епо',
-  repository: 'рипозит+ори',
-  github: 'г+итхаб',
-  git: 'гит',
-  npm: 'эн пи эм',
-  python: 'п+айтон',
-  javascript: 'дж+аваскрипт',
-  typescript: 'т+айпскрипт',
-  react: 'ри+акт',
-  node: 'ноуд',
-  electron: 'эл+ектрон',
-  swift: 'свифт',
-  linux: 'л+инукс',
-  windows: 'у+индоуз',
-  macos: 'мак+ос',
-  ios: 'ай+ос',
-  iphone: 'айф+он',
-  wifi: 'в+ай фай',
-  google: 'г+угл',
-  apple: '+эпл',
-  microsoft: 'м+айкрософт',
-  openai: '+опен эй ай',
-  chatgpt: 'чат джи пи ти',
+/** Apostrophes and hyphens people type instead of the ASCII ones. */
+const JOINERS = /['’-]/g
 
-  // Requests and states
-  email: 'имейл',
-  internet: 'интерн+ет',
-  website: 'в+ебсайт',
-  web: 'веб',
-  online: 'онл+айн',
-  offline: 'офл+айн',
-  update: 'апд+ейт',
-  download: 'даунл+оуд',
-  upload: 'апл+оуд',
-  install: 'инст+ол',
-  error: '+эрор',
-  warning: 'в+орнинг',
-  success: 'сакс+есс',
-  fail: 'фейл',
-  test: 'тест',
-  true: 'тру',
-  false: 'фолс',
-  chat: 'чат',
-  user: '+юзер',
-  password: 'п+асворд',
-  login: 'лог+ин',
-  account: 'акк+аунт',
-  network: 'н+етворк',
-  class: 'класс',
-  object: '+обджект',
-  array: 'арр+ей',
-  function: 'ф+анкшен',
-  import: 'имп+орт',
-  export: '+экспорт',
-  return: 'рит+ёрн',
-  private: 'пр+айват',
-  public: 'п+аблик',
-  async: 'ас+инк',
-  await: 'ав+ейт',
+/** Every Latin word in a line: letters joined by an inner apostrophe or hyphen. */
+const LATIN_WORD = /\p{Script=Latin}+(?:['’-]\p{Script=Latin}+)*/gu
 
-  // Function words: the rules mangle these, and they are everywhere
-  the: 'зэ',
-  a: 'э',
-  an: 'эн',
-  i: 'ай',
-  of: 'оф',
-  to: 'ту',
-  in: 'ин',
-  is: 'из',
-  are: 'ар',
-  and: 'энд',
-  or: 'ор',
-  for: 'фор',
-  with: 'виз',
-  this: 'зис',
-  that: 'зэт',
-  it: 'ит',
-  we: 'ви',
-  you: 'ю',
-  my: 'май',
-  your: 'йор',
-  on: 'он',
-  at: 'эт',
-  from: 'фром',
-  by: 'бай',
-  be: 'би',
-  not: 'нот',
-  have: 'хэв',
-  has: 'хэз',
-  had: 'хэд',
-  do: 'ду',
-  does: 'даз',
-  was: 'воз',
-  were: 'вер',
-  can: 'кэн',
-  will: 'вил',
-  but: 'бат',
-  so: 'соу',
-  if: 'иф',
-  then: 'зэн',
-  than: 'зэн',
-  there: 'зэр',
-  here: 'хир',
-  what: 'уот',
-  when: 'уэн',
-  where: 'уэр',
-  why: 'уай',
-  how: 'хау',
-  who: 'ху',
-  all: 'ол',
-  some: 'сам',
-  any: 'эни',
-  more: 'мор',
-  most: 'моуст',
-  just: 'джаст',
-  only: 'онли',
-  also: 'олсоу',
-  very: 'вери',
-  now: 'нау',
-  today: 'тудэй',
-  tomorrow: 'тумороу',
-  yesterday: 'естердэй',
-
-  // Common nouns outside a codebase
-  computer: 'компь+ютер',
-  laptop: 'лэпт+оп',
-  phone: 'фон',
-  message: 'месс+адж',
-  notification: 'нотифик+ейшен',
-  calendar: 'календ+арь',
-  browser: 'бр+аузер',
-  keyboard: 'к+иборд',
-  mouse: 'м+аус',
-  document: 'докьюм+ент',
-  project: 'пр+оджект',
-  problem: 'пробл+ем',
-  question: 'кв+есчен',
-  answer: '+ансер',
-  time: 'тайм',
-  date: 'дейт',
-  day: 'дэй',
-  week: 'уик',
-  month: 'манс',
-  year: 'йир',
-  work: 'ворк',
-  home: 'хоум',
-  city: 'с+ити',
-  school: 'скул',
-  money: 'м+ани',
-  price: 'прайс',
-  order: '+ордер',
-  product: 'пр+одакт',
-  support: 'сапп+орт',
-  team: 'тим',
-  news: 'ньюс',
-  article: 'артикл',
-  post: 'пост',
-  comment: 'комм+ент',
-  share: 'шер',
-  like: 'лайк',
-  follow: 'ф+оллоу',
-  subscribe: 'сабскр+айб',
-
-  // Everyday English
-  ok: 'ок+ей',
-  okay: 'ок+ей',
-  please: 'плиз',
-  thanks: 'с+энкс',
-  sorry: 'с+орри',
-  hello: 'хелл+оу',
-  hi: 'хай',
-  world: 'у+орлд',
-  yes: 'йес',
-  no: 'ноу',
-  good: 'гуд',
-  bad: 'бэд',
-  new: 'нью',
-  old: '+олд',
-  next: 'некст',
-  back: 'бэк',
-  forward: 'ф+орвард'
+/** The dictionary entry for a word, also trying it without its joiners. */
+function dictionaryForm(word: string): string | undefined {
+  return WORDS[word] ?? WORDS[word.replace(JOINERS, '')]
 }
 
 /** How a letter is pronounced when an acronym is spelled out. */
 const LETTER_NAMES: Record<string, string> = {
-  a: 'эй', b: 'би', c: 'си', d: 'ди', e: 'и', f: 'эф', g: 'джи',
-  h: 'эйч', i: 'ай', j: 'джей', k: 'кей', l: 'эл', m: 'эм', n: 'эн',
-  o: 'оу', p: 'пи', q: 'кью', r: 'ар', s: 'эс', t: 'ти', u: 'ю',
-  v: 'ви', w: 'дабл ю', x: 'экс', y: 'уай', z: 'зед'
+  a: 'эй',
+  b: 'би',
+  c: 'си',
+  d: 'ди',
+  e: 'и',
+  f: 'эф',
+  g: 'джи',
+  h: 'эйч',
+  i: 'ай',
+  j: 'джей',
+  k: 'кей',
+  l: 'эл',
+  m: 'эм',
+  n: 'эн',
+  o: 'оу',
+  p: 'пи',
+  q: 'кью',
+  r: 'ар',
+  s: 'эс',
+  t: 'ти',
+  u: 'ю',
+  v: 'ви',
+  w: 'дабл ю',
+  x: 'экс',
+  y: 'уай',
+  z: 'зед'
 }
 
 const LETTERS: Record<string, string> = {
-  a: 'а', b: 'б', c: 'к', d: 'д', e: 'е', f: 'ф', g: 'г', h: 'х',
-  i: 'и', j: 'дж', k: 'к', l: 'л', m: 'м', n: 'н', o: 'о', p: 'п',
-  q: 'к', r: 'р', s: 'с', t: 'т', u: 'у', v: 'в', w: 'в', x: 'кс',
-  y: 'и', z: 'з'
+  a: 'а',
+  b: 'б',
+  c: 'к',
+  d: 'д',
+  e: 'е',
+  f: 'ф',
+  g: 'г',
+  h: 'х',
+  i: 'и',
+  j: 'дж',
+  k: 'к',
+  l: 'л',
+  m: 'м',
+  n: 'н',
+  o: 'о',
+  p: 'п',
+  q: 'к',
+  r: 'р',
+  s: 'с',
+  t: 'т',
+  u: 'у',
+  v: 'в',
+  w: 'в',
+  x: 'кс',
+  y: 'и',
+  z: 'з'
 }
 
 /** Long value of a vowel before a silent final `e`: `file` → файл. */
@@ -351,6 +131,35 @@ const DIGRAPHS: Array<[string, string]> = [
   ['ng', 'нг']
 ]
 
+/** Latin letters that decomposition does not split into a base letter and a mark. */
+const FOLDED_LETTERS: Record<string, string> = {
+  ß: 'ss',
+  æ: 'ae',
+  œ: 'oe',
+  ø: 'o',
+  ł: 'l',
+  đ: 'd',
+  ð: 'd',
+  þ: 'th',
+  ı: 'i'
+}
+
+/** One pattern for the same letters, so the map and the match cannot drift apart. */
+const FOLDED_PATTERN = new RegExp(`[${Object.keys(FOLDED_LETTERS).join('')}]`, 'gi')
+
+/**
+ * A Latin word written with the base letters of its alphabet.
+ *
+ * Silero has no accented letter in its vocabulary, so `café` must reach the
+ * letter rules as `cafe` instead of passing `é` through untouched.
+ */
+function foldLatin(word: string): string {
+  return word
+    .normalize('NFD')
+    .replace(/\p{M}/gu, '')
+    .replace(FOLDED_PATTERN, (letter) => FOLDED_LETTERS[letter.toLowerCase()])
+}
+
 /** The placeholder stands in for the long vowel produced by a silent final `e`. */
 const LONG_MARK = '\u0001'
 const SOFT_G = '\u0002'
@@ -361,30 +170,53 @@ function spellAcronym(word: string): string {
 }
 
 function looksLikeAcronym(word: string): boolean {
-  if (/^[A-Z]{2,6}$/.test(word)) return true
+  // A vowel-less capitalised token is an abbreviation (`JWT`, `HTML`, `SQL`).
+  // A capitalised product name with vowels (`KAFKA`, `REDIS`) is a word and
+  // must reach the rules or the pronunciation hint, not the letter names.
+  if (/^[A-Z]{2,6}$/.test(word)) return !/[AEIOU]/.test(word)
   // A lowercase short token with no vowel is an abbreviation too: `md`, `pkg`.
   return word.length >= 2 && word.length <= 3 && !/[aeiouy]/i.test(word)
 }
 
-function ruleTransliterate(input: string): string {
-  let word = input.toLowerCase()
+/**
+ * The marker for a `g` or `c` that the letter rules must read soft, and the
+ * letter itself for everything else.
+ */
+function softConsonant(letter: string): string {
+  if (letter === 'g') return SOFT_G
+  if (letter === 'c') return SOFT_C
+  return letter
+}
 
-  // `file` → `fайл`: a vowel, one consonant and a silent final `e` make the
-  // vowel long. A soft `g`/`c` before that `e` keeps its soft sound.
+/**
+ * Applies a silent final `e` to the word the letter rules are about to read.
+ *
+ * `file` becomes a long `i` and a plain `l`; `slice` a long `i` and a soft `c`;
+ * `table` only loses the `e`, because it does not lengthen the vowel before it.
+ * The markers in the returned text are what `ruleTransliterate` understands.
+ */
+function applyFinalE(word: string): { marked: string; longVowel: string } {
   const magic = /^(.*?)([aeiou])([^aeiou])e$/.exec(word)
   if (magic) {
-    const [prefix, consonant] = [magic[1], magic[3]]
-    const soft = consonant === 'g' ? SOFT_G : consonant === 'c' ? SOFT_C : consonant
-    word = `${prefix}${LONG_MARK}${soft}`
-  } else if (word.length > 2 && word.endsWith('e') && !/[aeiou]$/.test(word.slice(0, -1))) {
-    word = word.slice(0, -1)
+    return { marked: `${magic[1]}${LONG_MARK}${softConsonant(magic[3])}`, longVowel: magic[2] }
   }
+  if (word.length > 2 && word.endsWith('e') && !/[aeiou]$/.test(word.slice(0, -1))) {
+    // The `e` is silent, but a `g` or `c` before it is still soft: `edge` must
+    // not become «едг» and `large` not «ларг».
+    const head = word.slice(0, -2)
+    return { marked: `${head}${softConsonant(word[word.length - 2])}`, longVowel: '' }
+  }
+  return { marked: word, longVowel: '' }
+}
+
+function ruleTransliterate(input: string): string {
+  const { marked: word, longVowel } = applyFinalE(input.toLowerCase())
 
   let out = ''
-  for (let index = 0; index < word.length; ) {
+  for (let index = 0; index < word.length;) {
     const char = word[index]
     if (char === LONG_MARK) {
-      out += LONG_VOWELS[magic?.[2] ?? ''] ?? 'е'
+      out += LONG_VOWELS[longVowel] ?? 'е'
       index += 1
       continue
     }
@@ -425,31 +257,105 @@ function ruleTransliterate(input: string): string {
   return out
 }
 
-function transliterateWord(word: string): string {
+/**
+ * A known singular with an English plural ending.
+ *
+ * The rules lose the stem's stress mark and read a silent `e` as a vowel, so
+ * `updates` becomes «упдатес» instead of «апд+ейтс». Reusing the dictionary form
+ * keeps both the sound and the stress of the word the user already knows.
+ */
+function pluralOf(word: string): string | null {
+  if (!word.endsWith('s')) return null
+  const stems = word.endsWith('es') ? [word.slice(0, -1), word.slice(0, -2)] : [word.slice(0, -1)]
+  for (const stem of stems) {
+    // A two-letter stem is a function word (`us`, `it`), not a noun that takes
+    // an English plural; `uses` must not become «асис».
+    if (stem.length < 3) continue
+    const singular = dictionaryForm(stem)
+    if (!singular) continue
+    const last = singular[singular.length - 1]
+    // A russified word ending in `а`/`е`/`я` adds the English plural differently
+    // (`фича` + `с` is not `features`); let the letter rules handle those.
+    if ('аеёяэ'.includes(last)) continue
+    if ('шжчщсзц'.includes(last)) return `${singular}ис`
+    if (last === 'ь') return `${singular.slice(0, -1)}с`
+    return `${singular}с`
+  }
+  return null
+}
+
+function acronymPluralOf(word: string): string | null {
+  const match = /^([A-Z]{2,6})s$/.exec(word)
+  if (!match) return null
+  const stem = match[1]
+  const lower = stem.toLowerCase()
+  const known = WORDS[lower]
+  if (known && known.includes(' ')) return `${known}с`
+  return looksLikeAcronym(stem) ? `${spellAcronym(stem)}с` : null
+}
+
+/** Whether the dictionary, the plural rule or the acronym rules can say this word. */
+function needsPronunciation(word: string): boolean {
   const lower = word.toLowerCase()
-  const known = WORDS[lower] ?? WORDS[lower.replace(/['’-]/g, '')]
+  if (dictionaryForm(lower)) return false
+  if (acronymPluralOf(word)) return false
+  if (pluralOf(lower)) return false
+  return !looksLikeAcronym(word)
+}
+
+/**
+ * Latin words that need a pronunciation hint, without duplicates.
+ *
+ * The whole token is checked first so «Wi-Fi» stays in the dictionary instead of
+ * being split into two unknown words. A token that is not known is split at its
+ * hyphens and apostrophes, exactly as `transliterate` will split it.
+ */
+export function unknownWords(text: string): string[] {
+  const words = new Set<string>()
+  for (const token of text.match(LATIN_WORD) ?? []) {
+    const folded = foldLatin(token)
+    if (dictionaryForm(folded.toLowerCase())) continue
+    for (const part of folded.split(/['’-]/).filter(Boolean)) {
+      if (part.length < 2) continue
+      if (needsPronunciation(part)) words.add(part.toLowerCase())
+    }
+  }
+  return [...words]
+}
+
+function transliterateWord(word: string, pronunciations: Readonly<Record<string, string>>): string {
+  const folded = foldLatin(word)
+  const lower = folded.toLowerCase()
+  const known = dictionaryForm(lower)
   if (known) return known
-  if (looksLikeAcronym(word)) return spellAcronym(word)
-  return ruleTransliterate(word)
+  const acronymPlural = acronymPluralOf(folded)
+  if (acronymPlural) return acronymPlural
+  const plural = pluralOf(lower)
+  if (plural) return plural
+  const hint = pronunciations[lower]
+  if (hint) return hint
+  if (looksLikeAcronym(folded)) return spellAcronym(folded)
+  return ruleTransliterate(folded)
 }
 
 /**
  * Replaces every Latin word in a line, leaving Cyrillic, numbers and
  * punctuation exactly where they were.
  *
- * Hyphens and apostrophes inside a Latin token become a space: «Wi-Fi» is two
- * Russian words, «don't» is one. A hyphen between a Latin and a Cyrillic word
- * is left alone.
+ * A hyphen inside a Latin token becomes a space: «Wi-Fi» is two Russian words.
+ * An apostrophe does not: «don't» and «user's» are one spoken word.
+ *
+ * `pronunciations` carries the model's hints for words the dictionary does not
+ * know; only the string sent to synthesis is affected.
  */
-export function transliterate(text: string): string {
-  return text.replace(/\p{Script=Latin}+(?:['’-]\p{Script=Latin}+)*/gu, (token) => {
-    const lower = token.toLowerCase()
-    const whole = WORDS[lower] ?? WORDS[lower.replace(/['’-]/g, '')]
+export function transliterate(text: string, pronunciations: Readonly<Record<string, string>> = {}): string {
+  return text.replace(LATIN_WORD, (token) => {
+    const whole = dictionaryForm(foldLatin(token).toLowerCase())
     if (whole) return whole
     return token
       .split(/['’-]/)
       .filter(Boolean)
-      .map(transliterateWord)
-      .join(' ')
+      .map((part) => transliterateWord(part, pronunciations))
+      .join(token.includes('-') ? ' ' : '')
   })
 }

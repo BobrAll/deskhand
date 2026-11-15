@@ -1,7 +1,7 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import { ProviderError } from './provider'
-import { readSse, toProviderError, toTransportError } from './http'
+import { providerErrorMessage, readSse, toProviderError, toTransportError } from './http'
 
 /** A `text/event-stream` body delivered as the given chunks, in order. */
 function body(chunks: string[]): ReadableStream<Uint8Array> {
@@ -40,9 +40,7 @@ describe('readSse: the event stream', () => {
   it('keeps a chunk boundary in the middle of an event from splitting it', async () => {
     const whole = await collect(['data: {"delta":"привет"}\n\n'])
     const byChar = await collect('data: {"delta":"привет"}\n\n'.split(''))
-    const byTwo = await collect(
-      ('data: {"delta":"привет"}\n\n' + 'data: [DONE]\n\n').match(/[\s\S]{1,2}/g) ?? []
-    )
+    const byTwo = await collect(('data: {"delta":"привет"}\n\n' + 'data: [DONE]\n\n').match(/[\s\S]{1,2}/g) ?? [])
 
     expect(byChar).toEqual(whole)
     expect(byTwo).toEqual([{ data: '{"delta":"привет"}' }, { data: '[DONE]' }])
@@ -84,12 +82,8 @@ describe('readSse: the event stream', () => {
   })
 
   it('reads the event name', async () => {
-    expect(await collect(['event: message\ndata: hi\n\n'])).toEqual([
-      { event: 'message', data: 'hi' }
-    ])
-    expect(await collect(['event:  message  \ndata: hi\n\n'])).toEqual([
-      { event: 'message', data: 'hi' }
-    ])
+    expect(await collect(['event: message\ndata: hi\n\n'])).toEqual([{ event: 'message', data: 'hi' }])
+    expect(await collect(['event:  message  \ndata: hi\n\n'])).toEqual([{ event: 'message', data: 'hi' }])
   })
 
   it('joins several data lines with a newline', async () => {
@@ -121,15 +115,43 @@ describe('readSse: the event stream', () => {
     const again = await collect(['data: c\n\n'])
     expect(again).toEqual([{ data: 'c' }])
   })
+
+  it('cancels the body a consumer abandoned', async () => {
+    const cancel = vi.fn()
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode('data: a\n\ndata: b\n\n'))
+      },
+      cancel
+    })
+
+    for await (const event of readSse(stream)) {
+      expect(event.data).toBe('a')
+      break
+    }
+
+    expect(cancel).toHaveBeenCalledTimes(1)
+  })
+
+  it('survives a cancel that fails', async () => {
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode('data: a\n\n'))
+      },
+      cancel() {
+        return Promise.reject(new Error('already gone'))
+      }
+    })
+
+    for await (const event of readSse(stream)) {
+      expect(event.data).toBe('a')
+      break
+    }
+  })
 })
 
 describe('toProviderError: the status map', () => {
-
-  async function errorFor(
-    status: number,
-    text = '',
-    label = 'OpenAI'
-  ): Promise<ProviderError> {
+  async function errorFor(status: number, text = '', label = 'OpenAI'): Promise<ProviderError> {
     return toProviderError(new Response(text, { status }), label)
   }
 
@@ -168,9 +190,7 @@ describe('toProviderError: the status map', () => {
 
   it('maps 429 to a rate limit, and marks it retryable', async () => {
     const error = await errorFor(429)
-    expect(error.message).toBe(
-      'Ключ OpenAI действителен, но лимит запросов исчерпан. Попробуй позже.'
-    )
+    expect(error.message).toBe('Ключ OpenAI действителен, но лимит запросов исчерпан. Попробуй позже.')
     expect(error.retryable).toBe(true)
     expect(error.status).toBe(429)
   })
@@ -178,9 +198,7 @@ describe('toProviderError: the status map', () => {
   it('maps any 5xx to a temporary outage, and marks it retryable', async () => {
     for (const status of [500, 502, 503, 504, 599]) {
       const error = await errorFor(status)
-      expect(error.message, String(status)).toBe(
-        `Сервис OpenAI временно недоступен (${status}).`
-      )
+      expect(error.message, String(status)).toBe(`Сервис OpenAI временно недоступен (${status}).`)
       expect(error.retryable, String(status)).toBe(true)
       expect(error.status, String(status)).toBe(status)
     }
@@ -204,9 +222,7 @@ describe('toProviderError: the detail in the body', () => {
   it('reads `error.message` from a JSON body', async () => {
     const text = JSON.stringify({ error: { message: 'model not found', type: 'x' } })
     const error = await toProviderError(new Response(text, { status: 404 }), 'OpenAI')
-    expect(error.message).toBe(
-      'Модель не найдена у OpenAI. Проверь название модели. (model not found)'
-    )
+    expect(error.message).toBe('Модель не найдена у OpenAI. Проверь название модели. (model not found)')
   })
 
   it('falls back to a top-level `message`', async () => {
@@ -259,6 +275,24 @@ describe('toProviderError: the detail in the body', () => {
   })
 })
 
+describe('providerErrorMessage', () => {
+  it('prefers the message, then the type, then the code', () => {
+    expect(providerErrorMessage({ message: 'overloaded', type: 'x', code: 'y' })).toBe('overloaded')
+    expect(providerErrorMessage({ type: 'overloaded_error', code: 'y' })).toBe('overloaded_error')
+    expect(providerErrorMessage({ code: 'insufficient_quota' })).toBe('insufficient_quota')
+  })
+
+  it('keeps a string error', () => {
+    expect(providerErrorMessage('overloaded')).toBe('overloaded')
+  })
+
+  it('still says something when the provider said nothing', () => {
+    expect(providerErrorMessage({})).toBe('причина не указана')
+    expect(providerErrorMessage(undefined)).toBe('причина не указана')
+    expect(providerErrorMessage({ message: '   ' })).toBe('причина не указана')
+  })
+})
+
 describe('toTransportError', () => {
   function signal(aborted = false): AbortSignal {
     const controller = new AbortController()
@@ -285,8 +319,14 @@ describe('toTransportError', () => {
       'getaddrinfo ENOTFOUND api.openai.com',
       'EAI_AGAIN',
       'ENETUNREACH',
+      'ECONNRESET',
+      'EPIPE',
       'fetch failed',
-      'network error'
+      'network error',
+      // What undici throws when the connection dies mid-body.
+      'terminated',
+      'socket hang up',
+      'other side closed'
     ]) {
       const error = toTransportError(new Error(message), signal())
       expect(error.message, message).toBe('Нет соединения с интернетом или сервис недоступен.')

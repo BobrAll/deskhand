@@ -20,8 +20,16 @@ export type VoiceAction = 'command' | 'dictate'
 /** Hold-to-talk input: a local model turns speech into text. */
 export interface VoiceSettings {
   enabled: boolean
-  /** Accelerator held down to talk, e.g. "Alt+Shift+Space". */
+  /** Accelerator held down to talk, e.g. "Control+Alt". */
   hotkey: string
+  /**
+   * Accelerator that always dictates into the frontmost app.
+   *
+   * Separate from `hotkey` because the two are different gestures: the main
+   * combination follows `action`, while this one must never open a question on
+   * the card — the words belong where the cursor is.
+   */
+  dictationHotkey: string
   /** Catalog ID or imported Whisper model filename. */
   model: string
   /** Whisper language code, or `auto` to let the model detect it. */
@@ -90,6 +98,15 @@ export interface TtsSettings {
    * picking a Silero speaker rewrote the API voice in the next tab.
    */
   sileroVoice: string
+  /**
+   * `silero` only: ask the configured text model for words the seed dictionary
+   * does not know, and cache the answer.
+   *
+   * Silero itself stays offline; this is the one optional request, and turning
+   * it off leaves every unknown word to the transliteration rules and the stress
+   * model.
+   */
+  pronunciationLookup: boolean
 }
 
 /**
@@ -141,6 +158,14 @@ export interface AgentSettings {
    * per-app or per-tool switch, so nothing has to be taught about a new app.
    */
   showActions: boolean
+  /**
+   * Write a per-run trace with the exact prompts, window titles and screenshots.
+   *
+   * Off by default: the aggregate `agent-trace.jsonl` already answers why a run
+   * was slow, while these files hold everything the user saw and typed. They are
+   * a debugging tool, not a history, so turning this on is a deliberate choice.
+   */
+  saveRunTraces: boolean
 }
 
 /**
@@ -202,7 +227,7 @@ export interface AgentToolRequest {
   /**
    * A stable fingerprint of what this call would do, computed by the agent.
    *
-   * "Разрешить всегда" stores this, not the sentence around it: the same button
+   * "Больше не спрашивать" stores this, not the sentence around it: the same button
    * in the same app is the same decision, while the same word in another app is
    * a different one. Typed text is deliberately not part of it.
    */
@@ -248,9 +273,8 @@ export interface AgentEvent {
   /**
    * What the agent has done so far, newest last.
    *
-   * The plan is not known in advance any more — the agent decides its next call
-   * after seeing the result of the previous one — so the card shows the log it
-   * actually produced instead of a list it was handed at the start.
+   * The card shows only the current step and its label; the full log travels on
+   * the event for the run trace and for callers that need the sequence.
    */
   actions?: AgentActionRow[]
   /** Set on `error` / `aborted`: why the run stopped. */
@@ -287,7 +311,7 @@ export interface AgentActionRow {
 export interface AgentRunResult {
   /** The agent's final answer, in the user's language. */
   answer: string
-  /** What actually happened, one row per call, for the card and the history. */
+  /** What actually happened, one row per call, for the run trace and the summary. */
   actions: AgentActionRow[]
   /** Set when the run stopped early, or when it could not start. */
   message?: string
@@ -335,16 +359,7 @@ export interface AgentCursorFrame {
  * an animation, never to decide whether the action is allowed: the host has
  * already approved the call by the time this arrives.
  */
-export type AgentGesture =
-  | 'click'
-  | 'secondary'
-  | 'type'
-  | 'value'
-  | 'select'
-  | 'key'
-  | 'scroll'
-  | 'drag'
-  | 'activate'
+export type AgentGesture = 'click' | 'secondary' | 'type' | 'value' | 'select' | 'key' | 'scroll' | 'drag' | 'activate'
 
 /**
  * One action, in screen terms, as the agent reports it just before acting.
@@ -405,12 +420,7 @@ export type VoicePhase = 'idle' | 'listening' | 'transcribing'
  * decides whether to say something out loud. Matching on the sentence would
  * break the moment the wording changes.
  */
-export type VoiceErrorCode =
-  | 'notHeard'
-  | 'recordFailed'
-  | 'transcribeFailed'
-  | 'noMic'
-  | 'recordTooLong'
+export type VoiceErrorCode = 'notHeard' | 'recordFailed' | 'transcribeFailed' | 'noMic' | 'recordTooLong'
 
 export interface VoiceEvent {
   phase: VoicePhase
@@ -422,6 +432,13 @@ export interface VoiceEvent {
   error?: string
   /** Set alongside `error`, so the reason does not have to be matched by text. */
   code?: VoiceErrorCode
+}
+
+/** Main -> the transparent field layer: draw or drop the voice strip. */
+export interface FieldHighlightEvent {
+  visible: boolean
+  /** 0..1 microphone level, so the bars open with the user's voice. */
+  level: number
 }
 
 export interface VoiceStatus {
@@ -514,6 +531,15 @@ export interface TranscribeResult {
   /** Wall-clock milliseconds spent in whisper, shown as "распознано за 0.9 с". */
   ms: number
   message?: string
+  /**
+   * True when the recognizer ran to completion and was not cancelled.
+   *
+   * The warm-up may treat a silent run as proof that the model loaded; a missing
+   * binary, a model that never started, a failed temp-file write or a cancelled
+   * run must not. An empty or unreadable transcript still counts as spawned,
+   * because the model itself did run.
+   */
+  spawned?: boolean
 }
 
 export interface AppSettings {
@@ -596,9 +622,16 @@ export type AnnotationKind = 'circle' | 'box' | 'arrow' | 'underline'
 
 export interface Annotation {
   kind: AnnotationKind
-  /** Start point: the centre of a circle, one corner of a box, the arrow tail. */
+  /**
+   * One corner of the shape's box, or the tail of an arrow, or the start of an
+   * underline.
+   *
+   * A circle is drawn from the same two corners as a box — it is an ellipse
+   * inscribed in them, not a centre plus a radius — which is why a grounded
+   * circle is the rectangle of the element it encircles.
+   */
   from: Point01
-  /** End point: a point on the circle, the opposite corner, the arrow head. */
+  /** The opposite corner, the arrow head, or the end of the underline. */
   to: Point01
   /** Short caption drawn next to the shape. */
   label?: string
@@ -816,9 +849,7 @@ export interface PasteResult {
   message?: string
 }
 
-export type ModelListResult =
-  | { ok: true; models: string[] }
-  | { ok: false; message: string }
+export type ModelListResult = { ok: true; models: string[] } | { ok: false; message: string }
 
 export interface TestKeyResult {
   ok: boolean

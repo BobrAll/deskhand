@@ -71,22 +71,20 @@ vi.mock('node:readline', () => ({
   })
 }))
 
-import { VoiceKeyListener, parseAccelerator } from './listen'
+import { MODIFIER_ONLY, VoiceKeyListener, parseAccelerator } from './listen'
 
 const COMMAND = 0x00100000
 const SHIFT = 0x00020000
 const CONTROL = 0x00040000
 const OPTION = 0x00080000
+const FN = 0x00800000
 
 beforeEach(() => {
   state.children = []
   state.spawnThrows = false
   state.timers = []
   vi.spyOn(console, 'warn').mockImplementation(() => undefined)
-  vi.spyOn(globalThis, 'setTimeout').mockImplementation(((
-    fn: () => void,
-    ms?: number
-  ) => {
+  vi.spyOn(globalThis, 'setTimeout').mockImplementation(((fn: () => void, ms?: number) => {
     const timer = { fn, ms: ms ?? 0, cleared: false }
     state.timers.push(timer)
     return timer as unknown as NodeJS.Timeout
@@ -142,8 +140,20 @@ describe('parseAccelerator', () => {
     expect(parseAccelerator('   ')).toBeNull()
   })
 
-  it('rejects a combination of modifiers only', () => {
-    expect(parseAccelerator('Alt+Shift')).toBeNull()
+  it('parses a hold of two or more modifiers without a key', () => {
+    expect(parseAccelerator('Control+Alt')).toEqual({
+      keyCode: MODIFIER_ONLY,
+      flags: CONTROL | OPTION
+    })
+    expect(parseAccelerator('Fn+Control')).toEqual({
+      keyCode: MODIFIER_ONLY,
+      flags: FN | CONTROL
+    })
+  })
+
+  it('rejects a single modifier, which would fire on ordinary typing', () => {
+    expect(parseAccelerator('Alt')).toBeNull()
+    expect(parseAccelerator('Control+Control')).toBeNull()
   })
 
   it('rejects two non-modifier keys', () => {
@@ -181,6 +191,13 @@ describe('VoiceKeyListener: starting', () => {
 
     expect(tap.start('Alt+Space')).toBeNull()
     expect(state.children[0].args).toEqual(['voice', '49', String(OPTION), 'swallow'])
+  })
+
+  it('sends a modifier-only hold without `swallow`', () => {
+    const { listener: tap } = listener()
+
+    expect(tap.start('Control+Alt')).toBeNull()
+    expect(state.children[0].args).toEqual(['voice', String(MODIFIER_ONLY), String(CONTROL | OPTION)])
   })
 
   it('omits `swallow` when the options say so', () => {
@@ -281,9 +298,7 @@ describe('VoiceKeyListener: reading helper events', () => {
 
     state.children[0].stdout.emit('{"error":"accessibility-denied"}')
 
-    expect(errors).toEqual([
-      'Нет доступа «Универсальный доступ» — удержание клавиши не работает.'
-    ])
+    expect(errors).toEqual(['Нет доступа «Универсальный доступ» — удержание клавиши не работает.'])
     expect(tap.lastError).toBe(errors[0])
   })
 
@@ -366,25 +381,74 @@ describe('VoiceKeyListener: restart and stop', () => {
     expect(tap.listening).toBe(true)
   })
 
-  it('keeps restarting with a 1 s backoff forever (KNOWN BUG: characterization)', () => {
-    // `launch()` resets `failures` whenever the helper reports `ready`, and a
-    // restart only happens after `ready` — so the exponential growth and the
-    // six-failure cap are unreachable: every restart waits 1000 ms.
+  it('backs off exponentially and gives up instead of spinning every second', () => {
+    // `launch()` used to reset `failures` whenever the helper reported `ready`,
+    // and a restart only happens after `ready` — so the exponential growth and
+    // the six-failure cap were unreachable and a dying helper was respawned
+    // every second, forever.
     const { tap } = started()
     const delays: number[] = []
 
-    for (let attempt = 0; attempt < 8; attempt += 1) {
+    for (let attempt = 0; attempt < 10; attempt += 1) {
       const child = state.children[state.children.length - 1]
       child.stdout.emit('{"event":"ready"}')
+      const timersBefore = state.timers.length
       child.exit(0)
+      if (state.timers.length === timersBefore) break
       const timer = state.timers[state.timers.length - 1]
       delays.push(timer.ms)
       timer.fn()
     }
 
-    expect(delays).toEqual([1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000])
-    expect(state.children).toHaveLength(9)
-    expect(tap.listening).toBe(true)
+    expect(delays).toEqual([1000, 2000, 4000, 8000, 16000, 30000])
+    expect(state.children).toHaveLength(7)
+    expect(tap.listening).toBe(false)
+    expect(console.warn).toHaveBeenCalledWith(expect.stringContaining('died 6 times without a healthy run'))
+  })
+
+  it('forgives the earlier failures after a long healthy run', () => {
+    // One death a day used to accumulate across days and stop the listener for
+    // good; a process that stayed up for a minute was not in a crash loop.
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(1_000)
+    started()
+
+    const first = state.children[0]
+    first.stdout.emit('{"event":"ready"}')
+    clock.mockReturnValue(2_000)
+    first.exit(0)
+    expect(state.timers[state.timers.length - 1].ms).toBe(1000)
+    state.timers[state.timers.length - 1].fn()
+
+    const second = state.children[1]
+    second.stdout.emit('{"event":"ready"}')
+    clock.mockReturnValue(62_001)
+    second.exit(0)
+
+    // A second failure in a row would have doubled the delay; the healthy run
+    // started the count over.
+    expect(state.timers[state.timers.length - 1].ms).toBe(1000)
+  })
+
+  it('forgets the failures when the listener is started again', () => {
+    const { tap } = started()
+    // Exhaust the retries.
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      const child = state.children[state.children.length - 1]
+      child.stdout.emit('{"event":"ready"}')
+      const timersBefore = state.timers.length
+      child.exit(0)
+      if (state.timers.length === timersBefore) break
+      state.timers[state.timers.length - 1].fn()
+    }
+
+    expect(tap.start('Alt+Shift+Space')).toBeNull()
+    const child = state.children[state.children.length - 1]
+    const timersBefore = state.timers.length
+    child.stdout.emit('{"event":"ready"}')
+    child.exit(0)
+
+    expect(state.timers.length).toBe(timersBefore + 1)
+    expect(state.timers[state.timers.length - 1].ms).toBe(1000)
   })
 
   it('does not retry a process that never reported ready', () => {
@@ -392,9 +456,7 @@ describe('VoiceKeyListener: restart and stop', () => {
 
     state.children[0].exit(1)
 
-    expect(errors).toEqual([
-      'Слушатель клавиатуры не запустился — проверь «Универсальный доступ».'
-    ])
+    expect(errors).toEqual(['Слушатель клавиатуры не запустился — проверь «Универсальный доступ».'])
     expect(state.timers).toHaveLength(0)
   })
 
@@ -416,6 +478,39 @@ describe('VoiceKeyListener: restart and stop', () => {
     state.children[0].exit(0)
 
     expect(state.timers).toHaveLength(0)
+  })
+
+  it('ignores the delayed exit of a child that start() already replaced', () => {
+    const { tap } = started()
+    const replaced = state.children[0]
+    replaced.stdout.emit('{"event":"ready"}')
+
+    tap.start('Alt+Shift+Space')
+    expect(replaced.killed).toBe('SIGTERM')
+
+    // The old helper was signalled but has not exited yet. When it finally does,
+    // its exit belongs to a process this listener no longer owns.
+    replaced.exit(0)
+
+    expect(state.timers).toHaveLength(0)
+    expect(state.children).toHaveLength(2)
+    expect(state.children[1].killed).toBeNull()
+    expect(tap.listening).toBe(true)
+    expect(tap.accelerator).toBe('Alt+Shift+Space')
+  })
+
+  it('ignores a delayed error from a child that start() already replaced', () => {
+    const { tap, errors } = started()
+    const replaced = state.children[0]
+    replaced.stdout.emit('{"event":"ready"}')
+
+    tap.start('Alt+Shift+Space')
+    replaced.fail(new Error('ENOENT'))
+
+    expect(errors).toEqual([])
+    expect(tap.lastError).toBeNull()
+    expect(state.timers).toHaveLength(0)
+    expect(tap.listening).toBe(true)
   })
 
   it('stop() kills the process, clears the accelerator and any pending restart', () => {

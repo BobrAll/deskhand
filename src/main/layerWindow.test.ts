@@ -22,11 +22,10 @@ const state = {
 vi.mock('electron', () => {
   class FakeBrowserWindow {
     readonly webContents = {
-      setWindowOpenHandler: (
-        handler: (details: { url: string }) => { action: string }
-      ): void => {
+      setWindowOpenHandler: (handler: (details: { url: string }) => { action: string }): void => {
         state.handlers.push(handler)
       },
+      on: (): void => undefined,
       once: (): void => undefined
     }
 
@@ -143,7 +142,7 @@ describe('createLayerWindow: the shared contract', () => {
     createLayerWindow({ page: 'cursor', acceptFirstMouse: false })
 
     expect(state.loaded).toEqual([
-      expect.stringContaining("/drawing/index.html"),
+      expect.stringContaining('/drawing/index.html'),
       expect.stringContaining('/cursor/index.html')
     ])
   })

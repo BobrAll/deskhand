@@ -1,5 +1,5 @@
-import Foundation
 import DeskhandCore
+import Foundation
 
 /// Anthropic messages wire format, including the `anthropic-version` header and
 /// the block-based content array. `baseURL` is configurable so this also works
@@ -30,9 +30,10 @@ public struct AnthropicProvider: StreamingChatProvider {
         systemPrompt: String
     ) async throws -> Completion {
         try requireKey()
-        let request = makeRequest(payload: makePayload(
-            messages: messages, tools: tools, systemPrompt: systemPrompt, stream: false
-        ))
+        let request = makeRequest(
+            payload: makePayload(
+                messages: messages, tools: tools, systemPrompt: systemPrompt, stream: false
+            ))
         let exchange = ModelTrace.start(request)
 
         let data: Data
@@ -65,9 +66,10 @@ public struct AnthropicProvider: StreamingChatProvider {
         onText: (String) -> Void
     ) async throws -> Completion {
         try requireKey()
-        let request = makeRequest(payload: makePayload(
-            messages: messages, tools: tools, systemPrompt: systemPrompt, stream: true
-        ))
+        let request = makeRequest(
+            payload: makePayload(
+                messages: messages, tools: tools, systemPrompt: systemPrompt, stream: true
+            ))
         let exchange = ModelTrace.start(request)
 
         let bytes: URLSession.AsyncBytes
@@ -83,7 +85,7 @@ public struct AnthropicProvider: StreamingChatProvider {
             throw LLMError.transport("no HTTP response")
         }
         guard (200..<300).contains(http.statusCode) else {
-            let body = await collect(bytes, limit: 4096)
+            let body = await bytes.prefixData(limit: 4096)
             exchange?.response(body, status: http.statusCode)
             // Same fallback as the OpenAI wire: a proxy that refuses `stream`
             // can still answer in one piece, and nothing has been shown yet.
@@ -97,8 +99,9 @@ public struct AnthropicProvider: StreamingChatProvider {
         }
 
         if let contentType = http.value(forHTTPHeaderField: "Content-Type"),
-           contentType.lowercased().contains("application/json") {
-            let body = await collect(bytes, limit: 16 * 1024 * 1024)
+            contentType.lowercased().contains("application/json")
+        {
+            let body = await bytes.prefixData(limit: 16 * 1024 * 1024)
             exchange?.response(body, status: http.statusCode)
             return try decode(body)
         }
@@ -170,7 +173,7 @@ public struct AnthropicProvider: StreamingChatProvider {
         var stopReason: String?
         var inputTokens: Int?
         var outputTokens: Int?
-        var sawStop = false
+        var sawTerminalEvent = false
 
         var lines: [JSONValue] = []
         defer { exchange?.stream(lines, status: status) }
@@ -179,7 +182,10 @@ public struct AnthropicProvider: StreamingChatProvider {
             let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
             guard trimmed.hasPrefix("data:") else { continue }
             let raw = trimmed.dropFirst(5).trimmingCharacters(in: .whitespaces)
-            if raw == "[DONE]" { break }
+            if raw == streamDoneMarker {
+                sawTerminalEvent = true
+                break
+            }
             guard let value = try? JSONValue.parse(raw) else { continue }
 
             switch value["type"]?.stringValue {
@@ -229,47 +235,32 @@ public struct AnthropicProvider: StreamingChatProvider {
                 }
 
             case "message_stop":
-                sawStop = true
+                sawTerminalEvent = true
 
             default:
                 continue
             }
         }
 
-        if !sawStop && stopReason == nil && text.isEmpty && builders.isEmpty {
-            throw LLMError.transport("the response stream ended before the model answered")
-        }
+        try requireStreamFinished(stopReason: stopReason, sawTerminalEvent: sawTerminalEvent)
 
         let calls = builders.keys.sorted().map { index -> ToolCall in
             let builder = builders[index]!
-            let arguments = (try? JSONValue.parse(builder.arguments)) ?? .object([:])
-            return ToolCall(
+            return makeToolCall(
                 id: builder.id.isEmpty ? UUID().uuidString : builder.id,
                 name: builder.name,
-                arguments: arguments
+                argumentsJSON: builder.arguments
             )
         }
         if stopReason == "tool_use" && calls.isEmpty {
             throw LLMError.decoding("the stream announced a tool use but none arrived")
         }
 
-        let usage = (inputTokens == nil && outputTokens == nil)
+        let usage =
+            (inputTokens == nil && outputTokens == nil)
             ? nil
             : TokenUsage(inputTokens: inputTokens ?? 0, outputTokens: outputTokens ?? 0)
         return Completion(text: text, toolCalls: calls, stopReason: stopReason, usage: usage)
-    }
-
-    private func collect(_ bytes: URLSession.AsyncBytes, limit: Int) async -> Data {
-        var data = Data()
-        do {
-            for try await byte in bytes {
-                data.append(byte)
-                if data.count >= limit { break }
-            }
-        } catch {
-            // Only the error message needs the body.
-        }
-        return data
     }
 
     /// Anthropic requires tool results to be `user` messages containing
@@ -279,8 +270,9 @@ public struct AnthropicProvider: StreamingChatProvider {
 
         func appendMerging(role: String, blocks: [JSONValue]) {
             if let last = out.last?.objectValue,
-               last["role"]?.stringValue == role,
-               let existing = last["content"]?.arrayValue {
+                last["role"]?.stringValue == role,
+                let existing = last["content"]?.arrayValue
+            {
                 var merged = existing
                 merged.append(contentsOf: blocks)
                 out[out.count - 1] = .object([
@@ -288,10 +280,11 @@ public struct AnthropicProvider: StreamingChatProvider {
                     "content": .array(merged),
                 ])
             } else {
-                out.append(.object([
-                    "role": .string(role),
-                    "content": .array(blocks),
-                ]))
+                out.append(
+                    .object([
+                        "role": .string(role),
+                        "content": .array(blocks),
+                    ]))
             }
         }
 
@@ -304,38 +297,42 @@ public struct AnthropicProvider: StreamingChatProvider {
             case .user:
                 var blocks: [JSONValue] = []
                 for image in message.images {
-                    blocks.append(.object([
-                        "type": .string("image"),
-                        "source": .object([
-                            "type": .string("base64"),
-                            "media_type": .string(WindowCapture.mimeType(of: image)),
-                            "data": .string(image.base64EncodedString()),
-                        ]),
-                    ]))
+                    blocks.append(
+                        .object([
+                            "type": .string("image"),
+                            "source": .object([
+                                "type": .string("base64"),
+                                "media_type": .string(WindowCapture.mimeType(of: image)),
+                                "data": .string(image.base64EncodedString()),
+                            ]),
+                        ]))
                 }
                 if !message.text.isEmpty {
-                    blocks.append(.object([
-                        "type": .string("text"),
-                        "text": .string(message.text),
-                    ]))
+                    blocks.append(
+                        .object([
+                            "type": .string("text"),
+                            "text": .string(message.text),
+                        ]))
                 }
                 appendMerging(role: "user", blocks: blocks)
 
             case .assistant:
                 var blocks: [JSONValue] = []
                 if !message.text.isEmpty {
-                    blocks.append(.object([
-                        "type": .string("text"),
-                        "text": .string(message.text),
-                    ]))
+                    blocks.append(
+                        .object([
+                            "type": .string("text"),
+                            "text": .string(message.text),
+                        ]))
                 }
                 for call in message.toolCalls {
-                    blocks.append(.object([
-                        "type": .string("tool_use"),
-                        "id": .string(call.id),
-                        "name": .string(call.name),
-                        "input": call.arguments,
-                    ]))
+                    blocks.append(
+                        .object([
+                            "type": .string("tool_use"),
+                            "id": .string(call.id),
+                            "name": .string(call.name),
+                            "input": call.arguments,
+                        ]))
                 }
                 if blocks.isEmpty { continue }
                 appendMerging(role: "assistant", blocks: blocks)
@@ -376,11 +373,12 @@ public struct AnthropicProvider: StreamingChatProvider {
             case "text":
                 text += block["text"]?.stringValue ?? ""
             case "tool_use":
-                calls.append(ToolCall(
-                    id: block["id"]?.stringValue ?? UUID().uuidString,
-                    name: block["name"]?.stringValue ?? "",
-                    arguments: block["input"] ?? .object([:])
-                ))
+                calls.append(
+                    ToolCall(
+                        id: block["id"]?.stringValue ?? UUID().uuidString,
+                        name: block["name"]?.stringValue ?? "",
+                        arguments: block["input"] ?? .object([:])
+                    ))
             default:
                 continue
             }

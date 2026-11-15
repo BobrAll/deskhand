@@ -113,8 +113,9 @@ describe('normalizeBaseUrl: a user-supplied base URL', () => {
     expect(normalizeBaseUrl('https://a.example/v1/chat/completions')).toBe('https://a.example/v1')
     expect(normalizeBaseUrl('https://a.example/v1/messages')).toBe('https://a.example/v1')
     expect(normalizeBaseUrl('https://a.example/v1/models')).toBe('https://a.example/v1')
-    expect(normalizeBaseUrl('https://a.example/v1/models/?tenant=deskhand#docs'))
-      .toBe('https://a.example/v1?tenant=deskhand#docs')
+    expect(normalizeBaseUrl('https://a.example/v1/models/?tenant=deskhand#docs')).toBe(
+      'https://a.example/v1?tenant=deskhand#docs'
+    )
     expect(normalizeBaseUrl('https://a.example/v1/key')).toBe('https://a.example/v1')
     expect(normalizeBaseUrl('https://a.example/v1/CHAT/COMPLETIONS')).toBe('https://a.example/v1')
   })
@@ -174,10 +175,12 @@ describe('resolveSearchModel: the search model falls back to the chat model', ()
   }
 
   it('uses the search override when the user set one', () => {
-    expect(resolveSearchModel({
-      ...settings,
-      searchModels: { ...settings.searchModels, openai: 'search-model' }
-    })).toBe('search-model')
+    expect(
+      resolveSearchModel({
+        ...settings,
+        searchModels: { ...settings.searchModels, openai: 'search-model' }
+      })
+    ).toBe('search-model')
   })
 
   it('falls back to the chat model the user chose, not to a built-in name', () => {
@@ -196,8 +199,7 @@ describe('sanitizeVoiceModel: a choice that exists', () => {
   })
 
   it('keeps an imported model outside the catalog', () => {
-    expect(normalizeSettings({ voice: { model: 'ggml-custom.bin' } }).voice.model)
-      .toBe('ggml-custom.bin')
+    expect(normalizeSettings({ voice: { model: 'ggml-custom.bin' } }).voice.model).toBe('ggml-custom.bin')
   })
 
   it('rejects a name that is neither a catalog id nor a model file', () => {

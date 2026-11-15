@@ -17,14 +17,7 @@
 import { describe, expect, it } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import {
-  CARET_SLACK,
-  CHROME_WIDTH,
-  FIELD_FONT,
-  MAX_FIELD_HEIGHT,
-  STOP_CHROME,
-  clamp
-} from './cardMetrics'
+import { CARET_SLACK, CHROME_WIDTH, FIELD_FONT, MAX_FIELD_HEIGHT, STOP_CHROME, clamp } from './cardMetrics'
 
 const overlayCss = readFileSync(join(__dirname, 'overlay.css'), 'utf8')
 
@@ -56,7 +49,7 @@ describe('metrics: the widths stay in @shared/metrics', () => {
 })
 
 describe('metrics: the chrome the CSS spends', () => {
-  it('sums the padding, the edge, the gap and the chevron', () => {
+  it('sums the padding, the edge, the chevron and the close button', () => {
     const card = rule('.card')
     const padding = /(?:^|\n)\s*padding:\s*(\d+)px\s+(\d+)px/.exec(card)
     expect(padding, '.card must still declare "padding: <vertical>px <horizontal>px"').not.toBeNull()
@@ -64,8 +57,9 @@ describe('metrics: the chrome the CSS spends', () => {
     const edge = px(card, 'border') * 2
     const gap = px(rule('.line'), 'gap')
     const chevron = px(rule('button.toggle'), 'width')
+    const close = px(rule('button.close'), 'width')
 
-    expect(CHROME_WIDTH).toBe(horizontalPadding * 2 + edge + gap + chevron)
+    expect(CHROME_WIDTH).toBe(horizontalPadding * 2 + edge + gap + chevron + gap + close)
   })
 
   it('counts the stop button and its gap', () => {

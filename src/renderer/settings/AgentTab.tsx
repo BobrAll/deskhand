@@ -60,9 +60,7 @@ export function AgentTab({ agent, onChange, onEnabledChange }: AgentTabProps) {
   // skipped when the field already means the same number, so "05" is not rewritten
   // to "5" under the cursor as the user types.
   useEffect(() => {
-    setSteps((current) =>
-      Number(current) === agent.maxSteps ? current : String(agent.maxSteps)
-    )
+    setSteps((current) => (Number(current) === agent.maxSteps ? current : String(agent.maxSteps)))
   }, [agent.maxSteps])
 
   const editSteps = (raw: string): void => {
@@ -103,11 +101,7 @@ export function AgentTab({ agent, onChange, onEnabledChange }: AgentTabProps) {
             {state === 'blocked' && (availability?.reason ?? 'Готовность агента пока неизвестна.')}
           </span>
           {state === 'blocked' && availability?.needsAccessibility && (
-            <button
-              onClick={() => window.deskhand.permissions.open('accessibility')}
-            >
-              Открыть доступ
-            </button>
+            <button onClick={() => window.deskhand.permissions.open('accessibility')}>Открыть доступ</button>
           )}
         </div>
       </Group>
@@ -154,10 +148,7 @@ export function AgentTab({ agent, onChange, onEnabledChange }: AgentTabProps) {
             onChange={(verifyResult) => onChange({ verifyResult })}
           />
 
-          <Row
-            title="Лимит шагов задачи"
-            hint="Сколько действий агент может сделать за одну задачу."
-          >
+          <Row title="Лимит шагов задачи" hint="Сколько действий агент может сделать за одну задачу.">
             <input
               type="number"
               min={1}
@@ -176,7 +167,7 @@ export function AgentTab({ agent, onChange, onEnabledChange }: AgentTabProps) {
           <Row
             stacked
             title="Запомненные разрешения"
-            hint="Сбрось решения «Разрешить всегда», чтобы агент снова спрашивал перед этими действиями."
+            hint="Сбрось решения «Больше не спрашивать», чтобы агент снова спрашивал перед этими действиями."
           >
             <div className="row-actions">
               <button
@@ -190,13 +181,17 @@ export function AgentTab({ agent, onChange, onEnabledChange }: AgentTabProps) {
               >
                 Сбросить
               </button>
-              <span className="row-hint" role="status">{approvalStatus}</span>
+              <span className="row-hint" role="status">
+                {approvalStatus}
+              </span>
             </div>
           </Row>
         </Group>
       </div>
 
-      <p className="group-foot"><kbd>Esc</kbd> останавливает задачу в любой момент.</p>
+      <p className="group-foot">
+        <kbd>Esc</kbd> останавливает задачу в любой момент.
+      </p>
     </div>
   )
 }

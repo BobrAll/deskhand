@@ -4,24 +4,46 @@ import { groundAnnotation } from './annotationGrounding'
 
 const area: ScreenRect = { x: -1000, y: 50, width: 1000, height: 800 }
 const target: AxElementInfo = {
-  role: 'AXButton', title: 'Codex', pressable: true,
+  role: 'AXButton',
+  title: 'Codex',
+  pressable: true,
   frame: { x: -900, y: 150, width: 80, height: 32 }
 }
 const circle: Annotation = {
-  kind: 'circle', label: 'codex', from: { x: 0.7, y: 0.7 }, to: { x: 0.8, y: 0.8 }
+  kind: 'circle',
+  label: 'codex',
+  from: { x: 0.7, y: 0.7 },
+  to: { x: 0.8, y: 0.8 }
 }
 
 describe('groundAnnotation', () => {
   it('replaces a wrong visual estimate with exact bounds on an offset display', () => {
     expect(groundAnnotation(circle, [target], area)).toEqual({
-      ...circle, from: { x: 0.1, y: 0.125 }, to: { x: 0.18, y: 0.165 }
+      ...circle,
+      from: { x: 0.1, y: 0.125 },
+      to: { x: 0.18, y: 0.165 }
     })
   })
 
   it('does not choose between identically named elements', () => {
-    expect(groundAnnotation(circle, [target, { ...target, frame: {
-      x: -700, y: 150, width: 80, height: 32
-    } }], area)).toBe(circle)
+    expect(
+      groundAnnotation(
+        circle,
+        [
+          target,
+          {
+            ...target,
+            frame: {
+              x: -700,
+              y: 150,
+              width: 80,
+              height: 32
+            }
+          }
+        ],
+        area
+      )
+    ).toBe(circle)
   })
 
   it('does not treat a substring as a match', () => {
@@ -35,8 +57,9 @@ describe('groundAnnotation', () => {
   })
 
   it('does not bind a field to the text typed into it', () => {
-    expect(groundAnnotation(circle, [{ ...target, title: undefined,
-      editable: true, value: 'codex' }], area)).toBe(circle)
+    expect(groundAnnotation(circle, [{ ...target, title: undefined, editable: true, value: 'codex' }], area)).toBe(
+      circle
+    )
   })
 
   it('moves only the arrow tip to the element centre', () => {
@@ -49,13 +72,28 @@ describe('groundAnnotation', () => {
 
   it('places an underline along the bottom of the element', () => {
     expect(groundAnnotation({ ...circle, kind: 'underline' }, [target], area)).toMatchObject({
-      from: { x: 0.1, y: 0.165 }, to: { x: 0.18, y: 0.165 }
+      from: { x: 0.1, y: 0.165 },
+      to: { x: 0.18, y: 0.165 }
     })
   })
 
   it('rejects a frame outside the screenshot', () => {
-    expect(groundAnnotation(circle, [{ ...target, frame: {
-      x: 100, y: 150, width: 80, height: 32
-    } }], area)).toBe(circle)
+    expect(
+      groundAnnotation(
+        circle,
+        [
+          {
+            ...target,
+            frame: {
+              x: 100,
+              y: 150,
+              width: 80,
+              height: 32
+            }
+          }
+        ],
+        area
+      )
+    ).toBe(circle)
   })
 })

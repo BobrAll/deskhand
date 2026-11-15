@@ -27,6 +27,7 @@ import type { AppSettings, TtsSettings, TtsStatus } from '@shared/types'
 import { RECORDED, TTS_MAX_CHARS, sileroSpeaker, type TtsResult } from '@shared/tts'
 import { getTtsKey } from '../settings/secrets'
 import { getSettings } from '../settings/store'
+import { prefetchHints, resolvePronunciations } from './pronounce'
 import {
   SILERO_CACHE_ID,
   sileroModelsReady,
@@ -40,6 +41,9 @@ const TTS_TIMEOUT_MS = 20_000
 
 /** One clip in flight per text; a repeated sentence waits for the first copy. */
 const inFlight = new Map<string, Promise<TtsResult>>()
+
+/** The container a cached clip is stored in. */
+type ClipFormat = 'mp3' | 'wav'
 
 /**
  * Why the last request failed, if it did.
@@ -64,25 +68,55 @@ const CACHE_KEY_SEPARATOR = '\u0000'
  * to another never plays the previous voice's file. The key is deliberately not
  * part of it — rotating a key does not change the voice.
  */
-function cacheKey(settings: TtsSettings, text: string): string {
-  let identity: Array<string | number> = [settings.baseUrl, settings.model, settings.voice, settings.style]
-  if (settings.engine === 'silero') {
-    // The weights come from a pinned release, so the version and the speaker are
-    // the whole identity; hashing 300 MB on every line would be absurd.
-    identity = [SILERO_CACHE_ID, sileroSpeaker(settings.sileroVoice), TRANSLITERATION_VERSION]
-  }
+function cacheKey(settings: TtsSettings, text: string, hints: Readonly<Record<string, string>> = {}): string {
+  const identity = settings.engine === 'silero' ? sileroIdentity(settings, hints) : remoteIdentity(settings)
   return createHash('sha256')
     .update([...identity, text].join(CACHE_KEY_SEPARATOR))
     .digest('hex')
 }
 
+/**
+ * The local engine's identity: the pinned weights, the speaker and the hints.
+ *
+ * The weights come from a pinned release, so the version and the speaker are the
+ * whole identity; hashing 300 MB on every line would be absurd. The hints are
+ * part of it because a line first spoken before a hint arrived must not keep the
+ * rule-based pronunciation forever.
+ */
+function sileroIdentity(settings: TtsSettings, hints: Readonly<Record<string, string>>): Array<string | number> {
+  const spelling = Object.entries(hints)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([word, pronunciation]) => `${word}=${pronunciation}`)
+    .join(CACHE_KEY_SEPARATOR)
+  return [SILERO_CACHE_ID, sileroSpeaker(settings.sileroVoice), TRANSLITERATION_VERSION, spelling]
+}
+
+/** The remote engine's identity: every field the service turns into a sound. */
+function remoteIdentity(settings: TtsSettings): Array<string | number> {
+  return [settings.baseUrl, settings.model, settings.voice, settings.style]
+}
+
 /** The remote engine answers in MP3; the local engine writes a WAV. */
-function cacheExtension(settings: TtsSettings): 'mp3' | 'wav' {
+function cacheExtension(settings: TtsSettings): ClipFormat {
   return settings.engine === 'remote' ? 'mp3' : 'wav'
 }
 
-function mimeFor(extension: 'mp3' | 'wav'): string {
+function mimeFor(extension: ClipFormat): string {
   return extension === 'wav' ? 'audio/wav' : 'audio/mpeg'
+}
+
+/**
+ * The synthesis key, or null when the secrets store cannot be read.
+ *
+ * A corrupt store is the same as no key: speech must fall back to the macOS
+ * voice instead of rejecting `tts.status` and throwing at every sentence.
+ */
+function ttsKey(): string | null {
+  try {
+    return getTtsKey()
+  } catch {
+    return null
+  }
 }
 
 /**
@@ -102,12 +136,12 @@ export function ttsBlockReason(settings: AppSettings = getSettings()): string | 
   if (!tts.baseUrl) return 'Не указан адрес сервиса.'
   if (!tts.model) return 'Не указана модель.'
   if (!tts.voice) return 'Не указан голос.'
-  if (!getTtsKey()) return 'Не указан ключ синтеза.'
+  if (!ttsKey()) return 'Не указан ключ синтеза.'
   return null
 }
 
 /** Reads a cached clip, if one exists for exactly this configuration and text. */
-async function readCache(key: string, extension: 'mp3' | 'wav'): Promise<TtsResult | null> {
+async function readCache(key: string, extension: ClipFormat): Promise<TtsResult | null> {
   try {
     const file = await readFile(join(cacheDir(), `${key}.${extension}`))
     return { ok: true, audio: file.toString('base64'), cached: true, mime: mimeFor(extension) }
@@ -116,7 +150,7 @@ async function readCache(key: string, extension: 'mp3' | 'wav'): Promise<TtsResu
   }
 }
 
-async function writeCache(key: string, extension: 'mp3' | 'wav', audio: Buffer): Promise<void> {
+async function writeCache(key: string, extension: ClipFormat, audio: Buffer): Promise<void> {
   try {
     await mkdir(cacheDir(), { recursive: true })
     await writeFile(join(cacheDir(), `${key}.${extension}`), audio)
@@ -140,10 +174,12 @@ async function pruneCache(): Promise<void> {
     const dir = cacheDir()
     const names = (await readdir(dir)).filter((name) => name.endsWith('.mp3') || name.endsWith('.wav'))
     if (names.length <= CACHE_LIMIT) return
-    const dated = await Promise.all(names.map(async (name) => {
-      const info = await stat(join(dir, name)).catch(() => null)
-      return { name, at: info?.mtimeMs ?? 0 }
-    }))
+    const dated = await Promise.all(
+      names.map(async (name) => {
+        const info = await stat(join(dir, name)).catch(() => null)
+        return { name, at: info?.mtimeMs ?? 0 }
+      })
+    )
     dated.sort((left, right) => left.at - right.at)
     for (const { name } of dated.slice(0, dated.length - CACHE_LIMIT)) {
       await unlink(join(dir, name)).catch(() => undefined)
@@ -154,7 +190,7 @@ async function pruneCache(): Promise<void> {
 }
 
 async function requestSynthesis(text: string, settings: TtsSettings): Promise<TtsResult> {
-  const key = getTtsKey()
+  const key = ttsKey()
   if (!key) return { ok: false, message: 'Ключ синтеза не настроен.' }
 
   let response: Response
@@ -207,19 +243,25 @@ export async function synthesize(text: string, localOnly = false): Promise<TtsRe
   const blocked = ttsBlockReason(settings)
   if (blocked) return { ok: false, message: blocked }
 
-  const key = cacheKey(settings.tts, line)
+  const hints = settings.tts.engine === 'silero' ? await resolvePronunciations(line) : {}
+  const key = cacheKey(settings.tts, line, hints)
   const extension = cacheExtension(settings.tts)
   const running = inFlight.get(key)
   if (running) return running
 
+  // Reading the cache yields to the event loop, so a sibling line can register
+  // the same key in `inFlight` while this one waits for the disk. Its job is
+  // then the answer for this one too, and the cached copy would be older.
   const cached = await readCache(key, extension)
-  const pending = inFlight.get(key)
-  if (pending) return pending
+  const startedDuringRead = inFlight.get(key)
+  if (startedDuringRead) return startedDuringRead
   if (cached) return cached
 
-  const job = (settings.tts.engine === 'silero'
-    ? synthesizeSilero(line, sileroSpeaker(settings.tts.sileroVoice))
-    : requestSynthesis(line, settings.tts))
+  const job = (
+    settings.tts.engine === 'silero'
+      ? synthesizeSilero(line, sileroSpeaker(settings.tts.sileroVoice), hints)
+      : requestSynthesis(line, settings.tts)
+  )
     .then(async (result): Promise<TtsResult> => {
       if (result.ok) {
         await writeCache(key, extension, Buffer.from(result.audio, 'base64'))
@@ -234,6 +276,18 @@ export async function synthesize(text: string, localOnly = false): Promise<TtsRe
     .finally(() => inFlight.delete(key))
   inFlight.set(key, job)
   return job
+}
+
+/**
+ * Warms pronunciation hints for text that is about to be spoken.
+ *
+ * Same availability rule as `synthesize`: a line the engine cannot say must not
+ * spend a provider request on hints that never reach it. Fire-and-forget — the
+ * caller is the streaming overlay, not a line waiting for audio.
+ */
+export function prefetchPronunciations(text: string): void {
+  if (ttsBlockReason() !== null) return
+  void prefetchHints(text)
 }
 
 /**
@@ -256,7 +310,7 @@ export function ttsStatus(): TtsStatus {
     engine: settings.tts.engine,
     voice: silero ? sileroSpeaker(settings.tts.sileroVoice) : settings.tts.voice,
     model: settings.tts.model,
-    keyConfigured: Boolean(getTtsKey()),
+    keyConfigured: Boolean(ttsKey()),
     recordedVoice: RECORDED.voice,
     silero: silero ? { installed: sileroRuntimeReady() && sileroModelsReady() } : null
   }

@@ -210,6 +210,78 @@ describe('card: resizing at the anchor', () => {
     expect(next.point.y).toBe(300 - GAP)
   })
 
+  it('keeps a moved card where it was left on the resize after that', () => {
+    const dropped: ScreenRect = { x: 200, y: 300, width: 112, height: 31 }
+    const moved = resizeAnchor({ anchor: base, bounds: dropped, height: 31, width: 112, workAreaAt: () => SCREEN })
+    const after = resizeAnchor({
+      anchor: moved,
+      bounds: boundsFor(moved, 31, 112),
+      height: 200,
+      width: 360,
+      workAreaAt: () => SCREEN
+    })
+
+    expect(after.x).toBe(200)
+  })
+
+  it('grows down from the top edge a moved card was dropped on', () => {
+    // This card had been placed above the pointer, as any card opened in the
+    // lower half of the screen is. After a move, that side is history: the top
+    // edge is what the user put where they wanted it.
+    const above: CardAnchor = { ...base, above: true, point: at(700, 700) }
+    const dropped: ScreenRect = { x: 200, y: 300, width: 112, height: 31 }
+    const moved = resizeAnchor({ anchor: above, bounds: dropped, height: 31, width: 112, workAreaAt: () => SCREEN })
+
+    expect(moved.above).toBe(false)
+    expect(boundsFor(moved, 200, 360).y).toBe(300)
+  })
+
+  it('keeps growing upward when only the right edge is pulled', () => {
+    const above: CardAnchor = { ...base, above: true, point: at(700, 700) }
+    const bounds: ScreenRect = { x: 710, y: 659, width: 112, height: 31 }
+    const next = resizeAnchor({
+      anchor: above,
+      bounds,
+      height: 31,
+      width: 480,
+      pin: true,
+      workAreaAt: () => SCREEN
+    })
+
+    expect(next.above).toBe(true)
+    expect(next.x).toBe(710)
+  })
+
+  it('moves a wide card aside instead of parking it over the pointer', () => {
+    // The side was chosen when the card was 112 wide and still fitted to the
+    // right. The answer grew to 360, that side no longer fits, and the clamped
+    // far edge would have put the panel under the cursor at x=1200.
+    const nearEdge: CardAnchor = { ...base, point: at(1200, 400), x: 1210 }
+    const inPlace: ScreenRect = { x: 1210, y: 410, width: 112, height: 31 }
+    const next = resizeAnchor({ anchor: nearEdge, bounds: inPlace, height: 520, width: 360, workAreaAt: () => SCREEN })
+
+    expect(next.x).toBe(1200 - GAP - 360)
+    expect(next.right).toBe(false)
+  })
+
+  it('does not jump to the other side while the field is being typed into', () => {
+    const nearEdge: CardAnchor = { ...base, point: at(1200, 400), x: 1210 }
+    const inPlace: ScreenRect = { x: 1210, y: 410, width: 112, height: 31 }
+    // 48 is a wrapped two-line question, the case the height-based guard missed.
+    const next = resizeAnchor({
+      anchor: nearEdge,
+      bounds: inPlace,
+      height: 48,
+      width: 360,
+      typing: true,
+      workAreaAt: () => SCREEN
+    })
+
+    // The far edge is clamped as before; the side stays where the typing is.
+    expect(next.x).toBe(1440 - 360 - MIN)
+    expect(next.right).toBe(true)
+  })
+
   it('pulls a dragged card back when growing wider would carry it off screen', () => {
     const dropped: ScreenRect = { x: 1400, y: 300, width: 112, height: 31 }
     const next = resizeAnchor({ anchor: base, bounds: dropped, height: 31, width: 360, workAreaAt: () => SCREEN })
@@ -220,14 +292,28 @@ describe('card: resizing at the anchor', () => {
   it('keeps the left edge while the user drags the right one', () => {
     // The edge under the pointer has to follow the pointer, so the card grows
     // away from its own left edge instead of away from the anchor.
-    const next = resizeAnchor({ anchor: base, bounds: inPlace, height: 31, width: 480, workAreaAt: () => SCREEN, pin: true })
+    const next = resizeAnchor({
+      anchor: base,
+      bounds: inPlace,
+      height: 31,
+      width: 480,
+      workAreaAt: () => SCREEN,
+      pin: true
+    })
 
     expect(next.x).toBe(710)
     expect(next.pinned).toBe(true)
   })
 
   it('keeps the left edge for the resizes that follow the drag', () => {
-    const dragged = resizeAnchor({ anchor: base, bounds: inPlace, height: 31, width: 480, workAreaAt: () => SCREEN, pin: true })
+    const dragged = resizeAnchor({
+      anchor: base,
+      bounds: inPlace,
+      height: 31,
+      width: 480,
+      workAreaAt: () => SCREEN,
+      pin: true
+    })
     const bounds = boundsFor(dragged, 31, 480)
     // A content-driven resize with no `pin`: the answer reflowed, the person did
     // not touch the edge. The card must stay where the drag left it.

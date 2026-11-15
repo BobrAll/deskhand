@@ -1,11 +1,13 @@
-import XCTest
-import Foundation
-@testable import DeskhandLLM
 import DeskhandCore
+import Foundation
+import XCTest
+
+@testable import DeskhandLLM
 
 final class MiniTOMLTests: XCTestCase {
     func testParsesSectionsAndKeys() throws {
-        let parsed = try MiniTOML.parse("""
+        let parsed = try MiniTOML.parse(
+            """
             # leading comment
             [provider]
             wire = "openai"
@@ -35,7 +37,8 @@ final class MiniTOMLTests: XCTestCase {
     }
 
     func testSkipsBlankAndMalformedLines() throws {
-        let parsed = try MiniTOML.parse("""
+        let parsed = try MiniTOML.parse(
+            """
 
             not a pair
             key = value
@@ -51,7 +54,10 @@ final class ProviderConfigTests: XCTestCase {
             ("https://api.openai.com/v1/", "https://api.openai.com/v1/chat/completions"),
             ("https://api.openai.com/v1/chat/completions", "https://api.openai.com/v1/chat/completions"),
             ("http://localhost:11434/v1", "http://localhost:11434/v1/chat/completions"),
-            ("https://proxy.example/v1/?tenant=deskhand#docs", "https://proxy.example/v1/chat/completions?tenant=deskhand"),
+            (
+                "https://proxy.example/v1/?tenant=deskhand#docs",
+                "https://proxy.example/v1/chat/completions?tenant=deskhand"
+            ),
         ]
         for (input, expected) in cases {
             let config = ProviderConfig(baseURL: URL(string: input)!)
@@ -73,12 +79,12 @@ final class ProviderConfigTests: XCTestCase {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let path = directory.appendingPathComponent("config.toml")
         try """
-            [provider]
-            wire = "anthropic"
-            base_url = "https://proxy.example.com"
-            model = "file-model"
-            api_key = "file-key"
-            """.write(to: path, atomically: true, encoding: .utf8)
+        [provider]
+        wire = "anthropic"
+        base_url = "https://proxy.example.com"
+        model = "file-model"
+        api_key = "file-key"
+        """.write(to: path, atomically: true, encoding: .utf8)
 
         let config = try ConfigLoader.load(path: path.path, environment: [:])
         XCTAssertEqual(config.wire, .anthropic)
@@ -93,10 +99,10 @@ final class ProviderConfigTests: XCTestCase {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let path = directory.appendingPathComponent("config.toml")
         try """
-            [provider]
-            base_url = "https://file.example.com/v1"
-            model = "file-model"
-            """.write(to: path, atomically: true, encoding: .utf8)
+        [provider]
+        base_url = "https://file.example.com/v1"
+        model = "file-model"
+        """.write(to: path, atomically: true, encoding: .utf8)
 
         let config = try ConfigLoader.load(
             path: path.path,
@@ -120,9 +126,9 @@ final class ProviderConfigTests: XCTestCase {
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let path = directory.appendingPathComponent("config.toml")
         try? """
-            [provider]
-            base_url = "not a url"
-            """.write(to: path, atomically: true, encoding: .utf8)
+        [provider]
+        base_url = "not a url"
+        """.write(to: path, atomically: true, encoding: .utf8)
 
         XCTAssertThrowsError(try ConfigLoader.load(path: path.path, environment: [:])) { error in
             XCTAssertTrue("\(error)".contains("base_url"))
@@ -136,9 +142,9 @@ final class ProviderConfigTests: XCTestCase {
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let path = directory.appendingPathComponent("config.toml")
         try? """
-            [provider]
-            wire = "gemini"
-            """.write(to: path, atomically: true, encoding: .utf8)
+        [provider]
+        wire = "gemini"
+        """.write(to: path, atomically: true, encoding: .utf8)
 
         XCTAssertThrowsError(try ConfigLoader.load(path: path.path, environment: [:])) { error in
             XCTAssertTrue("\(error)".contains("gemini"))
@@ -237,6 +243,18 @@ final class OpenAIEncodingTests: XCTestCase {
         XCTAssertEqual(payload["stream"]?.boolValue, true)
     }
 
+    func testAStreamingRequestAsksForTokenUsage() {
+        // Without `stream_options` OpenAI sends no usage block at all, so the
+        // step timing loses the token counts on the most common provider. The
+        // one-shot shape has its own usage field and must not grow this key.
+        let provider = OpenAICompatibleProvider(config: ProviderConfig(apiKey: "x"))
+        let streaming = provider.makePayload(messages: [], tools: [], systemPrompt: "", stream: true)
+        XCTAssertEqual(streaming["stream_options"]?["include_usage"]?.boolValue, true)
+
+        let oneShot = provider.makePayload(messages: [], tools: [], systemPrompt: "", stream: false)
+        XCTAssertNil(oneShot["stream_options"])
+    }
+
     func testDecodesToolCallsAndUsage() throws {
         let provider = OpenAICompatibleProvider(config: ProviderConfig(apiKey: "x"))
         let json = """
@@ -280,9 +298,11 @@ final class AnthropicEncodingTests: XCTestCase {
     func testToolResultsBecomeUserToolResultBlocks() throws {
         let provider = AnthropicProvider(config: ProviderConfig(wire: .anthropic, apiKey: "x"))
         let encoded = provider.encodeMessages([
-            ChatMessage(role: .assistant, text: "", toolCalls: [
-                ToolCall(id: "t1", name: "click", arguments: .object([:]))
-            ]),
+            ChatMessage(
+                role: .assistant, text: "",
+                toolCalls: [
+                    ToolCall(id: "t1", name: "click", arguments: .object([:]))
+                ]),
             ChatMessage(role: .tool, text: "clicked", toolCallID: "t1", isError: false),
         ])
         XCTAssertEqual(encoded.count, 2)
@@ -341,7 +361,8 @@ final class StreamingURLProtocol: URLProtocol {
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
 
     override func startLoading() {
-        let next = Self.responses.isEmpty
+        let next =
+            Self.responses.isEmpty
             ? (status: 500, body: #"{"error":{"message":"no scripted response"}}"#)
             : Self.responses.removeFirst()
         let data = Data(next.body.utf8)
@@ -376,20 +397,25 @@ final class StreamingProviderTests: XCTestCase {
     }
 
     func testOpenAIStreamsTextAndAssemblesFragmentedToolCalls() async throws {
-        StreamingURLProtocol.responses = [(200, """
-            data: {"choices":[{"delta":{"content":"Открываю"},"finish_reason":null}]}
+        StreamingURLProtocol.responses = [
+            (
+                200,
+                """
+                data: {"choices":[{"delta":{"content":"Открываю"},"finish_reason":null}]}
 
-            data: {"choices":[{"delta":{"content":" Telegram"},"finish_reason":null}]}
+                data: {"choices":[{"delta":{"content":" Telegram"},"finish_reason":null}]}
 
-            data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"c1","function":{"name":"click","arguments":"{\\"x\\":"}}]},"finish_reason":null}]}
+                data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"c1","function":{"name":"click","arguments":"{\\"x\\":"}}]},"finish_reason":null}]}
 
-            data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"5}"}}]},"finish_reason":"tool_calls"}]}
+                data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"5}"}}]},"finish_reason":"tool_calls"}]}
 
-            data: {"choices":[],"usage":{"prompt_tokens":12,"completion_tokens":3}}
+                data: {"choices":[],"usage":{"prompt_tokens":12,"completion_tokens":3}}
 
-            data: [DONE]
+                data: [DONE]
 
-            """)]
+                """
+            )
+        ]
 
         let provider = OpenAICompatibleProvider(
             config: ProviderConfig(apiKey: "x", maxTokens: 64),
@@ -443,7 +469,10 @@ final class StreamingProviderTests: XCTestCase {
         // otherwise end the run with an empty answer.
         StreamingURLProtocol.contentType = "application/json"
         StreamingURLProtocol.responses = [
-            (200, #"{"choices":[{"finish_reason":"stop","message":{"role":"assistant","content":"Готово"}}],"usage":{"prompt_tokens":5,"completion_tokens":2}}"#),
+            (
+                200,
+                #"{"choices":[{"finish_reason":"stop","message":{"role":"assistant","content":"Готово"}}],"usage":{"prompt_tokens":5,"completion_tokens":2}}"#
+            )
         ]
 
         let provider = OpenAICompatibleProvider(
@@ -463,29 +492,34 @@ final class StreamingProviderTests: XCTestCase {
     }
 
     func testAnthropicStreamsTextAndToolInputFragments() async throws {
-        StreamingURLProtocol.responses = [(200, """
-            event: message_start
-            data: {"type":"message_start","message":{"usage":{"input_tokens":10,"output_tokens":1}}}
+        StreamingURLProtocol.responses = [
+            (
+                200,
+                """
+                event: message_start
+                data: {"type":"message_start","message":{"usage":{"input_tokens":10,"output_tokens":1}}}
 
-            event: content_block_start
-            data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}
+                event: content_block_start
+                data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}
 
-            event: content_block_delta
-            data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Привет"}}
+                event: content_block_delta
+                data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Привет"}}
 
-            event: content_block_start
-            data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"t1","name":"click","input":{}}}
+                event: content_block_start
+                data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"t1","name":"click","input":{}}}
 
-            event: content_block_delta
-            data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\\"x\\":5}"}}
+                event: content_block_delta
+                data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\\"x\\":5}"}}
 
-            event: message_delta
-            data: {"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":7}}
+                event: message_delta
+                data: {"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":7}}
 
-            event: message_stop
-            data: {"type":"message_stop"}
+                event: message_stop
+                data: {"type":"message_stop"}
 
-            """)]
+                """
+            )
+        ]
 
         let provider = AnthropicProvider(
             config: ProviderConfig(wire: .anthropic, apiKey: "x", maxTokens: 64),
@@ -507,5 +541,218 @@ final class StreamingProviderTests: XCTestCase {
         XCTAssertEqual(completion.toolCalls[0].arguments["x"]?.intValue, 5)
         XCTAssertEqual(completion.usage?.inputTokens, 10)
         XCTAssertEqual(completion.usage?.outputTokens, 7)
+    }
+
+    // MARK: - A cut stream is not a finished answer
+
+    /// A connection that dies mid-answer leaves no terminal event behind. The
+    /// text that arrived is half a reply, so it must fail the turn rather than
+    /// become a final answer with a checkmark over it.
+    private func assertTransportFailure(
+        file: StaticString = #filePath,
+        line: UInt = #line,
+        _ run: () async throws -> Completion
+    ) async {
+        do {
+            _ = try await run()
+            XCTFail("a stream ended without a terminal event must not be returned", file: file, line: line)
+        } catch let error as LLMError {
+            guard case .transport = error else {
+                return XCTFail("expected a transport error, got \(error)", file: file, line: line)
+            }
+        } catch {
+            XCTFail("expected a transport error, got \(error)", file: file, line: line)
+        }
+    }
+
+    func testOpenAIRejectsAStreamThatEndsWithoutAFinishReasonOrDone() async throws {
+        StreamingURLProtocol.responses = [
+            (
+                200,
+                """
+                data: {"choices":[{"delta":{"content":"half an ans"},"finish_reason":null}]}
+
+                """
+            )
+        ]
+        let provider = OpenAICompatibleProvider(
+            config: ProviderConfig(apiKey: "x", maxTokens: 64),
+            session: session()
+        )
+        await assertTransportFailure {
+            try await provider.complete(
+                messages: [ChatMessage(role: .user, text: "go")],
+                tools: [],
+                systemPrompt: "sys"
+            ) { _ in }
+        }
+    }
+
+    func testOpenAIAcceptsAStreamThatEndsWithDoneAndNoFinishReason() async throws {
+        // Gateways in the wild end the stream with `[DONE]` and no
+        // `finish_reason` on the last chunk. That is a terminal event, so the
+        // text is a finished answer.
+        StreamingURLProtocol.responses = [
+            (
+                200,
+                """
+                data: {"choices":[{"delta":{"content":"Готово"},"finish_reason":null}]}
+
+                data: [DONE]
+
+                """
+            )
+        ]
+        let provider = OpenAICompatibleProvider(
+            config: ProviderConfig(apiKey: "x", maxTokens: 64),
+            session: session()
+        )
+        let completion = try await provider.complete(
+            messages: [ChatMessage(role: .user, text: "go")],
+            tools: [],
+            systemPrompt: "sys"
+        ) { _ in }
+        XCTAssertEqual(completion.text, "Готово")
+    }
+
+    func testAnthropicRejectsAStreamThatEndsWithoutMessageStop() async throws {
+        StreamingURLProtocol.responses = [
+            (
+                200,
+                """
+                event: message_start
+                data: {"type":"message_start","message":{"usage":{"input_tokens":10,"output_tokens":1}}}
+
+                event: content_block_delta
+                data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"half an ans"}}
+
+                """
+            )
+        ]
+        let provider = AnthropicProvider(
+            config: ProviderConfig(wire: .anthropic, apiKey: "x", maxTokens: 64),
+            session: session()
+        )
+        await assertTransportFailure {
+            try await provider.complete(
+                messages: [ChatMessage(role: .user, text: "go")],
+                tools: [],
+                systemPrompt: "sys"
+            ) { _ in }
+        }
+    }
+
+    func testAnthropicAcceptsDoneInsteadOfMessageStop() async throws {
+        // Anthropic-compatible proxies often end the stream with the OpenAI
+        // marker. It is a terminal event, so the stricter cut-stream check must
+        // not reject an answer that finished normally.
+        StreamingURLProtocol.responses = [
+            (
+                200,
+                """
+                event: content_block_delta
+                data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Готово"}}
+
+                data: [DONE]
+
+                """
+            )
+        ]
+        let provider = AnthropicProvider(
+            config: ProviderConfig(wire: .anthropic, apiKey: "x", maxTokens: 64),
+            session: session()
+        )
+        let completion = try await provider.complete(
+            messages: [ChatMessage(role: .user, text: "go")],
+            tools: [],
+            systemPrompt: "sys"
+        ) { _ in }
+        XCTAssertEqual(completion.text, "Готово")
+    }
+
+    // MARK: - Malformed tool arguments
+
+    func testOpenAIReportsUnparseableToolArgumentsInsteadOfAnEmptyObject() async throws {
+        StreamingURLProtocol.responses = [
+            (
+                200,
+                """
+                data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"c1","function":{"name":"click","arguments":"{\\"x\\":"}}]},"finish_reason":"tool_calls"}]}
+
+                data: [DONE]
+
+                """
+            )
+        ]
+        let provider = OpenAICompatibleProvider(
+            config: ProviderConfig(apiKey: "x", maxTokens: 64),
+            session: session()
+        )
+        let completion = try await provider.complete(
+            messages: [ChatMessage(role: .user, text: "go")],
+            tools: [],
+            systemPrompt: "sys"
+        ) { _ in }
+        XCTAssertEqual(completion.toolCalls.count, 1)
+        XCTAssertEqual(completion.toolCalls[0].argumentsError, #"{"x":"#)
+        XCTAssertEqual(completion.toolCalls[0].arguments, .object([:]))
+    }
+
+    func testOpenAIKeepsEmptyToolArgumentsAsAnEmptyObject() async throws {
+        StreamingURLProtocol.responses = [
+            (
+                200,
+                """
+                data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"c1","function":{"name":"list_apps","arguments":""}}]},"finish_reason":"tool_calls"}]}
+
+                data: [DONE]
+
+                """
+            )
+        ]
+        let provider = OpenAICompatibleProvider(
+            config: ProviderConfig(apiKey: "x", maxTokens: 64),
+            session: session()
+        )
+        let completion = try await provider.complete(
+            messages: [ChatMessage(role: .user, text: "go")],
+            tools: [],
+            systemPrompt: "sys"
+        ) { _ in }
+        XCTAssertNil(completion.toolCalls[0].argumentsError, "empty arguments mean no arguments")
+        XCTAssertEqual(completion.toolCalls[0].arguments, .object([:]))
+    }
+
+    func testAnthropicReportsUnparseableToolInputInsteadOfAnEmptyObject() async throws {
+        StreamingURLProtocol.responses = [
+            (
+                200,
+                """
+                event: content_block_start
+                data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"t1","name":"click","input":{}}}
+
+                event: content_block_delta
+                data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\\"x\\":"}}
+
+                event: message_delta
+                data: {"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":2}}
+
+                event: message_stop
+                data: {"type":"message_stop"}
+
+                """
+            )
+        ]
+        let provider = AnthropicProvider(
+            config: ProviderConfig(wire: .anthropic, apiKey: "x", maxTokens: 64),
+            session: session()
+        )
+        let completion = try await provider.complete(
+            messages: [ChatMessage(role: .user, text: "go")],
+            tools: [],
+            systemPrompt: "sys"
+        ) { _ in }
+        XCTAssertEqual(completion.toolCalls.count, 1)
+        XCTAssertEqual(completion.toolCalls[0].argumentsError, #"{"x":"#)
     }
 }

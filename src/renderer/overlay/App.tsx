@@ -4,11 +4,11 @@
  * A card, not a window: one line for the question, the answer printed directly
  * underneath it. It appears next to the cursor (the main process owns the
  * placement) as *only* that line plus one small chevron; context tags and the answer's secondary commands stay folded behind the chevron, so
- * the common case — ask, read, paste — is a small rectangle that never covers the
+ * the common case — ask, read, copy — is a small rectangle that never covers the
  * screen.
  *
- * Keyboard: Enter sends, Cmd/Ctrl+Enter pastes, Esc closes, Cmd/Ctrl+C copies the
- * answer when nothing is selected.
+ * Keyboard: Enter sends, Esc closes, Cmd/Ctrl+C copies the answer when nothing
+ * is selected.
  *
  * Width is the one thing the card lets a person overrule. It sizes itself to its
  * content up to `CARD_WIDTH`, which is right for a sentence and wrong for a table;
@@ -17,7 +17,12 @@
  */
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
-import type { CSSProperties, PointerEvent as ReactPointerEvent } from 'react'
+import type {
+  CSSProperties,
+  KeyboardEvent as ReactKeyboardEvent,
+  PointerEvent as ReactPointerEvent,
+  UIEvent as ReactUIEvent
+} from 'react'
 import type {
   AgentEvent,
   AgentToolRequest,
@@ -27,32 +32,21 @@ import type {
   ResponseMode,
   StreamEvent
 } from '@shared/types'
-import { CARD_NARROW_WIDTH, CARD_WIDTH } from '@shared/metrics'
+import { CARD_MIN_WIDTH, CARD_WIDTH } from '@shared/metrics'
 import { looksLikeAction } from '@shared/intent'
-import {
-  ANSWER_CHROME,
-  ACTIONS_CHROME,
-  ACTIONS_FONT,
-  AGENT_FONT,
-  AGENT_ROW_CHROME,
-  AGENT_STATUS_INSET,
-  CARET_SLACK,
-  CHROME_WIDTH,
-  FIELD_FONT,
-  STOP_CHROME,
-  clamp
-} from './cardMetrics'
+import { FIELD_FONT } from './cardMetrics'
+import { layoutCard, structuredAnswer } from './cardLayout'
 import { REFINE_HINT, REFINE_LABEL } from './copy'
 import { useSpeech } from './useSpeech'
 import { useWaiting } from './useWaiting'
 import { useVoice } from './useVoice'
 import { deriveView } from './viewFlags'
 import { agentLabel, agentMark } from './agentRow'
-import { keyPolicy, type KeyAction } from './keyPolicy'
-import { routeStream } from './streamRouting'
+import { hasTextSelection, keyPolicy, type KeyAction } from './keyPolicy'
+import { rewriteStartsOver, routeStream } from './streamRouting'
 import { Markdown } from './markdownText'
 import { LiveThumb } from './LiveThumb'
-import { draggedWidth, expandedWidth, resolveWidth } from './cardWidth'
+import { draggedWidth, expandedWidth, userWidthCeiling } from './cardWidth'
 
 interface Failure {
   message: string
@@ -73,34 +67,11 @@ const VOICE_AMP_PER_LEVEL = 0.55
  */
 const AGENT_PROGRESS_MS = 45_000
 
+/** The one notice that has a retry attached to it. */
+const AGENT_ENABLED_NOTICE = 'Управление включено. Повтори просьбу — теперь я её выполню.'
+
 function newRequestId(): string {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
-}
-
-/** One measuring context for the whole window: creating one is not free. */
-let ruler: CanvasRenderingContext2D | null = null
-
-/**
- * The width of the widest line of `text`, in the font the field renders in.
- *
- * Measured, never guessed from the character count: «ш» and «i» are not the same
- * letter, and a card that widens by a different step than the typing does reads
- * as a glitch rather than as the card making room. A canvas 2D context is the
- * cheapest shaper that agrees with the textarea — no extra element whose layout
- * could lag the keystroke being measured.
- */
-function measureLine(text: string, font: string): number {
-  if (!text) return 0
-  if (!ruler) ruler = document.createElement('canvas').getContext('2d')
-  if (!ruler) return 0
-  if (ruler.font !== font) ruler.font = font
-  let widest = 0
-  // Only an explicit newline is another row; a soft wrap is a consequence of the
-  // width this measurement is about to decide and must not feed back into it.
-  for (const line of text.split('\n')) {
-    widest = Math.max(widest, ruler.measureText(line).width)
-  }
-  return widest
 }
 
 export function App() {
@@ -113,6 +84,22 @@ export function App() {
   const [busy, setBusy] = useState(false)
   const [failure, setFailure] = useState<Failure | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
+  /** The copy button says it worked, then goes back to being a command. */
+  const [copied, setCopied] = useState(false)
+  const copiedTimerRef = useRef<number | null>(null)
+  const resetCopied = useCallback(() => {
+    setCopied(false)
+    if (copiedTimerRef.current !== null) {
+      window.clearTimeout(copiedTimerRef.current)
+      copiedTimerRef.current = null
+    }
+  }, [])
+  /** The answer has new text below the reader's position. */
+  const [newText, setNewText] = useState(false)
+  /** The reader asked to follow the bottom; a new answer starts at the top. */
+  const followAnswerRef = useRef(false)
+  /** A rewrite keeps the old answer mounted until its first chunk; jump then. */
+  const scrollToTopOnNextAnswerRef = useRef(false)
   /** How many shapes are painted on the screen right now. */
   const [drawn, setDrawn] = useState(0)
   /**
@@ -124,6 +111,10 @@ export function App() {
    * over drawing: the card goes back to full density and the drawing stays.
    */
   const [typing, setTyping] = useState(false)
+  /** The resize listener is registered once; it reads the latest typing state. */
+  const typingRef = useRef(false)
+  /** Option turns the whole card, text included, into a window handle. */
+  const [dragAnywhere, setDragAnywhere] = useState(false)
   /**
    * The width the user chose for this card, or `null` while it sizes itself.
    *
@@ -139,7 +130,7 @@ export function App() {
   /**
    * The card opens as a single small field. Everything else — context tags,
    * status rows and the answer's action strip — lives behind the
-   * small chevron, so the common "ask and paste" case stays one line tall.
+   * small chevron, so the common "ask and read" case stays one line tall.
    */
   const [expanded, setExpanded] = useState(false)
   /**
@@ -231,8 +222,7 @@ export function App() {
     if (!node) return
     node.focus()
     const style = window.getComputedStyle(node)
-    fontRef.current =
-      style.font || `${style.fontStyle} ${style.fontWeight} ${style.fontSize} ${style.fontFamily}`
+    fontRef.current = style.font || `${style.fontStyle} ${style.fontWeight} ${style.fontSize} ${style.fontFamily}`
   }, [])
   /**
    * The card's outermost element, as state rather than a ref.
@@ -263,6 +253,7 @@ export function App() {
   answerTextRef.current = answer
   busyRef.current = busy
   agentRef.current = agent
+  typingRef.current = typing
 
   /**
    * Applies a state broadcast. A *new* session replaces the card completely; the
@@ -292,22 +283,29 @@ export function App() {
    * fields, and a width the person dragged belongs to the card they dragged it
    * on, not to the next one.
    */
-  const clearTurn = useCallback((typing: boolean) => {
-    setAnswer('')
-    setFailure(null)
-    setNotice(null)
-    setBusy(false)
-    setDrawn(0)
-    setTyping(typing)
-    setExpanded(false)
-    setUserWidth(null)
-    requestIdRef.current = null
-    replaceOnChunkRef.current = false
-    spokenPromptRef.current = false
-    turnKindRef.current = { spoken: false, action: false }
-    stoppedByUserRef.current = false
-    setAgent(null)
-  }, [])
+  const clearTurn = useCallback(
+    (typing: boolean) => {
+      setAnswer('')
+      setFailure(null)
+      setNotice(null)
+      resetCopied()
+      setNewText(false)
+      followAnswerRef.current = false
+      scrollToTopOnNextAnswerRef.current = false
+      setBusy(false)
+      setDrawn(0)
+      setTyping(typing)
+      setExpanded(false)
+      setUserWidth(null)
+      requestIdRef.current = null
+      replaceOnChunkRef.current = false
+      spokenPromptRef.current = false
+      turnKindRef.current = { spoken: false, action: false }
+      stoppedByUserRef.current = false
+      setAgent(null)
+    },
+    [resetCopied]
+  )
 
   const reset = useCallback(
     (next: OverlayState) => {
@@ -348,88 +346,138 @@ export function App() {
   )
 
   /**
+   * What the voice says when a run ends.
+   *
+   * Two shapes, and they are not the same sentence. An answer with text in it is
+   * read (and a failed run is read as a failure). A run that ended without a
+   * textual answer says how it ended from the recorded bank instead — a stop the
+   * user asked for is not news, they pressed Escape and are looking at the card,
+   * so that one is silent.
+   */
+  const finishTurnSpeech = useCallback((requestId: string, text: string, result: AgentEvent | null) => {
+    const speech = speechRef.current
+    if (!result) {
+      void speech.finish(requestId, text, false)
+      return
+    }
+    if (text.trim()) {
+      void speech.finish(requestId, text, result.phase === 'error' || result.completed === false)
+      return
+    }
+    void speech.finish(requestId, '')
+    if (result.phase === 'aborted' && stoppedByUserRef.current) return
+    // The line comes from the bank rather than from a literal, so it rotates and
+    // so a run that ended without an answer is not read as «Готово» by a
+    // different voice.
+    const cue =
+      result.phase === 'aborted'
+        ? 'stopped'
+        : result.phase === 'error'
+          ? 'failed'
+          : result.completed
+            ? 'done'
+            : 'incomplete'
+    speech.say(cue, turnKindRef.current)
+  }, [])
+
+  /**
    * Reacts to stream events. `done` is the authoritative final text; a rewrite in
    * flight keeps the previous answer visible until the first chunk arrives.
    */
-  const onStream = useCallback((event: StreamEvent) => {
-    // Which events belong to this card is decided in `streamRouting.ts`; the refs
-    // stay here because they are one piece of coupled state, not four.
-    const action = routeStream(event, {
-      requestId: requestIdRef.current,
-      ignoredRequest: ignoredRequestRef.current,
-      replaceOnChunk: replaceOnChunkRef.current,
-      spokenPrompt: spokenPromptRef.current
-    })
-    if (action.kind === 'ignore') return
+  const onStream = useCallback(
+    (event: StreamEvent) => {
+      // Which events belong to this card is decided in `streamRouting.ts`; the refs
+      // stay here because they are one piece of coupled state, not four.
+      const action = routeStream(event, {
+        requestId: requestIdRef.current,
+        ignoredRequest: ignoredRequestRef.current,
+        replaceOnChunk: replaceOnChunkRef.current,
+        spokenPrompt: spokenPromptRef.current
+      })
+      if (action.kind === 'ignore') return
 
-    // The spoken phrase was there to confirm what was heard while the model
-    // thought. From the first sign of an answer it is the leftover question every
-    // follow-up had to be appended to, so it goes — on any event that gets here,
-    // including one that never streamed.
-    if (action.clearSpoken) {
-      spokenPromptRef.current = false
-      setPrompt('')
-    }
+      // The spoken phrase was there to confirm what was heard while the model
+      // thought. From the first sign of an answer it is the leftover question every
+      // follow-up had to be appended to, so it goes — on any event that gets here,
+      // including one that never streamed.
+      if (action.clearSpoken) {
+        spokenPromptRef.current = false
+        setPrompt('')
+      }
 
-    if (action.kind === 'append') {
-      void speechRef.current.append(event.requestId, action.text)
-      setAnswer((prev) => prev + action.text)
-      return
-    }
-    if (action.kind === 'replace') {
+      if (action.kind === 'append') {
+        void speechRef.current.append(event.requestId, action.text)
+        setAnswer((prev) => prev + action.text)
+        return
+      }
+      if (action.kind === 'replace') {
+        replaceOnChunkRef.current = false
+        setAnswer(action.text)
+        return
+      }
+      const speechCurrent = requestIdRef.current === event.requestId
+      requestIdRef.current = null
       replaceOnChunkRef.current = false
-      setAnswer(action.text)
-      return
-    }
-    const speechCurrent = requestIdRef.current === event.requestId
-    requestIdRef.current = null
-    replaceOnChunkRef.current = false
-    setBusy(false)
-    if (action.kind === 'done') {
-      const result = agentRef.current
-      if (result) {
-        // An agent turn: the answer is read when there is one, and the recorded
-        // line says how the run ended when there is not. The line comes from the
-        // bank rather than from a literal, so it rotates and so a run that ended
-        // without an answer is not read as «Готово» by a different voice.
-        if (action.text.trim()) {
-          if (speechCurrent) {
-            void speechRef.current.finish(
-              event.requestId,
-              action.text,
-              result.phase === 'error' || result.completed === false
-            )
-          }
-        } else {
-          if (speechCurrent) {
+      setBusy(false)
+      if (action.kind === 'done') {
+        if (speechCurrent) finishTurnSpeech(event.requestId, action.text, agentRef.current)
+        setAnswer(action.text)
+      } else {
+        if (speechCurrent) {
+          if (action.code === 'timeout') {
+            // The recorded line already says "the result is not confirmed, check
+            // what happened", which is the whole point of C7 — and it plays
+            // instantly, unlike a synthesised sentence.
             void speechRef.current.finish(event.requestId, '')
-            // A stop the user asked for is not news: they pressed Escape or the
-            // stop button and are looking at the card.
-            if (!(result.phase === 'aborted' && stoppedByUserRef.current)) {
-              const cue = result.phase === 'aborted' ? 'stopped'
-                : result.phase === 'error' ? 'failed'
-                : result.completed ? 'done' : 'incomplete'
-              speechRef.current.say(cue, turnKindRef.current)
-            }
+            speechRef.current.say('timeout', turnKindRef.current)
+          } else {
+            void speechRef.current.finish(event.requestId, action.message, true)
           }
         }
-      } else if (speechCurrent) {
-        void speechRef.current.finish(event.requestId, action.text, false)
+        setFailure({ message: action.message, retryable: action.retryable })
       }
-      setAnswer(action.text)
-    } else {
-      if (speechCurrent) {
-        if (action.code === 'timeout') {
-          // The recorded line already says "the result is not confirmed, check
-          // what happened", which is the whole point of C7 — and it plays
-          // instantly, unlike a synthesised sentence.
-          void speechRef.current.finish(event.requestId, '')
-          speechRef.current.say('timeout', turnKindRef.current)
-        } else {
-          void speechRef.current.finish(event.requestId, action.message, true)
-        }
-      }
-      setFailure({ message: action.message, retryable: action.retryable })
+    },
+    [finishTurnSpeech]
+  )
+
+  /**
+   * Permissions and availability are changed in another window.
+   *
+   * The card can be open the whole time — the user goes to System Settings,
+   * grants Accessibility, and comes back to the same card. Without a pull on
+   * focus it keeps saying «нужен доступ» until it is closed and reopened.
+   */
+  useEffect(() => {
+    const refresh = (): void => {
+      void window.deskhand.overlay
+        .getState()
+        .then((next) => {
+          if (next) applyState(next)
+        })
+        .catch(() => undefined)
+    }
+    window.addEventListener('focus', refresh)
+    return () => window.removeEventListener('focus', refresh)
+  }, [applyState])
+
+  useEffect(() => {
+    return () => {
+      if (copiedTimerRef.current !== null) window.clearTimeout(copiedTimerRef.current)
+    }
+  }, [])
+
+  useEffect(() => {
+    const setOption = (event: KeyboardEvent): void => {
+      if (event.key === 'Alt') setDragAnywhere(event.type === 'keydown')
+    }
+    const reset = (): void => setDragAnywhere(false)
+    window.addEventListener('keydown', setOption)
+    window.addEventListener('keyup', setOption)
+    window.addEventListener('blur', reset)
+    return () => {
+      window.removeEventListener('keydown', setOption)
+      window.removeEventListener('keyup', setOption)
+      window.removeEventListener('blur', reset)
     }
   }, [])
 
@@ -439,9 +487,12 @@ export function App() {
     // field would make this window the frontmost app, and `collectContext` reads
     // the frontmost app: the target would come back as the assistant itself. The
     // focus is taken in `reset`, once the session it belongs to exists.
-    void window.deskhand.overlay.getState().then((next) => {
-      if (next) applyState(next)
-    })
+    void window.deskhand.overlay
+      .getState()
+      .then((next) => {
+        if (next) applyState(next)
+      })
+      .catch(() => undefined)
 
     const offState = window.deskhand.overlay.onState(applyState)
     const offPreparing = window.deskhand.overlay.onPreparing(() => {
@@ -502,7 +553,7 @@ export function App() {
       if (progressTimerRef.current !== null) window.clearTimeout(progressTimerRef.current)
       progressTimerRef.current = null
     }
-  }, [applyState, onStream])
+  }, [applyState, onStream, clearTurn])
 
   // Restore blur while typing, even if annotations are still visible.
   useEffect(() => {
@@ -550,17 +601,6 @@ export function App() {
    */
   const hasAnswer = answer.trim().length > 0
 
-  /**
-   * How wide the text in the field actually is, in points.
-   *
-   * Measured, not estimated from the character count: «ш» and «i» are not the
-   * same letter, and a card that widens by a different step than the typing does
-   * reads as a glitch rather than as the card making room. The measuring canvas
-   * uses the field's own computed font, so the run is shaped exactly as it will
-   * be inside the textarea.
-   */
-  const textWidth = prompt ? measureLine(prompt, fontRef.current) : 0
-
   // Drawers and confirmations need room for controls. Progress and answers
   // size to their content.
   const waiting = useWaiting(requestIdRef.current, busy && !failure && !listening)
@@ -584,87 +624,58 @@ export function App() {
   }, [voice.code, voice.at])
   const agentRunning = busy && agent !== null
   const agentStatus = agent && agentLabel(agent, answer)
+  const agentHint = agentRunning && agent?.phase !== 'asking' ? 'Esc — остановить' : null
   const agentDone = !busy && !hasAnswer && agent !== null && agentMark(agent) === 'done'
   const showWaiting = waitStage !== 'quiet' && !hasAnswer && !agent
-  const wantsWide = (expanded && !agentRunning) || Boolean(failure) ||
-    agent?.phase === 'asking' || showWaiting
+  /** An action that produced an answer because the agent is blocked, not refused. */
+  const blockedAction = Boolean(
+    state &&
+    state.agent.enabled &&
+    !state.agent.ready &&
+    !state.context.excluded &&
+    hasAnswer &&
+    !busy &&
+    !agentRunning &&
+    last &&
+    !last.refine &&
+    looksLikeAction(last.prompt)
+  )
+  const wantsWide =
+    (expanded && !agentRunning) || Boolean(failure) || agent?.phase === 'asking' || showWaiting || blockedAction
 
   /**
-   * Everything on the line that is not the question, in points.
+   * The width the card takes, and whether the question wraps in it.
    *
-   * The card's padding and edge, the gap and the chevron —
-   * plus the stop button, which is on screen exactly while a request is running.
+   * The composition lives in `cardLayout.ts`, where it can be checked without a
+   * card. The one input that is not state is the field's font: it has to be the
+   * live element's own computed style, because macOS may resolve the family
+   * differently from what the stylesheet names.
    */
-  const chromeWidth = CHROME_WIDTH + (busy ? STOP_CHROME : 0)
-
-  /**
-   * The line the field wants, in whole points.
-   *
-   * Rounded once and used for both decisions — how wide the card opens and
-   * whether the question wraps — because two roundings of the same measurement
-   * disagree at the boundary: a line that exactly fills the card would wrap
-   * while the width said it fits.
-   */
-  const wantedLineWidth = Math.ceil(textWidth) + chromeWidth + CARET_SLACK
-
-  /**
-   * The width the card needs for the question being written.
-   *
-   * Nothing is added for empty space: the field gets as many points as the
-   * sentence takes, so every keystroke widens the card by exactly one glyph and
-   * the card only starts wrapping once it has reached `CARD_WIDTH`. That is the
-   * difference between a card that grows under your hands and one that snaps
-   * open to a panel the moment you start typing — the latter is loud in precisely
-   * the moment a person is still deciding whether they want to say anything.
-   */
-  const composedWidth = clamp(wantedLineWidth, CARD_NARROW_WIDTH, CARD_WIDTH)
-
-  // Recompute from current content so a shorter answer shrinks the card again.
-  const answerWidth = hasAnswer
-    ? Math.ceil(measureLine(answer, fontRef.current)) + ANSWER_CHROME + CARET_SLACK
-    : 0
-  const actionsWidth = hasAnswer
-    ? Math.ceil(measureLine(
-        // The widest the strip can get, measured once so the card does not grow
-        // when the answer finishes and the remaining buttons appear. «Вернуть» is
-        // the longer of the two width labels, so it is the one measured.
-        `${speech.speaking ? 'Остановить озвучку' : 'Прослушать'} Вернуть Скопировать`,
-        ACTIONS_FONT
-      )) + ACTIONS_CHROME
-    : 0
-  const agentWidth = agentStatus
-    ? Math.ceil(measureLine(agentStatus, AGENT_FONT)) +
-      AGENT_ROW_CHROME + (agentRunning ? 0 : AGENT_STATUS_INSET) + CARET_SLACK
-    : 0
-  const inputWidth = agentRunning ? CARD_NARROW_WIDTH : composedWidth
-  /**
-   * What the content would like, before any cap.
-   *
-   * Kept unclamped because «Шире» has to know how much room the answer actually
-   * wants: the capped number is always `CARD_WIDTH` once the answer is long, and
-   * a button that opens the card to the same width for every long reply is the
-   * bug it was reported as.
-   */
-  const naturalWidth = Math.max(inputWidth, answerWidth, actionsWidth, agentWidth)
-  const contentWidth = clamp(naturalWidth, CARD_NARROW_WIDTH, CARD_WIDTH)
-  // While a drag runs the width lives in a ref, because updating state a hundred
-  // times a second re-renders the answer for nothing. But a render can still
-  // happen mid-drag — the next chunk of a streaming answer is exactly that — and
-  // React would then write its own width over the dragged one. Reading the live
-  // value here makes such a render agree with the edge instead of fighting it.
-  const cardWidth = resolveWidth({
-    showingVoiceBars: listening,
+  const {
+    width: cardWidth,
+    wrapped,
+    naturalWidth
+  } = layoutCard({
+    prompt,
+    font: fontRef.current,
+    answer,
+    hasAnswer,
+    structured: structuredAnswer(answer),
+    busy,
+    speaking: speech.speaking,
+    agentStatus,
+    agentHint,
+    agentRunning,
+    listening,
     wantsWide,
-    contentWidth,
+    // While a drag runs the width lives in a ref, because updating state a hundred
+    // times a second re-renders the answer for nothing. But a render can still
+    // happen mid-drag — the next chunk of a streaming answer is exactly that — and
+    // React would then write its own width over the dragged one. Reading the live
+    // value here makes such a render agree with the edge instead of fighting it.
     userWidth: dragRef.current?.width ?? userWidth,
     availWidth: window.screen.availWidth
   })
-
-  // Keep a single line throughout the sideways motion. Wrapping before there is
-  // room would briefly add rows that disappear as the window catches up. The
-  // question wraps at the card's own width, so a card the user widened holds a
-  // longer line and one they narrowed wraps sooner.
-  const wrapped = wantedLineWidth > cardWidth
 
   // Measure layout, not the entrance transform. getBoundingClientRect includes
   // the appear animation's scale, which used to feed false heights back to macOS.
@@ -682,7 +693,7 @@ export function App() {
       lastHeight = height
       // `pin` while a drag is in flight: the right edge is under the pointer, so
       // the card has to grow away from its left edge instead of from the anchor.
-      window.deskhand.overlay.resize(height, width, draggingRef.current)
+      window.deskhand.overlay.resize(height, width, draggingRef.current, typingRef.current)
     }
     const onFocus = (): void => {
       lastWidth = lastHeight = 0
@@ -709,7 +720,20 @@ export function App() {
 
   useEffect(() => {
     const node = answerRef.current
-    if (node) node.scrollTop = node.scrollHeight
+    if (!node) return
+    if (scrollToTopOnNextAnswerRef.current) {
+      scrollToTopOnNextAnswerRef.current = false
+      node.scrollTop = 0
+      followAnswerRef.current = false
+    }
+    if (followAnswerRef.current) {
+      node.scrollTop = node.scrollHeight
+      setNewText(false)
+    } else {
+      // The answer starts at its beginning; the pill appears only when there is
+      // actually something below the fold — while streaming and after it ends.
+      setNewText(node.scrollHeight > node.clientHeight + 1)
+    }
   }, [answer])
 
   // A setup problem or a failed request is not a detail: the card unfolds, so
@@ -718,67 +742,73 @@ export function App() {
     if (failure || state?.setupNotice) setExpanded(true)
   }, [failure, state?.setupNotice])
 
-  const send = useCallback((text: string, sendMode?: ResponseMode, spoken = false) => {
-    const value = text.trim()
-    const current = stateRef.current
-    if (!value || !current) return
-    if (busyRef.current) {
-      // A typed Enter while an answer streams is most likely a duplicate; a
-      // spoken command is a new question and has to win, or the phrase would be
-      // swallowed and the user would hear nothing back at all.
-      if (!spoken) return
-      const previous = requestIdRef.current
-      setBusy(false)
-      if (previous) window.deskhand.overlay.cancel(previous)
-    }
-    const usedMode = sendMode ?? 'insert'
-    const requestId = newRequestId()
-    requestIdRef.current = requestId
-    // What this turn is, for the speech gate at the end of it.
-    turnKindRef.current = { spoken, action: looksLikeAction(value) }
-    stoppedByUserRef.current = false
-    speechRef.current.begin(requestId, value, spoken)
-    setBusy(true)
-    setAnswer('')
-    setFailure(null)
-    setNotice(null)
-    // A new question is a new card: a width chosen while reading the previous
-    // answer must not decide how wide this one opens.
-    setUserWidth(null)
-    // A plan from the previous turn is not a state of this one. Without this the
-    // "Готово" row would sit under a fresh question until the new answer arrives.
-    setAgent(null)
-    // The question has been asked: whatever the user typed to ask it is no longer
-    // "using the card", and the answer — drawings included — is what they will be
-    // looking at now. Without this the card would stay solid for the whole
-    // answer, because the field still holds the question.
-    setTyping(false)
-    // The field is emptied on send, not on answer.
-    //
-    // It used to keep the question so the user could see what was asked — but the
-    // answer appears directly under the field, so the question is right there in
-    // the reply anyway. What the leftover text actually did was make every
-    // follow-up start from the previous question: «а почему?» had to be appended
-    // to a paragraph that was already sent, and the field grew into a draft of
-    // both questions at once. Clearing it here makes the next question a new
-    // question — which is exactly what the conversation memory is for.
-    //
-    // A spoken phrase is the exception, and only for a moment: it is the sole
-    // confirmation of what was heard, so it stays until the answer starts arriving
-    // (`onStream` clears it then). The user did not type it, so they have not
-    // already seen it.
-    spokenPromptRef.current = spoken
-    setPrompt(spoken ? value : '')
-    setLast({ prompt: value, mode: usedMode, refine: null, base: '', spoken })
-    window.deskhand.overlay.send({
-      requestId,
-      prompt: value,
-      mode: usedMode,
-      includeSelection: current.flags.includeSelection,
-      includeScreenshot: current.flags.includeScreenshot,
-      voice: spoken
-    })
-  }, [])
+  const send = useCallback(
+    (text: string, sendMode?: ResponseMode, spoken = false) => {
+      const value = text.trim()
+      const current = stateRef.current
+      if (!value || !current) return
+      if (busyRef.current) {
+        // A typed Enter while an answer streams is most likely a duplicate; a
+        // spoken command is a new question and has to win, or the phrase would be
+        // swallowed and the user would hear nothing back at all.
+        if (!spoken) return
+        const previous = requestIdRef.current
+        setBusy(false)
+        if (previous) window.deskhand.overlay.cancel(previous)
+      }
+      const usedMode = sendMode ?? 'insert'
+      const requestId = newRequestId()
+      requestIdRef.current = requestId
+      // What this turn is, for the speech gate at the end of it.
+      turnKindRef.current = { spoken, action: looksLikeAction(value) }
+      stoppedByUserRef.current = false
+      speechRef.current.begin(requestId, value, spoken)
+      setBusy(true)
+      setAnswer('')
+      setFailure(null)
+      setNotice(null)
+      resetCopied()
+      followAnswerRef.current = false
+      setNewText(false)
+      // A new question is a new card: a width chosen while reading the previous
+      // answer must not decide how wide this one opens.
+      setUserWidth(null)
+      // A plan from the previous turn is not a state of this one. Without this the
+      // "Готово" row would sit under a fresh question until the new answer arrives.
+      setAgent(null)
+      // The question has been asked: whatever the user typed to ask it is no longer
+      // "using the card", and the answer — drawings included — is what they will be
+      // looking at now. Without this the card would stay solid for the whole
+      // answer, because the field still holds the question.
+      setTyping(false)
+      // The field is emptied on send, not on answer.
+      //
+      // It used to keep the question so the user could see what was asked — but the
+      // answer appears directly under the field, so the question is right there in
+      // the reply anyway. What the leftover text actually did was make every
+      // follow-up start from the previous question: «а почему?» had to be appended
+      // to a paragraph that was already sent, and the field grew into a draft of
+      // both questions at once. Clearing it here makes the next question a new
+      // question — which is exactly what the conversation memory is for.
+      //
+      // A spoken phrase is the exception, and only for a moment: it is the sole
+      // confirmation of what was heard, so it stays until the answer starts arriving
+      // (`onStream` clears it then). The user did not type it, so they have not
+      // already seen it.
+      spokenPromptRef.current = spoken
+      setPrompt(spoken ? value : '')
+      setLast({ prompt: value, mode: usedMode, refine: null, base: '', spoken })
+      window.deskhand.overlay.send({
+        requestId,
+        prompt: value,
+        mode: usedMode,
+        includeSelection: current.flags.includeSelection,
+        includeScreenshot: current.flags.includeScreenshot,
+        voice: spoken
+      })
+    },
+    [resetCopied]
+  )
 
   /**
    * "Короче / длиннее" on an answer that is already on screen. The current text is
@@ -797,10 +827,22 @@ export function App() {
       const requestId = newRequestId()
       requestIdRef.current = requestId
       speechRef.current.stop()
-      replaceOnChunkRef.current = !base
+      replaceOnChunkRef.current = rewriteStartsOver(answer)
       setBusy(true)
+      // The answer is what the user reads while the rewrite runs, so the card
+      // steps out of the way of the drawing exactly as it does on `send`.
+      setTyping(false)
       setFailure(null)
       setNotice(null)
+      resetCopied()
+      // A rewrite is a writer turn; an agent summary from the previous turn
+      // must not sit over the reworked text.
+      setAgent(null)
+      followAnswerRef.current = false
+      setNewText(false)
+      // A refinement reuses the mounted answer until its first chunk lands;
+      // jump to the top only when the new text is actually there.
+      scrollToTopOnNextAnswerRef.current = true
       setLast({
         prompt: last?.prompt ?? '',
         mode: last?.mode ?? 'insert',
@@ -817,8 +859,15 @@ export function App() {
         refine: { direction, baseAnswer }
       })
     },
-    [answer, last]
+    [answer, last, resetCopied]
   )
+
+  /** Repeats whatever the last turn was: a question, or a rewrite and its base. */
+  const retryLast = useCallback(() => {
+    if (!last) return
+    if (last.refine) refine(last.refine, last.base)
+    else send(last.prompt, last.mode, last.spoken)
+  }, [last, refine, send])
 
   /**
    * The screenshot tag also arms the drawing tool: with an image the assistant
@@ -864,7 +913,7 @@ export function App() {
       // cannot retroactively become an action. Saying that out loud is the
       // difference between "включил и ничего не изменилось" and a user who
       // presses «Повторить».
-      setNotice('Управление включено. Повтори просьбу — теперь я её выполню.')
+      setNotice(AGENT_ENABLED_NOTICE)
     }
   }, [])
 
@@ -878,18 +927,15 @@ export function App() {
    * until the run itself says what happened, which is what keeps the card and the
    * machine from disagreeing for a frame.
    */
-  const answerAgent = useCallback(
-    async (request: AgentToolRequest, allow: boolean, remember: boolean) => {
-      await window.deskhand.agent.answer(request.id, allow, remember)
-      // The decision is the user's, so the line confirms it rather than the
-      // agent's judgement — and the click that made it is already on the card.
-      speechRef.current.say(
-        allow ? (remember ? 'remembered' : 'approved') : 'denied',
-        turnKindRef.current
-      )
-    },
-    []
-  )
+  const answerAgent = useCallback(async (request: AgentToolRequest, allow: boolean, remember: boolean) => {
+    // A refusal ends the run; the run's own «Остановлено» would repeat the
+    // decision the voice is about to name.
+    if (!allow) stoppedByUserRef.current = true
+    await window.deskhand.agent.answer(request.id, allow, remember)
+    // The decision is the user's, so the line confirms it rather than the
+    // agent's judgement — and the click that made it is already on the card.
+    speechRef.current.say(allow ? (remember ? 'remembered' : 'approved') : 'denied', turnKindRef.current)
+  }, [])
 
   /** Speech that has already been recognised and put into this card. */
   useEffect(() => {
@@ -900,7 +946,10 @@ export function App() {
       setAnswer('')
       setFailure(null)
       setNotice(null)
+      resetCopied()
       setAgent(null)
+      followAnswerRef.current = false
+      setNewText(false)
       setPrompt(text)
       // A dictated draft is text the user will read and edit in the card, so it
       // counts as engaging with it — same as a keystroke.
@@ -916,21 +965,46 @@ export function App() {
       }
     })
     return off
+  }, [resetCopied])
+
+  /**
+   * Follow the stream only while the reader is at its bottom.
+   *
+   * Scrolling up is a request to read the beginning; the next token must not
+   * undo it. The threshold leaves a few points for the last line's descenders.
+   */
+  const onAnswerScroll = useCallback((event: ReactUIEvent<HTMLDivElement>) => {
+    const node = event.currentTarget
+    const hidden = node.scrollHeight > node.clientHeight + 1
+    const atBottom = node.scrollHeight - node.scrollTop - node.clientHeight < 24
+    followAnswerRef.current = atBottom
+    setNewText(!atBottom && hidden)
   }, [])
 
-  const paste = useCallback(async () => {
-    const text = answerTextRef.current
-    if (!text.trim()) return
-    const result = await window.deskhand.overlay.paste(text)
-    if (!result.ok && result.message) setNotice(result.message)
+  const jumpToNewText = useCallback(() => {
+    const node = answerRef.current
+    if (!node) return
+    followAnswerRef.current = true
+    node.scrollTop = node.scrollHeight
+    setNewText(false)
   }, [])
 
   const copy = useCallback(async () => {
     const text = answerTextRef.current
     if (!text.trim()) return
-    await window.deskhand.overlay.copy(text)
-    setNotice('Скопировано в буфер обмена')
-  }, [])
+    const result = await window.deskhand.overlay.copy(text)
+    if (!result.ok) {
+      resetCopied()
+      setNotice(result.message ?? 'Не удалось скопировать ответ.')
+      return
+    }
+    if (copiedTimerRef.current !== null) window.clearTimeout(copiedTimerRef.current)
+    setCopied(true)
+    copiedTimerRef.current = window.setTimeout(() => {
+      copiedTimerRef.current = null
+      setCopied(false)
+    }, 1500)
+  }, [resetCopied])
 
   /**
    * The width the content itself wants, and the one «Шире» opens to.
@@ -977,23 +1051,42 @@ export function App() {
     [rootNode]
   )
 
-  const gripMove = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
-    const drag = dragRef.current
-    const node = rootNode
-    if (!drag || !node) return
-    // The drawer's buttons need the full width, so an unfolded card cannot be
-    // dragged narrower than that: it would snap back on release.
-    const floor = wantsWide ? CARD_WIDTH : undefined
-    const width = draggedWidth(
-      drag.startWidth,
-      event.screenX - drag.startX,
-      window.screen.availWidth,
-      floor
-    )
-    if (width === drag.width) return
-    drag.width = width
-    node.style.width = `${width}px`
-  }, [rootNode, wantsWide])
+  const gripMove = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      const drag = dragRef.current
+      const node = rootNode
+      if (!drag || !node) return
+      // The drawer's buttons need the full width, so an unfolded card cannot be
+      // dragged narrower than that: it would snap back on release.
+      const floor = wantsWide ? CARD_WIDTH : undefined
+      const width = draggedWidth(drag.startWidth, event.screenX - drag.startX, window.screen.availWidth, floor)
+      if (width === drag.width) return
+      drag.width = width
+      node.style.width = `${width}px`
+    },
+    [rootNode, wantsWide]
+  )
+
+  /**
+   * The same edge, without a pointer.
+   *
+   * The drag has a keyboard twin rather than being reported as cosmetic: the edge
+   * is the only way to widen a table past the card, and a window splitter that
+   * cannot be reached from the keyboard is a control half the users do not have.
+   * The step is small enough to read as nudging and repeats while held; Shift
+   * makes it a coarse jump.
+   */
+  const gripKey = useCallback(
+    (event: ReactKeyboardEvent<HTMLDivElement>) => {
+      if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
+      event.preventDefault()
+      const step = event.shiftKey ? 64 : 16
+      const floor = wantsWide ? CARD_WIDTH : undefined
+      const from = userWidth ?? cardWidth
+      setUserWidth(draggedWidth(from, event.key === 'ArrowRight' ? step : -step, window.screen.availWidth, floor))
+    },
+    [wantsWide, userWidth, cardWidth]
+  )
 
   const gripUp = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
     const drag = dragRef.current
@@ -1010,29 +1103,39 @@ export function App() {
     }
   }, [])
 
+  const closeCard = useCallback(() => {
+    speechRef.current.stop()
+    window.deskhand.overlay.close()
+  }, [])
+
   /**
-   * Stops the answer in flight.
+   * Stops the answer in flight and gives the question back.
    *
    * The order matters: the request is marked ignored *before* it is cancelled, so
    * a chunk already on its way cannot land on a card that has stopped waiting for
-   * it.
-   *
-   * `closeWhenIdle` is the one difference between the two ways in. Escape on a
-   * card with nothing running dismisses the card; the «Стоп» button only exists
-   * while an answer is streaming and has nothing to dismiss.
+   * it. The field is only refilled when the user has not started a follow-up in
+   * it — stopping an answer must not overwrite the next question.
    */
-  const cancelRequest = useCallback((closeWhenIdle: boolean) => {
+  const cancelRequest = useCallback(() => {
     speechRef.current.stop()
     const id = requestIdRef.current
-    if (!id) {
-      if (closeWhenIdle) window.deskhand.overlay.close()
-      return
-    }
+    if (!id) return
     ignoredRequestRef.current = id
     requestIdRef.current = null
+    busyRef.current = false
     setBusy(false)
+    setFailure(null)
+    setNotice(null)
+    spokenPromptRef.current = false
+    const question = last?.prompt ?? ''
+    if (question && !promptRef.current.trim()) {
+      setPrompt(question)
+      promptRef.current = question
+      setTyping(true)
+    }
+    inputRef.current?.focus()
     window.deskhand.overlay.cancel(id)
-  }, [])
+  }, [last])
 
   /**
    * Performs what `keyPolicy` decided.
@@ -1042,23 +1145,26 @@ export function App() {
    */
   const perform = useCallback(
     (action: Exclude<KeyAction, null>) => {
-      if (action === 'close' || action === 'stopAgent') speechRef.current.stop()
       if (action === 'close') {
-        window.deskhand.overlay.close()
+        closeCard()
         return
       }
       if (action === 'stopAgent') {
+        speechRef.current.stop()
         // The user ended this one, so the voice does not report it back to them.
         stoppedByUserRef.current = true
         void window.deskhand.agent.stop()
         return
       }
       if (action === 'cancel') {
-        cancelRequest(true)
+        cancelRequest()
         return
       }
-      if (action === 'paste') {
-        void paste()
+      if (action === 'approve' || action === 'approveAlways' || action === 'deny') {
+        const request = agentRef.current?.approval
+        // The native watcher answers an Escape that arrives with no question
+        // left; doing it here as well would stop a run the user only refused.
+        if (request) void answerAgent(request, action !== 'deny', action === 'approveAlways')
         return
       }
       if (action === 'copy') {
@@ -1067,7 +1173,7 @@ export function App() {
       }
       send(promptRef.current)
     },
-    [cancelRequest, copy, paste, send]
+    [answerAgent, cancelRequest, closeCard, copy, send]
   )
 
   useEffect(() => {
@@ -1078,7 +1184,12 @@ export function App() {
         shift: event.shiftKey,
         tagName: (event.target as HTMLElement | null)?.tagName ?? null,
         agentPhase: agentRef.current?.phase ?? null,
-        hasSelection: Boolean(window.getSelection()?.toString()),
+        busy: busyRef.current,
+        runActive: Boolean(agentRef.current) && busyRef.current,
+        hasSelection: hasTextSelection(
+          window.getSelection()?.toString() ?? '',
+          document.activeElement === inputRef.current ? inputRef.current : null
+        ),
         hasAnswer: Boolean(answerTextRef.current.trim())
       })
       if (!action) return
@@ -1104,7 +1215,13 @@ export function App() {
    */
   if (listening) {
     return (
-      <div ref={rootRef} className="card" style={{ width: cardWidth }} data-voice>
+      <div
+        ref={rootRef}
+        className="card"
+        style={{ width: cardWidth }}
+        data-voice
+        data-drag-anywhere={dragAnywhere || undefined}
+      >
         <div
           className="voice"
           data-phase={voice.phase}
@@ -1128,25 +1245,16 @@ export function App() {
    * only be checked by looking at the card. `blocked` is one of them: the field
    * needs it before the session exists, and the drawer's lines need it after.
    */
-  const {
-    blocked,
-    showMeta,
-    answerReady,
-    agentOff,
-    agentBlocked,
-    promptLooksLikeAction,
-    hint,
-    needsAttention
-  } = deriveView({
-    session: state,
-    expanded,
-    hasAnswer,
-    busy,
-    failed: Boolean(failure),
-    last
-  })
+  const { blocked, showMeta, answerReady, agentOff, agentBlocked, promptLooksLikeAction, hint, needsAttention } =
+    deriveView({
+      session: state,
+      expanded,
+      hasAnswer,
+      busy,
+      failed: Boolean(failure),
+      last
+    })
   const showingTranscript = busy && last?.spoken && Boolean(prompt)
-
   /**
    * The field is shared by the provisional and ready card.
    *
@@ -1160,7 +1268,8 @@ export function App() {
       className="prompt"
       rows={1}
       spellCheck
-      placeholder="Слушаю"
+      placeholder="Что сделать?"
+      aria-label="Что сделать?"
       data-wrap={wrapped || undefined}
       value={prompt}
       disabled={blocked}
@@ -1169,6 +1278,7 @@ export function App() {
         setPrompt(event.target.value)
         setTyping(true)
       }}
+      onBlur={() => setTyping(false)}
       /*
         The field's own Enter, kept separate from the window handler on purpose
         (A1.7). Both ask `keyPolicy` — the same decision — but they are two call
@@ -1177,15 +1287,19 @@ export function App() {
         them would change which element consumes the key.
       */
       onKeyDown={(event) => {
-        if (keyPolicy({
-          key: event.key,
-          meta: event.metaKey || event.ctrlKey,
-          shift: event.shiftKey,
-          tagName: 'TEXTAREA',
-          agentPhase: null,
-          hasSelection: false,
-          hasAnswer: Boolean(answer.trim())
-        }) !== 'send') {
+        if (
+          keyPolicy({
+            key: event.key,
+            meta: event.metaKey || event.ctrlKey,
+            shift: event.shiftKey,
+            tagName: 'TEXTAREA',
+            agentPhase: null,
+            busy: busyRef.current,
+            runActive: false,
+            hasSelection: false,
+            hasAnswer: Boolean(answer.trim())
+          }) !== 'send'
+        ) {
           return
         }
         event.preventDefault()
@@ -1214,7 +1328,7 @@ export function App() {
     // before the session exists is a no-op rather than an error: `send` returns
     // without touching the text, and the same Enter works a moment later.
     return (
-      <div ref={rootRef} className="card" style={{ width: cardWidth }}>
+      <div ref={rootRef} className="card" style={{ width: cardWidth }} data-drag-anywhere={dragAnywhere || undefined}>
         <div className="bar">
           {composer}
           {/*
@@ -1227,6 +1341,11 @@ export function App() {
             to the left — a jump in the middle of the first sentence typed.
           */}
           <span className="reserve" aria-hidden />
+          <button className="close" title="Закрыть" aria-label="Закрыть" onClick={closeCard}>
+            <svg viewBox="0 0 10 10" aria-hidden>
+              <path d="M2 2l6 6M8 2l-6 6" />
+            </svg>
+          </button>
         </div>
       </div>
     )
@@ -1248,17 +1367,14 @@ export function App() {
       style={{ width: cardWidth }}
       data-busy={busy || undefined}
       data-drawing={(drawn > 0 && !typing) || undefined}
+      data-drag-anywhere={dragAnywhere || undefined}
     >
       {!agentRunning && showingTranscript && <div className="line">Распознано</div>}
       {!agentRunning && (
         <div className="bar">
           {composer}
           {busy && (
-            <button
-              className="stop"
-              title="Остановить ответ"
-              onClick={() => cancelRequest(false)}
-            >
+            <button className="stop" title="Остановить ответ" aria-label="Остановить ответ" onClick={cancelRequest}>
               <span aria-hidden />
             </button>
           )}
@@ -1275,6 +1391,11 @@ export function App() {
               <path d="M1 1l4 4 4-4" />
             </svg>
           </button>
+          <button className="close" title="Закрыть" aria-label="Закрыть" onClick={closeCard}>
+            <svg viewBox="0 0 10 10" aria-hidden>
+              <path d="M2 2l6 6M8 2l-6 6" />
+            </svg>
+          </button>
         </div>
       )}
 
@@ -1284,6 +1405,30 @@ export function App() {
       {voice.phase === 'idle' && voice.error && voice.message && (
         <div className="line" data-tone="err">
           {voice.message}
+        </div>
+      )}
+
+      {/*
+        An action request that fell back to a text answer because the agent is
+        enabled but blocked. The reason belongs on the folded card: the chevron
+        turning accent is not an explanation.
+      */}
+      {blockedAction && !agentRunning && (
+        <div className="line" data-tone="warn">
+          <span>
+            {state.agent.needsAccessibility
+              ? 'Нужен доступ — без него я не нажимаю.'
+              : 'Агент сейчас не может действовать.'}
+          </span>
+          {state.agent.needsAccessibility ? (
+            <button className="tag" onClick={() => window.deskhand.permissions.open('accessibility')}>
+              Открыть доступ
+            </button>
+          ) : (
+            <button className="tag" onClick={() => window.deskhand.settings.open()}>
+              Настройки
+            </button>
+          )}
         </div>
       )}
 
@@ -1321,11 +1466,7 @@ export function App() {
             </button>
             {screenshot && flags.includeScreenshot && <LiveThumb src={screenshot.dataUrl} />}
             {drawn > 0 && (
-              <button
-                className="tag clear"
-                onClick={clearDrawing}
-                title="Убрать рисунок с экрана"
-              >
+              <button className="tag clear" onClick={clearDrawing} title="Убрать рисунок с экрана">
                 Рисунок {drawn} ×
               </button>
             )}
@@ -1348,7 +1489,7 @@ export function App() {
         </div>
       )}
 
-      {expanded && hint && !blocked && <div className="line">{hint}</div>}
+      {expanded && hint && !blocked && !blockedAction && <div className="line">{hint}</div>}
 
       {/*
         An offer, not a complaint: the mode is off, so the assistant can only
@@ -1375,12 +1516,9 @@ export function App() {
         reason already arrived through `hint`; this adds the way out of it, since
         "нужен доступ" without a button is a dead end in a card this small.
       */}
-      {expanded && agentBlocked && !blocked && !busy && (
+      {expanded && agentBlocked && !blocked && !busy && !blockedAction && (
         <div className="line">
-          <button
-            className="tag"
-            onClick={() => window.deskhand.permissions.open('accessibility')}
-          >
+          <button className="tag" onClick={() => window.deskhand.permissions.open('accessibility')}>
             Открыть «Универсальный доступ»
           </button>
         </div>
@@ -1393,7 +1531,7 @@ export function App() {
           </svg>
           <span className="agent-label">Готово</span>
         </div>
-      ) : agent && (agentStatus || approval) ? (
+      ) : agent && (agentStatus || approval) && !(agent.code === 'blocked' && blockedAction) ? (
         <div
           className="agent"
           data-phase={agent.phase}
@@ -1403,7 +1541,10 @@ export function App() {
           {agentStatus && (
             <div className="agent-head" role="status">
               <span className="agent-dot" aria-hidden />
-              <span className="agent-label" key={`${agent.step}:${agent.phase}`}>{agentStatus}</span>
+              <span className="agent-label" key={`${agent.step}:${agent.phase}`}>
+                {agentStatus}
+              </span>
+              {agentHint && <span className="agent-hint">{agentHint}</span>}
             </div>
           )}
 
@@ -1416,27 +1557,24 @@ export function App() {
           */}
           {agent.phase === 'asking' && approval && (
             <div className="agent-ask" role="group" aria-label="Подтверждение действия">
+              <div className="agent-ask-title">Нужно разрешение</div>
               {agent.message && <div className="agent-ask-detail">{agent.message}</div>}
               <div className="agent-ask-buttons">
-                <button
-                  className="agent-allow"
-                  onClick={() => void answerAgent(approval, true, false)}
-                >
+                <button className="agent-allow" onClick={() => void answerAgent(approval, true, false)}>
                   Разрешить
                 </button>
                 <button
                   className="agent-always"
+                  title="Запомнить именно это действие и больше не спрашивать"
                   onClick={() => void answerAgent(approval, true, true)}
                 >
-                  Разрешить всегда
+                  Больше не спрашивать
                 </button>
-                <button
-                  className="agent-deny"
-                  onClick={() => void answerAgent(approval, false, false)}
-                >
+                <button className="agent-deny" onClick={() => void answerAgent(approval, false, false)}>
                   Отменить
                 </button>
               </div>
+              <div className="agent-ask-hint">↩ разрешить · ⌘↩ больше не спрашивать · Esc отменить</div>
             </div>
           )}
         </div>
@@ -1446,9 +1584,12 @@ export function App() {
         <div className="waiting" role="status" aria-live="polite">
           <div className="waiting-label">Готовлю ответ…</div>
           {waitStage === 'long' ? (
-            <div>Ответ занимает больше времени. Esc — остановить.</div>
+            <div>Ответ занимает больше времени. Esc — остановить ответ.</div>
           ) : waitStage === 'tip' ? (
-            <div><span className="waiting-caption">На заметку</span>{waiting.tip}</div>
+            <div>
+              <span className="waiting-caption">На заметку</span>
+              {waiting.tip}
+            </div>
           ) : null}
         </div>
       )}
@@ -1459,15 +1600,13 @@ export function App() {
           <div className="line" data-tone="err">
             <span>{failure.message}</span>
             {failure.retryable && last && (
-              <button
-                className="tag"
-                onClick={() =>
-                  last.refine
-                    ? refine(last.refine, last.base)
-                    : send(last.prompt, last.mode, last.spoken)
-                }
-              >
+              <button className="tag" onClick={retryLast}>
                 Повторить
+              </button>
+            )}
+            {!failure.retryable && !state.setupNotice && (
+              <button className="tag" onClick={() => window.deskhand.settings.open()}>
+                Настройки
               </button>
             )}
           </div>
@@ -1479,22 +1618,22 @@ export function App() {
         field is what made a voice action look like it had answered something.
       */}
       {hasAnswer && (
-        <div ref={answerRef} className="answer">
-          <Markdown text={answer} streaming={busy} caret={busy} />
+        <div className="answer-wrap">
+          <div ref={answerRef} className="answer" onScroll={onAnswerScroll}>
+            <Markdown text={answer} streaming={busy} caret={busy} />
+          </div>
+          {newText && (
+            <button className="new-text" onClick={jumpToNewText}>
+              ↓ Новый текст
+            </button>
+          )}
         </div>
       )}
 
-      {/*
-        The everyday actions, on one row; rewrites live in the drawer.
-
-        Pasting is not here. It is the one action that takes the card away from
-        you — it activates another app, sends a keystroke and comes back — and
-        behind a button in the corner it fired by accident. ⌘⏎ is the same
-        action, reached on purpose.
-      */}
+      {/* The everyday actions, on one row; rewrites live in the drawer. */}
       {hasAnswer && (!busy || speech.speaking) && (
         <div className="foot answer-actions">
-          <button className="link" onClick={() => speech.speaking ? speech.stop() : speech.speak(answer)}>
+          <button className="link" onClick={() => (speech.speaking ? speech.stop() : speech.speak(answer))}>
             {speech.speaking ? 'Остановить озвучку' : 'Прослушать'}
           </button>
           {answerReady && (
@@ -1520,14 +1659,23 @@ export function App() {
                   Шире
                 </button>
               )}
-              <button className="link" title="Скопировать ответ" onClick={() => void copy()}>
-                Скопировать
+              <button
+                className="link"
+                data-copied={copied || undefined}
+                title={copied ? 'Скопировано в буфер обмена' : 'Скопировать ответ'}
+                onClick={() => void copy()}
+              >
+                {copied ? '✓ Скопировано' : 'Скопировать'}
               </button>
             </>
           )}
         </div>
       )}
-      {speech.error && <div className="line" role="status">{speech.error}</div>}
+      {speech.error && (
+        <div className="line" role="status">
+          {speech.error}
+        </div>
+      )}
 
       {hasAnswer && expanded && (
         <div className="foot">
@@ -1548,7 +1696,16 @@ export function App() {
         </div>
       )}
 
-      {notice && <div className="line">{notice}</div>}
+      {notice && (
+        <div className="line">
+          <span>{notice}</span>
+          {notice === AGENT_ENABLED_NOTICE && last && !busy && (
+            <button className="tag" onClick={retryLast}>
+              Повторить
+            </button>
+          )}
+        </div>
+      )}
 
       {/*
         The resize edge. It sits on the card's outermost right column, over the
@@ -1561,11 +1718,16 @@ export function App() {
           role="separator"
           aria-orientation="vertical"
           aria-label="Изменить ширину"
+          aria-valuenow={Math.round(cardWidth)}
+          aria-valuemin={wantsWide ? CARD_WIDTH : CARD_MIN_WIDTH}
+          aria-valuemax={userWidthCeiling(window.screen.availWidth)}
+          tabIndex={0}
           data-dragging={dragging || undefined}
           onPointerDown={gripDown}
           onPointerMove={gripMove}
           onPointerUp={gripUp}
           onPointerCancel={gripUp}
+          onKeyDown={gripKey}
         />
       )}
     </div>

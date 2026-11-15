@@ -150,7 +150,7 @@ describe('palette: per-window colours', () => {
     expect(dark['--panel']).toBe('rgba(22, 22, 25, 0.72)')
     expect(light['--panel']).toBe('rgba(252, 253, 255, 0.66)')
     expect(dark['--panel-drawing']).toBe('rgba(30, 30, 33, 0.38)')
-    expect(light['--panel-drawing']).toBe('rgba(200, 202, 206, 0.40)')
+    expect(light['--panel-drawing']).toBe('rgba(200, 202, 206, 0.4)')
   })
 
   it('keeps the screen glow colours fixed across appearances', () => {

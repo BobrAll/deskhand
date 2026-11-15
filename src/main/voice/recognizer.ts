@@ -19,7 +19,13 @@ import { cpus, homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pipeline } from 'node:stream/promises'
 import { app } from 'electron'
-import { BUNDLED_VOICE_MODEL, isVoiceModelFile, voiceModel, WHISPER_MODELS } from '@shared/defaults'
+import {
+  BUNDLED_VOICE_MODEL,
+  isVoiceModelFile,
+  voiceModel,
+  WHISPER_MODELS,
+  type VoiceModelMeta
+} from '@shared/defaults'
 import { resourceCandidates } from '../paths'
 import type { DownloadProgress, TranscribeResult, VoiceStatus } from '@shared/types'
 import { getSettings } from '../settings/store'
@@ -69,10 +75,7 @@ export function modelsDir(): string {
  */
 export function resolveBinary(engine: 'whisper' | 'transcribe' = 'whisper'): string | null {
   const name = binaryName(engine)
-  const candidates = resourceCandidates(name, [
-    join('/opt/homebrew/bin', name),
-    join('/usr/local/bin', name)
-  ])
+  const candidates = resourceCandidates(name, [join('/opt/homebrew/bin', name), join('/usr/local/bin', name)])
   return candidates.find((candidate) => existsSync(candidate)) ?? null
 }
 
@@ -114,8 +117,7 @@ function modelIdFor(path: string): string {
 
 function gigaamModelPath(): string | null {
   const legacyDownload = join(modelsDir(), BUNDLED_VOICE_MODEL.file)
-  return [...resourceCandidates(join('speech', BUNDLED_VOICE_MODEL.file)), legacyDownload]
-    .find(existsSync) ?? null
+  return [...resourceCandidates(join('speech', BUNDLED_VOICE_MODEL.file)), legacyDownload].find(existsSync) ?? null
 }
 
 /**
@@ -163,6 +165,18 @@ export async function resolveVoiceModel(id = getSettings().voice.model): Promise
   return { path, auto: true, id: path ? modelIdFor(path) : null }
 }
 
+/**
+ * Why there is no model to run.
+ *
+ * "Выбери её" is useless advice for someone who already chose a model and only
+ * lost the file, so a configured selection is named.
+ */
+function missingModelDetail(configured: VoiceModelMeta | undefined): string {
+  if (configured?.id === BUNDLED_VOICE_MODEL.id) return MISSING_BUNDLED_MODEL
+  if (configured) return `Модель «${configured.label}» не скачана — скачай её в настройках.`
+  return 'Не скачана модель распознавания — выбери её в настройках.'
+}
+
 export async function voiceStatus(): Promise<VoiceStatus> {
   const voice = getSettings().voice
   const configured = voiceModel(voice.model)
@@ -176,13 +190,7 @@ export async function voiceStatus(): Promise<VoiceStatus> {
         ? 'В приложении нет движка GigaAM. Переустанови Deskhand.'
         : 'Не найден whisper-cli — пересобери приложение (npm run build:whisper).'
   } else if (!model.path) {
-    // Say which model is missing when the settings point at one: "выбери её"
-    // is useless advice if the user already chose it and only the file is gone.
-    detail = configured?.id === BUNDLED_VOICE_MODEL.id
-      ? MISSING_BUNDLED_MODEL
-      : configured
-        ? `Модель «${configured.label}» не скачана — скачай её в настройках.`
-        : 'Не скачана модель распознавания — выбери её в настройках.'
+    detail = missingModelDetail(configured)
   }
   return {
     ready: Boolean(binary && model.path),
@@ -205,8 +213,7 @@ export async function voiceStatus(): Promise<VoiceStatus> {
 // ---------------------------------------------------------------------------
 
 /** These are whisper's own artefacts for silence, never something the user said. */
-const NON_SPEECH =
-  /^[\[(（]?\s*(music|applause|silence|blank_audio|no speech|inaudible)\s*[\])）]?[.!]?$/i
+const NON_SPEECH = /^[\[(（]?\s*(music|applause|silence|blank_audio|no speech|inaudible)\s*[\])）]?[.!]?$/i
 
 /** Drops timestamps and non-speech markers, then joins what is left. */
 function cleanTranscript(raw: string): string {
@@ -225,6 +232,16 @@ export interface TranscribeOptions {
   signal?: AbortSignal
 }
 
+/** A run that never started: no binary, no model, or a cancel before the spawn. */
+function notStarted(message: string): TranscribeResult {
+  return { ok: false, text: '', ms: 0, message, spawned: false }
+}
+
+/** A run the caller cancelled; `ms` is how long it lasted before the kill. */
+function cancelled(ms: number): TranscribeResult {
+  return { ok: false, text: '', ms, message: 'Отменено.', spawned: false }
+}
+
 /**
  * Runs the selected recognizer on one recording.
  *
@@ -239,18 +256,17 @@ export async function transcribe(options: TranscribeOptions): Promise<Transcribe
   const selected = voiceModel(model.id ?? voice.model)
   const engine = selected?.engine ?? 'whisper'
   const binary = resolveBinary(engine)
-  if (!binary) return { ok: false, text: '', ms: 0, message: `Не найден ${binaryName(engine)}.` }
+  if (!binary) return notStarted(`Не найден ${binaryName(engine)}.`)
 
   if (!model.path) {
-    const message = selected?.id === BUNDLED_VOICE_MODEL.id
-      ? MISSING_BUNDLED_MODEL
-      : 'Не скачана модель распознавания.'
-    return { ok: false, text: '', ms: 0, message }
+    const message = selected?.id === BUNDLED_VOICE_MODEL.id ? MISSING_BUNDLED_MODEL : 'Не скачана модель распознавания.'
+    return notStarted(message)
   }
 
   const dir = join(tmpdir(), `deskhand-voice-${randomUUID()}`)
   await mkdir(dir, { recursive: true })
   const wavPath = join(dir, 'input.wav')
+  let spawned = false
   try {
     await writeFile(wavPath, options.wav)
     const language = selected?.language ?? (voice.language || 'ru')
@@ -260,29 +276,120 @@ export async function transcribe(options: TranscribeOptions): Promise<Transcribe
       engine === 'transcribe'
         ? ['-m', model.path, '-l', language, '--timestamps', 'none', '-o', transcriptPath, wavPath]
         : ['-m', model.path, '-f', wavPath, '-l', language, '-nt', '-np', '-t', threads]
-    if (options.signal?.aborted) return { ok: false, text: '', ms: 0, message: 'Отменено.' }
+    if (options.signal?.aborted) return cancelled(0)
     const raw = await runRecognizer(binary, args, engine, options.signal)
     const ms = Date.now() - startedAt
-    if (options.signal?.aborted) return { ok: false, text: '', ms, message: 'Отменено.' }
-    const text = cleanTranscript(
-      engine === 'transcribe' ? await readFile(transcriptPath, 'utf8') : raw
-    )
+    if (options.signal?.aborted) return cancelled(ms)
+    // The process finished and was not cancelled, so the model itself is loaded
+    // even if the transcript cannot be read. A missing file becomes the ordinary
+    // "nothing recognised" sentence instead of a raw Node error in the card.
+    spawned = true
+    const text = cleanTranscript(engine === 'transcribe' ? await readFile(transcriptPath, 'utf8').catch(() => '') : raw)
     if (!text) {
       // Silence is not alarming, but it must not look like a successful empty
       // answer either: the card would sit there with nothing in it.
-      return { ok: false, text: '', ms, message: 'Речь не распознана — попробуй ещё раз.' }
+      return { ok: false, text: '', ms, message: 'Речь не распознана — попробуй ещё раз.', spawned }
     }
-    return { ok: true, text, ms }
+    return { ok: true, text, ms, spawned }
   } catch (error) {
     return {
       ok: false,
       text: '',
       ms: Date.now() - startedAt,
-      message: error instanceof Error ? error.message : 'Распознавание не удалось.'
+      message: error instanceof Error ? error.message : 'Распознавание не удалось.',
+      spawned
     }
   } finally {
-    void rm(dir, { recursive: true, force: true })
+    // The transcript is already decided at this point; a temp directory that
+    // cannot be removed (the disk is gone, it was cleaned by hand) must not turn
+    // into an unhandled rejection in the main process.
+    void rm(dir, { recursive: true, force: true }).catch(() => undefined)
   }
+}
+
+/** Length of the silent clip a warm-up turn feeds the recognizer. */
+const WARMUP_WAV_MS = 160
+const WARMUP_RATE = 16_000
+
+/** A short silent 16 kHz mono WAV: the input a warm-up turn discards. */
+function silentWav(ms: number): Buffer {
+  const samples = Math.max(1, Math.round((WARMUP_RATE * ms) / 1000))
+  const wav = Buffer.alloc(44 + samples * 2)
+  wav.write('RIFF', 0)
+  wav.writeUInt32LE(36 + samples * 2, 4)
+  wav.write('WAVE', 8)
+  wav.write('fmt ', 12)
+  wav.writeUInt32LE(16, 16)
+  wav.writeUInt16LE(1, 20)
+  wav.writeUInt16LE(1, 22)
+  wav.writeUInt32LE(WARMUP_RATE, 24)
+  wav.writeUInt32LE(WARMUP_RATE * 2, 28)
+  wav.writeUInt16LE(2, 32)
+  wav.writeUInt16LE(16, 34)
+  wav.write('data', 36)
+  wav.writeUInt32LE(samples * 2, 40)
+  return wav
+}
+
+/**
+ * The warm-up running right now, so two callers share one child process.
+ *
+ * A warm-up is a real recognizer invocation with silence: the binary, the model
+ * and the compute backend are paged in exactly as they will be for a phrase. The
+ * first process after launch pays for that cold start (measured at ~0.5 s against
+ * ~0.1 s once warm on Apple Silicon); doing it ahead of the first press keeps the
+ * cost out of the transcript the user is waiting for.
+ */
+let warmup: { controller: AbortController; done: Promise<boolean> } | null = null
+
+function startWarmup(): Promise<boolean> {
+  const controller = new AbortController()
+  const done = transcribe({ wav: silentWav(WARMUP_WAV_MS), signal: controller.signal })
+    .then((result) => {
+      // A cancelled warm-up reports the time it ran before the kill; saying it
+      // warmed anything would be wrong.
+      if (controller.signal.aborted) return false
+      if (result.spawned !== true) {
+        // `transcribe` returns before it starts a process when the binary or the
+        // model is missing, or when the temp file cannot be written. Nothing
+        // ran, so nothing is warm; the settings window already tells the user
+        // what to install.
+        console.warn('[voice] recognizer warm-up did not start:', result.message)
+        return false
+      }
+      console.log(`[voice] recognizer warmed in ${result.ms} мс`)
+      return true
+    })
+    .catch((error: unknown) => {
+      console.warn('[voice] recognizer warm-up failed:', error)
+      return false
+    })
+    .finally(() => {
+      if (warmup?.controller === controller) warmup = null
+    })
+  warmup = { controller, done }
+  return done
+}
+
+/**
+ * Loads the recognizer and its model before the first phrase needs them.
+ *
+ * Resolves `true` only when the recognizer really ran: a cancelled warm-up, a
+ * missing binary or a missing model all resolve `false`, and the caller must not
+ * treat that as "the model is loaded".
+ */
+export function warmRecognizer(): Promise<boolean> {
+  return warmup?.done ?? startWarmup()
+}
+
+/**
+ * Stops a warm-up that would otherwise compete with a real phrase for the same
+ * model and the same CPU. Safe to call when nothing is warming.
+ */
+export function cancelWarmRecognizer(): void {
+  const running = warmup
+  warmup = null
+  running?.controller.abort()
 }
 
 function runRecognizer(
@@ -303,6 +410,9 @@ function runRecognizer(
       signal?.removeEventListener('abort', onAbort)
     }
     signal?.addEventListener('abort', onAbort, { once: true })
+    // The signal can be aborted between the caller's pre-check and this line;
+    // the listener would never fire for an event that already happened.
+    if (signal?.aborted) onAbort()
 
     child.stdout.setEncoding('utf8')
     child.stderr.setEncoding('utf8')
@@ -349,10 +459,7 @@ export function isDownloading(id: string): boolean {
  * Written to a `.part` file and renamed only when complete, so an interrupted
  * download can never be picked up by `resolveVoiceModel()` as a usable model.
  */
-export function downloadModel(
-  id: string,
-  onProgress: (progress: DownloadProgress) => void
-): Promise<void> {
+export function downloadModel(id: string, onProgress: (progress: DownloadProgress) => void): Promise<void> {
   const running = downloads.get(id)
   if (running) return running
 

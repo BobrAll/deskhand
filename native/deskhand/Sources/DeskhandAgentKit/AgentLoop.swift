@@ -1,6 +1,6 @@
-import Foundation
 import DeskhandCore
 import DeskhandLLM
+import Foundation
 
 /// What the loop needs from the tool layer.
 ///
@@ -97,7 +97,7 @@ public final class AgentLoop {
     /// A miss costs a failed step, not silence — the ordinary error path still
     /// reports it.
     private static func isImageRefusal(_ error: Error) -> Bool {
-        guard case let LLMError.http(status, body) = error, status == 400 || status == 422 else {
+        guard case LLMError.http(let status, let body) = error, status == 400 || status == 422 else {
             return false
         }
         let lower = body.lowercased()
@@ -106,6 +106,11 @@ public final class AgentLoop {
 
     private static func hasImages(_ messages: [ChatMessage]) -> Bool {
         messages.contains { !$0.images.isEmpty }
+    }
+
+    /// Bytes of the prompt text, the number `step-timing` reports.
+    private static func textBytes(_ messages: [ChatMessage]) -> Int {
+        messages.reduce(0) { $0 + $1.text.utf8.count }
     }
 
     /// The same history with every image dropped. Text stays: it is what the
@@ -181,7 +186,8 @@ public final class AgentLoop {
     public func run(
         task: String,
         cancel: CancelToken? = nil,
-        finalResponseInstruction: String = "When you have no more tools to call, briefly summarize what you did and the outcome in the user's language."
+        finalResponseInstruction: String =
+            "When you have no more tools to call, briefly summarize what you did and the outcome in the user's language."
     ) async throws -> String {
         var messages: [ChatMessage] = [ChatMessage(role: .user, text: task)]
         var lastCallSignature: String?
@@ -201,9 +207,7 @@ public final class AgentLoop {
         // Counted here rather than read back from `timingLog`: the timing table is
         // opt-in and grouped by label, so it cannot answer "how many calls
         // failed" without the host parsing strings.
-        var stepsRun = 0
-        var callsRun = 0
-        var callsFailed = 0
+        var totals = RunTotals()
         // Set by the loop guard. Its own variable rather than a flag on the
         // return value: the run still returns a sentence, and the caller needs
         // to tell "the model finished" from "the guard cut it short" without
@@ -212,93 +216,58 @@ public final class AgentLoop {
 
         let systemPrompt = Self.systemPrompt + "\n\n" + finalResponseInstruction + "\n\n" + environmentSummary()
 
-        for step in 1...options.maxSteps {
+        // `1...options.maxSteps` traps on a non-positive budget, and the
+        // command line accepts `--max-steps 0`. One step is the smallest run
+        // that can say anything, so that is what a bad value gets.
+        let stepBudget = max(1, options.maxSteps)
+        for step in 1...stepBudget {
             try Task.checkCancellation()
             try cancel?.check()
-            observer?.stepStarted(step, of: options.maxSteps)
-            stepsRun = step
+            observer?.stepStarted(step, of: stepBudget)
+            totals.steps = step
             log("step \(step): asking \(provider.config.model)")
 
-            // Mutable because a provider that refuses images is asked the same step
-            // again without them, rather than the run ending on a request the
-            // user could not have known was impossible.
-            var prompt = trimmedHistory(messages)
-            var promptBytes = prompt.reduce(0) { $0 + $1.text.utf8.count }
-            let stepClock = TimingClock()
-            var completion: Completion
-            // Streaming is reported as a growing prefix, throttled so a host
-            // that resizes a window for every token does not spend the saved
-            // latency on layout. The first delta goes out immediately: that is
-            // the one the user is waiting for.
-            var streamed = ""
-            var lastStreamAt = -1.0
-            var lastStreamLength = 0
-            let onText: (String) -> Void = { delta in
-                streamed += delta
-                let now = stepClock.milliseconds
-                if lastStreamAt < 0 || now - lastStreamAt >= 80 {
-                    lastStreamAt = now
-                    lastStreamLength = streamed.count
-                    self.observer?.stepStreamed(step, text: streamed)
-                }
-            }
-            do {
-                completion = try await askModel(prompt, systemPrompt: systemPrompt, onText: onText)
-                // The last delta may have arrived inside the throttle window.
-                if !streamed.isEmpty, streamed.count != lastStreamLength {
-                    self.observer?.stepStreamed(step, text: streamed)
-                }
-            } catch {
-                // The provider refused the picture. Whether a model takes images
-                // is not knowable before the call — the user names it, and it may
-                // sit behind a proxy — so the refusal itself is the answer. Drop
-                // the images, say so once, and keep the run alive.
-                guard !imagesRefused, Self.hasImages(prompt), Self.isImageRefusal(error) else {
-                    timingLog.record(TimingLabel.model, milliseconds: stepClock.milliseconds)
-                    throw error
-                }
-                imagesRefused = true
-                prompt = Self.strippedImages(prompt)
-                promptBytes = prompt.reduce(0) { $0 + $1.text.utf8.count }
-                streamed = ""
-                lastStreamAt = -1
-                lastStreamLength = 0
-                observer?.loopWarned(Self.imageRefusalNotice)
-                log("provider refused images; asking again without them")
-                do {
-                    completion = try await askModel(prompt, systemPrompt: systemPrompt, onText: onText)
-                } catch {
-                    timingLog.record(TimingLabel.model, milliseconds: stepClock.milliseconds)
-                    throw error
-                }
-                if !streamed.isEmpty, streamed.count != lastStreamLength {
-                    self.observer?.stepStreamed(step, text: streamed)
-                }
-            }
-            let llmMilliseconds = stepClock.milliseconds
+            let turn = try await askStep(
+                step: step,
+                history: messages,
+                systemPrompt: systemPrompt,
+                imagesAlreadyRefused: imagesRefused
+            )
+            imagesRefused = imagesRefused || turn.refusedImages
+            let prompt = turn.prompt
+            let promptBytes = turn.promptBytes
+            let completion = turn.completion
+            let llmMilliseconds = turn.milliseconds
             if let record = ModelTrace.record {
-                record("model-completion", [
-                    "step": .number(Double(step)),
-                    "text": .string(completion.text),
-                    "stop_reason": completion.stopReason.map(JSONValue.string) ?? .null,
-                    "tool_calls": .array(completion.toolCalls.map { call in
-                        .object(["id": .string(call.id), "name": .string(call.name), "arguments": call.arguments])
-                    }),
-                ])
+                record(
+                    "model-completion",
+                    [
+                        "step": .number(Double(step)),
+                        "text": .string(completion.text),
+                        "stop_reason": completion.stopReason.map(JSONValue.string) ?? .null,
+                        "tool_calls": .array(
+                            completion.toolCalls.map { call in
+                                .object([
+                                    "id": .string(call.id), "name": .string(call.name), "arguments": call.arguments,
+                                ])
+                            }),
+                    ])
             }
             timingLog.record(TimingLabel.model, milliseconds: llmMilliseconds)
             // The host records this as the step's cost. It is emitted before the
             // branch below so the step that ends the run is timed too: the last
             // round trip is usually the most expensive one, and a timeline that
             // stops one line short of the answer is a timeline nobody trusts.
-            observer?.stepTimed(step, timing: StepTiming(
-                llmMilliseconds: llmMilliseconds,
-                promptBytes: promptBytes,
-                historyMessages: prompt.count,
-                callCount: completion.toolCalls.count,
-                inputTokens: completion.usage?.inputTokens,
-                outputTokens: completion.usage?.outputTokens
-            ))
+            observer?.stepTimed(
+                step,
+                timing: StepTiming(
+                    llmMilliseconds: llmMilliseconds,
+                    promptBytes: promptBytes,
+                    historyMessages: prompt.count,
+                    callCount: completion.toolCalls.count,
+                    inputTokens: completion.usage?.inputTokens,
+                    outputTokens: completion.usage?.outputTokens
+                ))
 
             // Only narration that leads into tool calls is logged; the final
             // answer is printed once by the CLI, so echoing it here too would
@@ -307,8 +276,9 @@ public final class AgentLoop {
                 log("assistant: \(completion.text.prefix(400))")
             }
             if options.timings {
-                logTiming(step: step, llm: llmMilliseconds, promptBytes: promptBytes,
-                          history: prompt.count, completion: completion)
+                logTiming(
+                    step: step, llm: llmMilliseconds, promptBytes: promptBytes,
+                    history: prompt.count, completion: completion)
             }
 
             try cancel?.check()
@@ -324,7 +294,7 @@ public final class AgentLoop {
                 return finishRun(
                     reason: "the model's reply was cut off at the token limit",
                     answer: "Stopped: the model's reply was cut off at the token limit.",
-                    steps: stepsRun, calls: callsRun, failedCalls: callsFailed, clock: runClock)
+                    totals: totals, clock: runClock)
             }
             if !completion.wantsToolCalls {
                 try Task.checkCancellation()
@@ -333,17 +303,18 @@ public final class AgentLoop {
                 // The only exit where the model decided it was done. Both other
                 // exits fall through to the return below.
                 finished = true
-                reportRun(steps: stepsRun, calls: callsRun, failedCalls: callsFailed, clock: runClock)
+                reportRun(totals: totals, clock: runClock)
                 return completion.text
             }
 
             observer?.stepAnswered(step, narration: completion.text, calls: completion.toolCalls)
 
-            messages.append(ChatMessage(
-                role: .assistant,
-                text: completion.text,
-                toolCalls: completion.toolCalls
-            ))
+            messages.append(
+                ChatMessage(
+                    role: .assistant,
+                    text: completion.text,
+                    toolCalls: completion.toolCalls
+                ))
 
             // The executor is asked to verify only the last call of the batch:
             // an intermediate step would pay for a tree walk nobody reads.
@@ -376,27 +347,23 @@ public final class AgentLoop {
                     // the old call at its word recorded a run as abandoned when
                     // it went on to succeed.
                     observer?.loopWarned("the same call repeated without a change")
-                    messages.append(ChatMessage(
-                        role: .tool,
-                        text: warning,
-                        toolCallID: call.id,
-                        isError: true
-                    ))
+                    messages.append(
+                        ChatMessage(
+                            role: .tool,
+                            text: warning,
+                            toolCallID: call.id,
+                            isError: true
+                        ))
                     continue
                 }
 
                 log("tool \(call.name) \(argumentPreview(call.arguments))")
                 observer?.toolStarted(step, call: call, narration: completion.text)
                 let callClock = TimingClock()
-                let result = await executor.call(
-                    name: call.name,
-                    arguments: call.arguments,
-                    verify: options.verifyActions && isLast,
-                    narration: completion.text
-                )
+                let result = await toolResult(for: call, narration: completion.text, isLast: isLast)
                 let wall = callClock.milliseconds
-                callsRun += 1
-                if result.isError { callsFailed += 1 }
+                totals.calls += 1
+                if result.isError { totals.failedCalls += 1 }
                 recordToolTimings(result.timings, name: call.name)
                 observer?.toolFinished(
                     step, call: call, text: result.plainText,
@@ -407,12 +374,13 @@ public final class AgentLoop {
                 }
 
                 let text = result.plainText
-                messages.append(ChatMessage(
-                    role: .tool,
-                    text: text.isEmpty ? "(no output)" : text,
-                    toolCallID: call.id,
-                    isError: result.isError
-                ))
+                messages.append(
+                    ChatMessage(
+                        role: .tool,
+                        text: text.isEmpty ? "(no output)" : text,
+                        toolCallID: call.id,
+                        isError: result.isError
+                    ))
                 if let fingerprint = result.stateFingerprint { stepFingerprint = fingerprint }
 
                 // A failed step invalidates the assumptions the later steps in
@@ -431,12 +399,13 @@ public final class AgentLoop {
                             the app state before continuing.
                             """
                         for skipped in batch[(position + 1)...] {
-                            messages.append(ChatMessage(
-                                role: .tool,
-                                text: note,
-                                toolCallID: skipped.id,
-                                isError: true
-                            ))
+                            messages.append(
+                                ChatMessage(
+                                    role: .tool,
+                                    text: note,
+                                    toolCallID: skipped.id,
+                                    isError: true
+                                ))
                         }
                         log("batch stopped after \(call.name) failed (\(remaining) skipped)")
                     }
@@ -449,11 +418,12 @@ public final class AgentLoop {
                 // user message. `trimmedHistory` drops the older ones.
                 let images = (result.isError || imagesRefused) ? [] : result.images
                 if !images.isEmpty {
-                    messages.append(ChatMessage(
-                        role: .user,
-                        text: "Screenshot of the current window:",
-                        images: images
-                    ))
+                    messages.append(
+                        ChatMessage(
+                            role: .user,
+                            text: "Screenshot of the current window:",
+                            images: images
+                        ))
                 }
             }
 
@@ -475,29 +445,30 @@ public final class AgentLoop {
                         reason: "the run kept returning to a screen it had already seen",
                         answer: "Stopped: \(stalled) steps in a row without a new screen. "
                             + "The same route was taken again, so repeating it will not finish the task.",
-                        steps: stepsRun, calls: callsRun, failedCalls: callsFailed, clock: runClock)
+                        totals: totals, clock: runClock)
                 }
                 if stalled >= Self.stallWarnSteps, !warnedStall {
                     log("warning: \(stalled) steps without a new screen")
                     observer?.loopWarned("the run keeps returning to the same screen")
                     warnedStall = true
-                    messages.append(ChatMessage(
-                        role: .user,
-                        text: """
-                            This is the same screen you have been on for \(stalled) steps. Nothing \
-                            has moved, so the next repetition will not move it either: try a \
-                            different route — a menu, a keyboard shortcut, or opening the page \
-                            directly — or say what is blocking the task.
-                            """
-                    ))
+                    messages.append(
+                        ChatMessage(
+                            role: .user,
+                            text: """
+                                This is the same screen you have been on for \(stalled) steps. Nothing \
+                                has moved, so the next repetition will not move it either: try a \
+                                different route — a menu, a keyboard shortcut, or opening the page \
+                                directly — or say what is blocking the task.
+                                """
+                        ))
                 }
             }
         }
 
         return finishRun(
             reason: "the step budget ran out",
-            answer: "Stopped after \(options.maxSteps) steps without finishing the task.",
-            steps: stepsRun, calls: callsRun, failedCalls: callsFailed, clock: runClock)
+            answer: "Stopped after \(stepBudget) steps without finishing the task.",
+            totals: totals, clock: runClock)
     }
 
     /// Whether the last run ended because the model finished, rather than
@@ -514,6 +485,20 @@ public final class AgentLoop {
         timingLog.report()
     }
 
+    /// What the run has done so far, in the numbers the report carries.
+    ///
+    /// One value rather than three parallel arguments, so the exits cannot pass
+    /// them along in a different order and a reader of `run` keeps one name in
+    /// mind instead of three that must stay in step.
+    private struct RunTotals {
+        /// Steps the loop has started.
+        var steps = 0
+        /// Calls the loop attempted, including ones it refused because their
+        /// arguments did not parse — those are counted as failed.
+        var calls = 0
+        var failedCalls = 0
+    }
+
     /// Ends the run on a path the loop chose rather than one the model chose.
     ///
     /// The order is the contract: the total is recorded before the report reads
@@ -521,14 +506,12 @@ public final class AgentLoop {
     private func finishRun(
         reason: String,
         answer: String,
-        steps: Int,
-        calls: Int,
-        failedCalls: Int,
+        totals: RunTotals,
         clock: TimingClock
     ) -> String {
         timingLog.record(TimingLabel.runTotal, milliseconds: clock.milliseconds)
         observer?.loopStopped(reason)
-        reportRun(steps: steps, calls: calls, failedCalls: failedCalls, clock: clock)
+        reportRun(totals: totals, clock: clock)
         return answer
     }
 
@@ -537,20 +520,21 @@ public final class AgentLoop {
     /// Called at every exit of the loop and nowhere else: a report emitted from a
     /// cancellation path as well would arrive twice, and the second one would
     /// describe a run that had already been accounted for.
-    private func reportRun(steps: Int, calls: Int, failedCalls: Int, clock: TimingClock) {
+    private func reportRun(totals: RunTotals, clock: TimingClock) {
         let rows = timingLog.grouped()
         let llm = rows.first { $0.label == TimingLabel.model }?.total ?? 0
         let tools = rows.filter { $0.label.hasPrefix(TimingLabel.toolPrefix) }
             .reduce(0) { $0 + $1.total }
-        observer?.runFinished(RunReport(
-            steps: steps,
-            calls: calls,
-            failedCalls: failedCalls,
-            totalMilliseconds: clock.milliseconds,
-            llmMilliseconds: llm,
-            toolMilliseconds: tools,
-            table: options.timings ? timingLog.report() : ""
-        ))
+        observer?.runFinished(
+            RunReport(
+                steps: totals.steps,
+                calls: totals.calls,
+                failedCalls: totals.failedCalls,
+                totalMilliseconds: clock.milliseconds,
+                llmMilliseconds: llm,
+                toolMilliseconds: tools,
+                table: options.timings ? timingLog.report() : ""
+            ))
     }
 
     private func recordToolTimings(_ tool: ToolTimings, name: String) {
@@ -609,9 +593,8 @@ public final class AgentLoop {
 
     /// One model call, streaming when the provider supports it.
     ///
-    /// Extracted so the step can be asked twice: once with the screenshots the
-    /// run has accumulated, and once without them after a provider refuses an
-    /// image. The retry is the same question, so nothing about the call changes.
+    /// A provider without `StreamingChatProvider` still works; it just answers in
+    /// one piece and reports no caption while the step runs.
     private func askModel(
         _ messages: [ChatMessage],
         systemPrompt: String,
@@ -632,6 +615,113 @@ public final class AgentLoop {
         )
     }
 
+    /// What one step's model call produced.
+    private struct ModelTurn {
+        var completion: Completion
+        /// The history as it was actually sent, after trimming.
+        var prompt: [ChatMessage]
+        /// Bytes of the text in `prompt`.
+        var promptBytes: Int
+        var milliseconds: Double
+        /// True when this step is the one that found images refused.
+        var refusedImages: Bool
+    }
+
+    /// One step's model call: the trimmed prompt, the streamed caption, and the
+    /// retry that keeps a vision-less model usable.
+    ///
+    /// The same step is asked twice when the provider refuses the picture.
+    /// Whether a model takes images is not knowable before the call — the user
+    /// names it, and it may sit behind a proxy — so the refusal itself is the
+    /// answer: drop the images, say so once, and ask again. Nothing else about
+    /// the call changes.
+    private func askStep(
+        step: Int,
+        history: [ChatMessage],
+        systemPrompt: String,
+        imagesAlreadyRefused: Bool
+    ) async throws -> ModelTurn {
+        // Mutable because the refusal path asks the same step again without the
+        // images.
+        var prompt = promptForStep(history, imagesAlreadyRefused: imagesAlreadyRefused)
+        var promptBytes = Self.textBytes(prompt)
+        let clock = TimingClock()
+        // Streaming is reported as a growing prefix, throttled so a host that
+        // resizes a window for every token does not spend the saved latency on
+        // layout. The first delta goes out immediately: that is the one the user
+        // is waiting for.
+        var streamed = ""
+        var lastStreamAt = -1.0
+        var lastStreamLength = 0
+        let onText: (String) -> Void = { delta in
+            streamed += delta
+            let now = clock.milliseconds
+            if lastStreamAt < 0 || now - lastStreamAt >= 80 {
+                lastStreamAt = now
+                lastStreamLength = streamed.count
+                self.observer?.stepStreamed(step, text: streamed)
+            }
+        }
+        // The last delta may have arrived inside the throttle window.
+        let flushStream: () -> Void = {
+            if !streamed.isEmpty, streamed.count != lastStreamLength {
+                self.observer?.stepStreamed(step, text: streamed)
+            }
+        }
+
+        do {
+            let completion = try await askModel(prompt, systemPrompt: systemPrompt, onText: onText)
+            flushStream()
+            return ModelTurn(
+                completion: completion,
+                prompt: prompt,
+                promptBytes: promptBytes,
+                milliseconds: clock.milliseconds,
+                refusedImages: false
+            )
+        } catch {
+            guard !imagesAlreadyRefused, Self.hasImages(prompt), Self.isImageRefusal(error) else {
+                timingLog.record(TimingLabel.model, milliseconds: clock.milliseconds)
+                throw error
+            }
+            prompt = Self.strippedImages(prompt)
+            promptBytes = Self.textBytes(prompt)
+            streamed = ""
+            lastStreamAt = -1
+            lastStreamLength = 0
+            observer?.loopWarned(Self.imageRefusalNotice)
+            log("provider refused images; asking again without them")
+            do {
+                let completion = try await askModel(prompt, systemPrompt: systemPrompt, onText: onText)
+                flushStream()
+                return ModelTurn(
+                    completion: completion,
+                    prompt: prompt,
+                    promptBytes: promptBytes,
+                    milliseconds: clock.milliseconds,
+                    refusedImages: true
+                )
+            } catch {
+                timingLog.record(TimingLabel.model, milliseconds: clock.milliseconds)
+                throw error
+            }
+        }
+    }
+
+    /// The history as it goes to the provider on this step.
+    ///
+    /// Once a provider has said it cannot take images, the newest screenshot
+    /// still in the history goes too: `trimmedHistory` keeps one, so without
+    /// this every following step would re-send the refused image, pay a failed
+    /// round trip, and only then retry without it.
+    private func promptForStep(
+        _ history: [ChatMessage],
+        imagesAlreadyRefused: Bool
+    ) -> [ChatMessage] {
+        let trimmed = trimmedHistory(history)
+        return imagesAlreadyRefused ? Self.strippedImages(trimmed) : trimmed
+    }
+
     /// Keeps the conversation bounded.
     ///
     /// Two kinds of bulk live in the history: screenshots and accessibility
@@ -649,8 +739,10 @@ public final class AgentLoop {
     /// recently seen first.
     func trimmedHistory(_ messages: [ChatMessage]) -> [ChatMessage] {
         var seenImages = 0
-        var treesKeptPerApp: [String: Int] = [:]
+        // Apps admitted to the tree cap, newest first.
         var keptApps: [String] = []
+        // Apps whose newest tree has already been walked past.
+        var sawTree = Set<String>()
         var diffsKept = 0
         var result: [ChatMessage] = []
 
@@ -680,21 +772,13 @@ public final class AgentLoop {
 
             if copy.role == .tool, copy.text.contains(Self.treeMarkerPrefix) {
                 let app = Self.appKey(forTreeMessage: copy.text)
-                let seen = treesKeptPerApp[app, default: 0]
-                let appAlreadyCounted = keptApps.contains(app)
-                if !appAlreadyCounted {
-                    if keptApps.count >= options.keepTrees {
-                        copy.text = Self.compactTree(in: copy.text)
-                        result.append(copy)
-                        continue
-                    }
+                // Only the newest tree per app is authoritative: an older one
+                // advertises indices that no longer resolve to what the model
+                // thinks they do. The cap bounds how many apps keep one.
+                let isNewestForApp = sawTree.insert(app).inserted
+                if isNewestForApp, keptApps.count < options.keepTrees {
                     keptApps.append(app)
-                }
-                treesKeptPerApp[app] = seen + 1
-                if seen >= 1 {
-                    // Only the newest tree per app is authoritative; an older
-                    // one advertises indices that no longer resolve to what the
-                    // model thinks they do.
+                } else {
                     copy.text = Self.compactTree(in: copy.text)
                 }
             }
@@ -711,7 +795,8 @@ public final class AgentLoop {
     /// keeps unparseable results from all sharing one bucket.
     static func appKey(forTreeMessage text: String) -> String {
         guard let close = text.firstIndex(of: "]"),
-              let open = text[text.startIndex..<close].lastIndex(of: "[") else {
+            let open = text[text.startIndex..<close].lastIndex(of: "[")
+        else {
             return String(text.prefix(40))
         }
         return String(text[text.index(after: open)..<close])
@@ -751,6 +836,43 @@ public final class AgentLoop {
     private func argumentPreview(_ arguments: JSONValue) -> String {
         let text = arguments.serialized()
         return text.count > 220 ? String(text.prefix(220)) + "…" : text
+    }
+
+    /// The result of one call, or the refusal that stands in for it.
+    ///
+    /// A call whose arguments did not parse is not executed: running it with
+    /// the empty object the parser left would execute a different, usually
+    /// no-argument call, and the model would read the resulting tool error as a
+    /// fault of the tool. The refusal carries the raw text so the model can
+    /// correct it.
+    private func toolResult(
+        for call: ToolCall,
+        narration: String,
+        isLast: Bool
+    ) async -> ToolResult {
+        guard let rawArguments = call.argumentsError else {
+            return await executor.call(
+                name: call.name,
+                arguments: call.arguments,
+                verify: options.verifyActions && isLast,
+                narration: narration
+            )
+        }
+        log("  arguments did not parse; not executing")
+        return .failure(Self.unparseableArgumentsMessage(raw: rawArguments))
+    }
+
+    /// What the model is told when its own arguments did not parse.
+    ///
+    /// The text is included because it is the only way the model can see what
+    /// it actually sent: the history shows the call with the empty object the
+    /// loop refused to run, not the broken text.
+    static func unparseableArgumentsMessage(raw: String) -> String {
+        let preview = raw.count > 200 ? String(raw.prefix(200)) + "…" : raw
+        return """
+            This call was not run: its arguments were not valid JSON. Resend it with valid \
+            JSON arguments. Received: \(preview)
+            """
     }
 
     private func textPreview(_ text: String) -> String {

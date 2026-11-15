@@ -12,9 +12,9 @@ import type {
   ContextFlags,
   ContextSnapshot,
   DownloadProgress,
+  FieldHighlightEvent,
   KeyStatus,
   OverlayState,
-  PasteResult,
   PermissionState,
   SystemPermissionRequest,
   DrawingPayload,
@@ -91,7 +91,6 @@ export interface DeskhandApi {
     send(request: SendRequest): void
     cancel(requestId: string): void
     copy(text: string): Promise<ActionResult>
-    paste(text: string): Promise<PasteResult>
     /** Removes the drawings without closing the card. */
     clearDrawing(): void
     /**
@@ -113,7 +112,7 @@ export interface DeskhandApi {
      * dragging the right edge means: the edge under the pointer has to follow the
      * pointer, and the anchor would otherwise decide which side grows.
      */
-    resize(height: number, width?: number, pin?: boolean): void
+    resize(height: number, width?: number, pin?: boolean, typing?: boolean): void
   }
   /** Used only by the transparent drawing layer. */
   drawing: {
@@ -214,6 +213,8 @@ export interface DeskhandApi {
    */
   voice: {
     onEvent(handler: (event: VoiceEvent) => void): Unsubscribe
+    /** The transparent layer's border around the field a dictation will fill. */
+    onFieldHighlight(handler: (event: FieldHighlightEvent) => void): Unsubscribe
     /** Start capturing; `maxDurationMs` bounds a key that gets stuck. */
     onRecord(handler: (request: { maxDurationMs: number }) => void): Unsubscribe
     /** Stop capturing; `transcribe: false` throws the audio away (Escape). */
@@ -251,6 +252,13 @@ export interface DeskhandApi {
    */
   tts: {
     speak(text: string, localOnly?: boolean): Promise<TtsResult>
+    /**
+     * Warms pronunciation hints for words in text that is about to be spoken.
+     *
+     * The prompt is known while the model thinks, and an answer is known a
+     * sentence before its turn comes. Fire-and-forget: a line never waits for it.
+     */
+    prefetch(text: string): void
     status(): Promise<TtsStatus>
     /** Stores the key encrypted; an empty string removes it. */
     setKey(key: string): Promise<TtsStatus>

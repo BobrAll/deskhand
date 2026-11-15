@@ -31,7 +31,12 @@ const turns = new Map()
 let malformedLines = 0
 for (const line of (await readFile(tracePath, 'utf8')).split('\n').filter(Boolean)) {
   let event
-  try { event = JSON.parse(line) } catch { malformedLines += 1; continue }
+  try {
+    event = JSON.parse(line)
+  } catch {
+    malformedLines += 1
+    continue
+  }
   if (!event || typeof event.turn !== 'string' || typeof event.event !== 'string') continue
   const events = turns.get(event.turn) ?? []
   events.push(event)
@@ -43,9 +48,14 @@ if (scoresPath) {
   const input = JSON.parse(await readFile(scoresPath, 'utf8'))
   if (!Array.isArray(input)) throw new Error('Scores must be an array')
   for (const row of input) {
-    if (!row || !turns.has(row.turn) || !caseIds.has(row.case) || scores.has(row.turn) ||
-        !['cold', 'warm'].includes(row.start) ||
-        !['success', 'wrongTarget', 'falseDone'].every((key) => typeof row[key] === 'boolean')) {
+    if (
+      !row ||
+      !turns.has(row.turn) ||
+      !caseIds.has(row.case) ||
+      scores.has(row.turn) ||
+      !['cold', 'warm'].includes(row.start) ||
+      !['success', 'wrongTarget', 'falseDone'].every((key) => typeof row[key] === 'boolean')
+    ) {
       throw new Error('Invalid, unknown or duplicate scored turn')
     }
     scores.set(row.turn, row)
@@ -69,9 +79,20 @@ const coverage = Object.fromEntries(cases.map(({ id }) => [id, 0]))
 // were the old runner's verdicts on its own plan; the agent now reports what it
 // did and the trace records that instead, so a run that acted ends as
 // `agent-report` and one that only spoke ends as `agent-silent`.
-const outcomes = Object.fromEntries([
-  'answer', 'agent-report', 'agent-silent', 'interrupted', 'blocked', 'abandoned', 'cancelled', 'timeout', 'error', 'unrecorded'
-].map((value) => [value, 0]))
+const outcomes = Object.fromEntries(
+  [
+    'answer',
+    'agent-report',
+    'agent-silent',
+    'interrupted',
+    'blocked',
+    'abandoned',
+    'cancelled',
+    'timeout',
+    'error',
+    'unrecorded'
+  ].map((value) => [value, 0])
+)
 for (const [id, events] of turns) {
   const end = events.find((e) => e.event === 'turn.end')
   if (!end) {
@@ -89,7 +110,9 @@ for (const [id, events] of turns) {
   const writerRounds = events.filter((e) => e.event === 'model.round.end')
   const model = agentSteps.length ? agentSteps : writerRounds
   runs.push({
-    score, duration: end.durationMs, model,
+    score,
+    duration: end.durationMs,
+    model,
     usage: events.filter((e) => e.event === 'model.usage'),
     firstAction: events.find((e) => e.event === 'agent.call')?.elapsedMs,
     ttft: events.filter((e) => e.event === 'model.firstChunk').map((e) => e.ttftMs),
@@ -114,10 +137,12 @@ function summarize(group) {
     firstActionMs: statistics(group.map((r) => r.firstAction)),
     modelRounds: statistics(group.map((r) => r.model.length)),
     modelRoundMs: statistics(group.flatMap((r) => r.model.map((e) => e.durationMs ?? e.llmMs))),
-    reportedInputTokens: statistics(group.flatMap((r) =>
-      r.usage.length ? r.usage.map((e) => e.inputTokens) : r.steps.map((e) => e.inputTokens))),
-    reportedOutputTokens: statistics(group.flatMap((r) =>
-      r.usage.length ? r.usage.map((e) => e.outputTokens) : r.steps.map((e) => e.outputTokens))),
+    reportedInputTokens: statistics(
+      group.flatMap((r) => (r.usage.length ? r.usage.map((e) => e.inputTokens) : r.steps.map((e) => e.inputTokens)))
+    ),
+    reportedOutputTokens: statistics(
+      group.flatMap((r) => (r.usage.length ? r.usage.map((e) => e.outputTokens) : r.steps.map((e) => e.outputTokens)))
+    ),
     ttftMs: statistics(group.flatMap((r) => r.ttft)),
     screenshotMs: statistics(group.flatMap((r) => r.screenshot)),
     callsPerRun: statistics(group.map((r) => r.calls.length)),
@@ -130,7 +155,7 @@ function summarize(group) {
     modelShare: (() => {
       const total = group.reduce((sum, r) => sum + (r.report?.totalMs ?? 0), 0)
       const model = group.reduce((sum, r) => sum + (r.report?.llmMs ?? 0), 0)
-      return total > 0 ? Math.round(model / total * 100) : null
+      return total > 0 ? Math.round((model / total) * 100) : null
     })(),
     // Which phase of a tool call costs the time. A run dominated by `tree` is
     // fixed in the accessibility layer; one dominated by `capture` is fixed in
@@ -196,17 +221,22 @@ function printTimeline(id, events) {
       const tok = event.inputTokens === undefined ? '' : `  ${event.inputTokens}→${event.outputTokens ?? '?'} tok`
       // The history size is what makes the duration interpretable: a slow round
       // trip on two messages is the network, on twenty it is the prompt.
-      console.log(`  ${at}    model ${secs(event.llmMs)}  ${event.history} msg  ${event.promptBytes} B${tok}` +
-        (event.calls ? `  ${event.calls} call${event.calls === 1 ? '' : 's'}` : ''))
+      console.log(
+        `  ${at}    model ${secs(event.llmMs)}  ${event.history} msg  ${event.promptBytes} B${tok}` +
+          (event.calls ? `  ${event.calls} call${event.calls === 1 ? '' : 's'}` : '')
+      )
     } else if (event.event === 'agent.call') {
       const phases = [
         event.treeMs !== undefined && 'tree ' + secs(event.treeMs),
         event.captureMs !== undefined && 'capture ' + secs(event.captureMs),
         event.encodeMs !== undefined && 'encode ' + secs(event.encodeMs),
         event.imageBytes !== undefined && (event.imageBytes / 1024).toFixed(0) + 'kB'
-      ].filter(Boolean).join(', ')
-      console.log(`  ${at}    ${event.ok ? 'ok  ' : 'FAIL'} ${event.tool} ${secs(event.wallMs)}` +
-        (phases ? `  (${phases})` : ''))
+      ]
+        .filter(Boolean)
+        .join(', ')
+      console.log(
+        `  ${at}    ${event.ok ? 'ok  ' : 'FAIL'} ${event.tool} ${secs(event.wallMs)}` + (phases ? `  (${phases})` : '')
+      )
     } else if (event.event === 'agent.approval') {
       console.log(`  ${at}    ask  ${event.tool ?? ''} → ${event.outcome}`)
     } else if (event.event === 'agent.abort') {
@@ -227,21 +257,29 @@ if (timeline) {
 const scored = runs.filter((r) => r.score)
 const successful = scored.filter((r) => r.score.success)
 const successfulCount = successful.length
-console.log(JSON.stringify({
-  malformedLines,
-  unfinished: turns.size - runs.length,
-  outcomes,
-  all: summarize(runs),
-  independentlyScored: scoresPath ? {
-    coverage,
-    hasFiveRunsPerCase: Object.values(coverage).every((n) => n >= 5),
-    successes: successfulCount,
-    successRate: scored.length ? successfulCount / scored.length : null,
-    wrongTarget: scored.filter((r) => r.score.wrongTarget).length,
-    falseDone: scored.filter((r) => r.score.falseDone).length,
-    all: summarize(scored),
-    successful: summarize(successful),
-    cold: summarize(scored.filter((r) => r.score.start === 'cold')),
-    warm: summarize(scored.filter((r) => r.score.start === 'warm'))
-  } : null
-}, null, 2))
+console.log(
+  JSON.stringify(
+    {
+      malformedLines,
+      unfinished: turns.size - runs.length,
+      outcomes,
+      all: summarize(runs),
+      independentlyScored: scoresPath
+        ? {
+            coverage,
+            hasFiveRunsPerCase: Object.values(coverage).every((n) => n >= 5),
+            successes: successfulCount,
+            successRate: scored.length ? successfulCount / scored.length : null,
+            wrongTarget: scored.filter((r) => r.score.wrongTarget).length,
+            falseDone: scored.filter((r) => r.score.falseDone).length,
+            all: summarize(scored),
+            successful: summarize(successful),
+            cold: summarize(scored.filter((r) => r.score.start === 'cold')),
+            warm: summarize(scored.filter((r) => r.score.start === 'warm'))
+          }
+        : null
+    },
+    null,
+    2
+  )
+)

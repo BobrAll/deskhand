@@ -191,7 +191,6 @@ const INSERT_BASE =
   'всего ответа, без пояснений и вступлений. Разметку используй только там, где она ' +
   'несёт структуру: списки и таблицы. Заголовки, жирный и курсив не нужны.'
 
-
 /**
  * The note that turns a request into a follow-up.
  *
@@ -270,55 +269,66 @@ function formatInstruction(options: InstructionOptions): string {
   // is not the action that was asked for. It still has to be able to draw — the
   // note cannot replace the tool, only qualify it.
   const base = mode === 'insert' ? INSERT_BASE : OVERLAY_BASE
-  const tools = [
-    draw ? DRAW_TOOL : '',
-    actReason ? ACT_UNAVAILABLE(actReason, actAsked) : ''
-  ]
+  const tools = [draw ? DRAW_TOOL : '', actReason ? ACT_UNAVAILABLE(actReason, actAsked) : '']
     .filter(Boolean)
     .join('\n\n')
   return tools ? `${base}\n\n${tools}` : base
 }
 
-export function buildRequest(input: RequestInput): BuiltRequest {
-  const lines: string[] = []
+/**
+ * Everything the model is told about the screen, in the order it reads it.
+ *
+ * The app comes first because it frames the rest; the selection is the text the
+ * request is about; the screenshot note says what the picture is and where its
+ * coordinates point; the outline names what is in it. The fallback line exists
+ * so an empty block is never a heading with nothing under it.
+ */
+function contextBlock(input: RequestInput): string[] {
   const snapshot = input.snapshot
+  if (!snapshot) return ['Контекст из приложения не собран.']
 
-  if (snapshot) {
-    lines.push(...contextLines(snapshot.activeApp))
+  const lines = contextLines(snapshot.activeApp)
 
-    if (input.includeSelection && snapshot.selection) {
-      const text = snapshot.selection.text.slice(0, MAX_SELECTION_CHARS)
-      lines.push('Выделенный текст:')
-      lines.push('"""')
-      lines.push(text)
-      lines.push('"""')
-      if (snapshot.selection.truncated) lines.push('(выделение обрезано из-за размера)')
-    }
-
-    if (input.imageAttached) {
-      const what = snapshot?.screenshot?.fullScreen ? 'весь экран' : 'активное окно'
-      lines.push(`Приложен скриншот — ${what}. Используй его как основной контекст.`)
-      if (input.draw) {
-        lines.push(
-          'Все координаты @point считай по этому изображению: (0,0) — его ' +
-            'левый верхний угол, (1,1) — правый нижний.'
-        )
-      }
-    } else if (input.requestedScreenshot) {
-      lines.push('Скриншот недоступен, опирайся только на текст.')
-    }
-
-    // The exact names go after the screenshot note: the picture says what the
-    // window looks like, this says what the things in it are called.
-    if (input.draw && input.outline) {
-      lines.push('')
-      lines.push(input.outline)
+  if (input.includeSelection && snapshot.selection) {
+    const selection = snapshot.selection
+    const text = selection.text.slice(0, MAX_SELECTION_CHARS)
+    lines.push('Выделенный текст:')
+    lines.push('"""')
+    lines.push(text)
+    lines.push('"""')
+    // The collector's own limit is higher than this one, so a selection between
+    // the two is cut here with `truncated` still false. Either way the model has
+    // to know it is not reading the whole selection.
+    if (selection.truncated || selection.text.length > text.length) {
+      lines.push('(выделение обрезано из-за размера)')
     }
   }
 
-  if (lines.length === 0) lines.push('Контекст из приложения не собран.')
+  if (input.imageAttached) {
+    const what = snapshot.screenshot?.fullScreen ? 'весь экран' : 'активное окно'
+    lines.push(`Приложен скриншот — ${what}. Используй его как основной контекст.`)
+    if (input.draw) {
+      lines.push(
+        'Все координаты @point считай по этому изображению: (0,0) — его ' + 'левый верхний угол, (1,1) — правый нижний.'
+      )
+    }
+  } else if (input.requestedScreenshot) {
+    lines.push('Скриншот недоступен, опирайся только на текст.')
+  }
 
-  const userText = ['[Контекст]', ...lines, '', '[Запрос]', input.prompt.trim()].join('\n')
+  // The exact names go after the screenshot note: the picture says what the
+  // window looks like, this says what the things in it are called.
+  if (input.draw && input.outline) {
+    lines.push('')
+    lines.push(input.outline)
+  }
+
+  if (lines.length === 0) lines.push('Контекст из приложения не собран.')
+  return lines
+}
+
+export function buildRequest(input: RequestInput): BuiltRequest {
+  const userText = ['[Контекст]', ...contextBlock(input), '', '[Запрос]', input.prompt.trim()].join('\n')
 
   const instruction = formatInstruction({
     mode: input.mode,
@@ -345,7 +355,16 @@ export function buildRequest(input: RequestInput): BuiltRequest {
  * one — which is exactly what "сделай саммари короче" should mean.
  */
 export function buildRefine(input: RefineInput): BuiltRequest {
-  const lines: string[] = ['[Предыдущий ответ]', '"""', input.baseAnswer.slice(0, MAX_ANSWER_CHARS), '"""']
+  const answer = input.baseAnswer
+  const lines: string[] = ['[Предыдущий ответ]', '"""', answer.slice(0, MAX_ANSWER_CHARS), '"""']
+  // The rewrite replaces the whole answer, so a model that is not told about the
+  // cut shortens a text it never saw the end of and drops the rest silently.
+  if (answer.length > MAX_ANSWER_CHARS) {
+    lines.push(
+      `(ответ обрезан из-за размера: показаны первые ${MAX_ANSWER_CHARS} символов из ${answer.length}; ` +
+        'конец ответа не показан)'
+    )
+  }
 
   const original = input.originalPrompt.trim()
   if (original) lines.push('', '[Исходный запрос]', original)

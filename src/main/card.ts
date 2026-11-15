@@ -8,7 +8,7 @@
  * functions and is tested with real numbers instead of a fake `BrowserWindow`.
  *
  * The two `screen.*` lookups that the arithmetic needs stay with the caller
- * (`windows.ts`) and arrive as arguments: a work area for the pointer, a work area
+ * (`windows/index.ts`) and arrive as arguments: a work area for the pointer, a work area
  * for a card the user dragged to another display.
  *
  * The rules, in the order they matter:
@@ -34,6 +34,12 @@ export const CARD_GAP = 10
 
 /** How close the card may get to a display edge. */
 export const CARD_MARGIN = 8
+
+/**
+ * Height of the folded card — one input line and the chevron — before the
+ * renderer has laid itself out.
+ */
+export const CARD_FOLDED_HEIGHT = 31
 
 /** How far the window may drift from where it was placed before it counts as dragged. */
 const DRAG_SLACK = 2
@@ -70,7 +76,7 @@ export interface CardAnchor {
   /**
    * The side of the pointer the card hangs on.
    *
-   * Remembered because the card *grows sideways*: it opens as a 112 pt pill and
+   * Remembered because the card *grows sideways*: it opens as a narrow pill and
    * widens with every letter typed, so the horizontal edge has to be computed
    * from the width each time instead of being frozen at the size it opened with.
    * The side is the part that stays.
@@ -88,10 +94,7 @@ export interface CardAnchor {
 }
 
 /** Remaining room on either side of the pointer, inside the given work area. */
-export function roomAround(
-  point: ScreenPoint,
-  area: ScreenRect
-): { below: number; above: number } {
+export function roomAround(point: ScreenPoint, area: ScreenRect): { below: number; above: number } {
   return {
     below: area.y + area.height - CARD_MARGIN - (point.y + CARD_GAP),
     above: point.y - CARD_GAP - (area.y + CARD_MARGIN)
@@ -116,11 +119,7 @@ export function xFor(placed: CardAnchor, width: number): number {
 export function yFor(placed: CardAnchor, height: number): number {
   const raw = placed.above ? placed.point.y - CARD_GAP - height : placed.point.y + CARD_GAP
   const max = placed.area.y + placed.area.height - height - CARD_MARGIN
-  return clamp(
-    raw,
-    placed.area.y + CARD_MARGIN,
-    Math.max(placed.area.y + CARD_MARGIN, max)
-  )
+  return clamp(raw, placed.area.y + CARD_MARGIN, Math.max(placed.area.y + CARD_MARGIN, max))
 }
 
 /**
@@ -129,12 +128,7 @@ export function yFor(placed: CardAnchor, height: number): number {
  * Placed down-and-right of the pointer, flipped left near the right edge and
  * above near the bottom edge.
  */
-export function placeAnchor(
-  point: ScreenPoint,
-  area: ScreenRect,
-  height: number,
-  width: number
-): CardAnchor {
+export function placeAnchor(point: ScreenPoint, area: ScreenRect, height: number, width: number): CardAnchor {
   const right = point.x + CARD_GAP + width <= area.x + area.width - CARD_MARGIN
 
   const room = roomAround(point, area)
@@ -157,6 +151,36 @@ export function boundsFor(anchor: CardAnchor, height: number, width: number): Sc
     width: Math.round(width),
     height: Math.round(height)
   }
+}
+
+function coversPoint(rect: ScreenRect, point: ScreenPoint): boolean {
+  return point.x >= rect.x && point.x < rect.x + rect.width && point.y >= rect.y && point.y < rect.y + rect.height
+}
+
+/**
+ * Keeps an auto-placed card off the pointer when its far edge has to be pinned.
+ *
+ * A card that grows wider near a display edge slides back over the pointer: the
+ * right side no longer fits, so `xFor` clamps the far edge and the panel ends up
+ * under the cursor. Moving to the other side is the last resort — the side is
+ * kept whenever it can — but a cursor hidden under the answer cannot point at
+ * anything.
+ */
+function keepPointerClear(placed: CardAnchor, height: number, width: number): CardAnchor {
+  if (!coversPoint(boundsFor(placed, height, width), placed.point)) return placed
+
+  const min = placed.area.x + CARD_MARGIN
+  const max = Math.max(min, placed.area.x + placed.area.width - width - CARD_MARGIN)
+  const toRight = { x: placed.point.x + CARD_GAP, right: true }
+  const toLeft = { x: placed.point.x - CARD_GAP - width, right: false }
+  const candidates = placed.right ? [toRight, toLeft] : [toLeft, toRight]
+
+  for (const candidate of candidates) {
+    if (candidate.x < min || candidate.x > max) continue
+    const next: CardAnchor = { ...placed, x: candidate.x, right: candidate.right }
+    if (!coversPoint(boundsFor(next, height, width), placed.point)) return next
+  }
+  return placed
 }
 
 /**
@@ -188,10 +212,18 @@ export interface ResizeAnchorOptions {
   workAreaAt(point: ScreenPoint): ScreenRect
   /** The horizontal edge is the user's: they dragged the card or pulled its edge. */
   pin?: boolean
+  /**
+   * The user is writing in the card.
+   *
+   * A card that jumps to the other side of the pointer mid-sentence is worse
+   * than one that sits under an idle cursor; the pointer is not being aimed
+   * while the caret is in the field.
+   */
+  typing?: boolean
 }
 
 export function resizeAnchor(options: ResizeAnchorOptions): CardAnchor {
-  const { anchor, bounds, height, width, workAreaAt, pin = false } = options
+  const { anchor, bounds, height, width, workAreaAt, pin = false, typing = false } = options
   const placed: CardAnchor = { ...anchor, point: { ...anchor.point } }
   placed.area = workAreaAt(placed.point)
 
@@ -210,13 +242,26 @@ export function resizeAnchor(options: ResizeAnchorOptions): CardAnchor {
     const min = placed.area.x + CARD_MARGIN
     const max = Math.max(min, placed.area.x + placed.area.width - width - CARD_MARGIN)
     placed.x = clamp(bounds.x, min, max)
-    placed.point = {
-      x: placed.point.x,
-      y: placed.above ? bounds.y + bounds.height + CARD_GAP : bounds.y - CARD_GAP
+    // The top edge is what the user dropped only when the move actually changed
+    // it. A right-edge resize leaves the top alone, so the card keeps growing in
+    // the direction it was already growing.
+    const topMoved = Math.abs(bounds.y - yFor(anchor, bounds.height)) > DRAG_SLACK
+    if (topMoved) {
+      // Growing down from the dropped top is the direction a window grows; the
+      // old side was about which side of the pointer it had been placed on,
+      // which no longer means anything after a move.
+      placed.above = false
+      placed.point = { x: placed.point.x, y: bounds.y - CARD_GAP }
+    } else {
+      placed.point = {
+        x: placed.point.x,
+        y: placed.above ? bounds.y + bounds.height + CARD_GAP : bounds.y - CARD_GAP
+      }
     }
     // From here on the horizontal edge belongs to the user, including a resize
-    // that happens after the drag has ended.
-    if (pin) placed.pinned = true
+    // that happens after the drag has ended. A moved window is as much their
+    // choice as a dragged edge, so both pin it.
+    placed.pinned = true
   } else {
     const room = roomAround(placed.point, placed.area)
     if (height > room.below && height <= room.above) placed.above = true
@@ -224,6 +269,9 @@ export function resizeAnchor(options: ResizeAnchorOptions): CardAnchor {
     // The width changed with the text, so the horizontal edge is re-derived too:
     // the card widens away from the pointer instead of running off the display.
     placed.x = xFor(placed, width)
+    // A field that is being typed into owns the caret, not the pointer; moving
+    // the card under the hand mid-sentence is the worse surprise.
+    return typing ? placed : keepPointerClear(placed, height, width)
   }
 
   return placed

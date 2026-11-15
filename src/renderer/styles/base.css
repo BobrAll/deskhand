@@ -33,7 +33,7 @@
   --radius-sm: 9px;
 
   /* Glass surface for the cursor card (see `overlay.css`). */
-  --glass-tint: rgba(34, 34, 37, 0.60);
+  --glass-tint: rgba(34, 34, 37, 0.6);
   --glass-sheen: rgba(255, 255, 255, 0.16);
   --glass-edge: rgba(255, 255, 255, 0.14);
 }
@@ -92,7 +92,10 @@ button {
   border-radius: var(--radius-sm);
   padding: 6px 11px;
   cursor: pointer;
-  transition: background 120ms ease, border-color 120ms ease, transform 90ms ease;
+  transition:
+    background 120ms ease,
+    border-color 120ms ease,
+    transform 90ms ease;
 }
 
 button:hover:not(:disabled) {
@@ -208,7 +211,7 @@ select option {
 body.window {
   --window-rail: light-dark(#ebedf4, #1b1d24);
   --window-panel: light-dark(#fff, #23252d);
-  --window-divider: light-dark(rgb(25 35 64 / 0.10), rgb(236 240 255 / 0.10));
+  --window-divider: light-dark(rgb(25 35 64 / 0.1), rgb(236 240 255 / 0.1));
   --window-depth: 0 2px 8px light-dark(rgb(31 43 81 / 0.055), rgb(0 0 0 / 0.16));
   --window-gutter: 32px;
   background: light-dark(#f5f6fa, #18191f);

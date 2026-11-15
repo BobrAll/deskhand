@@ -19,6 +19,8 @@
  *   spying".
  */
 
+import { MAX_VOICE_DURATION_MS } from '@shared/defaults'
+
 /** whisper.cpp only accepts 16 kHz mono input. */
 const TARGET_RATE = 16_000
 
@@ -29,10 +31,10 @@ const TARGET_RATE = 16_000
  * `voice.maxDurationMs`, and the main process closes the turn at that value. The
  * two have to agree at the top end, or the tail of a long recording is dropped
  * here while the card says the recording is still running — hence the same
- * 10 minutes that `sanitizeVoice` allows the setting to reach. At 16 kHz mono
- * that is 38 MB, which a wedged key cannot grow past.
+ * `MAX_VOICE_DURATION_MS` that `sanitizeVoice` allows the setting to reach. At
+ * the typical 48 kHz mono that is 115 MB, which a wedged key cannot grow past.
  */
-const MAX_RECORDING_MS = 10 * 60_000
+const MAX_RECORDING_MS = MAX_VOICE_DURATION_MS
 
 /** Below this the recording is silence, not speech. */
 const SILENCE_RMS = 0.0035
@@ -77,6 +79,7 @@ export interface RecorderHandles {
   stop(capture: boolean): Promise<RecordedAudio | null>
   /** 0..1 loudness of the most recent block. */
   level(): number
+  isActive(): boolean
 }
 
 function encodeWav(samples: Float32Array, sampleRate: number): ArrayBuffer {
@@ -196,11 +199,7 @@ function audioContext(): AudioContext {
  * every Electron build without shipping a worklet bundle; the load is trivial.
  * The returned function detaches the nodes and leaves the context running.
  */
-function openGraph(
-  context: AudioContext,
-  stream: MediaStream,
-  onBlock: (block: Float32Array) => void
-): () => void {
+function openGraph(context: AudioContext, stream: MediaStream, onBlock: (block: Float32Array) => void): () => void {
   const source = context.createMediaStreamSource(stream)
   const processor = context.createScriptProcessor(4096, 1, 1)
   processor.onaudioprocess = (event) => onBlock(event.inputBuffer.getChannelData(0))
@@ -283,39 +282,64 @@ async function warmUp(): Promise<void> {
  * Resolves with the handles rather than a promise of audio: the caller decides
  * when the turn ends, and it may end without any audio at all (Escape).
  */
-export async function startRecording(maxDurationMs: number): Promise<RecorderHandles> {
+export async function startRecording(maxDurationMs: number, signal?: AbortSignal): Promise<RecorderHandles> {
   // A press that lands while the page is still warming the microphone waits for
   // that open instead of starting a second one: two `getUserMedia` calls at once
   // would have the second queue behind the first anyway, and the first turn is
   // the one that must not lose audio.
   if (warming) await warming
 
+  signal?.throwIfAborted()
   const stream = await navigator.mediaDevices.getUserMedia({ audio: MICROPHONE })
-  const context = audioContext()
-  if (context.state !== 'running') await context.resume()
-
-  // The resampler needs the real input rate; read it once, while the context is
-  // certainly alive.
-  const inputRate = context.sampleRate
+  const tracks = stream.getTracks()
+  let tracksStopped = false
+  const stopTracks = () => {
+    if (tracksStopped) return
+    tracksStopped = true
+    for (const track of tracks) track.stop()
+  }
+  signal?.addEventListener('abort', stopTracks, { once: true })
   const chunks: Float32Array[] = []
-  let buffered = 0
-  const limit = Math.floor((TARGET_RATE * Math.min(maxDurationMs, MAX_RECORDING_MS)) / 1000)
   let lastLevel = 0
+  let detach: () => void
+  let inputRate: number
+  try {
+    signal?.throwIfAborted()
+    const context = audioContext()
+    if (context.state !== 'running') await context.resume()
+    signal?.throwIfAborted()
 
-  const detach = openGraph(context, stream, (input) => {
-    lastLevel = Math.min(1, rms(input) * LEVEL_GAIN)
-    if (buffered >= limit) return
-    const copy = new Float32Array(input)
-    chunks.push(copy)
-    buffered += copy.length
-  })
+    // The resampler needs the real input rate; read it once, while the context is
+    // certainly alive. The buffer budget is in input frames too: the processor
+    // delivers at this rate, not at TARGET_RATE, which applies only after
+    // resampling.
+    inputRate = context.sampleRate
+    let buffered = 0
+    const limit = Math.floor((inputRate * Math.min(maxDurationMs, MAX_RECORDING_MS)) / 1000)
+
+    detach = openGraph(context, stream, (input) => {
+      lastLevel = Math.min(1, rms(input) * LEVEL_GAIN)
+      if (buffered >= limit) return
+      const copy = new Float32Array(input)
+      chunks.push(copy)
+      buffered += copy.length
+    })
+  } catch (error) {
+    stopTracks()
+    throw error
+  } finally {
+    signal?.removeEventListener('abort', stopTracks)
+  }
 
   let closed = false
   const teardown = (): void => {
     if (closed) return
     closed = true
-    detach()
-    for (const track of stream.getTracks()) track.stop()
+    try {
+      detach()
+    } finally {
+      stopTracks()
+    }
     // The context stays open on purpose: see `audioContext`. Closing it here
     // would tear the audio subsystem down again and the next press would pay the
     // same startup cost in the middle of the first word.
@@ -323,6 +347,7 @@ export async function startRecording(maxDurationMs: number): Promise<RecorderHan
 
   return {
     level: () => lastLevel,
+    isActive: () => !closed && tracks.some((track) => track.readyState === 'live'),
     async stop(capture: boolean): Promise<RecordedAudio | null> {
       teardown()
       const total = chunks.reduce((sum, chunk) => sum + chunk.length, 0)

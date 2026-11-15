@@ -1,6 +1,7 @@
 // Native helper for Deskhand.
 // Provides the macOS pieces that Electron cannot do reliably from JS:
 //   * front        - frontmost application info + focused window id/bounds/title
+//   * visible-apps - bundle ids of applications with an on-screen window
 //   * cursor       - current mouse location in screen coordinates
 //   * copy / paste - synthesize Cmd+C / Cmd+V
 //   * activate     - bring an application back to the front
@@ -526,7 +527,13 @@ static CGEventRef watchCallback(CGEventTapProxy proxy, CGEventType type, CGEvent
 static int commandWatch(BOOL watchMouse, BOOL interaction) {
   if (agentRequireAccessibility()) return 0;
 
-  WatchState state = {.origin = CGEventGetLocation(CGEventCreate(NULL)), .moved = NO, .interaction = interaction, .tap = NULL};
+  CGEventRef current = CGEventCreate(NULL);
+  CGPoint origin = CGPointZero;
+  if (current) {
+    origin = CGEventGetLocation(current);
+    CFRelease(current);
+  }
+  WatchState state = {.origin = origin, .moved = NO, .interaction = interaction, .tap = NULL};
   CGEventMask mask = CGEventMaskBit(kCGEventKeyDown);
   if (interaction) {
     mask |= CGEventMaskBit(kCGEventLeftMouseDown) | CGEventMaskBit(kCGEventRightMouseDown) |
@@ -747,6 +754,31 @@ static int commandApps(void) {
   return 0;
 }
 
+/**
+ * Bundle ids of the applications that have a window on screen right now.
+ *
+ * Only window-server metadata is read (owner PID), so this needs no Screen
+ * Recording or Accessibility grant. The caller uses it to decide whether the
+ * whole display is safe to photograph: an excluded app without a window cannot
+ * appear in the picture, while one that is on screen can.
+ */
+static int commandVisibleApps(void) {
+  NSArray *windows = CFBridgingRelease(CGWindowListCopyWindowInfo(
+      kCGWindowListOptionOnScreenOnly | kCGWindowListExcludeDesktopElements, kCGNullWindowID));
+  NSMutableSet<NSString *> *bundleIds = [NSMutableSet set];
+  for (NSDictionary *window in windows) {
+    NSNumber *owner = window[(id)kCGWindowOwnerPID];
+    if (![owner isKindOfClass:[NSNumber class]]) continue;
+    NSRunningApplication *app = [NSRunningApplication
+        runningApplicationWithProcessIdentifier:(pid_t)[owner intValue]];
+    NSString *bundleId = [app bundleIdentifier];
+    if (bundleId.length > 0) [bundleIds addObject:bundleId];
+  }
+  NSArray<NSString *> *sorted = [[bundleIds allObjects] sortedArrayUsingSelector:@selector(compare:)];
+  emit(@{@"ok" : @YES, @"visibleBundleIds" : sorted});
+  return 0;
+}
+
 static int commandPermissions(BOOL request) {
   BOOL accessibility = AXIsProcessTrusted();
   if (request && !accessibility) {
@@ -783,7 +815,11 @@ typedef struct {
 } VoiceTapState;
 
 static const CGEventFlags kVoiceModifierMask =
-    kCGEventFlagMaskCommand | kCGEventFlagMaskAlternate | kCGEventFlagMaskControl | kCGEventFlagMaskShift;
+    kCGEventFlagMaskCommand | kCGEventFlagMaskAlternate | kCGEventFlagMaskControl |
+    kCGEventFlagMaskShift | kCGEventFlagMaskSecondaryFn;
+
+// The sentinel `voice/listen.ts` sends for a hold with no ordinary key.
+static const int64_t kVoiceModifierOnly = -1;
 
 static BOOL voiceModifiersMatch(CGEventFlags actual, CGEventFlags required) {
   return (actual & kVoiceModifierMask) == (required & kVoiceModifierMask);
@@ -802,6 +838,29 @@ static CGEventRef voiceTapCallback(CGEventTapProxy proxy, CGEventType type, CGEv
     return event;
   }
 
+  // A modifier-only hold has no key edge: the pair becomes "held" when the last
+  // modifier joins it and "released" when the first one leaves. The events are
+  // passed through — swallowing a bare Ctrl or Fn would break the app behind.
+  if (type == kCGEventFlagsChanged) {
+    if (state->keyCode != kVoiceModifierOnly) return event;
+    CGEventFlags actual = CGEventGetFlags(event);
+    // Press needs the exact pair. Release only needs the required pair to still
+    // be down: adding and removing an extra modifier (Shift, Fn) must not turn
+    // one hold into a release followed by a second press.
+    BOOL stillHeld =
+        (actual & state->flags & kVoiceModifierMask) == (state->flags & kVoiceModifierMask);
+    if (!state->holding) {
+      if (voiceModifiersMatch(actual, state->flags)) {
+        state->holding = YES;
+        emit(@{@"event" : @"press"});
+      }
+    } else if (!stillHeld) {
+      state->holding = NO;
+      emit(@{@"event" : @"release"});
+    }
+    return event;
+  }
+
   // The helper is not a GUI app: it cannot see key events it did not tap for,
   // so Escape is handled here to abort a recording without sending it.
   if (type == kCGEventKeyDown) {
@@ -811,6 +870,7 @@ static CGEventRef voiceTapCallback(CGEventTapProxy proxy, CGEventType type, CGEv
       emit(@{@"event" : @"cancel"});
       return event;
     }
+    if (state->keyCode == kVoiceModifierOnly) return event;
     if (code == state->keyCode && voiceModifiersMatch(CGEventGetFlags(event), state->flags)) {
       if (!state->holding) {
         state->holding = YES;
@@ -822,6 +882,7 @@ static CGEventRef voiceTapCallback(CGEventTapProxy proxy, CGEventType type, CGEv
   }
 
   if (type == kCGEventKeyUp) {
+    if (state->keyCode == kVoiceModifierOnly) return event;
     int64_t code = CGEventGetIntegerValueField(event, kCGKeyboardEventKeycode);
     if (code == state->keyCode && state->holding) {
       state->holding = NO;
@@ -839,7 +900,8 @@ static int commandVoice(int64_t keyCode, CGEventFlags flags, BOOL swallow) {
   }
 
   VoiceTapState state = {.keyCode = keyCode, .flags = flags, .holding = NO, .swallow = swallow, .tap = NULL};
-  CGEventMask mask = CGEventMaskBit(kCGEventKeyDown) | CGEventMaskBit(kCGEventKeyUp);
+  CGEventMask mask = CGEventMaskBit(kCGEventKeyDown) | CGEventMaskBit(kCGEventKeyUp) |
+                     CGEventMaskBit(kCGEventFlagsChanged);
   CFMachPortRef tap = CGEventTapCreate(kCGSessionEventTap, kCGHeadInsertEventTap,
                                        kCGEventTapOptionDefault, mask, voiceTapCallback, &state);
   if (!tap) {
@@ -1207,8 +1269,20 @@ static NSArray<NSDictionary *> *axCollectTargets(pid_t pid, double budgetMs) {
   return targets;
 }
 
-static NSDictionary *axFocusedElement(pid_t pid) {
-  AXUIElementRef focused = NULL;
+/** The focused element, without copying a whole document value just for a frame. */
+static NSDictionary *axDescribeFocused(AXUIElementRef element) {
+  NSString *role = axText(element, kAXRoleAttribute) ?: @"";
+  NSMutableDictionary *info = [NSMutableDictionary dictionary];
+  info[@"role"] = role;
+  NSDictionary *frame = axFrame(element);
+  if (frame) info[@"frame"] = frame;
+  info[@"editable"] = axRoleIsField(role) ? @YES : @NO;
+  info[@"pressable"] = @NO;
+  return info;
+}
+
+static NSDictionary *axFocusedElement(pid_t pid, BOOL lean) {
+  AXUIElementRef systemElement = NULL;
   AXUIElementRef system = AXUIElementCreateSystemWide();
   if (system) {
     AXUIElementSetMessagingTimeout(system, 0.3);
@@ -1216,28 +1290,53 @@ static NSDictionary *axFocusedElement(pid_t pid) {
     if (AXUIElementCopyAttributeValue(system, kAXFocusedUIElementAttribute, &value) ==
             kAXErrorSuccess &&
         value) {
-      focused = (AXUIElementRef)value;
+      systemElement = (AXUIElementRef)value;
     }
     CFRelease(system);
   }
-  if (!focused) {
-    AXUIElementRef application = AXUIElementCreateApplication(pid);
-    if (application) {
-      AXUIElementSetMessagingTimeout(application, 0.3);
-      CFTypeRef value = NULL;
-      if (AXUIElementCopyAttributeValue(application, kAXFocusedUIElementAttribute, &value) ==
-              kAXErrorSuccess &&
-          value) {
-        focused = (AXUIElementRef)value;
-      }
-      CFRelease(application);
+
+  AXUIElementRef appElement = NULL;
+  AXUIElementRef application = AXUIElementCreateApplication(pid);
+  if (application) {
+    AXUIElementSetMessagingTimeout(application, 0.3);
+    // Chromium browsers and other web-content apps keep their accessibility tree
+    // off until an assistive client asks for it. Without these writes the
+    // focused element is a web area or absent, and a dictation into a page ends
+    // up without a field to mark.
+    AXUIElementSetAttributeValue(application, CFSTR("AXEnhancedUserInterface"), kCFBooleanTrue);
+    AXUIElementSetAttributeValue(application, CFSTR("AXManualAccessibility"), kCFBooleanTrue);
+    CFTypeRef value = NULL;
+    if (AXUIElementCopyAttributeValue(application, kAXFocusedUIElementAttribute, &value) ==
+            kAXErrorSuccess &&
+        value) {
+      appElement = (AXUIElementRef)value;
     }
+    CFRelease(application);
   }
-  if (!focused) return nil;
-  NSMutableDictionary *info = [axDescribe(focused, axActions(focused)) mutableCopy];
-  pid_t owner = 0;
-  if (AXUIElementGetPid(focused, &owner) == kAXErrorSuccess) info[@"pid"] = @(owner);
-  CFRelease(focused);
+
+  // Prefer the element that is actually a text field. In a browser the
+  // system-wide focus can be the web area while the app's own answer is the real
+  // text control (or the other way around).
+  AXUIElementRef focused = NULL;
+  if (systemElement && axRoleIsField(axText(systemElement, kAXRoleAttribute))) {
+    focused = systemElement;
+  } else if (appElement && axRoleIsField(axText(appElement, kAXRoleAttribute))) {
+    focused = appElement;
+  } else {
+    focused = systemElement ? systemElement : appElement;
+  }
+
+  NSMutableDictionary *info = nil;
+  if (focused) {
+    info = lean
+      ? [axDescribeFocused(focused) mutableCopy]
+      : [axDescribe(focused, axActions(focused)) mutableCopy];
+    pid_t owner = 0;
+    if (AXUIElementGetPid(focused, &owner) == kAXErrorSuccess) info[@"pid"] = @(owner);
+  }
+  if (systemElement && systemElement != focused) CFRelease(systemElement);
+  if (appElement && appElement != focused) CFRelease(appElement);
+  if (focused) CFRelease(focused);
   return info;
 }
 
@@ -1276,7 +1375,7 @@ static int commandProbe(pid_t requestedPid, double x, double y) {
   if (isfinite(x) && isfinite(y)) payload[@"chain"] = axChainAtPoint(x, y, targets);
   [targets addObjectsFromArray:axCollectTargets(pid, 600)];
   payload[@"targets"] = targets;
-  NSDictionary *focused = axFocusedElement(pid);
+  NSDictionary *focused = axFocusedElement(pid, NO);
   if (focused) payload[@"focused"] = focused;
   payload[@"elapsedMs"] = @((CFAbsoluteTimeGetCurrent() - started) * 1000.0);
   emit(payload);
@@ -1305,7 +1404,7 @@ static int commandFocused(pid_t requestedPid) {
   NSMutableDictionary *payload = [NSMutableDictionary dictionary];
   payload[@"ok"] = @YES;
   payload[@"pid"] = @(pid);
-  NSDictionary *focused = pid > 0 ? axFocusedElement(pid) : nil;
+  NSDictionary *focused = pid > 0 ? axFocusedElement(pid, YES) : nil;
   if (focused) payload[@"focused"] = focused;
   emit(payload);
   return 0;
@@ -1338,6 +1437,7 @@ int main(int argc, const char *argv[]) {
     if (strcmp(command, "request-permissions") == 0) return commandPermissions(YES);
     if (strcmp(command, "cursor") == 0) return commandCursor();
     if (strcmp(command, "apps") == 0) return commandApps();
+    if (strcmp(command, "visible-apps") == 0) return commandVisibleApps();
     if (strcmp(command, "front") == 0) return commandFront(0, YES);
     // front-quick: which application is in front, without reading its window.
     // The window costs a cold Accessibility round trip and a full on-screen
@@ -1357,7 +1457,7 @@ int main(int argc, const char *argv[]) {
       return commandLaunch(target);
     }
     if (strcmp(command, "voice") == 0) {
-      // voice <keyCode> <flags> [swallow]
+      // voice <keyCode> <flags> [swallow]; keyCode -1 is a modifier-only hold.
       if (argc < 4) {
         emit(@{@"ok" : @NO, @"error" : @"missing-arguments"});
         return 1;

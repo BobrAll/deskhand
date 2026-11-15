@@ -12,7 +12,10 @@ interface AudioBlock {
 }
 
 class FakeTrack {
-  stop = vi.fn()
+  readyState: MediaStreamTrackState = 'live'
+  stop = vi.fn(() => {
+    this.readyState = 'ended'
+  })
 }
 
 class FakeStream {
@@ -70,8 +73,10 @@ async function flush(times = 20): Promise<void> {
 }
 
 /** One captured block; 4096 frames, the processor's own buffer size. */
+const BLOCK_FRAMES = 4096
+
 function block(value: number): AudioBlock {
-  const samples = new Float32Array(4096).fill(value)
+  const samples = new Float32Array(BLOCK_FRAMES).fill(value)
   return { inputBuffer: { getChannelData: () => samples } }
 }
 
@@ -168,5 +173,60 @@ describe('microphone warm-up', () => {
     const recorder = await startRecording(30_000)
     expect(await recorder.stop(false)).toBeNull()
     expect(tracks[0].stop).toHaveBeenCalled()
+  })
+})
+
+describe('recording limit', () => {
+  it('keeps the full window at the input rate and stops at its end', async () => {
+    const { startRecording } = await import('./recorder')
+
+    // The fake context runs at 48 kHz: a 2 s window is 96 000 input frames, not
+    // the 32 000 that TARGET_RATE would allow.
+    const recorder = await startRecording(2_000)
+    const context = FakeAudioContext.created[0]
+
+    // Three times the allowed audio: the buffer must stop at the window rather
+    // than one third into it.
+    for (let i = 0; i < 72; i += 1) context.processors[0].onaudioprocess?.(block(0.5))
+
+    const audio = await recorder.stop(true)
+    const blockMs = (BLOCK_FRAMES / context.sampleRate) * 1000
+    expect(audio?.durationMs).toBeGreaterThanOrEqual(2_000)
+    // A block that crosses the limit is kept whole; nothing after it is.
+    expect(audio?.durationMs).toBeLessThanOrEqual(2_000 + blockMs)
+  })
+})
+
+describe('microphone check lifecycle', () => {
+  it('releases a stream granted after the check was cancelled', async () => {
+    const { startRecording } = await import('./recorder')
+    const track = new FakeTrack()
+    let grant!: (stream: FakeStream) => void
+    getUserMedia.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          grant = resolve
+        })
+    )
+    const controller = new AbortController()
+    const result = startRecording(0, controller.signal)
+    controller.abort()
+    grant(new FakeStream([track]))
+
+    await expect(result).rejects.toMatchObject({ name: 'AbortError' })
+    expect(track.stop).toHaveBeenCalledOnce()
+    expect(FakeAudioContext.created).toHaveLength(0)
+  })
+
+  it('reports when the input track ends during the check', async () => {
+    const { startRecording } = await import('./recorder')
+    const recording = await startRecording(0)
+    expect(recording.isActive()).toBe(true)
+
+    tracks[0].readyState = 'ended'
+
+    expect(recording.isActive()).toBe(false)
+    await recording.stop(false)
+    expect(tracks[0].stop).toHaveBeenCalledOnce()
   })
 })

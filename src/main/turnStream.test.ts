@@ -23,7 +23,11 @@ const STREAM_OPTIONS: StreamOptions = {
 }
 
 /** A provider that yields exactly the deltas it was given, and records the call. */
-function fakeProvider(deltas: string[], failWith?: Error, end: StreamEnd = 'complete'): LlmProvider & {
+function fakeProvider(
+  deltas: string[],
+  failWith?: Error,
+  end: StreamEnd = 'complete'
+): LlmProvider & {
   calls: Array<{ messages: ChatMessage[]; apiKey: string; options: StreamOptions }>
 } {
   const calls: Array<{ messages: ChatMessage[]; apiKey: string; options: StreamOptions }> = []
@@ -83,6 +87,22 @@ describe('consumeTurnStream: prose', () => {
     const out = recorder()
     const result = await consumeTurnStream({
       provider: fakeProvider(['@we', 'b']),
+      messages: MESSAGES,
+      apiKey: '',
+      streamOptions: STREAM_OPTIONS,
+      isAlive: () => true,
+      onAnnotations: out.onAnnotations,
+      onText: out.onText
+    })
+
+    expect(result).toEqual({ text: '', webLookup: true })
+    expect(out.text).toEqual([])
+  })
+
+  it('reads a marker line that carries the request, and prints none of it', async () => {
+    const out = recorder()
+    const result = await consumeTurnStream({
+      provider: fakeProvider(['@web Найди игру: симулятор с заданиями посетителей']),
       messages: MESSAGES,
       apiKey: '',
       streamOptions: STREAM_OPTIONS,
@@ -328,8 +348,8 @@ describe('consumeTurnStream: a round that is no longer wanted', () => {
       onText: out.onText
     })
 
-    expect(out.text.join('')).toBe('Готово\n@po\n')
-    expect(result.text).toBe('Готово\n@po\n')
+    expect(out.text.join('')).toBe('Готово\n@po')
+    expect(result.text).toBe('Готово\n@po')
   })
 
   it('lets a provider failure propagate, because the caller owns the retry', async () => {
@@ -353,18 +373,45 @@ describe('consumeTurnStream: execution integrity', () => {
   it.each(['incomplete', 'limit'] as const)('rejects a truncated web lookup on %s', async (end) => {
     // A search marker that arrived in a stream nobody finished is a lookup the
     // answer no longer justifies: retrying is honest, answering is not.
-    await expect(consumeTurnStream({
-      provider: fakeProvider(['@web\nИщу'], undefined, end),
-      messages: MESSAGES, apiKey: '', streamOptions: STREAM_OPTIONS, isAlive: () => true,
-      onAnnotations: () => undefined, onText: () => undefined
-    })).rejects.toThrow('Ответ модели оборвался')
+    await expect(
+      consumeTurnStream({
+        provider: fakeProvider(['@web\nИщу'], undefined, end),
+        messages: MESSAGES,
+        apiKey: '',
+        streamOptions: STREAM_OPTIONS,
+        isAlive: () => true,
+        onAnnotations: () => undefined,
+        onText: () => undefined
+      })
+    ).rejects.toThrow('Ответ модели оборвался')
   })
+
+  it.each(['incomplete', 'limit'] as const)(
+    'rejects a truncated lookup that carried its request on the marker line on %s',
+    async (end) => {
+      await expect(
+        consumeTurnStream({
+          provider: fakeProvider(['@web Найди игру: симулятор'], undefined, end),
+          messages: MESSAGES,
+          apiKey: '',
+          streamOptions: STREAM_OPTIONS,
+          isAlive: () => true,
+          onAnnotations: () => undefined,
+          onText: () => undefined
+        })
+      ).rejects.toThrow('Ответ модели оборвался')
+    }
+  )
 
   it('keeps a truncated plain answer: it is still readable prose', async () => {
     const result = await consumeTurnStream({
       provider: fakeProvider(['Первое предложение. Второе предло'], undefined, 'incomplete'),
-      messages: MESSAGES, apiKey: '', streamOptions: STREAM_OPTIONS, isAlive: () => true,
-      onAnnotations: () => undefined, onText: () => undefined
+      messages: MESSAGES,
+      apiKey: '',
+      streamOptions: STREAM_OPTIONS,
+      isAlive: () => true,
+      onAnnotations: () => undefined,
+      onText: () => undefined
     })
 
     expect(result.text).toBe('Первое предложение. Второе предло')

@@ -63,9 +63,7 @@ describe('resourceCandidates: the shared order', () => {
 
   it('ignores extras in a packaged app, where only the bundle counts', () => {
     state.isPackaged = true
-    expect(resourceCandidates('whisper-cli', ['/opt/homebrew/bin/whisper-cli'])).toEqual([
-      '/resources/whisper-cli'
-    ])
+    expect(resourceCandidates('whisper-cli', ['/opt/homebrew/bin/whisper-cli'])).toEqual(['/resources/whisper-cli'])
   })
 })
 

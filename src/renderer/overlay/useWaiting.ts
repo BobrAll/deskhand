@@ -1,12 +1,5 @@
 import { useEffect, useState } from 'react'
-import {
-  WAIT_LONG_MS,
-  WAIT_STATUS_MS,
-  WAIT_TIP_MS,
-  WAITING_TIPS,
-  type WaitStage,
-  waitingStage
-} from './waiting'
+import { WAIT_LONG_MS, WAIT_STATUS_MS, WAIT_TIP_MS, WAITING_TIPS, type WaitStage, waitingStage } from './waiting'
 
 /**
  * The rotation is deliberately one counter for the whole renderer, not one per
@@ -43,7 +36,7 @@ export function useWaiting(requestId: string | null, active: boolean): WaitingCl
       stage: waitingStage(elapsed)
     })
     setClock(at(0))
-    const timers = [WAIT_STATUS_MS, WAIT_TIP_MS, WAIT_LONG_MS].map(elapsed =>
+    const timers = [WAIT_STATUS_MS, WAIT_TIP_MS, WAIT_LONG_MS].map((elapsed) =>
       setTimeout(() => setClock(at(elapsed)), elapsed)
     )
     return () => timers.forEach(clearTimeout)

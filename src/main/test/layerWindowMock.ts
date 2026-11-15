@@ -32,6 +32,9 @@ export function layerWindowClass<Frame>(state: FakeLayerState<Frame>) {
       setWindowOpenHandler: (_handler: unknown): void => {
         // Part of the contract: the layer never opens a window of its own.
       },
+      on: (_event: string, _handler: unknown): void => {
+        // Part of the contract: the layer never navigates in place either.
+      },
       once: (event: string, handler: () => void) => {
         this.entry.loadHandlers[event] = handler
         return this.webContents

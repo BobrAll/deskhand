@@ -43,12 +43,7 @@ export function userWidthCeiling(availWidth: number): number {
  * cannot be narrower than `CARD_WIDTH` — its buttons need that much — and a drag
  * that ignored it would snap back on release.
  */
-export function draggedWidth(
-  startWidth: number,
-  delta: number,
-  availWidth: number,
-  min = CARD_MIN_WIDTH
-): number {
+export function draggedWidth(startWidth: number, delta: number, availWidth: number, min = CARD_MIN_WIDTH): number {
   return Math.round(clamp(startWidth + delta, min, userWidthCeiling(availWidth)))
 }
 
@@ -76,6 +71,8 @@ export interface WidthInputs {
   wantsWide: boolean
   /** What the content measured out to, chrome included. */
   contentWidth: number
+  /** The content cap for this answer; wider than `CARD_WIDTH` for tables/code. */
+  contentMax?: number
   /** The width the user chose, or `null` while the card sizes itself. */
   userWidth: number | null
   /** The display's available width, in points. */
@@ -103,6 +100,6 @@ export function resolveWidth(input: WidthInputs): number {
       : Math.round(clamp(input.userWidth, CARD_MIN_WIDTH, userWidthCeiling(input.availWidth)))
 
   if (chosen !== null) return input.wantsWide ? Math.max(chosen, CARD_WIDTH) : chosen
-  if (input.wantsWide) return CARD_WIDTH
-  return clamp(input.contentWidth, CARD_NARROW_WIDTH, CARD_WIDTH)
+  if (input.wantsWide) return Math.max(CARD_WIDTH, Math.min(input.contentWidth, input.contentMax ?? CARD_WIDTH))
+  return clamp(input.contentWidth, CARD_NARROW_WIDTH, input.contentMax ?? CARD_WIDTH)
 }

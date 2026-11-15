@@ -96,6 +96,8 @@ export interface AgentRunOptions {
    * it. The action itself is unchanged: this only adds a picture to the pipe.
    */
   visualize: boolean
+  /** Bundle ids the agent must never read or act on. */
+  excludedApps: string[]
 }
 
 /**
@@ -206,6 +208,11 @@ interface PendingRequest {
   reject(error: Error): void
 }
 
+/** One newline-delimited request, ready for the pipe. */
+function requestLine(id: number, method: string, params: Record<string, unknown>): string {
+  return `${JSON.stringify({ id, method, params })}\n`
+}
+
 export interface Message {
   trace_run_id?: string
   id?: number
@@ -231,6 +238,17 @@ export class AgentSidecar {
   private readonly pending = new Map<number, PendingRequest>()
   private handlers: ((event: AgentSidecarEvent) => void)[] = []
   private starting: Promise<void> | null = null
+  /**
+   * Stops requested by the host, counted so a run can tell its own stop from an
+   * earlier one.
+   *
+   * A stop often arrives while the process is still starting: the first run
+   * waits up to ten seconds for `ready`, and `cancel()` has nothing to write to
+   * until the spawn has happened. Remembering the request is what keeps that
+   * stop from being lost — otherwise the run is written as soon as the pipe
+   * opens, into an agent nobody is watching and Escape no longer reaches.
+   */
+  private cancelCount = 0
 
   /** Whether a process exists and has not exited. */
   get alive(): boolean {
@@ -276,19 +294,32 @@ export class AgentSidecar {
     })
     this.child = child
 
+    /**
+     * Settles the handshake once, whichever of the four things happens first:
+     * `ready`, a spawn error, the exit, or the timeout.
+     *
+     * The exit is one of them: a binary that dies before `ready` — a missing
+     * dylib, a broken signature, a crash — would otherwise leave the caller
+     * waiting out the whole timeout for a process that no longer exists.
+     */
+    let settleHandshake: (error?: Error) => void = () => {}
     const ready = new Promise<void>((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error('Агент не ответил за 10 секунд.')), START_TIMEOUT_MS)
+      const timer = setTimeout(
+        () => settleHandshake(new Error(`Агент не ответил за ${START_TIMEOUT_MS / 1000} секунд.`)),
+        START_TIMEOUT_MS
+      )
       const off = this.onEvent((event) => {
-        if (event.kind !== 'ready') return
+        if (event.kind === 'ready') settleHandshake()
+      })
+      settleHandshake = (error?: Error) => {
+        // The first of the four wins; the rest find this no-op.
+        settleHandshake = () => {}
         clearTimeout(timer)
         off()
-        resolve()
-      })
-      child.once('error', (error) => {
-        clearTimeout(timer)
-        off()
-        reject(error)
-      })
+        if (error) reject(error)
+        else resolve()
+      }
+      child.once('error', (error) => settleHandshake(error))
     })
 
     child.stdout.setEncoding('utf8')
@@ -304,6 +335,9 @@ export class AgentSidecar {
     child.once('exit', (code, signal) => {
       this.child = null
       const message = code === 0 ? 'Агент завершил работу.' : `Агент остановился (${signal ?? code}).`
+      // A process that exited before the handshake leaves no pipe to write to:
+      // the start fails now rather than after the timeout.
+      settleHandshake(new Error(message))
       for (const [, entry] of this.pending) entry.reject(new Error(message))
       this.pending.clear()
       // A run that was in flight when the process died has to end in the card,
@@ -338,13 +372,21 @@ export class AgentSidecar {
           reject(error)
         }
       })
-      child.stdin.write(`${JSON.stringify({ id, method, params })}\n`)
+      child.stdin.write(requestLine(id, method, params))
     })
   }
 
-  /** Starts a task. Resolves when the run is accepted, not when it finishes. */
+  /**
+   * Starts a task. Resolves when the run is accepted, not when it finishes.
+   *
+   * A stop that arrived while the process was starting resolves without writing
+   * a run: the host has already settled the turn, and a run sent after it would
+   * be an agent with no card, no events and no Escape.
+   */
   async run(runOptions: AgentRunOptions): Promise<void> {
+    const cancelsBefore = this.cancelCount
     await this.start()
+    if (this.cancelCount !== cancelsBefore) return
     this.traceRunId = runOptions.traceRunId
     await this.request('run', {
       task: runOptions.task,
@@ -359,25 +401,34 @@ export class AgentSidecar {
         timings: true,
         // Presentation only. With this false the same tools run and the same
         // approvals are asked, but nothing is raised or drawn.
-        visualize: runOptions.visualize
+        visualize: runOptions.visualize,
+        // An absent field on the Swift side means no exclusions, so an older
+        // binary keeps working.
+        excluded_apps: runOptions.excludedApps
       }
     })
+    // A stop can reach the process before this run does. That cancel is a no-op
+    // on a process with no active run, so repeat it now that one exists.
+    if (this.cancelCount !== cancelsBefore) this.cancel()
   }
 
   /** Answers a pending confirmation. */
   approve(id: string, allow: boolean, reason?: string): void {
     if (!this.alive) return
-    this.child?.stdin.write(`${JSON.stringify({
-      id: ++this.counter,
-      method: 'approval',
-      params: { id, allow, ...(reason ? { reason } : {}) }
-    })}\n`)
+    this.child?.stdin.write(
+      requestLine(++this.counter, 'approval', {
+        id,
+        allow,
+        ...(reason ? { reason } : {})
+      })
+    )
   }
 
   /** Stops the run in flight; the process stays up for the next one. */
   cancel(): void {
+    this.cancelCount += 1
     if (!this.alive) return
-    this.child?.stdin.write(`${JSON.stringify({ id: ++this.counter, method: 'cancel', params: {} })}\n`)
+    this.child?.stdin.write(requestLine(++this.counter, 'cancel', {}))
   }
 
   /** Ends the process; called on quit so no agent outlives the window. */
@@ -386,7 +437,7 @@ export class AgentSidecar {
     this.child = null
     if (!child || child.exitCode !== null) return
     try {
-      child.stdin.write(`${JSON.stringify({ id: ++this.counter, method: 'shutdown', params: {} })}\n`)
+      child.stdin.write(requestLine(++this.counter, 'shutdown', {}))
     } catch {
       /* the pipe is already gone */
     }
@@ -458,9 +509,7 @@ function wireProvider(provider: AgentProvider): Record<string, unknown> {
     api_key: provider.apiKey,
     max_tokens: provider.maxTokens,
     temperature: provider.temperature,
-    ...(provider.extraBody && Object.keys(provider.extraBody).length > 0
-      ? { extra_body: provider.extraBody }
-      : {}),
+    ...(provider.extraBody && Object.keys(provider.extraBody).length > 0 ? { extra_body: provider.extraBody } : {}),
     ...(provider.headers ? { headers: provider.headers } : {})
   }
 }
@@ -473,11 +522,7 @@ function wireProvider(provider: AgentProvider): Record<string, unknown> {
  * between a tool that does not screenshot and one that screenshots instantly,
  * and a `0` would erase it.
  */
-function optionalNumber(
-  params: Record<string, unknown>,
-  wire: string,
-  local: string
-): Record<string, number> {
+function optionalNumber(params: Record<string, unknown>, wire: string, local: string): Record<string, number> {
   const value = params[wire]
   return typeof value === 'number' && Number.isFinite(value) ? { [local]: value } : {}
 }
@@ -522,10 +567,14 @@ function screenRectParam(value: unknown): ScreenRect | undefined {
   const width = raw.width
   const height = raw.height
   if (
-    typeof x !== 'number' || !Number.isFinite(x) ||
-    typeof y !== 'number' || !Number.isFinite(y) ||
-    typeof width !== 'number' || !Number.isFinite(width) ||
-    typeof height !== 'number' || !Number.isFinite(height)
+    typeof x !== 'number' ||
+    !Number.isFinite(x) ||
+    typeof y !== 'number' ||
+    !Number.isFinite(y) ||
+    typeof width !== 'number' ||
+    !Number.isFinite(width) ||
+    typeof height !== 'number' ||
+    !Number.isFinite(height)
   ) {
     return undefined
   }
@@ -626,10 +675,7 @@ function translatePresent(params: Record<string, unknown>): EventOf<'present'> {
       app: textParam(params, 'app') || undefined,
       bundleId: textParam(params, 'bundle_id') || undefined,
       pid: typeof params.pid === 'number' ? params.pid : undefined,
-      point:
-        typeof params.x === 'number' && typeof params.y === 'number'
-          ? { x: params.x, y: params.y }
-          : undefined,
+      point: typeof params.x === 'number' && typeof params.y === 'number' ? { x: params.x, y: params.y } : undefined,
       target: screenRectParam(params.target),
       window: screenRectParam(params.window)
     }

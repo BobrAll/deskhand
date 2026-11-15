@@ -1,0 +1,3 @@
+# Checkout line endings. `endOfLine: "lf"` in .prettierrc.json matches this:
+# a CRLF checkout would fail `npm run format:check` without it.
+* text=auto eol=lf

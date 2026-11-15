@@ -21,10 +21,30 @@ const PYTHON_CANDIDATES = [
   '/usr/bin/python3'
 ]
 
-const FIRST_LINE_CHARS = 300
+const LINE_CHARS = 300
+
+/**
+ * The first non-empty line of the given lines, trimmed and clipped.
+ *
+ * Python puts the useful line at one end: the first for a failed command, the
+ * last for a traceback.
+ */
+function edgeLine(lines: string[]): string {
+  return (
+    lines
+      .find((line) => line.trim())
+      ?.trim()
+      .slice(0, LINE_CHARS) ?? ''
+  )
+}
 
 export function firstLine(text: string): string {
-  return text.split('\n').find((line) => line.trim())?.trim().slice(0, FIRST_LINE_CHARS) ?? ''
+  return edgeLine(text.split('\n'))
+}
+
+/** The last non-empty line: where Python puts the exception, not the traceback header. */
+export function lastLine(text: string): string {
+  return edgeLine(text.split('\n').reverse())
 }
 
 /** Runs a command to completion; the first stderr line becomes the error. */

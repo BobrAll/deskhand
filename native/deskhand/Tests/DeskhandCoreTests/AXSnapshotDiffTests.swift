@@ -1,4 +1,6 @@
+import ApplicationServices
 import XCTest
+
 @testable import DeskhandCore
 
 /// The diff is what lets the agent confirm an action without re-reading a whole
@@ -37,14 +39,18 @@ final class AXSnapshotDiffTests: XCTestCase {
     }
 
     func testSettledSignatureChangesWhenGeometryMoves() {
-        let before = [AXNode(
-            index: 0, depth: 0, role: "AXButton", title: "Send",
-            frame: CGRect(x: 0, y: 0, width: 40, height: 20)
-        )]
-        let after = [AXNode(
-            index: 0, depth: 0, role: "AXButton", title: "Send",
-            frame: CGRect(x: 0, y: 40, width: 40, height: 20)
-        )]
+        let before = [
+            AXNode(
+                index: 0, depth: 0, role: "AXButton", title: "Send",
+                frame: CGRect(x: 0, y: 0, width: 40, height: 20)
+            )
+        ]
+        let after = [
+            AXNode(
+                index: 0, depth: 0, role: "AXButton", title: "Send",
+                frame: CGRect(x: 0, y: 40, width: 40, height: 20)
+            )
+        ]
         XCTAssertNotEqual(snapshot(before).settledSignature, snapshot(after).settledSignature)
     }
 
@@ -52,10 +58,12 @@ final class AXSnapshotDiffTests: XCTestCase {
         // A click is reported by the control it hit, not by the window that
         // contains everything, so nested frames must resolve to the child.
         let nodes = [
-            AXNode(index: 0, depth: 0, role: "AXWindow",
-                   frame: CGRect(x: 0, y: 0, width: 800, height: 600)),
-            AXNode(index: 1, depth: 1, role: "AXButton", title: "Send",
-                   frame: CGRect(x: 10, y: 10, width: 100, height: 40)),
+            AXNode(
+                index: 0, depth: 0, role: "AXWindow",
+                frame: CGRect(x: 0, y: 0, width: 800, height: 600)),
+            AXNode(
+                index: 1, depth: 1, role: "AXButton", title: "Send",
+                frame: CGRect(x: 10, y: 10, width: 100, height: 40)),
         ]
         let snapshot = snapshot(nodes)
         XCTAssertEqual(snapshot.smallestNode(containing: CGPoint(x: 20, y: 20))?.index, 1)
@@ -65,10 +73,12 @@ final class AXSnapshotDiffTests: XCTestCase {
 
     func testSmallestNodeIgnoresZeroSizedFrames() {
         let nodes = [
-            AXNode(index: 0, depth: 0, role: "AXWindow",
-                   frame: CGRect(x: 0, y: 0, width: 800, height: 600)),
-            AXNode(index: 1, depth: 1, role: "AXGroup",
-                   frame: CGRect(x: 10, y: 10, width: 0, height: 0)),
+            AXNode(
+                index: 0, depth: 0, role: "AXWindow",
+                frame: CGRect(x: 0, y: 0, width: 800, height: 600)),
+            AXNode(
+                index: 1, depth: 1, role: "AXGroup",
+                frame: CGRect(x: 10, y: 10, width: 0, height: 0)),
         ]
         XCTAssertEqual(snapshot(nodes).smallestNode(containing: CGPoint(x: 10, y: 10))?.index, 0)
     }
@@ -98,11 +108,13 @@ final class AXSnapshotDiffTests: XCTestCase {
         // between "you cannot reach this" and a working next step.
         let nodes = [
             AXNode(index: 0, depth: 0, role: "AXWindow", title: "Chats"),
-            AXNode(index: 5, depth: 1, role: "AXTextField", subrole: "AXSearchField",
-                   label: "Search", settable: true),
-            AXNode(index: 7, depth: 1, role: "AXList",
-                   frame: CGRect(x: 0, y: 100, width: 300, height: 900),
-                   childrenRefused: true, declaredItemCount: 11),
+            AXNode(
+                index: 5, depth: 1, role: "AXTextField", subrole: "AXSearchField",
+                label: "Search", settable: true),
+            AXNode(
+                index: 7, depth: 1, role: "AXList",
+                frame: CGRect(x: 0, y: 100, width: 300, height: 900),
+                childrenRefused: true, declaredItemCount: 11),
         ]
         let text = AXTreeRenderer.render(nodes)
         XCTAssertTrue(text.contains("type into element 5"), text)
@@ -112,9 +124,10 @@ final class AXSnapshotDiffTests: XCTestCase {
         let nodes = [
             AXNode(index: 0, depth: 0, role: "AXWindow", title: "Chats"),
             AXNode(index: 4, depth: 1, role: "AXTextField", settable: true, focused: true),
-            AXNode(index: 9, depth: 1, role: "AXList",
-                   frame: CGRect(x: 0, y: 100, width: 300, height: 900),
-                   childrenRefused: true, declaredItemCount: 3),
+            AXNode(
+                index: 9, depth: 1, role: "AXList",
+                frame: CGRect(x: 0, y: 100, width: 300, height: 900),
+                childrenRefused: true, declaredItemCount: 3),
         ]
         let text = AXTreeRenderer.render(nodes)
         XCTAssertTrue(text.contains("element 4 (focused) is the way in"), text)
@@ -123,9 +136,10 @@ final class AXSnapshotDiffTests: XCTestCase {
     func testOpaqueContainerWithNoFieldFallsBackToCoordinates() {
         let nodes = [
             AXNode(index: 0, depth: 0, role: "AXWindow", title: "Canvas"),
-            AXNode(index: 2, depth: 1, role: "AXList",
-                   frame: CGRect(x: 0, y: 0, width: 300, height: 300),
-                   childrenRefused: true),
+            AXNode(
+                index: 2, depth: 1, role: "AXList",
+                frame: CGRect(x: 0, y: 0, width: 300, height: 300),
+                childrenRefused: true),
         ]
         let text = AXTreeRenderer.render(nodes)
         XCTAssertTrue(text.contains("no addressable way in"), text)
@@ -189,9 +203,10 @@ final class AXSnapshotDiffTests: XCTestCase {
 
     func testDeclaredItemCountIsSingularForOneItem() {
         let nodes = [
-            AXNode(index: 0, depth: 0, role: "AXList",
-                   frame: CGRect(x: 0, y: 0, width: 100, height: 100),
-                   childrenRefused: true, declaredItemCount: 1),
+            AXNode(
+                index: 0, depth: 0, role: "AXList",
+                frame: CGRect(x: 0, y: 0, width: 100, height: 100),
+                childrenRefused: true, declaredItemCount: 1)
         ]
         let text = AXTreeRenderer.render(nodes)
         XCTAssertTrue(text.contains("1 item not exposed"), text)
@@ -200,10 +215,16 @@ final class AXSnapshotDiffTests: XCTestCase {
     func testDeclaredItemCountParticipatesInVisibleState() {
         // A list that goes from "hidden, 11 rows" to "hidden, 12 rows" changed,
         // and the diff has to say so.
-        let before = snapshot([AXNode(index: 0, depth: 0, role: "AXList",
-                                      childrenRefused: true, declaredItemCount: 11)])
-        let after = snapshot([AXNode(index: 0, depth: 0, role: "AXList",
-                                     childrenRefused: true, declaredItemCount: 12)])
+        let before = snapshot([
+            AXNode(
+                index: 0, depth: 0, role: "AXList",
+                childrenRefused: true, declaredItemCount: 11)
+        ])
+        let after = snapshot([
+            AXNode(
+                index: 0, depth: 0, role: "AXList",
+                childrenRefused: true, declaredItemCount: 12)
+        ])
         XCTAssertFalse(before.diff(from: after).isEmpty)
     }
 
@@ -238,6 +259,88 @@ final class AXSnapshotDiffTests: XCTestCase {
         XCTAssertTrue(diff.text().contains("тест"))
     }
 
+    func testRowsDifferingOnlyInValueKeepTheirIdentitiesWhenOneIsInserted() {
+        // A chat, table or log row is named by its text and nothing else. With
+        // only role and title in the identity, two such rows were told apart by
+        // an occurrence counter, which is positional: inserting a row above
+        // shifted every number below it, and a remembered click landed on a
+        // different row without any error.
+        let first = AXNode(index: 0, depth: 1, role: "AXStaticText", value: "первое")
+        let second = AXNode(index: 1, depth: 1, role: "AXStaticText", value: "второе")
+        let inserted = AXNode(index: 0, depth: 1, role: "AXStaticText", value: "новое")
+
+        let book = IndexBook()
+        let beforeNumbers = AXSnapshot.identityKeys(of: [first, second]).map {
+            book.number(for: $0)
+        }
+        let afterNumbers = AXSnapshot.identityKeys(of: [inserted, first, second]).map {
+            book.number(for: $0)
+        }
+
+        XCTAssertEqual(afterNumbers[1], beforeNumbers[0], "the first row kept its number")
+        XCTAssertEqual(afterNumbers[2], beforeNumbers[1], "the second row kept its number")
+        XCTAssertFalse(
+            beforeNumbers.contains(afterNumbers[0]),
+            "the inserted row got a number of its own")
+
+        let diff = snapshot([inserted, first, second]).diff(from: snapshot([first, second]))
+        XCTAssertEqual(diff.added.count, 1, "the inserted row is the only new node")
+        XCTAssertTrue(diff.removed.isEmpty, "the rows below it were not replaced")
+    }
+
+    func testTextFieldKeepsItsIdentityAcrossAValueEdit() {
+        // The editable exception to value-based identity: changing what a field
+        // holds must not turn it into a different control.
+        let before = AXSnapshot.identityKeys(of: [
+            AXNode(index: 0, depth: 1, role: "AXTextField", value: "")
+        ])
+        let after = AXSnapshot.identityKeys(of: [
+            AXNode(index: 0, depth: 1, role: "AXTextField", value: "тест")
+        ])
+        XCTAssertEqual(before, after)
+    }
+
+    func testCheckboxToggleKeepsItsNumberAndIsReportedAsAChange() {
+        // A checkbox's value is state, not its name. Treating it as identity
+        // would make the toggle look like a different control: a fresh number
+        // for the same box, the old number dead, and a remove+add in the diff
+        // instead of the one change the model needs to see.
+        let before = [
+            AXNode(index: 0, depth: 0, role: "AXWindow", title: "Settings"),
+            AXNode(index: 1, depth: 1, role: kAXCheckBoxRole, title: "Notify", value: "0"),
+        ]
+        let after = [
+            AXNode(index: 0, depth: 0, role: "AXWindow", title: "Settings"),
+            AXNode(index: 1, depth: 1, role: kAXCheckBoxRole, title: "Notify", value: "1"),
+        ]
+
+        let book = IndexBook()
+        let beforeNumbers = AXSnapshot.identityKeys(of: before).map { book.number(for: $0) }
+        let afterNumbers = AXSnapshot.identityKeys(of: after).map { book.number(for: $0) }
+        XCTAssertEqual(afterNumbers, beforeNumbers, "a toggle is the same control in a new state")
+
+        let diff = snapshot(after).diff(from: snapshot(before))
+        XCTAssertTrue(diff.added.isEmpty, "the box did not appear")
+        XCTAssertTrue(diff.removed.isEmpty, "the box did not disappear")
+        XCTAssertEqual(diff.changed.count, 1)
+        XCTAssertTrue(diff.text().contains("value: 0 → 1"), diff.text())
+    }
+
+    func testSliderDragKeepsItsNumberAndIsReportedAsAChange() {
+        let before = [AXNode(index: 3, depth: 1, role: kAXSliderRole, value: "10")]
+        let after = [AXNode(index: 3, depth: 1, role: kAXSliderRole, value: "70")]
+
+        let book = IndexBook()
+        let beforeNumber = book.number(for: AXSnapshot.identityKeys(of: before)[0])
+        let afterNumber = book.number(for: AXSnapshot.identityKeys(of: after)[0])
+        XCTAssertEqual(beforeNumber, afterNumber, "the slider is the same control at a new position")
+
+        let diff = snapshot(after).diff(from: snapshot(before))
+        XCTAssertTrue(diff.added.isEmpty)
+        XCTAssertTrue(diff.removed.isEmpty)
+        XCTAssertEqual(diff.changed.count, 1)
+    }
+
     func testNewNodeIsReportedAsAdded() {
         let before = [AXNode(index: 0, depth: 0, role: "AXWindow", title: "Inbox")]
         let after = [
@@ -260,8 +363,9 @@ final class AXSnapshotDiffTests: XCTestCase {
         let before = [AXNode(index: 0, depth: 0, role: "AXWindow", title: "Inbox")]
         let after = [
             AXNode(index: 0, depth: 0, role: "AXWindow", title: "Inbox"),
-            AXNode(index: 1, depth: 1, role: "AXButton", title: "Send",
-                   frame: CGRect(x: 402, y: 836, width: 40, height: 40)),
+            AXNode(
+                index: 1, depth: 1, role: "AXButton", title: "Send",
+                frame: CGRect(x: 402, y: 836, width: 40, height: 40)),
         ]
         let diff = snapshot(after).diff(from: snapshot(before))
         let text = diff.text()
@@ -281,10 +385,16 @@ final class AXSnapshotDiffTests: XCTestCase {
     }
 
     func testPureScrollingIsCountedAsMovement() {
-        let before = [AXNode(index: 0, depth: 0, role: "AXButton", title: "Row",
-                             frame: CGRect(x: 0, y: 0, width: 10, height: 10))]
-        let after = [AXNode(index: 0, depth: 0, role: "AXButton", title: "Row",
-                            frame: CGRect(x: 0, y: 40, width: 10, height: 10))]
+        let before = [
+            AXNode(
+                index: 0, depth: 0, role: "AXButton", title: "Row",
+                frame: CGRect(x: 0, y: 0, width: 10, height: 10))
+        ]
+        let after = [
+            AXNode(
+                index: 0, depth: 0, role: "AXButton", title: "Row",
+                frame: CGRect(x: 0, y: 40, width: 10, height: 10))
+        ]
         let diff = snapshot(after).diff(from: snapshot(before))
         XCTAssertEqual(diff.moved, 1)
         XCTAssertTrue(diff.changed.isEmpty)

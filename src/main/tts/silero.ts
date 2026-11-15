@@ -7,14 +7,18 @@
  * single button in the settings rather than a dependency of the build.
  *
  * Silero has no Latin letters in its vocabulary, so `transliterate.ts` writes
- * English words in Russian letters and lets the model's stress model place the
- * marks. The card keeps the original text; only the string sent to synthesis is
+ * English words in Russian letters. Words the seed dictionary does not know may
+ * get a cached hint from the text model first (`pronounce.ts`); if that is
+ * unavailable, the rules and the model's stress model still place the marks.
+ * The card keeps the original text; only the string sent to synthesis is
  * rewritten.
  *
  * Three decisions:
  *
  * - **Nothing is installed without a click.** `installSilero` is called from the
- *   settings pane; no start-up path and no synthesis path may reach the network.
+ *   settings pane, and synthesis itself is offline. The one optional request is
+ *   the cached pronunciation hint for a word the seed dictionary does not know;
+ *   `tts.pronunciationLookup` gates it, and no hint is asked without it.
  * - **Every file is checked by SHA-256 before it is used.** The weights come
  *   from GitHub Releases, and a truncated download must read as "not installed",
  *   not as a model that produces silence.
@@ -23,7 +27,7 @@
  *   macOS voice exactly like every other engine failure.
  */
 
-import { spawn } from 'node:child_process'
+import { spawn, type ChildProcess } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
 import { createWriteStream, existsSync, readFileSync } from 'node:fs'
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
@@ -34,13 +38,16 @@ import { pipeline } from 'node:stream/promises'
 import { app } from 'electron'
 import type { TtsSetupProgress } from '@shared/types'
 import type { TtsResult } from '@shared/tts'
-import { findPython, firstLine, run } from './python'
+import { findPython, lastLine, run } from './python'
+import { resolvePronunciations } from './pronounce'
+import { SileroWorker, WORKER_SCRIPT, WORKER_SCRIPT_NAME } from './sileroWorker'
 import { transliterate } from './transliterate'
 
 /** Pinned: a new release changes the file list and the hashes below. */
 const RUNTIME_VERSION = 'v0.5.0'
 /** The commit behind the tag: a moved tag must not change what pip installs. */
-const RUNTIME_URL = 'https://github.com/some1-in-here/silero-tts-onnx/archive/10e5698504e14b39ffd5f72dc2c7b02bd7893747.tar.gz'
+const RUNTIME_URL =
+  'https://github.com/some1-in-here/silero-tts-onnx/archive/10e5698504e14b39ffd5f72dc2c7b02bd7893747.tar.gz'
 const RELEASE_URL = `https://github.com/some1-in-here/silero-tts-onnx/releases/download/${RUNTIME_VERSION}`
 
 /**
@@ -64,11 +71,14 @@ const MODEL_BYTES = MODEL_FILES.reduce((sum, [, bytes]) => sum + bytes, 0)
 export const SILERO_CACHE_ID = `silero-v5_6_ru-${RUNTIME_VERSION}`
 
 /** Bump when the transliteration dictionary or rules change the spoken text. */
-export const TRANSLITERATION_VERSION = 1
+export const TRANSLITERATION_VERSION = 5
 
 const PIP_TIMEOUT_MS = 5 * 60_000
 const MODEL_TIMEOUT_MS = 10 * 60_000
 const SYNTHESIS_TIMEOUT_MS = 60_000
+const WORKER_IDLE_TIMEOUT_MS = 3 * 60_000
+/** A worker that hung once is not retried on every line of the same answer. */
+const WORKER_BACKOFF_MS = 10 * 60_000
 const STDERR_TAIL_CHARS = 2000
 const PROGRESS_INTERVAL_MS = 150
 
@@ -111,6 +121,10 @@ function batchScript(): string {
   return join(sileroDir(), 'batch_tts.py')
 }
 
+function workerScript(): string {
+  return join(sileroDir(), WORKER_SCRIPT_NAME)
+}
+
 /** The venv exists and was built from the pinned package version. */
 export function sileroRuntimeReady(): boolean {
   if (!existsSync(venvPython()) || !existsSync(join(sileroDir(), 'venv', 'bin', 'silero-onnx'))) return false
@@ -140,9 +154,10 @@ async function downloadFile(
   onBytes: (bytes: number) => void
 ): Promise<void> {
   const temporary = `${target}.part`
+  const fileName = target.split('/').pop() ?? target
   const response = await fetch(url, { signal: AbortSignal.timeout(timeoutMs) })
-  if (!response.ok) throw new Error(`Не удалось скачать ${target.split('/').pop()}: ${response.status}.`)
-  if (!response.body) throw new Error(`Пустой ответ при скачивании ${target.split('/').pop()}.`)
+  if (!response.ok) throw new Error(`Не удалось скачать ${fileName}: ${response.status}.`)
+  if (!response.body) throw new Error(`Пустой ответ при скачивании ${fileName}.`)
 
   const hash = createHash('sha256')
   // Hashing in the stream keeps the download one pass and the memory flat; a
@@ -157,14 +172,21 @@ async function downloadFile(
   })
 
   await mkdir(dirname(target), { recursive: true })
-  await pipeline(
-    Readable.fromWeb(response.body as import('node:stream/web').ReadableStream),
-    meter,
-    createWriteStream(temporary)
-  )
+  try {
+    await pipeline(
+      Readable.fromWeb(response.body as import('node:stream/web').ReadableStream),
+      meter,
+      createWriteStream(temporary)
+    )
+  } catch (error) {
+    // A transfer that dies halfway would otherwise leave up to 150 MB behind
+    // until the next attempt or an uninstall.
+    await rm(temporary, { force: true }).catch(() => undefined)
+    throw error
+  }
   if (hash.digest('hex') !== sha256) {
     await rm(temporary, { force: true })
-    throw new Error(`Файл ${target.split('/').pop()} скачался повреждённым. Попробуй ещё раз.`)
+    throw new Error(`Файл ${fileName} скачался повреждённым. Попробуй ещё раз.`)
   }
   await rename(temporary, target)
 }
@@ -208,6 +230,10 @@ let installation: Promise<string | null> | null = null
  */
 export function installSilero(onProgress: (progress: TtsSetupProgress) => void): Promise<string | null> {
   if (!installation) {
+    // A reinstall is not a quit: synthesis must be allowed again afterwards.
+    shuttingDown = false
+    // The venv is about to be replaced under the running workers.
+    stopSileroWorker()
     installation = runInstall(onProgress).finally(() => {
       installation = null
     })
@@ -241,6 +267,7 @@ async function runInstall(onProgress: (progress: TtsSetupProgress) => void): Pro
       )
       await writeFile(runtimeMarker(), `${RUNTIME_VERSION}\n`)
       await writeFile(batchScript(), BATCH_SCRIPT)
+      await writeFile(workerScript(), WORKER_SCRIPT)
     }
 
     stage = 'models'
@@ -261,33 +288,129 @@ async function runInstall(onProgress: (progress: TtsSetupProgress) => void): Pro
   }
 }
 
-/** Removes the venv, the weights and the clip cache in one go. */
+/**
+ * Removes the venv and the weights.
+ *
+ * Clips already in the TTS cache stay: they are keyed by the pinned release and
+ * the speaker, so a reinstall would produce the same audio for them.
+ */
 export async function removeSilero(): Promise<void> {
+  stopSileroWorker()
   await rm(sileroDir(), { recursive: true, force: true })
 }
 
-async function ensureBatchScript(): Promise<string> {
-  const script = batchScript()
-  if (!existsSync(script)) {
-    await mkdir(sileroDir(), { recursive: true })
-    await writeFile(script, BATCH_SCRIPT)
+/**
+ * Writes a generated Python script when it is missing or its content changed.
+ *
+ * An app update may ship a different protocol or a fix in the script itself, so
+ * a changed one must reach an existing install; an unchanged one must not be
+ * rewritten on every phrase, because that disturbs a warm process.
+ */
+async function ensureScript(path: string, content: string): Promise<string> {
+  try {
+    if ((await readFile(path, 'utf8')) === content) return path
+  } catch {
+    /* the script appears on first use */
   }
-  return script
+  await mkdir(sileroDir(), { recursive: true })
+  await writeFile(path, content)
+  return path
 }
 
-function spawnCaptured(
-  command: string,
-  args: string[],
-  env: NodeJS.ProcessEnv,
-  timeoutMs: number
-): Promise<void> {
+/** One warm process per runtime and speaker, plus the fallback processes in flight. */
+const sileroWorkers = new Map<string, SileroWorker>()
+const oneShotProcesses = new Set<ChildProcess>()
+/** While this is in the future, that worker key goes straight to the one-shot. */
+let workerUnavailableUntil = 0
+let workerUnavailableFor = ''
+/** Set on quit so a fallback already in flight cannot spawn a new child. */
+let shuttingDown = false
+
+/**
+ * Kills every Python child this module owns.
+ *
+ * Called on quit, uninstall and reinstall: a worker keeps 300 MB of weights in
+ * memory and must never outlive the app.
+ */
+export function stopSileroWorker(): void {
+  for (const worker of sileroWorkers.values()) worker.stop()
+  sileroWorkers.clear()
+  for (const child of oneShotProcesses) child.kill('SIGKILL')
+  oneShotProcesses.clear()
+  workerUnavailableUntil = 0
+  workerUnavailableFor = ''
+}
+
+/**
+ * Stops synthesis for good while the app is quitting.
+ *
+ * `stopSileroWorker` is also used by reinstall, where a later synthesis is
+ * expected. This variant additionally blocks a fallback that is about to spawn
+ * its own `batch_tts.py` after the sweep has already run.
+ */
+export function shutdownSilero(): void {
+  shuttingDown = true
+  stopSileroWorker()
+}
+
+function sileroEnvironment(): NodeJS.ProcessEnv {
+  return {
+    ...process.env,
+    PYTHONUTF8: '1',
+    PYTHONUNBUFFERED: '1',
+    SILERO_ONNX_MODELS: sileroModelsDir(),
+    SILERO_ONNX_CACHE: join(sileroDir(), 'cache')
+  }
+}
+
+function workerKey(speaker: string, script: string): string {
+  return [venvPython(), script, speaker].join('\u0000')
+}
+
+function workerFor(speaker: string, script: string): SileroWorker {
+  const key = workerKey(speaker, script)
+  const existing = sileroWorkers.get(key)
+  if (existing) return existing
+
+  const models = sileroModelsDir()
+  const worker = new SileroWorker({
+    spawnWorker: () =>
+      spawn(venvPython(), [script, models, speaker], {
+        env: sileroEnvironment(),
+        stdio: ['pipe', 'pipe', 'pipe']
+      }),
+    requestTimeoutMs: SYNTHESIS_TIMEOUT_MS,
+    idleTimeoutMs: WORKER_IDLE_TIMEOUT_MS,
+    onTimeout: () => {
+      // A silent interpreter is not going to answer the next line either. The
+      // one-shot still speaks this one, but the rest of the answer should not
+      // pay the same 60-second wait.
+      workerUnavailableFor = key
+      workerUnavailableUntil = Date.now() + WORKER_BACKOFF_MS
+    }
+  })
+  sileroWorkers.set(key, worker)
+  return worker
+}
+
+/** Why a Python child ended, when it wrote nothing useful to stderr. */
+function exitReason(code: number | null, signal: NodeJS.Signals | null): string {
+  if (signal) return `Процесс завершился сигналом ${signal}.`
+  if (code !== null) return `Процесс завершился с кодом ${code}.`
+  return 'Процесс завершился без кода.'
+}
+
+function spawnCaptured(command: string, args: string[], env: NodeJS.ProcessEnv, timeoutMs: number): Promise<void> {
+  if (shuttingDown) return Promise.reject(new Error('Синтез остановлен.'))
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, { env, stdio: ['ignore', 'ignore', 'pipe'] })
+    oneShotProcesses.add(child)
     let stderr = ''
     let settled = false
     const settle = (error?: Error): void => {
       if (settled) return
       settled = true
+      oneShotProcesses.delete(child)
       clearTimeout(timer)
       if (error) reject(error)
       else resolve()
@@ -302,9 +425,9 @@ function spawnCaptured(
       stderr = (stderr + chunk).slice(-STDERR_TAIL_CHARS)
     })
     child.on('error', (error) => settle(error))
-    child.on('close', (code) => {
+    child.on('close', (code, signal) => {
       if (code === 0) settle()
-      else settle(new Error(firstLine(stderr) || `Процесс завершился с кодом ${code}.`))
+      else settle(new Error(lastLine(stderr) || exitReason(code, signal)))
     })
   })
 }
@@ -316,21 +439,53 @@ async function renderSilero(
   directory: string
 ): Promise<void> {
   if (jobs.length === 0) return
-  const script = await ensureBatchScript()
+  const script = await ensureScript(batchScript(), BATCH_SCRIPT)
   const jobsPath = join(directory, 'jobs.json')
   await writeFile(jobsPath, JSON.stringify(jobs))
   await spawnCaptured(
     venvPython(),
     [script, sileroModelsDir(), jobsPath, speaker],
-    {
-      ...process.env,
-      PYTHONUTF8: '1',
-      PYTHONUNBUFFERED: '1',
-      SILERO_ONNX_MODELS: sileroModelsDir(),
-      SILERO_ONNX_CACHE: join(sileroDir(), 'cache')
-    },
+    sileroEnvironment(),
     SYNTHESIS_TIMEOUT_MS
   )
+}
+
+/**
+ * Speaks one fragment through the warm process, with the one-shot renderer as a
+ * fallback. The fallback runs inside the worker queue, so the two model loads
+ * never overlap.
+ */
+async function renderThroughWorker(
+  job: { text: string; output: string },
+  speaker: string,
+  directory: string
+): Promise<void> {
+  if (shuttingDown) throw new Error('Синтез остановлен.')
+  const renderOnceShot = (): Promise<void> => renderSilero([job], speaker, directory)
+
+  let script: string
+  try {
+    script = await ensureScript(workerScript(), WORKER_SCRIPT)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    console.warn('[tts] unable to write the silero worker script (%s); using the one-shot renderer', message)
+    await renderOnceShot()
+    return
+  }
+  const key = workerKey(speaker, script)
+  if (workerUnavailableFor === key && Date.now() < workerUnavailableUntil) {
+    await renderOnceShot()
+    return
+  }
+  // The backoff belongs to one worker key; a different speaker starts with none.
+  if (workerUnavailableFor !== key) {
+    workerUnavailableFor = key
+    workerUnavailableUntil = 0
+  }
+  await workerFor(speaker, script).render(job.text, job.output, renderOnceShot, async () => {
+    const audio = await readFile(job.output)
+    if (audio.length === 0) throw new Error('Silero вернул пустой файл.')
+  })
 }
 
 /**
@@ -338,22 +493,31 @@ async function renderSilero(
  *
  * Latin words are transliterated before they reach the model: Silero's
  * vocabulary has no Latin letters at all. The original text never changes, only
- * the string handed to synthesis.
+ * the string handed to synthesis. A word outside the seed dictionary may wait
+ * for one cached hint from the text model; a failed lookup is not an error, it
+ * simply leaves the word to the rules.
  */
-export async function synthesizeSilero(text: string, speaker: string): Promise<TtsResult> {
+export async function synthesizeSilero(
+  text: string,
+  speaker: string,
+  hints?: Readonly<Record<string, string>>
+): Promise<TtsResult> {
+  if (shuttingDown) return { ok: false, message: 'Синтез остановлен.' }
   if (!sileroRuntimeReady()) return { ok: false, message: 'Silero не установлен.' }
   if (!sileroModelsReady()) return { ok: false, message: 'Нет модели Silero V5.6 RU.' }
 
-  const spoken = transliterate(text)
+  const pronunciations = hints ?? (await resolvePronunciations(text))
+  const spoken = transliterate(text, pronunciations)
   if (!spoken.trim()) return { ok: false, message: 'Нечего произносить.' }
 
   const directory = join(tmpdir(), `deskhand-silero-${process.pid}-${randomUUID()}`)
   const output = join(directory, 'speech.wav')
+  const job = { text: spoken, output }
   try {
     await mkdir(directory, { recursive: true })
-    await renderSilero([{ text: spoken, output }], speaker, directory)
-    const audio = await readFile(output)
-    if (audio.length === 0) return { ok: false, message: 'Silero вернул пустой файл.' }
+    await renderThroughWorker(job, speaker, directory)
+    const audio = await readFile(output).catch(() => null)
+    if (!audio || audio.length === 0) return { ok: false, message: 'Silero вернул пустой файл.' }
     return { ok: true, audio: audio.toString('base64'), cached: false, mime: 'audio/wav' }
   } catch (error) {
     return {

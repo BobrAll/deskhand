@@ -46,13 +46,11 @@ dist_electron/
 # ---------- Compiled native binaries ----------
 # Собираются из исходников: src/main/native/helper.m, scripts/build-helper.mjs
 resources/deskhand-helper
-resources/deskhand-window-blur.node
 resources/whisper-cli
 resources/transcribe-cli
 resources/transcribe-licenses/
 resources/speech/*.gguf
 resources/speech/*.part
-resources/cu-service
 resources/deskhand-agent
 resources/*.dylib
 resources/*.so
@@ -66,6 +64,7 @@ resources/*.so
 .electron-cache/
 .swift-cache/
 .tmp-userdata/
+.home/
 .scratch/
 *.log
 logs/

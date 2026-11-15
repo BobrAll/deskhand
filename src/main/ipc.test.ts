@@ -98,7 +98,7 @@ vi.mock('./settings/store', async () => {
       ...DEFAULT_SETTINGS,
       ...patch
     })),
-    storeRecovered: () => false
+    settingsWereRecovered: () => false
   }
 })
 
@@ -144,7 +144,6 @@ function fakeDeps(): IpcDeps {
       resize: vi.fn(),
       close: vi.fn(),
       copy: vi.fn(async () => undefined),
-      paste: vi.fn(async () => ({ ok: true, method: 'paste' })),
       agentAvailability: vi.fn(() => ({ enabled: false, ready: false, reason: null })),
       setAgentEnabled: vi.fn(() => ({ enabled: true, ready: false, reason: null })),
       stopAgent: vi.fn(),
@@ -192,6 +191,7 @@ const MAIN_TO_RENDERER = new Set<string>([
   CH.agent.cursor,
   CH.agent.presentation,
   CH.voice.event,
+  CH.voice.fieldHighlight,
   CH.voice.record,
   CH.voice.stop,
   CH.voice.transcript,
@@ -220,9 +220,7 @@ describe('registerIpc: every channel has exactly one handler', () => {
   it('wires no channel that is not in the shared map', () => {
     wire()
     const known = new Set(channels.map(([, channel]) => channel))
-    const extra = [...electron.handles.keys(), ...electron.ons.keys()].filter(
-      (channel) => !known.has(channel)
-    )
+    const extra = [...electron.handles.keys(), ...electron.ons.keys()].filter((channel) => !known.has(channel))
     expect(extra).toEqual([])
   })
 
@@ -238,7 +236,6 @@ describe('registerIpc: every channel has exactly one handler', () => {
     for (const channel of [
       CH.overlay.getState,
       CH.overlay.copy,
-      CH.overlay.paste,
       CH.settings.load,
       CH.settings.save,
       CH.permissions.status,
@@ -258,7 +255,8 @@ describe('registerIpc: every channel has exactly one handler', () => {
       CH.permissions.open,
       CH.onboarding.openSettings,
       CH.voice.level,
-      CH.voice.failed
+      CH.voice.failed,
+      CH.tts.prefetch
     ]) {
       expect(electron.ons.has(channel), channel).toBe(true)
       expect(electron.handles.has(channel), channel).toBe(false)
@@ -284,14 +282,18 @@ describe('registerIpc: the handlers reach their dependency', () => {
     expect(deps.overlay.setTyping).toHaveBeenCalledWith(true)
 
     electron.ons.get(CH.overlay.resize)!({}, 120, 360)
-    expect(deps.overlay.resize).toHaveBeenCalledWith(120, 360, false)
+    expect(deps.overlay.resize).toHaveBeenCalledWith(120, 360, false, false)
 
     // A drag pins the left edge; anything else is coerced, because the renderer
     // is not trusted with the type.
     electron.ons.get(CH.overlay.resize)!({}, 120, 480, true)
-    expect(deps.overlay.resize).toHaveBeenCalledWith(120, 480, true)
+    expect(deps.overlay.resize).toHaveBeenCalledWith(120, 480, true, false)
     electron.ons.get(CH.overlay.resize)!({}, 120, 480, 'yes')
-    expect(deps.overlay.resize).toHaveBeenCalledWith(120, 480, true)
+    expect(deps.overlay.resize).toHaveBeenCalledWith(120, 480, true, false)
+
+    // Typing is passed through with the same coercion.
+    electron.ons.get(CH.overlay.resize)!({}, 120, 360, false, 1)
+    expect(deps.overlay.resize).toHaveBeenCalledWith(120, 360, false, true)
   })
 
   it('answers the agent availability question from the overlay', async () => {
@@ -330,9 +332,7 @@ describe('registerIpc: the handlers reach their dependency', () => {
 
   it('reports copy failures instead of throwing into the renderer', async () => {
     const deps = fakeDeps()
-    ;(deps.overlay.copy as unknown as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
-      new Error('clipboard busy')
-    )
+    ;(deps.overlay.copy as unknown as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error('clipboard busy'))
     electron.reset()
     registerIpc(deps)
 

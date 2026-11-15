@@ -15,8 +15,8 @@ import { CARD_MIN_WIDTH, CARD_NARROW_WIDTH, CARD_VOICE_WIDTH, CARD_WIDTH } from 
  */
 
 describe('metrics: the card widths', () => {
-  it('keeps the folded pill at 112', () => {
-    expect(CARD_NARROW_WIDTH).toBe(112)
+  it('keeps the folded pill wide enough for the placeholder and both controls', () => {
+    expect(CARD_NARROW_WIDTH).toBe(152)
   })
 
   it('keeps the voice surface at 80 — the macOS transparency floor', () => {
@@ -79,7 +79,11 @@ describe('metrics: the widths have one source', () => {
     for (const name of ['CARD_WIDTH', 'CARD_NARROW_WIDTH', 'CARD_VOICE_WIDTH']) {
       expect(cardWidth, name).toContain(name)
     }
-    for (const file of ['renderer/overlay/cardWidth.ts', 'renderer/overlay/App.tsx', 'renderer/overlay/cardMetrics.ts']) {
+    for (const file of [
+      'renderer/overlay/cardWidth.ts',
+      'renderer/overlay/App.tsx',
+      'renderer/overlay/cardMetrics.ts'
+    ]) {
       expect(read(file), file).not.toMatch(/const (NARROW_WIDTH|VOICE_WIDTH|FULL_WIDTH) = \d/)
     }
   })

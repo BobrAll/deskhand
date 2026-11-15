@@ -13,12 +13,7 @@ import { BrowserWindow, screen } from 'electron'
 import { CH } from '@shared/ipc'
 import type { AgentCursorFrame, AgentCursorPhase, AgentEvent, ScreenRect } from '@shared/types'
 import { trace } from './trace'
-import {
-  createLayerWindow,
-  ensureLayerWindow,
-  placeLayer,
-  type LayerWindowState
-} from '../layerWindow'
+import { createLayerWindow, ensureLayerWindow, placeLayer, type LayerWindowState } from '../layerWindow'
 
 /** How long the renderer's fade-out runs before the window is actually hidden. */
 const CURSOR_FADE_MS = 160
@@ -268,13 +263,19 @@ function hideNow(): void {
   hide(true)
 }
 
+/**
+ * A frame for this phase, anchored where the pointer already is.
+ *
+ * The anchor is read from the live frame rather than passed in: every caller
+ * wants the glow to stay where it is and only change what it says.
+ */
+function frameAt(phase: AgentCursorPhase): AgentCursorFrame {
+  return { visible: true, anchor: frame?.anchor ?? { x: 0, y: 0 }, phase }
+}
+
 /** The success frame: a green check for a run that finished. */
 function paintSuccess(): void {
-  frame = {
-    visible: true,
-    anchor: frame?.anchor ?? { x: 0, y: 0 },
-    phase: 'success'
-  }
+  frame = frameAt('success')
   void paint()
 }
 
@@ -285,12 +286,8 @@ function paintSuccess(): void {
 function paintQuestion(): void {
   if (!frame && glowOwner === null) return
   cancelWait()
-  const waiting: AgentCursorFrame = {
-    visible: true,
-    anchor: frame?.anchor ?? { x: 0, y: 0 },
-    phase: 'waiting'
-  }
   trace('cursor.waiting', { asking: true })
+  const waiting = frameAt('waiting')
   const target = layer.window
   if (visible && target && !target.isDestroyed()) send(target, waiting)
   else {
@@ -301,13 +298,7 @@ function paintQuestion(): void {
 
 /** A step of a run: the glow changes phase and follows the pointer. */
 function paintStep(phase: AgentCursorPhase): void {
-  const next: AgentCursorFrame = {
-    visible: true,
-    anchor: frame?.anchor ?? { x: 0, y: 0 },
-    phase
-  }
-
-  frame = next
+  frame = frameAt(phase)
   void paint()
 }
 

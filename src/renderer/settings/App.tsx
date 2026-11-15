@@ -12,17 +12,21 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { AppSettings, KeyStatus, PermissionState, ProviderId } from '@shared/types'
+import type {
+  AgentAvailability,
+  AgentSettings,
+  AppSettings,
+  KeyStatus,
+  PermissionState,
+  ProviderId,
+  TtsSettings,
+  VoiceSettings
+} from '@shared/types'
 import { PROVIDERS } from '@shared/defaults'
 import type { AppPickResult, RunningAppInfo, SettingsBundle } from '@shared/api'
 import { WindowBrand } from '../styles/WindowBrand'
 import { HotkeyField } from './HotkeyField'
-import {
-  hasUnsaved,
-  holdReasonFor,
-  invalidBaseUrlProviders,
-  writableSettings
-} from './applyGate'
+import { hasUnsaved, holdReasonFor, invalidBaseUrlProviders, writeCoversDraft, writableSettings } from './applyGate'
 import { ApplyStatus, type ApplyState } from './ApplyStatus'
 import { AgentTab } from './AgentTab'
 import { VoiceTab } from './VoiceTab'
@@ -110,7 +114,7 @@ function NavIcon({ tab }: { tab: Tab }) {
 
 /** How long a footer message stays up before the apply status comes back. */
 const BANNER_WRITE_ERROR_MS = 2600
-const BANNER_KEY_SAVE_MS = 3600
+const BANNER_KEY_NOTICE_MS = 3600
 const BANNER_KEY_REMOVED_MS = 2200
 
 /** Quiet time after the last edit before the draft is written. */
@@ -185,9 +189,7 @@ export function App() {
       })
       .catch((error: unknown) => {
         console.error('[settings] load failed:', error)
-        setLoadError(
-          error instanceof Error ? error.message : 'Не удалось загрузить настройки.'
-        )
+        setLoadError(error instanceof Error ? error.message : 'Не удалось загрузить настройки.')
       })
     void window.deskhand.settings
       .runningApps()
@@ -207,15 +209,44 @@ export function App() {
     setDraft((prev) => (prev ? { ...prev, ...changes } : prev))
   }, [])
 
-  const invalidBaseUrls = useMemo(
-    () => (draft ? invalidBaseUrlProviders(draft) : []),
-    [draft]
-  )
+  /** A change inside the voice block, merged into the draft the same way. */
+  const patchVoice = useCallback((changes: Partial<VoiceSettings>) => {
+    setDraft((prev) => (prev ? { ...prev, voice: { ...prev.voice, ...changes } } : prev))
+  }, [])
 
-  const holdReason = useMemo(
-    () => (draft ? holdReasonFor(draft, invalidBaseUrls) : null),
-    [draft, invalidBaseUrls]
-  )
+  /** A change inside the synthesis block. */
+  const patchTts = useCallback((changes: Partial<TtsSettings>) => {
+    setDraft((prev) => (prev ? { ...prev, tts: { ...prev.tts, ...changes } } : prev))
+  }, [])
+
+  /** A change inside the agent block. */
+  const patchAgent = useCallback((changes: Partial<AgentSettings>) => {
+    setDraft((prev) => (prev ? { ...prev, agent: { ...prev.agent, ...changes } } : prev))
+  }, [])
+
+  /**
+   * The agent's master switch, written through its own channel.
+   *
+   * Every other value on that tab can wait for the autosave, but this one decides
+   * whether the assistant can act at all, and it has to be on disk before the
+   * answer that arrives a second later. The debounced autosave would also get
+   * there, one debounce too late.
+   *
+   * The bundle is the "saved" side of the auto-apply comparison, so it is synced
+   * too: the footer must not announce a pending write for a value that is already
+   * on disk.
+   */
+  const setAgentEnabled = useCallback(async (enabled: boolean): Promise<AgentAvailability> => {
+    const availability = await window.deskhand.agent.setEnabled(enabled)
+    setBundle((prev) =>
+      prev ? { ...prev, settings: { ...prev.settings, agent: { ...prev.settings.agent, enabled } } } : prev
+    )
+    return availability
+  }, [])
+
+  const invalidBaseUrls = useMemo(() => (draft ? invalidBaseUrlProviders(draft) : []), [draft])
+
+  const holdReason = useMemo(() => (draft ? holdReasonFor(draft, invalidBaseUrls) : null), [draft, invalidBaseUrls])
 
   /**
    * What was last written, verbatim.
@@ -229,6 +260,16 @@ export function App() {
    * it stayed open.
    */
   const writtenRef = useRef<string | null>(null)
+
+  /**
+   * The draft as of the newest render.
+   *
+   * A write resolves after the state it was started from may have moved on, and
+   * its callback must compare against what is on screen now — the `draft` it
+   * closed over is the snapshot it sent.
+   */
+  const draftRef = useRef<AppSettings | null>(null)
+  draftRef.current = draft
 
   /**
    * The snapshot a failed write was for, so it is not retried in a loop.
@@ -295,7 +336,10 @@ export function App() {
           return false
         }
         setHotkeyMessage(null)
-        setApplyState('saved')
+        // «Применено» is about the draft on screen, not the snapshot that was
+        // sent: an edit made during the round trip still has to be written, and
+        // the footer (and the close hold) must say so until it is.
+        if (writeCoversDraft(written, draftRef.current)) setApplyState('saved')
         return true
       } catch {
         // Nothing reached the disk, so a later change must be allowed to try again —
@@ -359,10 +403,7 @@ export function App() {
   }, [applyState])
 
   /** Whether the draft holds anything that is not on disk yet. */
-  const unsaved = useCallback(
-    (value: AppSettings): boolean => hasUnsaved(value, bundle, writtenRef.current),
-    [bundle]
-  )
+  const unsaved = useCallback((value: AppSettings): boolean => hasUnsaved(value, bundle, writtenRef.current), [bundle])
 
   /**
    * The draft as it can actually be written, for the explicit paths (⌘S, closing).
@@ -414,10 +455,10 @@ export function App() {
       const next = await window.deskhand.settings.setKey(draft.provider, keyInput)
       setBundle(next)
       setKeyInput('')
-      showNotice({ kind: 'ok', text: 'Ключ сохранён.' }, BANNER_KEY_SAVE_MS)
+      showNotice({ kind: 'ok', text: 'Ключ сохранён.' }, BANNER_KEY_NOTICE_MS)
       return true
     } catch {
-      showNotice({ kind: 'err', text: 'Не удалось сохранить ключ.' }, BANNER_KEY_SAVE_MS)
+      showNotice({ kind: 'err', text: 'Не удалось сохранить ключ.' }, BANNER_KEY_NOTICE_MS)
       return false
     }
   }, [draft, keyInput, showNotice])
@@ -429,7 +470,7 @@ export function App() {
       setBundle(next)
       showNotice({ kind: 'ok', text: 'Ключ удалён' }, BANNER_KEY_REMOVED_MS)
     } catch {
-      showNotice({ kind: 'err', text: 'Не удалось удалить ключ.' }, BANNER_KEY_SAVE_MS)
+      showNotice({ kind: 'err', text: 'Не удалось удалить ключ.' }, BANNER_KEY_NOTICE_MS)
     }
   }, [draft, showNotice])
 
@@ -504,7 +545,9 @@ export function App() {
       <main className="content">
         <header className="pane-head">
           <div className="pane-heading">
-            <span className="pane-icon"><NavIcon tab={tab} /></span>
+            <span className="pane-icon">
+              <NavIcon tab={tab} />
+            </span>
             <div>
               <h1>{PANE[tab].title}</h1>
               <p className="pane-sub">{PANE[tab].subtitle}</p>
@@ -534,37 +577,12 @@ export function App() {
               tts={draft.tts}
               savedVoice={bundle.settings.voice}
               savedTts={bundle.settings.tts}
-              onVoiceChange={(changes) => setDraft((current) => current
-                ? { ...current, voice: { ...current.voice, ...changes } }
-                : current)}
-              onTtsChange={(changes) => setDraft((current) => current
-                ? { ...current, tts: { ...current.tts, ...changes } }
-                : current)}
+              onVoiceChange={patchVoice}
+              onTtsChange={patchTts}
             />
           )}
 
-          {tab === 'agent' && (
-            <AgentTab
-              agent={draft.agent}
-              onChange={(changes) => patch({ agent: { ...draft.agent, ...changes } })}
-              onEnabledChange={async (enabled) => {
-                // Written through the dedicated channel, not the draft: this switch
-                // decides whether the assistant can act at all, and it has to be on
-                // disk before the answer that arrives a second later. The debounced
-                // autosave would also get there, one debounce too late.
-                const availability = await window.deskhand.agent.setEnabled(enabled)
-                // The bundle is the "saved" side of the auto-apply comparison;
-                // syncing it keeps the footer from announcing a pending write for a
-                // value that is already on disk.
-                setBundle((prev) =>
-                  prev
-                    ? { ...prev, settings: { ...prev.settings, agent: { ...prev.settings.agent, enabled } } }
-                    : prev
-                )
-                return availability
-              }}
-            />
-          )}
+          {tab === 'agent' && <AgentTab agent={draft.agent} onChange={patchAgent} onEnabledChange={setAgentEnabled} />}
 
           {tab === 'privacy' && (
             <PrivacySection

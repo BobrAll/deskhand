@@ -130,6 +130,22 @@ describe('buildRequest: context block', () => {
     expect(userText).toContain('(выделение обрезано из-за размера)')
   })
 
+  it('marks the cut even when the collector did not call the selection truncated', () => {
+    // The collector cuts at 24 000 characters; the prompt cuts at 12 000. A
+    // selection between the two is halved here with `truncated` still false, and
+    // the model has to know it is reading half a selection.
+    const { userText } = request({
+      snapshot: snapshot({ selection: { text: 'я'.repeat(MAX_SELECTION_CHARS + 1), truncated: false } }),
+      imageAttached: false
+    })
+
+    expect(userText).toContain('(выделение обрезано из-за размера)')
+  })
+
+  it('says nothing about a cut when the selection fits', () => {
+    expect(request({ imageAttached: false }).userText).not.toContain('(выделение обрезано')
+  })
+
   it('caps the selection at 12000 characters', () => {
     const { userText } = request({
       snapshot: snapshot({ selection: { text: 'я'.repeat(20_000), truncated: false } }),
@@ -167,9 +183,7 @@ describe('buildRequest: context block', () => {
   })
 
   it('says the screenshot is missing when one was requested but is absent', () => {
-    expect(request({ imageAttached: false }).userText).toContain(
-      'Скриншот недоступен, опирайся только на текст.'
-    )
+    expect(request({ imageAttached: false }).userText).toContain('Скриншот недоступен, опирайся только на текст.')
   })
 
   it('explains the coordinate system only when a tool needs it', () => {
@@ -208,9 +222,7 @@ describe('buildRequest: context block', () => {
 
 describe('buildRequest: mode instruction', () => {
   it('uses the overlay format for analyze', () => {
-    expect(request({ mode: 'analyze', draw: false }).modeInstruction).toContain(
-      'краткий разбор для показа в оверлее'
-    )
+    expect(request({ mode: 'analyze', draw: false }).modeInstruction).toContain('краткий разбор для показа в оверлее')
   })
 
   it('names the markdown the card can actually render', () => {
@@ -233,17 +245,13 @@ describe('buildRequest: mode instruction', () => {
   })
 
   it('uses the insert format for insert', () => {
-    expect(request({ mode: 'insert', draw: false }).modeInstruction).toContain(
-      'только готовый текст для вставки'
-    )
+    expect(request({ mode: 'insert', draw: false }).modeInstruction).toContain('только готовый текст для вставки')
   })
 
   it('adds the drawing tool after the format', () => {
     const { modeInstruction } = request({ draw: true })
 
-    expect(modeInstruction.indexOf('Формат ответа')).toBeLessThan(
-      modeInstruction.indexOf('@point')
-    )
+    expect(modeInstruction.indexOf('Формат ответа')).toBeLessThan(modeInstruction.indexOf('@point'))
   })
 
   it('appends the drawing tool after the answer format', () => {
@@ -320,6 +328,33 @@ describe('buildRefine', () => {
     // The cap test above compares against the constant itself, so it stays green
     // when the number moves. Only a literal pins what the prompt promises.
     expect(MAX_ANSWER_CHARS).toBe(8_000)
+  })
+
+  it('says the answer was cut when it is longer than the ceiling', () => {
+    const baseAnswer = 'я'.repeat(MAX_ANSWER_CHARS + 2_000)
+    const { userText } = buildRefine({
+      baseAnswer,
+      originalPrompt: '',
+      direction: 'shorter',
+      mode: 'analyze'
+    })
+
+    // "Короче" replaces the whole answer, so a model that is not told about the
+    // cut shortens a text whose ending it never saw.
+    expect(userText).toContain('(ответ обрезан из-за размера')
+    expect(userText).toContain(String(MAX_ANSWER_CHARS))
+    expect(userText).toContain(String(baseAnswer.length))
+  })
+
+  it('adds no cut note to an answer that fits', () => {
+    const { userText } = buildRefine({
+      baseAnswer: 'короткий ответ',
+      originalPrompt: '',
+      direction: 'longer',
+      mode: 'analyze'
+    })
+
+    expect(userText).not.toContain('(ответ обрезан')
   })
 
   it('never offers a tool', () => {

@@ -81,7 +81,11 @@ public enum JSONValue: Sendable, Equatable {
     }
 
     public var intValue: Int? {
-        if case .number(let d) = self { return Int(d) }
+        if case .number(let d) = self {
+            // JSON numbers may be NaN, infinite or outside `Int`; `Int(d)`
+            // traps on all three, while `Int(exactly:)` returns nil.
+            return Int(exactly: d.rounded(.towardZero))
+        }
         return nil
     }
 

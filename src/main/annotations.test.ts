@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { isDrawable, parseAnnotationLine } from './annotations'
+import { couldStartMarker, isDrawable, parseAnnotationLine } from './annotations'
 
 describe('parseAnnotationLine: marker recognition', () => {
   it('returns null for a line that is not protocol syntax', () => {
@@ -25,9 +25,27 @@ describe('parseAnnotationLine: marker recognition', () => {
   })
 
   it('ignores surrounding whitespace', () => {
-    expect(parseAnnotationLine('   @point 0.1 0.2 0.3 0.4   ')).toEqual(
-      parseAnnotationLine('@point 0.1 0.2 0.3 0.4')
-    )
+    expect(parseAnnotationLine('   @point 0.1 0.2 0.3 0.4   ')).toEqual(parseAnnotationLine('@point 0.1 0.2 0.3 0.4'))
+  })
+})
+
+describe('couldStartMarker: what the stream parser must hold back', () => {
+  it('accepts a marker that has not finished arriving', () => {
+    for (const tail of ['@', '@p', '@po', '@poi', '@poin', '@point', '@cir', '@under']) {
+      expect(couldStartMarker(tail), tail).toBe(true)
+    }
+  })
+
+  it('accepts every marker spelling once complete', () => {
+    for (const marker of ['@point', '@draw', '@arrow', '@circle', '@box', '@underline', '@Point']) {
+      expect(couldStartMarker(marker), marker).toBe(true)
+    }
+  })
+
+  it('rejects a word that can no longer become a marker', () => {
+    for (const tail of ['@pointless', '@username', '@hover', 'текст', 'x @po', '']) {
+      expect(couldStartMarker(tail), tail).toBe(false)
+    }
   })
 })
 
@@ -92,26 +110,57 @@ describe('parseAnnotationLine: numbers', () => {
     })
   })
 
-  it('splits on commas and semicolons as well as whitespace', () => {
+  it('reads commas used as separators', () => {
     const expected = {
       kind: 'arrow',
       from: { x: 0.5, y: 0.8 },
       to: { x: 0.82, y: 0.11 },
       label: undefined
     }
-    expect(parseAnnotationLine('@point arrow, 0.5, 0.8, 0.82, 0.11')?.annotations[0]).toEqual(
-      expected
-    )
+    expect(parseAnnotationLine('@point arrow, 0.5, 0.8, 0.82, 0.11')?.annotations[0]).toEqual(expected)
     expect(parseAnnotationLine('@point arrow;0.5;0.8;0.82;0.11')?.annotations[0]).toEqual(expected)
   })
 
-  // KNOWN BUG: characterization — commas separate tokens, so "0,5" is split into
-  // "0" and "5" before the decimal-comma fallback can run.
-  it('mangles a decimal comma (known bug)', () => {
-    expect(parseAnnotationLine('@point 0,5 0,2 0,3 0,4')?.annotations[0].from).toEqual({
-      x: 0,
-      y: 0.05
+  it('reads a compact list where the commas separate numbers', () => {
+    // No space after a comma: the comma is a separator, not a decimal one, so
+    // the line is the same shape the spaced form asks for.
+    const arrow = {
+      kind: 'arrow',
+      from: { x: 0.5, y: 0.8 },
+      to: { x: 0.82, y: 0.11 },
+      label: undefined
+    }
+    expect(parseAnnotationLine('@point 0.5,0.8,0.3,0.4')?.annotations[0]).toEqual({
+      kind: 'circle',
+      from: { x: 0.5, y: 0.8 },
+      to: { x: 0.3, y: 0.4 },
+      label: undefined
     })
+    expect(parseAnnotationLine('@point arrow,0.5 0.8 0.82 0.11')?.annotations[0]).toEqual(arrow)
+    expect(parseAnnotationLine('@point arrow,0.5,0.8,0.82,0.11')?.annotations[0]).toEqual(arrow)
+  })
+
+  it('reads a decimal comma instead of splitting the number in two', () => {
+    // Splitting on commas read this line as "0 5 0 2" and drew a tiny ring in
+    // the top-left corner instead of the shape the model asked for.
+    expect(parseAnnotationLine('@point 0,5 0,2 0,3 0,4')?.annotations[0]).toEqual({
+      kind: 'circle',
+      from: { x: 0.5, y: 0.2 },
+      to: { x: 0.3, y: 0.4 },
+      label: undefined
+    })
+  })
+
+  it('reads a decimal comma next to a decimal point', () => {
+    // "0.5,0.8" cannot be one number, so its comma separates; "0,5,0,8" is two
+    // numbers, so the first comma is decimal and the second one separates.
+    expect(parseAnnotationLine('@point 0.5,0.8')?.annotations[0].from).toEqual({ x: 0.5, y: 0.8 })
+    expect(parseAnnotationLine('@point 0,5,0,8')?.annotations[0].from).toEqual({ x: 0.5, y: 0.8 })
+  })
+
+  it('drops a line whose numbers do not parse', () => {
+    expect(parseAnnotationLine('@point 0,5 мусор')).toEqual({ annotations: [] })
+    expect(parseAnnotationLine('@point arrow,')).toEqual({ annotations: [] })
   })
 
   it('scales percentages down', () => {
@@ -183,16 +232,12 @@ describe('parseAnnotationLine: numbers', () => {
 describe('parseAnnotationLine: labels', () => {
   it('strips one layer of «», "", \'\', (), []', () => {
     for (const wrapped of ['«Сюда»', '"Сюда"', "'Сюда'", '(Сюда)', '[Сюда]']) {
-      expect(parseAnnotationLine(`@point arrow 0.1 0.2 0.3 0.4 ${wrapped}`)?.annotations[0].label).toBe(
-        'Сюда'
-      )
+      expect(parseAnnotationLine(`@point arrow 0.1 0.2 0.3 0.4 ${wrapped}`)?.annotations[0].label).toBe('Сюда')
     }
   })
 
   it('joins multi-word labels and collapses whitespace', () => {
-    expect(
-      parseAnnotationLine('@point arrow 0.1 0.2 0.3 0.4 «нажми   сюда»')?.annotations[0].label
-    ).toBe('нажми сюда')
+    expect(parseAnnotationLine('@point arrow 0.1 0.2 0.3 0.4 «нажми   сюда»')?.annotations[0].label).toBe('нажми сюда')
   })
 
   it('drops a label that is only quotes', () => {
@@ -204,8 +249,7 @@ describe('parseAnnotationLine: labels', () => {
   })
 
   it('truncates a label longer than 90 characters with an ellipsis', () => {
-    const label = parseAnnotationLine(`@point arrow 0.1 0.2 0.3 0.4 ${'я'.repeat(200)}`)?.annotations[0]
-      .label
+    const label = parseAnnotationLine(`@point arrow 0.1 0.2 0.3 0.4 ${'я'.repeat(200)}`)?.annotations[0].label
 
     expect(label).toHaveLength(90)
     expect(label?.endsWith('…')).toBe(true)
@@ -213,56 +257,40 @@ describe('parseAnnotationLine: labels', () => {
   })
 
   it('keeps a label of exactly 90 characters intact', () => {
-    expect(
-      parseAnnotationLine(`@point arrow 0.1 0.2 0.3 0.4 ${'я'.repeat(90)}`)?.annotations[0].label
-    ).toBe('я'.repeat(90))
+    expect(parseAnnotationLine(`@point arrow 0.1 0.2 0.3 0.4 ${'я'.repeat(90)}`)?.annotations[0].label).toBe(
+      'я'.repeat(90)
+    )
   })
 })
 
 describe('isDrawable', () => {
   it('accepts a normal shape', () => {
-    expect(
-      isDrawable({ kind: 'arrow', from: { x: 0.1, y: 0.2 }, to: { x: 0.3, y: 0.4 } })
-    ).toBe(true)
+    expect(isDrawable({ kind: 'arrow', from: { x: 0.1, y: 0.2 }, to: { x: 0.3, y: 0.4 } })).toBe(true)
   })
 
   it('rejects a point outside the image', () => {
-    expect(
-      isDrawable({ kind: 'arrow', from: { x: -0.1, y: 0.5 }, to: { x: 0.6, y: 0.5 } })
-    ).toBe(false)
-    expect(
-      isDrawable({ kind: 'arrow', from: { x: 0.5, y: 0.5 }, to: { x: 1.1, y: 0.5 } })
-    ).toBe(false)
+    expect(isDrawable({ kind: 'arrow', from: { x: -0.1, y: 0.5 }, to: { x: 0.6, y: 0.5 } })).toBe(false)
+    expect(isDrawable({ kind: 'arrow', from: { x: 0.5, y: 0.5 }, to: { x: 1.1, y: 0.5 } })).toBe(false)
   })
 
   it('rejects a zero-length circle, arrow and underline', () => {
     for (const kind of ['circle', 'arrow', 'underline'] as const) {
-      expect(isDrawable({ kind, from: { x: 0.5, y: 0.5 }, to: { x: 0.5, y: 0.5 } }), kind).toBe(
-        false
-      )
+      expect(isDrawable({ kind, from: { x: 0.5, y: 0.5 }, to: { x: 0.5, y: 0.5 } }), kind).toBe(false)
     }
   })
 
   it('accepts a zero-length box only when both sides exceed the minimum', () => {
-    expect(
-      isDrawable({ kind: 'box', from: { x: 0.1, y: 0.1 }, to: { x: 0.5, y: 0.101 } })
-    ).toBe(false)
+    expect(isDrawable({ kind: 'box', from: { x: 0.1, y: 0.1 }, to: { x: 0.5, y: 0.101 } })).toBe(false)
     expect(isDrawable({ kind: 'box', from: { x: 0.1, y: 0.1 }, to: { x: 0.5, y: 0.5 } })).toBe(true)
   })
 
   it('rejects a box wider or taller than 0.95 of the screen', () => {
-    expect(isDrawable({ kind: 'box', from: { x: 0.01, y: 0.01 }, to: { x: 0.99, y: 0.99 } })).toBe(
-      false
-    )
+    expect(isDrawable({ kind: 'box', from: { x: 0.01, y: 0.01 }, to: { x: 0.99, y: 0.99 } })).toBe(false)
     expect(isDrawable({ kind: 'box', from: { x: 0, y: 0 }, to: { x: 1, y: 1 } })).toBe(false)
     // Just under the limit on both axes is still drawable.
-    expect(isDrawable({ kind: 'box', from: { x: 0.02, y: 0.02 }, to: { x: 0.96, y: 0.96 } })).toBe(
-      true
-    )
+    expect(isDrawable({ kind: 'box', from: { x: 0.02, y: 0.02 }, to: { x: 0.96, y: 0.96 } })).toBe(true)
     // Exactly 0.95 on one axis is already rejected.
-    expect(isDrawable({ kind: 'box', from: { x: 0.02, y: 0.02 }, to: { x: 0.97, y: 0.9 } })).toBe(
-      false
-    )
+    expect(isDrawable({ kind: 'box', from: { x: 0.02, y: 0.02 }, to: { x: 0.97, y: 0.9 } })).toBe(false)
   })
 
   it('accepts shapes that touch the border', () => {

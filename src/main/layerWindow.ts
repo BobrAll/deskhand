@@ -25,23 +25,27 @@
  * do not — see `denyExternalLinks.ts`) and the module-specific `closed` reset.
  */
 
-import { join } from 'node:path'
 import { BrowserWindow } from 'electron'
 import type { ScreenRect } from '@shared/types'
 import { denyExternalLinks } from './denyExternalLinks'
 import { loadPage } from './pageLoad'
+import { preloadPath } from './preloadPath'
 
 /** How long to wait for a layer's page before painting anyway. */
 const LOAD_TIMEOUT_MS = 1500
 
 export interface LayerWindowOptions {
-  /** Renderer entry to load: `'drawing'`, `'cursor'` or `'presenter'`. */
+  /** Renderer entry to load: `'drawing'`, `'cursor'`, `'highlight'` or `'presenter'`. */
   page: string
   /**
    * Whether the layer accepts the first click. `drawing.ts` passes `true`;
    * the agent's two layers pass `false`. The values are not unified.
    */
   acceptFirstMouse: boolean
+  /** Native frost behind the layer, for surfaces that should read as glass. */
+  vibrancy?: 'under-window'
+  /** Clip the native window and its blur to the rounded CSS silhouette. */
+  roundedCorners?: boolean
   /** Case-insensitive `^https?:\/\/` in the window-open handler. */
   matchSchemeCaseInsensitively?: boolean
   /** Runs on `closed`, after the window's own state has been dropped. */
@@ -72,9 +76,11 @@ export function createLayerWindow(options: LayerWindowOptions): BrowserWindow {
     focusable: false,
     skipTaskbar: true,
     acceptFirstMouse: options.acceptFirstMouse,
-    roundedCorners: false,
+    roundedCorners: options.roundedCorners === true,
+    vibrancy: options.vibrancy,
+    visualEffectState: options.vibrancy ? 'active' : undefined,
     webPreferences: {
-      preload: join(__dirname, '../preload/index.js'),
+      preload: preloadPath,
       sandbox: false,
       contextIsolation: true,
       nodeIntegration: false
@@ -140,8 +146,7 @@ export function ensureLayerWindow(
   create: () => BrowserWindow,
   options: EnsureLayerWindowOptions = {}
 ): Promise<BrowserWindow | null> {
-  const stillOpen = (): BrowserWindow | null =>
-    state.window && !state.window.isDestroyed() ? state.window : null
+  const stillOpen = (): BrowserWindow | null => (state.window && !state.window.isDestroyed() ? state.window : null)
 
   const live = state.window
   if (live && !live.isDestroyed() && state.loaded) return state.loaded.then(stillOpen)

@@ -90,6 +90,18 @@ export function hasUnsaved(
 }
 
 /**
+ * Whether a finished write covers the draft on screen.
+ *
+ * The store answers a write after a round trip, and the user may have typed since.
+ * Saying «Применено» for a snapshot the draft has moved past would claim the
+ * newest edit is on disk while it is still waiting for its own write — and would
+ * release the close hold during exactly that gap.
+ */
+export function writeCoversDraft(written: string, draft: AppSettings | null): boolean {
+  return draft !== null && JSON.stringify(draft) === written
+}
+
+/**
  * The draft as it can actually be written, for the explicit paths (⌘S, closing).
  *
  * Revert incomplete fields to their saved values so normalization does not

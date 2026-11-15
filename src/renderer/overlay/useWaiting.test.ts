@@ -4,12 +4,19 @@ let cleanup: (() => void) | undefined
 const update = vi.fn()
 vi.mock('react', () => ({
   useState: (value: unknown) => [value, update],
-  useEffect: (effect: () => (() => void) | undefined) => { cleanup = effect() }
+  useEffect: (effect: () => (() => void) | undefined) => {
+    cleanup = effect()
+  }
 }))
 import { useWaiting } from './useWaiting'
 import { waitingStage } from './waiting'
 
-afterEach(() => { cleanup?.(); cleanup = undefined; update.mockClear(); vi.useRealTimers() })
+afterEach(() => {
+  cleanup?.()
+  cleanup = undefined
+  update.mockClear()
+  vi.useRealTimers()
+})
 
 it('shows status, one tip, then a long-wait message on the same request', () => {
   vi.useFakeTimers()

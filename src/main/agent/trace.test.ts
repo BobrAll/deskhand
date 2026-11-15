@@ -12,18 +12,32 @@ it('records concurrent turns with separate IDs and pairs overlapping spans', asy
   getPath.mockReturnValue(directory)
   vi.stubEnv('DESKHAND_AGENT_TRACE', '1')
   try {
-    await Promise.all(['first', 'second'].map((name) =>
-      traceTurn({ name }, () => timed('work', async () => { trace('checkpoint') }))))
+    await Promise.all(
+      ['first', 'second'].map((name) =>
+        traceTurn({ name }, () =>
+          timed('work', async () => {
+            trace('checkpoint')
+          })
+        )
+      )
+    )
     await vi.waitFor(async () => {
       const raw = await readFile(join(directory, 'agent-trace.jsonl'), 'utf8')
-      const events = raw.trim().split('\n').map((line) => JSON.parse(line))
+      const events = raw
+        .trim()
+        .split('\n')
+        .map((line) => JSON.parse(line))
       expect(events).toHaveLength(10)
       const starts = events.filter((event) => event.event === 'turn.start')
       expect(new Set(starts.map((event) => event.turn)).size).toBe(2)
       for (const start of starts) {
         const own = events.filter((event) => event.turn === start.turn)
         expect(own.map((event) => event.event)).toEqual([
-          'turn.start', 'work.start', 'checkpoint', 'work.end', 'turn.end'
+          'turn.start',
+          'work.start',
+          'checkpoint',
+          'work.end',
+          'turn.end'
         ])
         expect(own[1].span).toBe(own[3].span)
         expect(own[3].durationMs).toBeGreaterThanOrEqual(0)
@@ -69,7 +83,9 @@ it('opens a turn when there is none, so a run from an untraced path still record
     // has to come after the turn closes.
     await flushTrace()
     const events = (await readFile(join(directory, 'agent-trace.jsonl'), 'utf8'))
-      .trim().split('\n').map((line) => JSON.parse(line))
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line))
     expect(events.map((event) => event.event)).toEqual(['turn.start', 'agent.start', 'turn.end'])
     expect(events[1].turn).toBe(events[0].turn)
   } finally {
@@ -94,7 +110,9 @@ it('files a late callback under the turn that is open, not the one it came from'
       // Created here, in this turn, and never cleared: exactly the shape of the
       // sidecar's stdout listener.
       setTimeout(() => trace('agent.step', { step: 1 }), 120)
-      await new Promise<void>((resolve) => { releaseFirst = resolve })
+      await new Promise<void>((resolve) => {
+        releaseFirst = resolve
+      })
     })
     await traceTurn({ name: 'second' }, async () => {
       releaseFirst()
@@ -104,7 +122,9 @@ it('files a late callback under the turn that is open, not the one it came from'
     await firstDone
     await flushTrace()
     const events = (await readFile(join(directory, 'agent-trace.jsonl'), 'utf8'))
-      .trim().split('\n').map((line) => JSON.parse(line))
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line))
     const steps = events.filter((event) => event.event === 'agent.step')
     expect(steps).toHaveLength(1)
     const second = events.find((event) => event.event === 'turn.start' && event.name === 'second')
@@ -127,7 +147,9 @@ it('reuses the enclosing turn instead of starting a second one', async () => {
       })
     })
     const events = (await readFile(join(directory, 'agent-trace.jsonl'), 'utf8'))
-      .trim().split('\n').map((line) => JSON.parse(line))
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line))
     // One turn, not two: a nested turn would split one run across two ids and
     // break every "how long did this run take" question.
     expect(new Set(events.map((event) => event.turn)).size).toBe(1)

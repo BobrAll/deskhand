@@ -30,6 +30,9 @@ const MARKERS = ['point', 'draw', ...KINDS]
 
 const MARKER = new RegExp(`^@(?:${MARKERS.join('|')})\\b`, 'i')
 
+/** `@` followed by the word the model is typing, so it can be matched against `MARKERS`. */
+const MARKER_NAME = /^@([A-Za-z]*)/
+
 /**
  * The smallest extent, in 0–1 units, that a drawing can have and still be meant.
  *
@@ -61,6 +64,51 @@ function clamp01(value: number): number {
   return Math.min(1, Math.max(0, value))
 }
 
+/**
+ * One coordinate in 0–1 units.
+ *
+ * A value above the percentage threshold is a coordinate the model wrote as 50
+ * instead of 0.5, so it is divided by a hundred; whatever is left is clamped into
+ * the image, because every consumer expects 0–1.
+ */
+function coordinate(value: number): number {
+  return clamp01(Math.abs(value) > PERCENT_COORDINATE ? value / 100 : value)
+}
+
+/**
+ * Splits the part after the marker into tokens.
+ *
+ * The only comma that does not separate values is the decimal comma between two
+ * digits ("0,5"); it belongs to the number unless the number already has a
+ * decimal point ("0.5,0.8"). That is what makes the spaced form with trailing
+ * commas ("arrow, 0.5, 0.8"), the compact list ("0.5,0.8,0.3,0.4") and the
+ * decimal comma read as the same line.
+ */
+function markerTokens(rest: string): string[] {
+  const tokens: string[] = []
+  let token = ''
+  for (let index = 0; index < rest.length; index += 1) {
+    const char = rest[index]
+    if (char === ',' && isDecimalComma(rest, index, token)) {
+      token += '.'
+    } else if (/[\s;,]/.test(char)) {
+      tokens.push(token)
+      token = ''
+    } else {
+      token += char
+    }
+  }
+  tokens.push(token)
+  return tokens.filter(Boolean)
+}
+
+/** Whether the comma at `index` is the decimal comma inside the token so far. */
+function isDecimalComma(rest: string, index: number, token: string): boolean {
+  const digitBefore = /\d/.test(rest[index - 1] ?? '')
+  const digitAfter = /\d/.test(rest[index + 1] ?? '')
+  return digitBefore && digitAfter && !token.includes('.')
+}
+
 function cleanLabel(raw: string): string | undefined {
   const label = raw
     .trim()
@@ -74,6 +122,22 @@ function cleanLabel(raw: string): string | undefined {
 }
 
 /**
+ * Whether `text` could still grow into a drawing marker once more characters
+ * arrive.
+ *
+ * The stream parser needs this to decide what to hold back: `@po` may become
+ * `@point` two deltas later, while `@username` is ordinary text from its first
+ * character. The test is on the word after the `@`, so the answer does not
+ * depend on where the network cut the chunk.
+ */
+export function couldStartMarker(text: string): boolean {
+  const match = MARKER_NAME.exec(text)
+  if (!match) return false
+  const name = match[1].toLowerCase()
+  return MARKERS.some((marker) => marker.startsWith(name))
+}
+
+/**
  * Parses one line. Returns `null` when the line is not protocol syntax at all,
  * and an empty `annotations` list when it looked like protocol syntax but could
  * not be used (garbage coordinates) — the caller then drops the line instead of
@@ -83,10 +147,10 @@ export function parseAnnotationLine(line: string): ParsedLine | null {
   const trimmed = line.trim()
   if (!MARKER.test(trimmed)) return null
 
-  // Everything after the leading marker, split on whitespace and commas so both
-  // "@point arrow 0.5 0.8 0.8 0.1" and "@point arrow, 0.5, 0.8, 0.8, 0.1" work.
+  // Everything after the leading marker, as the model may write it: spaced, with
+  // commas between values, compact, or with a decimal comma.
   const rest = trimmed.replace(/^@[A-Za-z]+\s*/, '')
-  const tokens = rest.split(/[\s,;]+/).filter(Boolean)
+  const tokens = markerTokens(rest)
 
   let kind: AnnotationKind = 'circle'
   let index = 0
@@ -98,8 +162,7 @@ export function parseAnnotationLine(line: string): ParsedLine | null {
 
   const numbers: number[] = []
   while (index < tokens.length && numbers.length < 4) {
-    const token = tokens[index]
-    const value = Number.parseFloat(token.replace(',', '.'))
+    const value = Number.parseFloat(tokens[index])
     if (!Number.isFinite(value)) break
     numbers.push(value)
     index += 1
@@ -114,13 +177,10 @@ export function parseAnnotationLine(line: string): ParsedLine | null {
 
   // Two numbers describe a circle centre plus a default radius; four describe a
   // full start→end pair. Coordinates may be given as percentages by accident.
-  const scaled = numbers.map((value) =>
-    Math.abs(value) > PERCENT_COORDINATE ? value / 100 : value
-  )
-  const x1 = clamp01(scaled[0])
-  const y1 = clamp01(scaled[1])
-  const x2 = scaled.length >= 4 ? clamp01(scaled[2]) : clamp01(x1 + DEFAULT_SIDE)
-  const y2 = scaled.length >= 4 ? clamp01(scaled[3]) : clamp01(y1 + DEFAULT_SIDE)
+  const x1 = coordinate(numbers[0])
+  const y1 = coordinate(numbers[1])
+  const x2 = numbers.length >= 4 ? coordinate(numbers[2]) : clamp01(x1 + DEFAULT_SIDE)
+  const y2 = numbers.length >= 4 ? coordinate(numbers[3]) : clamp01(y1 + DEFAULT_SIDE)
 
   const from: Point01 = { x: x1, y: y1 }
   const to: Point01 = { x: x2, y: y2 }
@@ -142,9 +202,7 @@ export function parseAnnotationLine(line: string): ParsedLine | null {
  */
 export function isDrawable(annotation: Annotation): boolean {
   const { from, to, kind } = annotation
-  const inside = [from, to].every(
-    (point) => point.x >= 0 && point.x <= 1 && point.y >= 0 && point.y <= 1
-  )
+  const inside = [from, to].every((point) => point.x >= 0 && point.x <= 1 && point.y >= 0 && point.y <= 1)
   if (!inside) return false
   const width = Math.abs(to.x - from.x)
   const height = Math.abs(to.y - from.y)

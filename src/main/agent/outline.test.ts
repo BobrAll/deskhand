@@ -92,8 +92,7 @@ describe('formatOutline: which elements are listed', () => {
   })
 
   it('drops an element with no visible name', () => {
-    expect(formatOutline(probe([element({ title: '', description: '', value: '' })]), null, area))
-      .toBeNull()
+    expect(formatOutline(probe([element({ title: '', description: '', value: '' })]), null, area)).toBeNull()
     expect(formatOutline(probe([element({ title: '   ' })]), null, area)).toBeNull()
   })
 
@@ -104,12 +103,15 @@ describe('formatOutline: which elements are listed', () => {
 
 describe('formatOutline: how a name is chosen', () => {
   it('prefers title, then description, then value', () => {
-    expect(body(formatOutline(probe([element({ title: 'T', description: 'D', value: 'V' })]), null, area)))
-      .toEqual(['  0.140 0.144  кнопка «T»'])
-    expect(body(formatOutline(probe([element({ title: undefined, description: 'D', value: 'V' })]), null, area)))
-      .toEqual(['  0.140 0.144  кнопка «D»'])
-    expect(body(formatOutline(probe([element({ title: undefined, description: undefined, value: 'V' })]), null, area)))
-      .toEqual(['  0.140 0.144  кнопка «V»'])
+    expect(body(formatOutline(probe([element({ title: 'T', description: 'D', value: 'V' })]), null, area))).toEqual([
+      '  0.140 0.144  кнопка «T»'
+    ])
+    expect(
+      body(formatOutline(probe([element({ title: undefined, description: 'D', value: 'V' })]), null, area))
+    ).toEqual(['  0.140 0.144  кнопка «D»'])
+    expect(
+      body(formatOutline(probe([element({ title: undefined, description: undefined, value: 'V' })]), null, area))
+    ).toEqual(['  0.140 0.144  кнопка «V»'])
   })
 
   it('never uses the value of an editable as its name', () => {
@@ -130,8 +132,9 @@ describe('formatOutline: how a name is chosen', () => {
   })
 
   it('collapses whitespace and trims', () => {
-    expect(body(formatOutline(probe([element({ title: '  Экспорт \n  PDF  ' })]), null, area)))
-      .toEqual(['  0.140 0.144  кнопка «Экспорт PDF»'])
+    expect(body(formatOutline(probe([element({ title: '  Экспорт \n  PDF  ' })]), null, area))).toEqual([
+      '  0.140 0.144  кнопка «Экспорт PDF»'
+    ])
   })
 
   it('truncates a long name to 46 characters with an ellipsis', () => {
@@ -189,11 +192,7 @@ describe('formatOutline: order, dedup and the cap', () => {
   })
 
   it('dedupes the same name at the same rounded position', () => {
-    const outline = formatOutline(
-      probe([element(), element(), element({ title: 'другой' })]),
-      null,
-      area
-    )
+    const outline = formatOutline(probe([element(), element(), element({ title: 'другой' })]), null, area)
     expect(body(outline)).toHaveLength(2)
   })
 

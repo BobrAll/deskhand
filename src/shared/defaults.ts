@@ -80,8 +80,8 @@ export function normalizeBaseUrl(input: unknown): string {
   const suffix = suffixStart === -1 ? '' : value.slice(suffixStart)
   const root = suffixStart === -1 ? value : value.slice(0, suffixStart)
   // Users often paste the full endpoint instead of the API root.
-  value = root.replace(/\/+$/, '')
-    .replace(/\/(chat\/completions|messages|responses|audio\/speech|models|key)$/i, '') + suffix
+  value =
+    root.replace(/\/+$/, '').replace(/\/(chat\/completions|messages|responses|audio\/speech|models|key)$/i, '') + suffix
   if (!/^https?:\/\/[^\s/]+/i.test(value)) return ''
   try {
     // Throws on things like "https://" with no host.
@@ -208,12 +208,22 @@ export function isVoiceModelFile(name: string): boolean {
   return /^ggml-[^/\\]*\.bin$/.test(name)
 }
 
+/** The longest press push-to-talk accepts, in milliseconds. */
+export const MAX_VOICE_DURATION_MS = 10 * 60_000
+
+/** The single voice hold shipped before the dictation one was split off. */
+const LEGACY_VOICE_HOTKEY = 'Alt+Shift+Space'
+
 /** Key held to talk, language and what to do with the transcript. */
 export const DEFAULT_VOICE: VoiceSettings = {
   enabled: true,
-  // Separate from the main hotkey: the push-to-talk combination is swallowed by
-  // the keyboard tap, so it must never be the same as the "type instead" one.
-  hotkey: 'Alt+Shift+Space',
+  // Modifier-only on purpose: the tap watches `flagsChanged`, so no key is
+  // swallowed and the combination is free to be a pair of modifiers. Both voice
+  // combinations stay clear of the chat hotkey, which owns Alt+Space.
+  hotkey: 'Control+Alt',
+  // Always dictates, whatever `action` says; the main hotkey follows the
+  // setting. Fn is a modifier flag on macOS, so this is a hold, not a chord.
+  dictationHotkey: 'Fn+Control',
   model: BUNDLED_VOICE_MODEL.id,
   // `ru` rather than `auto`: detection on a three-word command is the most
   // common source of "он меня не понял" for a Russian-speaking user.
@@ -247,7 +257,8 @@ export const DEFAULT_TTS: TtsSettings = {
   model: '',
   voice: '',
   style: '',
-  sileroVoice: SILERO_DEFAULT_SPEAKER
+  sileroVoice: SILERO_DEFAULT_SPEAKER,
+  pronunciationLookup: true
 }
 
 export const WHISPER_LANGUAGES: Array<{ id: string; label: string }> = [
@@ -291,7 +302,11 @@ export const DEFAULT_AGENT: AgentSettings = {
   // Show what is happening: the target window comes forward and a pointer
   // travels to the element. This is presentation only — the same tools run when
   // it is off — and it is the switch a background mode will turn off.
-  showActions: true
+  showActions: true,
+  // Off: the per-run files copy the prompt, the window title and the request
+  // bodies, screenshots included. They exist for debugging a single bad run and
+  // must be asked for, never collected by default.
+  saveRunTraces: false
 }
 
 /**
@@ -362,6 +377,16 @@ function clamp(value: unknown, min: number, max: number, fallback: number): numb
   return Math.min(max, Math.max(min, num))
 }
 
+/** A stored boolean, or the default when the value is anything else. */
+function bool(value: unknown, fallback: boolean): boolean {
+  return typeof value === 'boolean' ? value : fallback
+}
+
+/** A stored number rounded to a whole value and kept inside the setting's range. */
+function boundedInt(value: unknown, bounds: { readonly min: number; readonly max: number }, fallback: number): number {
+  return Math.round(clamp(value, bounds.min, bounds.max, fallback))
+}
+
 function sanitizeStringList(input: unknown, fallback: string[]): string[] {
   if (!Array.isArray(input)) return fallback
   const list = input
@@ -384,13 +409,11 @@ function sanitizeVoiceModel(value: unknown): string {
 
 /** A short language code, lower-cased; `auto` passes through like any other. */
 function sanitizeLanguage(value: unknown): string {
-  return typeof value === 'string' && value.trim()
-    ? value.trim().toLowerCase().slice(0, 8)
-    : DEFAULT_VOICE.language
+  return typeof value === 'string' && value.trim() ? value.trim().toLowerCase().slice(0, 8) : DEFAULT_VOICE.language
 }
 
-function sanitizeHotkey(value: unknown): string {
-  return typeof value === 'string' && value.trim() ? value.trim() : DEFAULT_VOICE.hotkey
+function sanitizeHotkey(value: unknown, fallback: string): string {
+  return typeof value === 'string' && value.trim() ? value.trim() : fallback
 }
 
 /** `dictate` is the only second action; anything else sends the transcript to the model. */
@@ -404,23 +427,26 @@ function sanitizeDuration(value: unknown, min: number, max: number, fallback: nu
 }
 
 function sanitizeVoice(input: unknown): VoiceSettings {
-  const raw = (typeof input === 'object' && input !== null ? input : {}) as Partial<VoiceSettings> & { dialogue?: unknown }
+  const raw = (typeof input === 'object' && input !== null ? input : {}) as Partial<VoiceSettings> & {
+    dialogue?: unknown
+  }
+  // Settings from before the split have no `dictationHotkey`. When the only
+  // stored hold is the old default, move it to the new pair instead of keeping
+  // the retired combination forever; an explicit choice survives once the new
+  // field exists.
+  const legacyDefault = raw.dictationHotkey === undefined && raw.hotkey === LEGACY_VOICE_HOTKEY
   return {
-    enabled: typeof raw.enabled === 'boolean' ? raw.enabled : DEFAULT_VOICE.enabled,
-    hotkey: sanitizeHotkey(raw.hotkey),
+    enabled: bool(raw.enabled, DEFAULT_VOICE.enabled),
+    hotkey: legacyDefault ? DEFAULT_VOICE.hotkey : sanitizeHotkey(raw.hotkey, DEFAULT_VOICE.hotkey),
+    dictationHotkey: sanitizeHotkey(raw.dictationHotkey, DEFAULT_VOICE.dictationHotkey),
     model: sanitizeVoiceModel(raw.model),
     language: sanitizeLanguage(raw.language),
     action: sanitizeVoiceAction(raw.action),
     answerVoice: sanitizeAnswerVoice(raw),
     agentFeedback: raw.agentFeedback !== false,
-    autoSend: typeof raw.autoSend === 'boolean' ? raw.autoSend : DEFAULT_VOICE.autoSend,
+    autoSend: bool(raw.autoSend, DEFAULT_VOICE.autoSend),
     minDurationMs: sanitizeDuration(raw.minDurationMs, 0, 5_000, DEFAULT_VOICE.minDurationMs),
-    maxDurationMs: sanitizeDuration(
-      raw.maxDurationMs,
-      1_000,
-      10 * 60_000,
-      DEFAULT_VOICE.maxDurationMs
-    )
+    maxDurationMs: sanitizeDuration(raw.maxDurationMs, 1_000, MAX_VOICE_DURATION_MS, DEFAULT_VOICE.maxDurationMs)
   }
 }
 
@@ -456,7 +482,8 @@ function sanitizeTts(input: unknown): TtsSettings {
     model: text(raw.model).slice(0, 120),
     voice: legacySpeaker ? '' : voice,
     style: text(raw.style).slice(0, 300),
-    sileroVoice: explicitSpeaker ? sileroSpeaker(explicitSpeaker) : legacySpeaker ? voice : SILERO_DEFAULT_SPEAKER
+    sileroVoice: explicitSpeaker ? sileroSpeaker(explicitSpeaker) : legacySpeaker ? voice : SILERO_DEFAULT_SPEAKER,
+    pronunciationLookup: raw.pronunciationLookup !== false
   }
 }
 
@@ -465,13 +492,15 @@ const MAX_REMEMBERED_APPROVALS = 256
 
 function sanitizeAgent(input: unknown): AgentSettings {
   const raw = (typeof input === 'object' && input !== null ? input : {}) as Partial<AgentSettings>
-  const flag = (value: unknown, fallback: boolean): boolean =>
-    typeof value === 'boolean' ? value : fallback
   return {
     rememberedApprovals: Array.isArray(raw.rememberedApprovals)
-      ? [...new Set(raw.rememberedApprovals.filter(value => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value)))].slice(-MAX_REMEMBERED_APPROVALS)
+      ? [
+          ...new Set(
+            raw.rememberedApprovals.filter((value) => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value))
+          )
+        ].slice(-MAX_REMEMBERED_APPROVALS)
       : [],
-    enabled: flag(raw.enabled, DEFAULT_AGENT.enabled),
+    enabled: bool(raw.enabled, DEFAULT_AGENT.enabled),
     // Only the floor is enforced: a typo cannot produce a zero-step run, but the
     // user decides how large the budget is. The field is a text input, not a
     // preset, so an upper bound here would silently rewrite what they typed.
@@ -479,18 +508,20 @@ function sanitizeAgent(input: unknown): AgentSettings {
       typeof raw.maxSteps === 'number' && Number.isFinite(raw.maxSteps)
         ? Math.max(1, Math.round(raw.maxSteps))
         : DEFAULT_AGENT.maxSteps,
-    abortOnMouseMove: flag(raw.abortOnMouseMove, DEFAULT_AGENT.abortOnMouseMove),
-    verifyResult: flag(raw.verifyResult, DEFAULT_AGENT.verifyResult),
-    showActions: flag(raw.showActions, DEFAULT_AGENT.showActions)
+    abortOnMouseMove: bool(raw.abortOnMouseMove, DEFAULT_AGENT.abortOnMouseMove),
+    verifyResult: bool(raw.verifyResult, DEFAULT_AGENT.verifyResult),
+    showActions: bool(raw.showActions, DEFAULT_AGENT.showActions),
+    saveRunTraces: bool(raw.saveRunTraces, DEFAULT_AGENT.saveRunTraces)
   }
 }
 
 /** Coerces anything coming from disk or IPC into a valid settings object. */
 export function normalizeSettings(input: unknown): AppSettings {
   const raw = (typeof input === 'object' && input !== null ? input : {}) as Partial<AppSettings>
-  const baseUrls = (
-    typeof raw.baseUrls === 'object' && raw.baseUrls !== null ? raw.baseUrls : {}
-  ) as Record<string, unknown>
+  const baseUrls = (typeof raw.baseUrls === 'object' && raw.baseUrls !== null ? raw.baseUrls : {}) as Record<
+    string,
+    unknown
+  >
   return {
     provider: PROVIDERS.some((provider) => provider.id === raw.provider)
       ? (raw.provider as ProviderId)
@@ -509,44 +540,25 @@ export function normalizeSettings(input: unknown): AppSettings {
       SETTINGS_BOUNDS.temperature.max,
       DEFAULT_SETTINGS.temperature
     ),
-    maxTokens: Math.round(clamp(
-      raw.maxTokens,
-      SETTINGS_BOUNDS.maxTokens.min,
-      SETTINGS_BOUNDS.maxTokens.max,
-      DEFAULT_SETTINGS.maxTokens
-    )),
+    maxTokens: boundedInt(raw.maxTokens, SETTINGS_BOUNDS.maxTokens, DEFAULT_SETTINGS.maxTokens),
     systemPrompt:
-      typeof raw.systemPrompt === 'string' && raw.systemPrompt.trim()
-        ? raw.systemPrompt
-        : DEFAULT_SYSTEM_PROMPT,
-    hotkey:
-      typeof raw.hotkey === 'string' && raw.hotkey.trim() ? raw.hotkey.trim() : DEFAULT_SETTINGS.hotkey,
-    captureScreenshotByDefault:
-      typeof raw.captureScreenshotByDefault === 'boolean'
-        ? raw.captureScreenshotByDefault
-        : DEFAULT_SETTINGS.captureScreenshotByDefault,
-    screenshotMaxSide: Math.round(clamp(
+      typeof raw.systemPrompt === 'string' && raw.systemPrompt.trim() ? raw.systemPrompt : DEFAULT_SYSTEM_PROMPT,
+    hotkey: typeof raw.hotkey === 'string' && raw.hotkey.trim() ? raw.hotkey.trim() : DEFAULT_SETTINGS.hotkey,
+    captureScreenshotByDefault: bool(raw.captureScreenshotByDefault, DEFAULT_SETTINGS.captureScreenshotByDefault),
+    screenshotMaxSide: boundedInt(
       raw.screenshotMaxSide,
-      SETTINGS_BOUNDS.screenshotMaxSide.min,
-      SETTINGS_BOUNDS.screenshotMaxSide.max,
+      SETTINGS_BOUNDS.screenshotMaxSide,
       DEFAULT_SETTINGS.screenshotMaxSide
-    )),
-    screenshotQuality: Math.round(clamp(
+    ),
+    screenshotQuality: boundedInt(
       raw.screenshotQuality,
-      SETTINGS_BOUNDS.screenshotQuality.min,
-      SETTINGS_BOUNDS.screenshotQuality.max,
+      SETTINGS_BOUNDS.screenshotQuality,
       DEFAULT_SETTINGS.screenshotQuality
-    )),
+    ),
     excludedApps: sanitizeStringList(raw.excludedApps, DEFAULT_EXCLUDED_APPS),
-    rememberConversation: typeof raw.rememberConversation === 'boolean'
-      ? raw.rememberConversation
-      : DEFAULT_SETTINGS.rememberConversation,
-    launchAtLogin:
-      typeof raw.launchAtLogin === 'boolean' ? raw.launchAtLogin : DEFAULT_SETTINGS.launchAtLogin,
-    onboardingCompleted:
-      typeof raw.onboardingCompleted === 'boolean'
-        ? raw.onboardingCompleted
-        : DEFAULT_SETTINGS.onboardingCompleted,
+    rememberConversation: bool(raw.rememberConversation, DEFAULT_SETTINGS.rememberConversation),
+    launchAtLogin: bool(raw.launchAtLogin, DEFAULT_SETTINGS.launchAtLogin),
+    onboardingCompleted: bool(raw.onboardingCompleted, DEFAULT_SETTINGS.onboardingCompleted),
     voice: sanitizeVoice(raw.voice),
     tts: sanitizeTts(raw.tts),
     agent: sanitizeAgent(raw.agent)
