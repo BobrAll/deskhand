@@ -1,7 +1,7 @@
 import { useCallback, useRef, useState, type MutableRefObject } from 'react'
 import type { AgentEvent, OverlayState, RefineDirection, ResponseMode, StreamEvent } from '@shared/types'
 import { looksLikeAction } from '@shared/intent'
-import { useAgentSpeech } from './useAgentSpeech'
+import { finishTurnSpeech, type TurnKind } from './useAgentSpeech'
 import { useAnswerCopy } from './useAnswerCopy'
 import { useAnswerScroll } from './useAnswerScroll'
 import type { useSpeech } from './useSpeech'
@@ -72,7 +72,7 @@ export function useOverlayRequest({
    * The speech gate needs it after the turn is over — by the time a run ends,
    * the card no longer holds the prompt that started it.
    */
-  const turnKindRef = useRef({ spoken: false, action: false })
+  const turnKindRef = useRef<TurnKind>({ spoken: false, action: false })
   /** True when the user ended the run themselves, so its stop is not news. */
   const stoppedByUserRef = useRef(false)
   const busyRef = useRef(false)
@@ -100,7 +100,14 @@ export function useOverlayRequest({
   answerTextRef.current = answer
   busyRef.current = busy
 
-  const { onAgentSpeech, clearProgress, finishTurnSpeech } = useAgentSpeech(speechRef, turnKindRef, stoppedByUserRef)
+  /** The public face of the refs: what a reader needs, not where it is stored. */
+  const hasAnswerText = useCallback(() => answerTextRef.current.trim().length > 0, [])
+  const isBusy = useCallback(() => busyRef.current, [])
+  const currentRequestId = useCallback(() => requestIdRef.current, [])
+  const turnKind = useCallback(() => turnKindRef.current, [])
+  const markStoppedByUser = useCallback(() => {
+    stoppedByUserRef.current = true
+  }, [])
 
   /**
    * Reacts to stream events. `done` is the authoritative final text; a rewrite in
@@ -142,7 +149,16 @@ export function useOverlayRequest({
       replaceOnChunkRef.current = false
       setBusy(false)
       if (action.kind === 'done') {
-        if (speechCurrent) finishTurnSpeech(event.requestId, action.text, agentRef.current)
+        if (speechCurrent) {
+          finishTurnSpeech(
+            speechRef.current,
+            turnKindRef.current,
+            stoppedByUserRef.current,
+            event.requestId,
+            action.text,
+            agentRef.current
+          )
+        }
         setAnswer(action.text)
       } else {
         if (speechCurrent) {
@@ -159,7 +175,7 @@ export function useOverlayRequest({
         setFailure({ message: action.message, retryable: action.retryable })
       }
     },
-    [agentRef, finishTurnSpeech, setPrompt, speechRef]
+    [agentRef, setPrompt, speechRef]
   )
 
   const send = useCallback(
@@ -351,13 +367,11 @@ export function useOverlayRequest({
     copied,
     copy,
     last,
-    answerTextRef,
-    busyRef,
-    requestIdRef,
-    turnKindRef,
-    stoppedByUserRef,
-    onAgentSpeech,
-    clearProgress,
+    hasAnswerText,
+    isBusy,
+    currentRequestId,
+    turnKind,
+    markStoppedByUser,
     onStream,
     send,
     refine,

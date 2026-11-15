@@ -4,12 +4,14 @@ import { hasTextSelection, keyPolicy, type KeyAction } from './keyPolicy'
 
 interface OverlayKeysOptions {
   agentRef: MutableRefObject<AgentEvent | null>
-  answerTextRef: MutableRefObject<string>
-  busyRef: MutableRefObject<boolean>
   inputRef: MutableRefObject<HTMLTextAreaElement | null>
   promptRef: MutableRefObject<string>
   prompt: string
   answer: string
+  /** Reads whether a turn is in flight without re-registering the listener. */
+  isBusy(): boolean
+  /** Reads whether the card has an answer to copy. */
+  hasAnswerText(): boolean
   stopSpeech(): void
   markStoppedByUser(): void
   closeCard(): void
@@ -21,12 +23,12 @@ interface OverlayKeysOptions {
 
 export function useOverlayKeys({
   agentRef,
-  answerTextRef,
-  busyRef,
   inputRef,
   promptRef,
   prompt,
   answer,
+  isBusy,
+  hasAnswerText,
   stopSpeech,
   markStoppedByUser,
   closeCard,
@@ -82,13 +84,13 @@ export function useOverlayKeys({
         shift: event.shiftKey,
         tagName: (event.target as HTMLElement | null)?.tagName ?? null,
         agentPhase: agentRef.current?.phase ?? null,
-        busy: busyRef.current,
-        runActive: Boolean(agentRef.current) && busyRef.current,
+        busy: isBusy(),
+        runActive: Boolean(agentRef.current) && isBusy(),
         hasSelection: hasTextSelection(
           window.getSelection()?.toString() ?? '',
           document.activeElement === inputRef.current ? inputRef.current : null
         ),
-        hasAnswer: Boolean(answerTextRef.current.trim())
+        hasAnswer: hasAnswerText()
       })
       if (!action) return
       // ⌘C without a selection is ours; with one, `keyPolicy` has already said
@@ -99,7 +101,7 @@ export function useOverlayKeys({
 
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [agentRef, answerTextRef, busyRef, inputRef, perform])
+  }, [agentRef, hasAnswerText, inputRef, isBusy, perform])
 
   // The textarea handles Enter before the window fallback.
   const onPromptKeyDown = (event: ReactKeyboardEvent<HTMLTextAreaElement>): void => {
@@ -110,7 +112,7 @@ export function useOverlayKeys({
         shift: event.shiftKey,
         tagName: 'TEXTAREA',
         agentPhase: null,
-        busy: busyRef.current,
+        busy: isBusy(),
         runActive: false,
         hasSelection: false,
         hasAnswer: Boolean(answer.trim())

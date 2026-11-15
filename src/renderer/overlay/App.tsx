@@ -424,24 +424,24 @@ export function App() {
       )}
 
       <AnswerPanel
-        answer={answer}
-        hasAnswer={hasAnswer}
-        busy={busy}
-        answerReady={answerReady}
-        expanded={expanded}
-        newText={newText}
-        answerRef={answerRef}
-        onAnswerScroll={onAnswerScroll}
-        jumpToNewText={jumpToNewText}
-        speaking={speech.speaking}
-        speechError={speech.error}
-        toggleSpeech={() => (speech.speaking ? speech.stop() : speech.speak(answer))}
-        userWidth={userWidth}
-        wanted={wanted}
-        toggleWidth={toggleWidth}
-        copied={copied}
-        copy={copy}
-        refine={refine}
+        answer={{
+          text: answer,
+          hasAnswer,
+          busy,
+          ready: answerReady,
+          expanded,
+          newText,
+          ref: answerRef,
+          onScroll: onAnswerScroll,
+          jumpToNewText
+        }}
+        actions={{ copied, copy, refine }}
+        speech={{
+          speaking: speech.speaking,
+          error: speech.error,
+          toggle: () => (speech.speaking ? speech.stop() : speech.speak(answer))
+        }}
+        width={{ user: userWidth, wanted, toggle: toggleWidth }}
       />
 
       {notice && (

@@ -33,12 +33,12 @@ export function AgentStatus({ agent, done, running, status, hint, blockedAction,
       )}
 
       {/*
-            The confirmation, in the flow of the run rather than in a modal.
-            The question is about one named element — "нажать «Экспорт» в Safari" —
-            and a system dialog would cover the window it is asking about. Here it
-            appears where the step it belongs to appears, so the user reads the
-            run and the question as one thing.
-          */}
+        The confirmation, in the flow of the run rather than in a modal.
+        The question is about one named element — "нажать «Экспорт» в Safari" —
+        and a system dialog would cover the window it is asking about. Here it
+        appears where the step it belongs to appears, so the user reads the
+        run and the question as one thing.
+      */}
       {agent.phase === 'asking' && approval && (
         <div className="agent-ask" role="group" aria-label="Подтверждение действия">
           <div className="agent-ask-title">Нужно разрешение</div>

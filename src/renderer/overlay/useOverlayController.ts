@@ -6,6 +6,7 @@ import { useVoice } from './useVoice'
 import { useOverlayKeys } from './useOverlayKeys'
 import { useOverlayRequest } from './useOverlayRequest'
 import { useOverlayEvents } from './useOverlayEvents'
+import { useAgentSpeech } from './useAgentSpeech'
 
 /** The one notice that has a retry attached to it. */
 export const AGENT_ENABLED_NOTICE = 'Управление включено. Повтори просьбу — теперь я её выполню.'
@@ -95,13 +96,11 @@ export function useOverlayController() {
     copied,
     copy,
     last,
-    answerTextRef,
-    busyRef,
-    requestIdRef,
-    turnKindRef,
-    stoppedByUserRef,
-    onAgentSpeech,
-    clearProgress,
+    hasAnswerText,
+    isBusy,
+    currentRequestId,
+    turnKind,
+    markStoppedByUser,
     onStream,
     send,
     refine,
@@ -121,6 +120,8 @@ export function useOverlayController() {
     setUserWidth,
     setAgent
   })
+  // The run's own cues need the turn it belongs to, not the request hook's refs.
+  const { onAgentSpeech, clearProgress } = useAgentSpeech(speechRef, turnKind)
   // Voice subscriptions use the current send command without resubscribing.
   sendRef.current = (text, spoken) => send(text, undefined, spoken)
 
@@ -282,7 +283,7 @@ export function useOverlayController() {
 
   // Drawers and confirmations need room for controls. Progress and answers
   // size to their content.
-  const waiting = useWaiting(requestIdRef.current, busy && !failure && !listening)
+  const waiting = useWaiting(currentRequestId(), busy && !failure && !listening)
   const waitStage = waiting.stage
 
   /**
@@ -293,8 +294,8 @@ export function useOverlayController() {
    */
   useEffect(() => {
     if (waitStage !== 'long') return
-    speechRef.current.say('longWait', turnKindRef.current)
-  }, [turnKindRef, waitStage])
+    speechRef.current.say('longWait', turnKind())
+  }, [turnKind, waitStage])
 
   /** D1–D5: the press is over and the user is waiting to hear what happened. */
   useEffect(() => {
@@ -372,13 +373,13 @@ export function useOverlayController() {
     async (request: AgentToolRequest, allow: boolean, remember: boolean) => {
       // A refusal ends the run; the run's own «Остановлено» would repeat the
       // decision the voice is about to name.
-      if (!allow) stoppedByUserRef.current = true
+      if (!allow) markStoppedByUser()
       await window.deskhand.agent.answer(request.id, allow, remember)
       // The decision is the user's, so the line confirms it rather than the
       // agent's judgement — and the click that made it is already on the card.
-      speechRef.current.say(allow ? (remember ? 'remembered' : 'approved') : 'denied', turnKindRef.current)
+      speechRef.current.say(allow ? (remember ? 'remembered' : 'approved') : 'denied', turnKind())
     },
-    [stoppedByUserRef, turnKindRef]
+    [markStoppedByUser, turnKind]
   )
 
   /** Speech that has already been recognised and put into this card. */
@@ -412,17 +413,14 @@ export function useOverlayController() {
   }, [])
 
   const stopSpeech = useCallback(() => speechRef.current.stop(), [])
-  const markStoppedByUser = useCallback(() => {
-    stoppedByUserRef.current = true
-  }, [stoppedByUserRef])
   const onPromptKeyDown = useOverlayKeys({
     agentRef,
-    answerTextRef,
-    busyRef,
     inputRef,
     promptRef,
     prompt,
     answer,
+    isBusy,
+    hasAnswerText,
     stopSpeech,
     markStoppedByUser,
     closeCard,

@@ -3,60 +3,57 @@ import type { RefineDirection } from '@shared/types'
 import { REFINE_HINT, REFINE_LABEL } from './copy'
 import { Markdown } from './markdownText'
 
-interface Props {
-  answer: string
+interface AnswerView {
+  text: string
   hasAnswer: boolean
   busy: boolean
-  answerReady: boolean
+  ready: boolean
   expanded: boolean
   newText: boolean
-  answerRef: Ref<HTMLDivElement>
-  onAnswerScroll: UIEventHandler<HTMLDivElement>
+  ref: Ref<HTMLDivElement>
+  onScroll: UIEventHandler<HTMLDivElement>
   jumpToNewText(): void
-  speaking: boolean
-  speechError: string | null
-  toggleSpeech(): void
-  userWidth: number | null
-  wanted: number | null
-  toggleWidth(): void
+}
+
+interface AnswerActions {
   copied: boolean
   copy(): Promise<void>
   refine(direction: RefineDirection): void
 }
 
-export function AnswerPanel({
-  answer,
-  hasAnswer,
-  busy,
-  answerReady,
-  expanded,
-  newText,
-  answerRef,
-  onAnswerScroll,
-  jumpToNewText,
-  speaking,
-  speechError,
-  toggleSpeech,
-  userWidth,
-  wanted,
-  toggleWidth,
-  copied,
-  copy,
-  refine
-}: Props) {
+interface AnswerSpeech {
+  speaking: boolean
+  error: string | null
+  toggle(): void
+}
+
+interface AnswerWidth {
+  user: number | null
+  wanted: number | null
+  toggle(): void
+}
+
+interface Props {
+  answer: AnswerView
+  actions: AnswerActions
+  speech: AnswerSpeech
+  width: AnswerWidth
+}
+
+export function AnswerPanel({ answer, actions, speech, width }: Props) {
   return (
     <>
       {/*
         Only real text earns an answer row. An empty "thinking" box under the
         field is what made a voice action look like it had answered something.
       */}
-      {hasAnswer && (
+      {answer.hasAnswer && (
         <div className="answer-wrap">
-          <div ref={answerRef} className="answer" onScroll={onAnswerScroll}>
-            <Markdown text={answer} streaming={busy} caret={busy} />
+          <div ref={answer.ref} className="answer" onScroll={answer.onScroll}>
+            <Markdown text={answer.text} streaming={answer.busy} caret={answer.busy} />
           </div>
-          {newText && (
-            <button className="new-text" onClick={jumpToNewText}>
+          {answer.newText && (
+            <button className="new-text" onClick={answer.jumpToNewText}>
               ↓ Новый текст
             </button>
           )}
@@ -64,12 +61,12 @@ export function AnswerPanel({
       )}
 
       {/* The everyday actions, on one row; rewrites live in the drawer. */}
-      {hasAnswer && (!busy || speaking) && (
+      {answer.hasAnswer && (!answer.busy || speech.speaking) && (
         <div className="foot answer-actions">
-          <button className="link" onClick={toggleSpeech}>
-            {speaking ? 'Остановить озвучку' : 'Прослушать'}
+          <button className="link" onClick={speech.toggle}>
+            {speech.speaking ? 'Остановить озвучку' : 'Прослушать'}
           </button>
-          {answerReady && (
+          {answer.ready && (
             <>
               <span className="spacer" />
               {/*
@@ -82,44 +79,44 @@ export function AnswerPanel({
                 nothing, and a person who presses it once and sees no change
                 stops trusting the edge.
               */}
-              {userWidth !== null && (
-                <button className="link" title="Вернуть ширину по содержимому" onClick={toggleWidth}>
+              {width.user !== null && (
+                <button className="link" title="Вернуть ширину по содержимому" onClick={width.toggle}>
                   Вернуть
                 </button>
               )}
-              {userWidth === null && wanted !== null && (
-                <button className="link" title="Развернуть по содержимому" onClick={toggleWidth}>
+              {width.user === null && width.wanted !== null && (
+                <button className="link" title="Развернуть по содержимому" onClick={width.toggle}>
                   Шире
                 </button>
               )}
               <button
                 className="link"
-                data-copied={copied || undefined}
-                title={copied ? 'Скопировано в буфер обмена' : 'Скопировать ответ'}
-                onClick={() => void copy()}
+                data-copied={actions.copied || undefined}
+                title={actions.copied ? 'Скопировано в буфер обмена' : 'Скопировать ответ'}
+                onClick={() => void actions.copy()}
               >
-                {copied ? '✓ Скопировано' : 'Скопировать'}
+                {actions.copied ? '✓ Скопировано' : 'Скопировать'}
               </button>
             </>
           )}
         </div>
       )}
-      {speechError && (
+      {speech.error && (
         <div className="line" role="status">
-          {speechError}
+          {speech.error}
         </div>
       )}
 
-      {hasAnswer && expanded && (
+      {answer.hasAnswer && answer.expanded && (
         <div className="foot">
-          {!busy && (
+          {!answer.busy && (
             <>
               {(Object.keys(REFINE_LABEL) as RefineDirection[]).map((direction) => (
                 <button
                   key={direction}
                   className="link"
                   title={REFINE_HINT[direction]}
-                  onClick={() => refine(direction)}
+                  onClick={() => actions.refine(direction)}
                 >
                   {REFINE_LABEL[direction]}
                 </button>
