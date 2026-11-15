@@ -8,28 +8,34 @@ interface Result {
   annotations: Annotation[]
 }
 
+/** What the stream read from `chunks`: the prose, the shapes and the directive. */
+interface Parsed extends Result {
+  webLookup: boolean
+}
+
 /** Feeds `chunks`, then `finish()`, and concatenates everything the stream emitted. */
-function run(chunks: string[]): Result {
+function read(chunks: string[]): Parsed {
   const stream = new ResponseStream()
-  const out: Result = { text: '', annotations: [] }
+  const out: Parsed = { text: '', annotations: [], webLookup: false }
   const absorb = (chunk: ParsedChunk): void => {
     out.text += chunk.text
     out.annotations.push(...chunk.annotations)
   }
   for (const chunk of chunks) absorb(stream.push(chunk))
   absorb(stream.finish())
+  out.webLookup = stream.webLookup
   return out
+}
+
+function run(chunks: string[]): Result {
+  const { text, annotations } = read(chunks)
+  return { text, annotations }
 }
 
 const whole = (input: string): Result => run([input])
 
 /** Whether the stream read the input as a request for a web lookup. */
-function lookup(chunks: string[]): boolean {
-  const stream = new ResponseStream()
-  for (const chunk of chunks) stream.push(chunk)
-  stream.finish()
-  return stream.webLookup
-}
+const lookup = (chunks: string[]): boolean => read(chunks).webLookup
 
 const byChar = (input: string): string[] => [...input]
 const byTwo = (input: string): string[] => input.match(/[\s\S]{1,2}/g) ?? []
@@ -151,6 +157,16 @@ describe('ResponseStream: the web lookup marker', () => {
     expect(lookup(['@web Найди игру'])).toBe(true)
   })
 
+  it('drops only the marker line and keeps the answer after it', () => {
+    expect(run(['@web Найди игру\nГотово\n'])).toEqual({ text: 'Готово\n', annotations: [] })
+    expect(lookup(['@web Найди игру\nГотово\n'])).toBe(true)
+  })
+
+  it('matches the marker regardless of case and line ending', () => {
+    expect(whole('@WEB Найди игру\r\n').text).toBe('')
+    expect(lookup(['@Web Найди игру\r\n'])).toBe(true)
+  })
+
   it('keeps the marker when it sits inside a sentence', () => {
     expect(whole('напиши @web и всё\n').text).toBe('напиши @web и всё\n')
     expect(lookup(['напиши @web и всё\n'])).toBe(false)
@@ -159,6 +175,11 @@ describe('ResponseStream: the web lookup marker', () => {
   it('keeps a word that only starts like the marker', () => {
     expect(whole('@website это сайт\n').text).toBe('@website это сайт\n')
     expect(lookup(['@website это сайт\n'])).toBe(false)
+  })
+
+  it('does not read a marker glued to a word as a directive', () => {
+    expect(whole('@webсайт — это не команда\n').text).toBe('@webсайт — это не команда\n')
+    expect(lookup(['@webсайт — это не команда\n'])).toBe(false)
   })
 })
 
@@ -293,20 +314,20 @@ describe('ResponseStream: any chunking gives an identical result', () => {
 
   it('matches the whole-string result for every fixed chunking', () => {
     for (const input of corpus) {
-      const reference = whole(input)
+      const reference = read([input])
       const label = JSON.stringify(input)
 
-      expect(run(byChar(input)), `by char: ${label}`).toEqual(reference)
-      expect(run(byTwo(input)), `by two: ${label}`).toEqual(reference)
-      expect(run(byLine(input)), `by line: ${label}`).toEqual(reference)
+      expect(read(byChar(input)), `by char: ${label}`).toEqual(reference)
+      expect(read(byTwo(input)), `by two: ${label}`).toEqual(reference)
+      expect(read(byLine(input)), `by line: ${label}`).toEqual(reference)
     }
   })
 
   it('matches the whole-string result for random chunkings', () => {
     for (const input of corpus) {
-      const reference = whole(input)
+      const reference = read([input])
       for (let seed = 1; seed <= 20; seed += 1) {
-        expect(run(randomChunks(input, seed)), `${JSON.stringify(input)} seed ${seed}`).toEqual(
+        expect(read(randomChunks(input, seed)), `${JSON.stringify(input)} seed ${seed}`).toEqual(
           reference
         )
       }

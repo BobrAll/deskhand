@@ -34,7 +34,18 @@ const WEB_MARKER = '@web'
  * the search. What follows the marker is redundant: the search is built from the
  * user's prompt, so the rest of the line is dropped with the marker.
  */
-const WEB_LINE = /^@web\b/i
+const WEB_LINE = /^@web(?![\p{L}\p{N}_])/iu
+
+/**
+ * Whether a line the model is still writing can turn into the marker.
+ *
+ * Two shapes: `@w`/`@we`, which are not markers yet but are on their way, and
+ * `@web …`, which is decided and only waits for its newline so the raw directive
+ * never reaches the card.
+ */
+function couldBecomeWebMarker(text: string): boolean {
+  return WEB_LINE.test(text) || WEB_MARKER.startsWith(text.toLowerCase())
+}
 
 export interface ParsedChunk {
   /** Answer text with every marker removed. */
@@ -92,7 +103,7 @@ export class ResponseStream {
     // example is written with two leading spaces — is dropped whole instead of
     // leaking its indent into the answer.
     if (trimmed === '') return true
-    return couldStartMarker(trimmed) || WEB_LINE.test(trimmed) || WEB_MARKER.startsWith(trimmed.toLowerCase())
+    return couldStartMarker(trimmed) || couldBecomeWebMarker(trimmed)
   }
 
   /**

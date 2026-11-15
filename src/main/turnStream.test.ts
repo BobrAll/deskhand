@@ -376,6 +376,17 @@ describe('consumeTurnStream: execution integrity', () => {
     })).rejects.toThrow('Ответ модели оборвался')
   })
 
+  it.each(['incomplete', 'limit'] as const)(
+    'rejects a truncated lookup that carried its request on the marker line on %s',
+    async (end) => {
+      await expect(consumeTurnStream({
+        provider: fakeProvider(['@web Найди игру: симулятор'], undefined, end),
+        messages: MESSAGES, apiKey: '', streamOptions: STREAM_OPTIONS, isAlive: () => true,
+        onAnnotations: () => undefined, onText: () => undefined
+      })).rejects.toThrow('Ответ модели оборвался')
+    }
+  )
+
   it('keeps a truncated plain answer: it is still readable prose', async () => {
     const result = await consumeTurnStream({
       provider: fakeProvider(['Первое предложение. Второе предло'], undefined, 'incomplete'),
