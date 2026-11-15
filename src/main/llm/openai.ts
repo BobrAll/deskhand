@@ -4,7 +4,15 @@
 
 import { traceModelUsage } from '../agent/trace'
 import { disabledReasoning, isReasoningModel } from './reasoning'
-import { ProviderError, type ChatMessage, type ContentPart, type LlmProvider, type StreamChunk, type StreamEnd, type StreamOptions } from './provider'
+import {
+  ProviderError,
+  type ChatMessage,
+  type ContentPart,
+  type LlmProvider,
+  type StreamChunk,
+  type StreamEnd,
+  type StreamOptions
+} from './provider'
 import {
   apiEndpoint,
   apiRoot,

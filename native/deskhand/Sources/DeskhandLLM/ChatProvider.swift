@@ -1,5 +1,5 @@
-import Foundation
 import DeskhandCore
+import Foundation
 
 /// One turn in a conversation, in a provider-neutral shape.
 public struct ChatMessage: Sendable {

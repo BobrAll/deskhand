@@ -58,10 +58,7 @@ function isAppPage(url: string): boolean {
   }
 }
 
-export function denyExternalLinks(
-  win: BrowserWindow,
-  options: DenyExternalLinksOptions = {}
-): void {
+export function denyExternalLinks(win: BrowserWindow, options: DenyExternalLinksOptions = {}): void {
   const pattern = options.matchSchemeCaseInsensitively ? ANY_CASE_SCHEME : EXACT_CASE_SCHEME
   win.webContents.setWindowOpenHandler(({ url }) => {
     if (pattern.test(url)) void shell.openExternal(url)

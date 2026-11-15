@@ -1,4 +1,5 @@
 import XCTest
+
 @testable import DeskhandCore
 
 final class AXTreeRendererTests: XCTestCase {
@@ -29,10 +30,12 @@ final class AXTreeRendererTests: XCTestCase {
     }
 
     func testMarksDisabledAndSettable() {
-        let nodes = [AXNode(
-            index: 3, depth: 0, role: "AXTextField",
-            value: "hello", settable: true, enabled: false
-        )]
+        let nodes = [
+            AXNode(
+                index: 3, depth: 0, role: "AXTextField",
+                value: "hello", settable: true, enabled: false
+            )
+        ]
         let line = AXTreeRenderer.render(nodes)
         XCTAssertTrue(line.contains("[disabled]"))
         XCTAssertTrue(line.contains("[settable]"))

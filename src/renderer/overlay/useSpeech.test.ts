@@ -33,14 +33,22 @@ beforeEach(() => {
   })
   vi.stubGlobal('document', {
     hidden: true,
-    addEventListener: (name: string, fn: () => void) => { listeners[name] = fn },
+    addEventListener: (name: string, fn: () => void) => {
+      listeners[name] = fn
+    },
     removeEventListener: vi.fn()
   })
   vi.stubGlobal('window', {
     speechSynthesis: { cancel: vi.fn(), speak, getVoices: () => [{ localService: true, lang: 'ru-RU' }] },
-    addEventListener: vi.fn(), removeEventListener: vi.fn(),
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
     deskhand: {
-      voice: { onRecord: (fn: () => void) => { record = fn; return vi.fn() } },
+      voice: {
+        onRecord: (fn: () => void) => {
+          record = fn
+          return vi.fn()
+        }
+      },
       overlay: { onPreparing: () => vi.fn() },
       // No neural voice in these tests: the system voice is the last fallback,
       // which is what the assertions below can observe.
@@ -48,7 +56,12 @@ beforeEach(() => {
       settings: { load: async () => ({ settings: { voice: { answerVoice: 'system' } } }) }
     }
   })
-  vi.stubGlobal('SpeechSynthesisUtterance', class { constructor(public text: string) {} })
+  vi.stubGlobal(
+    'SpeechSynthesisUtterance',
+    class {
+      constructor(public text: string) {}
+    }
+  )
 })
 
 describe('automatic speech lifecycle', () => {
@@ -73,7 +86,7 @@ describe('automatic speech lifecycle', () => {
     expect(speak.mock.calls[0][0].rate).toBe(1.3)
     await speech.finish('one', 'Справа сверху. Затем открой меню.')
     await flush()
-    expect(speak.mock.calls.map(call => call[0].text)).toEqual(['Справа сверху.', 'Затем открой меню.'])
+    expect(speak.mock.calls.map((call) => call[0].text)).toEqual(['Справа сверху.', 'Затем открой меню.'])
   })
   it('does not speak an ordered-list marker as a sentence', async () => {
     const speech = useSpeech()
@@ -83,7 +96,7 @@ describe('automatic speech lifecycle', () => {
     expect(speak).not.toHaveBeenCalled()
     await speech.append('one', '. Второй шаг.')
     await flush()
-    expect(speak.mock.calls.map(call => call[0].text)).toEqual(['1. Первый шаг. Второй шаг.'])
+    expect(speak.mock.calls.map((call) => call[0].text)).toEqual(['1. Первый шаг. Второй шаг.'])
   })
   it('does not split a decimal number', async () => {
     const speech = useSpeech()
@@ -93,7 +106,7 @@ describe('automatic speech lifecycle', () => {
     expect(speak).not.toHaveBeenCalled()
     await speech.append('one', ' готова.')
     await flush()
-    expect(speak.mock.calls.map(call => call[0].text)).toEqual(['Версия 2.5 готова.'])
+    expect(speak.mock.calls.map((call) => call[0].text)).toEqual(['Версия 2.5 готова.'])
   })
   it('waits for the verified result of an action', async () => {
     const speech = useSpeech()
@@ -105,17 +118,20 @@ describe('automatic speech lifecycle', () => {
     await flush()
     expect(speak.mock.calls[0][0].text).toBe('Готово.')
   })
-  it.each(['Где настройки?', 'Прочитай вслух'])('keeps typed requests silent until manual playback (%s)', async (prompt) => {
-    const speech = useSpeech()
-    speech.begin('one', prompt, false)
-    await speech.append('one', 'Справа сверху.')
-    await speech.finish('one', 'Справа сверху.')
-    await flush()
-    expect(speak).not.toHaveBeenCalled()
-    speech.speak('Справа сверху.')
-    await flush()
-    expect(speak).toHaveBeenCalledOnce()
-  })
+  it.each(['Где настройки?', 'Прочитай вслух'])(
+    'keeps typed requests silent until manual playback (%s)',
+    async (prompt) => {
+      const speech = useSpeech()
+      speech.begin('one', prompt, false)
+      await speech.append('one', 'Справа сверху.')
+      await speech.finish('one', 'Справа сверху.')
+      await flush()
+      expect(speak).not.toHaveBeenCalled()
+      speech.speak('Справа сверху.')
+      await flush()
+      expect(speak).toHaveBeenCalledOnce()
+    }
+  )
   it('new recording cancels pending speech', async () => {
     const speech = useSpeech()
     speech.begin('one', 'Где настройки?', true)
@@ -169,15 +185,23 @@ describe('manual playback', () => {
       settings: { voice: { answerVoice: 'neural' } }
     })
     const synth = vi.fn(async (_text: string) => ({
-      ok: true as const, audio: 'AAA', cached: false, mime: 'audio/wav'
+      ok: true as const,
+      audio: 'AAA',
+      cached: false,
+      mime: 'audio/wav'
     }))
     window.deskhand.tts.speak = synth
     const clips: Array<{ onended: (() => void) | null }> = []
-    vi.stubGlobal('Audio', class {
-      onended: (() => void) | null = null
-      constructor(public url: string) { clips.push(this) }
-      async play(): Promise<void> {}
-    })
+    vi.stubGlobal(
+      'Audio',
+      class {
+        onended: (() => void) | null = null
+        constructor(public url: string) {
+          clips.push(this)
+        }
+        async play(): Promise<void> {}
+      }
+    )
 
     const answer = 'Первый абзац. '.repeat(60) + 'Второй абзац. '.repeat(60) + 'Последнее предложение.'
     useSpeech().speak(answer)
@@ -190,7 +214,7 @@ describe('manual playback', () => {
     }
     expect(clips).toHaveLength(3)
     const fragments = synth.mock.calls.map(([text]) => text)
-    expect(fragments.every(text => text.length <= TTS_MAX_CHARS)).toBe(true)
+    expect(fragments.every((text) => text.length <= TTS_MAX_CHARS)).toBe(true)
     expect(fragments.join(' ')).toBe(answer)
     expect(speak).not.toHaveBeenCalled()
   })
@@ -209,8 +233,7 @@ describe('manual playback', () => {
 
   it('cuts a long system answer at a sentence boundary', async () => {
     speak.mockImplementation(() => undefined)
-    const answer = 'Короткое предложение. '.repeat(5) +
-      'Очень длинное предложение без точек '.repeat(10)
+    const answer = 'Короткое предложение. '.repeat(5) + 'Очень длинное предложение без точек '.repeat(10)
 
     useSpeech().speak(answer)
     await flush()
@@ -240,7 +263,7 @@ describe('waiting acknowledgement', () => {
     expect(speak).toHaveBeenCalledOnce()
     speak.mock.calls[0][0].onend()
     await flush(20)
-    expect(speak.mock.calls.map(call => call[0].text)).toEqual(['Сейчас посмотрю.', 'Вот ответ.'])
+    expect(speak.mock.calls.map((call) => call[0].text)).toEqual(['Сейчас посмотрю.', 'Вот ответ.'])
     await vi.advanceTimersByTimeAsync(30000)
     await flush()
     expect(speak).toHaveBeenCalledTimes(2)
@@ -250,7 +273,7 @@ describe('waiting acknowledgement', () => {
     speech.begin('one', 'Вопрос', true)
     await speech.finish('one', 'Ответ.')
     await flush()
-    expect(speak.mock.calls.map(call => call[0].text)).toEqual(['Ответ.'])
+    expect(speak.mock.calls.map((call) => call[0].text)).toEqual(['Ответ.'])
   })
   it('cancels a pending acknowledgement the answer arrives before', async () => {
     const speech = useSpeech()
@@ -258,7 +281,7 @@ describe('waiting acknowledgement', () => {
     await speech.append('one', 'Вот ответ.')
     await vi.advanceTimersByTimeAsync(30000)
     await flush()
-    expect(speak.mock.calls.map(call => call[0].text)).toEqual(['Вот ответ.'])
+    expect(speak.mock.calls.map((call) => call[0].text)).toEqual(['Вот ответ.'])
   })
   it.each<[string, (speech: ReturnType<typeof useSpeech>) => void]>([
     ['a new recording', () => record()],
@@ -279,9 +302,12 @@ describe('waiting acknowledgement', () => {
     // still waiting for them. The local engine then holds the audio open: the
     // answer lands in exactly that window and must be the only thing heard.
     let resolveSettings!: (value: unknown) => void
-    window.deskhand.settings.load = vi.fn().mockImplementation(() => new Promise((resolve) => {
-      resolveSettings = resolve
-    }))
+    window.deskhand.settings.load = vi.fn().mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveSettings = resolve
+        })
+    )
     const audio = { ok: true as const, audio: 'AAA', cached: false, mime: 'audio/wav' }
     let releaseAudio!: () => void
     const prepared = new Promise<typeof audio>((resolve) => {
@@ -289,9 +315,9 @@ describe('waiting acknowledgement', () => {
     })
     const synth = vi.fn(() => prepared)
     window.deskhand.tts.speak = synth
-    window.deskhand.tts.status = vi.fn(async () => (
-      { configured: true, engine: 'silero' } as Awaited<ReturnType<typeof window.deskhand.tts.status>>
-    ))
+    window.deskhand.tts.status = vi.fn(
+      async () => ({ configured: true, engine: 'silero' }) as Awaited<ReturnType<typeof window.deskhand.tts.status>>
+    )
 
     const speech = useSpeech()
     speech.begin('one', 'Объясни это', true)
@@ -310,7 +336,7 @@ describe('waiting acknowledgement', () => {
 
     releaseAudio()
     await flush(20)
-    expect(speak.mock.calls.map(call => call[0].text)).toEqual(['Вот ответ.'])
+    expect(speak.mock.calls.map((call) => call[0].text)).toEqual(['Вот ответ.'])
   })
   it('never acknowledges a cancelled turn', async () => {
     const speech = useSpeech()
@@ -340,11 +366,16 @@ describe('waiting acknowledgement', () => {
     speech.begin('two', 'Ещё вопрос', true)
     await vi.advanceTimersByTimeAsync(2000)
     await flush()
-    expect(speak.mock.calls.map(call => call[0].text)).toEqual(['Сейчас посмотрю.', 'Ответ.'])
+    expect(speak.mock.calls.map((call) => call[0].text)).toEqual(['Сейчас посмотрю.', 'Ответ.'])
   })
   it('rejects a delayed settings result after cancellation', async () => {
     let resolve!: (value: unknown) => void
-    window.deskhand.settings.load = vi.fn().mockImplementation(() => new Promise(r => { resolve = r }))
+    window.deskhand.settings.load = vi.fn().mockImplementation(
+      () =>
+        new Promise((r) => {
+          resolve = r
+        })
+    )
     const speech = useSpeech()
     speech.begin('one', 'Вопрос', true)
     await vi.advanceTimersByTimeAsync(2000)
@@ -372,7 +403,9 @@ describe('the local engine', () => {
   function localEngine(): ReturnType<typeof vi.fn> {
     const synth = vi.fn(async () => ({ ok: true as const, audio: 'AAA', cached: false, mime: 'audio/wav' }))
     tts().speak = synth
-    tts().status = vi.fn(async () => ({ configured: true, engine: 'silero' } as Awaited<ReturnType<typeof window.deskhand.tts.status>>))
+    tts().status = vi.fn(
+      async () => ({ configured: true, engine: 'silero' }) as Awaited<ReturnType<typeof window.deskhand.tts.status>>
+    )
     return synth
   }
 
@@ -428,7 +461,9 @@ describe('the local engine', () => {
 
   it('falls back to the recorded line when the engine refuses', async () => {
     tts().speak = vi.fn(async () => ({ ok: false as const, message: 'нет' }))
-    tts().status = vi.fn(async () => ({ configured: true, engine: 'silero' } as Awaited<ReturnType<typeof window.deskhand.tts.status>>))
+    tts().status = vi.fn(
+      async () => ({ configured: true, engine: 'silero' }) as Awaited<ReturnType<typeof window.deskhand.tts.status>>
+    )
     const speech = useSpeech()
     speech.begin('one', 'Открой новую вкладку', true)
     await vi.advanceTimersByTimeAsync(1500)
@@ -439,7 +474,9 @@ describe('the local engine', () => {
   it('keeps the recorded bank when the engine is remote', async () => {
     const synth = vi.fn(async () => ({ ok: true as const, audio: 'AAA', cached: false, mime: 'audio/mpeg' }))
     tts().speak = synth
-    tts().status = vi.fn(async () => ({ configured: true, engine: 'remote' } as Awaited<ReturnType<typeof window.deskhand.tts.status>>))
+    tts().status = vi.fn(
+      async () => ({ configured: true, engine: 'remote' }) as Awaited<ReturnType<typeof window.deskhand.tts.status>>
+    )
     const speech = useSpeech()
     speech.begin('one', 'Открой новую вкладку', true)
     await vi.advanceTimersByTimeAsync(1500)
@@ -451,16 +488,20 @@ describe('the local engine', () => {
 
 describe('agent feedback independent of the answer voice', () => {
   it.each([false, true])('acknowledges an action only when it was spoken (voice=%s)', async (voice) => {
-    window.deskhand.settings.load = vi.fn().mockResolvedValue({ settings: { voice: { answerVoice: 'off', agentFeedback: true } } })
+    window.deskhand.settings.load = vi
+      .fn()
+      .mockResolvedValue({ settings: { voice: { answerVoice: 'off', agentFeedback: true } } })
     const speech = useSpeech()
     speech.begin('one', 'Открой новую вкладку', voice)
     await vi.advanceTimersByTimeAsync(1500)
     await speech.finish('one', 'Готово.')
     await flush()
-    expect(speak.mock.calls.map(call => call[0].text)).toEqual(voice ? ['Сейчас посмотрю.'] : [])
+    expect(speak.mock.calls.map((call) => call[0].text)).toEqual(voice ? ['Сейчас посмотрю.'] : [])
   })
   it('respects the separate feedback switch', async () => {
-    window.deskhand.settings.load = vi.fn().mockResolvedValue({ settings: { voice: { answerVoice: 'system', agentFeedback: false } } })
+    window.deskhand.settings.load = vi
+      .fn()
+      .mockResolvedValue({ settings: { voice: { answerVoice: 'system', agentFeedback: false } } })
     const speech = useSpeech()
     speech.begin('one', 'Открой новую вкладку', true)
     await vi.advanceTimersByTimeAsync(4000)

@@ -114,7 +114,9 @@ describe('the settings panes', () => {
 
   it('shows revoke actions for granted permissions and keeps command memory under local data', () => {
     const html = privacy()
-    expect(html).toMatch(/<nav[^>]*aria-label="Настройки приватности"><button[^>]*aria-pressed="true"[^>]*>Разрешения<\/button><button[^>]*>Данные на Mac<\/button><button[^>]*>Исключения<\/button>/)
+    expect(html).toMatch(
+      /<nav[^>]*aria-label="Настройки приватности"><button[^>]*aria-pressed="true"[^>]*>Разрешения<\/button><button[^>]*>Данные на Mac<\/button><button[^>]*>Исключения<\/button>/
+    )
     expect(html).toContain('aria-label="Отозвать в macOS · Универсальный доступ"')
     expect(html).toContain('aria-label="Отозвать в macOS · Микрофон"')
     expect(html).toContain('aria-label="Системные настройки · Запись экрана"')
@@ -130,7 +132,9 @@ describe('the settings panes', () => {
 
   it('starts the agent on screen settings and keeps the step limit after the switches', () => {
     const html = agent()
-    expect(html).toMatch(/<nav[^>]*aria-label="Настройки агента"><button[^>]*aria-pressed="true"[^>]*>На экране<\/button><button[^>]*>Границы задачи<\/button><button[^>]*>Разрешения<\/button>/)
+    expect(html).toMatch(
+      /<nav[^>]*aria-label="Настройки агента"><button[^>]*aria-pressed="true"[^>]*>На экране<\/button><button[^>]*>Границы задачи<\/button><button[^>]*>Разрешения<\/button>/
+    )
     expect(html).toMatch(/Останавливать при движении мыши.*Проверять результат по экрану.*Лимит шагов задачи/)
   })
 
@@ -166,7 +170,9 @@ describe('the settings panes', () => {
 
   it('keeps recognition model management behind one disclosure', () => {
     const html = voice()
-    const management = html.match(/<details class="disclosure"><summary>Управление моделями<\/summary>.*?<\/details>/)?.[0]
+    const management = html.match(
+      /<details class="disclosure"><summary>Управление моделями<\/summary>.*?<\/details>/
+    )?.[0]
     expect(management).toContain('Скачать модель Whisper')
     expect(management).toContain('Импортировать модель Whisper')
     expect(management?.match(/<details/g)).toHaveLength(1)

@@ -77,16 +77,14 @@ describe('keyPolicy: Escape while a run owns the card', () => {
   })
 
   it('stops a run whose phase is already aborted but is still on screen', () => {
-    expect(keyPolicy(key({ key: 'Escape', busy: true, runActive: true, agentPhase: 'aborted' })))
-      .toBe('stopAgent')
+    expect(keyPolicy(key({ key: 'Escape', busy: true, runActive: true, agentPhase: 'aborted' }))).toBe('stopAgent')
   })
 })
 
 describe('keyPolicy: the question in the card', () => {
   it('approves with Enter and remembers with Command+Enter', () => {
     expect(keyPolicy(key({ key: 'Enter', agentPhase: 'asking', tagName: 'BODY' }))).toBe('approve')
-    expect(keyPolicy(key({ key: 'Enter', agentPhase: 'asking', meta: true, tagName: 'BODY' })))
-      .toBe('approveAlways')
+    expect(keyPolicy(key({ key: 'Enter', agentPhase: 'asking', meta: true, tagName: 'BODY' }))).toBe('approveAlways')
   })
 
   it('leaves Enter to a focused approval button', () => {
@@ -103,8 +101,7 @@ describe('keyPolicy: the question in the card', () => {
   })
 
   it('still remembers with Command+Enter when a button has focus', () => {
-    expect(keyPolicy(key({ key: 'Enter', agentPhase: 'asking', meta: true, tagName: 'BUTTON' })))
-      .toBe('approveAlways')
+    expect(keyPolicy(key({ key: 'Enter', agentPhase: 'asking', meta: true, tagName: 'BUTTON' }))).toBe('approveAlways')
   })
 })
 
@@ -147,7 +144,6 @@ describe('keyPolicy: Enter', () => {
   it('lets Shift+Enter be a newline', () => {
     expect(keyPolicy(key({ key: 'Enter', shift: true }))).toBeNull()
   })
-
 })
 
 describe('keyPolicy: everything else', () => {

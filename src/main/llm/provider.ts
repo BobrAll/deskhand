@@ -5,9 +5,7 @@
 
 import type { ProviderId } from '@shared/types'
 
-export type ContentPart =
-  | { type: 'text'; text: string }
-  | { type: 'image'; mimeType: string; base64: string }
+export type ContentPart = { type: 'text'; text: string } | { type: 'image'; mimeType: string; base64: string }
 
 export interface ChatMessage {
   role: 'system' | 'user' | 'assistant'

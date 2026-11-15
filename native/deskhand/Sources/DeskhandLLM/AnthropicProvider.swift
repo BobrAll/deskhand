@@ -1,5 +1,5 @@
-import Foundation
 import DeskhandCore
+import Foundation
 
 /// Anthropic messages wire format, including the `anthropic-version` header and
 /// the block-based content array. `baseURL` is configurable so this also works
@@ -30,9 +30,10 @@ public struct AnthropicProvider: StreamingChatProvider {
         systemPrompt: String
     ) async throws -> Completion {
         try requireKey()
-        let request = makeRequest(payload: makePayload(
-            messages: messages, tools: tools, systemPrompt: systemPrompt, stream: false
-        ))
+        let request = makeRequest(
+            payload: makePayload(
+                messages: messages, tools: tools, systemPrompt: systemPrompt, stream: false
+            ))
         let exchange = ModelTrace.start(request)
 
         let data: Data
@@ -65,9 +66,10 @@ public struct AnthropicProvider: StreamingChatProvider {
         onText: (String) -> Void
     ) async throws -> Completion {
         try requireKey()
-        let request = makeRequest(payload: makePayload(
-            messages: messages, tools: tools, systemPrompt: systemPrompt, stream: true
-        ))
+        let request = makeRequest(
+            payload: makePayload(
+                messages: messages, tools: tools, systemPrompt: systemPrompt, stream: true
+            ))
         let exchange = ModelTrace.start(request)
 
         let bytes: URLSession.AsyncBytes
@@ -97,7 +99,8 @@ public struct AnthropicProvider: StreamingChatProvider {
         }
 
         if let contentType = http.value(forHTTPHeaderField: "Content-Type"),
-           contentType.lowercased().contains("application/json") {
+            contentType.lowercased().contains("application/json")
+        {
             let body = await bytes.prefixData(limit: 16 * 1024 * 1024)
             exchange?.response(body, status: http.statusCode)
             return try decode(body)
@@ -253,7 +256,8 @@ public struct AnthropicProvider: StreamingChatProvider {
             throw LLMError.decoding("the stream announced a tool use but none arrived")
         }
 
-        let usage = (inputTokens == nil && outputTokens == nil)
+        let usage =
+            (inputTokens == nil && outputTokens == nil)
             ? nil
             : TokenUsage(inputTokens: inputTokens ?? 0, outputTokens: outputTokens ?? 0)
         return Completion(text: text, toolCalls: calls, stopReason: stopReason, usage: usage)
@@ -266,8 +270,9 @@ public struct AnthropicProvider: StreamingChatProvider {
 
         func appendMerging(role: String, blocks: [JSONValue]) {
             if let last = out.last?.objectValue,
-               last["role"]?.stringValue == role,
-               let existing = last["content"]?.arrayValue {
+                last["role"]?.stringValue == role,
+                let existing = last["content"]?.arrayValue
+            {
                 var merged = existing
                 merged.append(contentsOf: blocks)
                 out[out.count - 1] = .object([
@@ -275,10 +280,11 @@ public struct AnthropicProvider: StreamingChatProvider {
                     "content": .array(merged),
                 ])
             } else {
-                out.append(.object([
-                    "role": .string(role),
-                    "content": .array(blocks),
-                ]))
+                out.append(
+                    .object([
+                        "role": .string(role),
+                        "content": .array(blocks),
+                    ]))
             }
         }
 
@@ -291,38 +297,42 @@ public struct AnthropicProvider: StreamingChatProvider {
             case .user:
                 var blocks: [JSONValue] = []
                 for image in message.images {
-                    blocks.append(.object([
-                        "type": .string("image"),
-                        "source": .object([
-                            "type": .string("base64"),
-                            "media_type": .string(WindowCapture.mimeType(of: image)),
-                            "data": .string(image.base64EncodedString()),
-                        ]),
-                    ]))
+                    blocks.append(
+                        .object([
+                            "type": .string("image"),
+                            "source": .object([
+                                "type": .string("base64"),
+                                "media_type": .string(WindowCapture.mimeType(of: image)),
+                                "data": .string(image.base64EncodedString()),
+                            ]),
+                        ]))
                 }
                 if !message.text.isEmpty {
-                    blocks.append(.object([
-                        "type": .string("text"),
-                        "text": .string(message.text),
-                    ]))
+                    blocks.append(
+                        .object([
+                            "type": .string("text"),
+                            "text": .string(message.text),
+                        ]))
                 }
                 appendMerging(role: "user", blocks: blocks)
 
             case .assistant:
                 var blocks: [JSONValue] = []
                 if !message.text.isEmpty {
-                    blocks.append(.object([
-                        "type": .string("text"),
-                        "text": .string(message.text),
-                    ]))
+                    blocks.append(
+                        .object([
+                            "type": .string("text"),
+                            "text": .string(message.text),
+                        ]))
                 }
                 for call in message.toolCalls {
-                    blocks.append(.object([
-                        "type": .string("tool_use"),
-                        "id": .string(call.id),
-                        "name": .string(call.name),
-                        "input": call.arguments,
-                    ]))
+                    blocks.append(
+                        .object([
+                            "type": .string("tool_use"),
+                            "id": .string(call.id),
+                            "name": .string(call.name),
+                            "input": call.arguments,
+                        ]))
                 }
                 if blocks.isEmpty { continue }
                 appendMerging(role: "assistant", blocks: blocks)
@@ -363,11 +373,12 @@ public struct AnthropicProvider: StreamingChatProvider {
             case "text":
                 text += block["text"]?.stringValue ?? ""
             case "tool_use":
-                calls.append(ToolCall(
-                    id: block["id"]?.stringValue ?? UUID().uuidString,
-                    name: block["name"]?.stringValue ?? "",
-                    arguments: block["input"] ?? .object([:])
-                ))
+                calls.append(
+                    ToolCall(
+                        id: block["id"]?.stringValue ?? UUID().uuidString,
+                        name: block["name"]?.stringValue ?? "",
+                        arguments: block["input"] ?? .object([:])
+                    ))
             default:
                 continue
             }

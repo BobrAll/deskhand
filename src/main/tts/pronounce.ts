@@ -54,7 +54,7 @@ const MAX_REPLY_CHARS = 8_000
 
 const PROMPT = [
   'You spell English words the way a Russian speaker says them in technical speech.',
-  'For every word in the user\'s JSON array, return one Russian spelling.',
+  "For every word in the user's JSON array, return one Russian spelling.",
   'Mark the stressed vowel with "+" immediately before it: "р+идми".',
   'Keep abbreviations as letter names: "API" becomes "эй пи ай".',
   'Do not translate: "delete" is "дел+ит", not "удалить".',
@@ -132,7 +132,10 @@ function parseReply(reply: string): Hints {
     const key = word.trim().toLowerCase()
     // A model may punctuate the value as a sentence; the punctuation is not part
     // of the pronunciation Silero receives.
-    const pronunciation = value.trim().toLowerCase().replace(/[.,;:!?…]+$/, '')
+    const pronunciation = value
+      .trim()
+      .toLowerCase()
+      .replace(/[.,;:!?…]+$/, '')
     if (key && validPronunciation(pronunciation)) hints[key] = pronunciation
   }
   return hints
@@ -188,8 +191,14 @@ function waitFor<T>(promise: Promise<T>, ms: number): Promise<T | null> {
   return new Promise((resolve) => {
     const timer = setTimeout(() => resolve(null), ms)
     promise.then(
-      (value) => { clearTimeout(timer); resolve(value) },
-      () => { clearTimeout(timer); resolve(null) }
+      (value) => {
+        clearTimeout(timer)
+        resolve(value)
+      },
+      () => {
+        clearTimeout(timer)
+        resolve(null)
+      }
     )
   })
 }
@@ -322,7 +331,7 @@ function startQueuedLookup(words: Hints): void {
   }
   const terms = [...pendingTerms].slice(0, MAX_TERMS)
   for (const term of terms) pendingTerms.delete(term)
-  startLookup(terms, settings, words)
+  void startLookup(terms, settings, words)
 }
 
 /**

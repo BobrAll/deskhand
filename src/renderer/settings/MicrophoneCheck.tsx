@@ -11,7 +11,8 @@ type MicrophoneTest =
   | { phase: 'error'; message: string }
 
 export function MicrophoneCheck({
-  visible, onOpenMicrophoneSettings
+  visible,
+  onOpenMicrophoneSettings
 }: {
   visible: boolean
   onOpenMicrophoneSettings(): void
@@ -30,11 +31,14 @@ export function MicrophoneCheck({
     if (!visible) cancelMicrophoneCheck()
   }, [visible, cancelMicrophoneCheck])
 
-  useEffect(() => () => {
-    const pending = microphoneCheck.current
-    microphoneCheck.current = null
-    pending?.abort()
-  }, [])
+  useEffect(
+    () => () => {
+      const pending = microphoneCheck.current
+      microphoneCheck.current = null
+      pending?.abort()
+    },
+    []
+  )
 
   async function checkMicrophone(): Promise<void> {
     if (microphoneCheck.current) return
@@ -76,11 +80,12 @@ export function MicrophoneCheck({
     } catch (error) {
       if (microphoneCheck.current === controller && !signal.aborted) {
         const name = error instanceof Error ? error.name : ''
-        const message = name === 'NotAllowedError'
-          ? 'Разреши Deskhand доступ к микрофону в настройках macOS.'
-          : name === 'NotFoundError'
-            ? 'Микрофон не найден. Подключи его и попробуй ещё раз.'
-            : 'Не удалось открыть микрофон. Проверь устройство ввода и попробуй ещё раз.'
+        const message =
+          name === 'NotAllowedError'
+            ? 'Разреши Deskhand доступ к микрофону в настройках macOS.'
+            : name === 'NotFoundError'
+              ? 'Микрофон не найден. Подключи его и попробуй ещё раз.'
+              : 'Не удалось открыть микрофон. Проверь устройство ввода и попробуй ещё раз.'
         setTest({ phase: 'error', message })
       }
     } finally {
@@ -100,18 +105,27 @@ export function MicrophoneCheck({
   return (
     <Group title="Микрофон">
       <Row title="Проверка микрофона" hint={<span role="status">{message}</span>}>
-        <button type="button" onClick={() => {
-          if (test.phase === 'listening') microphoneCheck.current?.abort('finished')
-          else if (active) cancelMicrophoneCheck()
-          else void checkMicrophone()
-        }}>
+        <button
+          type="button"
+          onClick={() => {
+            if (test.phase === 'listening') microphoneCheck.current?.abort('finished')
+            else if (active) cancelMicrophoneCheck()
+            else void checkMicrophone()
+          }}
+        >
           {active ? 'Остановить' : 'Проверить микрофон'}
         </button>
       </Row>
       {test.phase === 'listening' && (
         <Row stacked>
-          <div className="microphone-level" role="meter" aria-label="Уровень сигнала"
-            aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(test.level * 100)}>
+          <div
+            className="microphone-level"
+            role="meter"
+            aria-label="Уровень сигнала"
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={Math.round(test.level * 100)}
+          >
             {Array.from({ length: MICROPHONE_LEVEL_BARS }, (_, index) => (
               <span key={index} data-lit={index < Math.ceil(test.level * MICROPHONE_LEVEL_BARS)} />
             ))}
@@ -119,7 +133,11 @@ export function MicrophoneCheck({
         </Row>
       )}
       {test.phase === 'error' && (
-        <Row><button type="button" onClick={onOpenMicrophoneSettings}>Открыть «Приватность»</button></Row>
+        <Row>
+          <button type="button" onClick={onOpenMicrophoneSettings}>
+            Открыть «Приватность»
+          </button>
+        </Row>
       )}
     </Group>
   )

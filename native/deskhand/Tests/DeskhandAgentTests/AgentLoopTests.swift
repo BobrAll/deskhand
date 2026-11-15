@@ -1,6 +1,7 @@
 import XCTest
-@testable import DeskhandCore
+
 @testable import DeskhandAgentKit
+@testable import DeskhandCore
 @testable import DeskhandLLM
 
 /// A provider that answers from a script, so the agent loop can be exercised
@@ -98,9 +99,11 @@ final class AgentLoopTests: XCTestCase {
 
     func testExecutesToolCallsThenFinishes() async throws {
         let provider = ScriptedProvider(steps: [
-            .init(text: "", toolCalls: [
-                ToolCall(id: "c1", name: "list_apps", arguments: .object(["include_installed": .bool(false)]))
-            ]),
+            .init(
+                text: "",
+                toolCalls: [
+                    ToolCall(id: "c1", name: "list_apps", arguments: .object(["include_installed": .bool(false)]))
+                ]),
             .init(text: "Listed the apps.", toolCalls: []),
         ])
         let loop = AgentLoop(
@@ -128,10 +131,12 @@ final class AgentLoopTests: XCTestCase {
         // (This replaces `testASuccessfulBatchDoesNotStopEarly`, which used the
         // same script and asserted a strict subset of the same facts.)
         let provider = ScriptedProvider(steps: [
-            .init(text: "", toolCalls: [
-                ToolCall(id: "a", name: "list_apps", arguments: .object(["include_installed": .bool(false)])),
-                ToolCall(id: "b", name: "list_apps", arguments: .object(["include_installed": .bool(true)])),
-            ]),
+            .init(
+                text: "",
+                toolCalls: [
+                    ToolCall(id: "a", name: "list_apps", arguments: .object(["include_installed": .bool(false)])),
+                    ToolCall(id: "b", name: "list_apps", arguments: .object(["include_installed": .bool(true)])),
+                ]),
             .init(text: "done", toolCalls: []),
         ])
         let loop = AgentLoop(
@@ -157,10 +162,12 @@ final class AgentLoopTests: XCTestCase {
         // stops, and every skipped call still gets an answer, because the
         // protocol requires a result for each.
         let provider = ScriptedProvider(steps: [
-            .init(text: "", toolCalls: [
-                ToolCall(id: "bad", name: "no_such_tool", arguments: .object([:])),
-                ToolCall(id: "skipped", name: "list_apps", arguments: .object([:])),
-            ]),
+            .init(
+                text: "",
+                toolCalls: [
+                    ToolCall(id: "bad", name: "no_such_tool", arguments: .object([:])),
+                    ToolCall(id: "skipped", name: "list_apps", arguments: .object([:])),
+                ]),
             .init(text: "done", toolCalls: []),
         ])
         let loop = AgentLoop(
@@ -214,10 +221,14 @@ final class AgentLoopTests: XCTestCase {
     }
 
     func testStopsAfterMaxSteps() async throws {
-        let provider = ScriptedProvider(steps: Array(repeating:
-            .init(text: "", toolCalls: [
-                ToolCall(id: UUID().uuidString, name: "list_apps", arguments: .object([:]))
-            ]), count: 10))
+        let provider = ScriptedProvider(
+            steps: Array(
+                repeating:
+                    .init(
+                        text: "",
+                        toolCalls: [
+                            ToolCall(id: UUID().uuidString, name: "list_apps", arguments: .object([:]))
+                        ]), count: 10))
         let loop = AgentLoop(
             provider: provider,
             executor: ToolExecutor(),
@@ -232,14 +243,19 @@ final class AgentLoopTests: XCTestCase {
         // were identical — `super+l`, read, click, read — so the identical-call
         // guard never fired, and the step budget was the only bound. Every step
         // here lands on the same screen.
-        let executor = ScriptedExecutor(repeating: .init(
-            content: [.text("ok")], stateFingerprint: "Chrome|Filters|42"))
-        let provider = ScriptedProvider(steps: (0..<40).map { step in
-            .init(text: "", toolCalls: [
-                ToolCall(id: UUID().uuidString, name: "press_key",
-                         arguments: .object(["key": .string("key-\(step)")]))
-            ])
-        })
+        let executor = ScriptedExecutor(
+            repeating: .init(
+                content: [.text("ok")], stateFingerprint: "Chrome|Filters|42"))
+        let provider = ScriptedProvider(
+            steps: (0..<40).map { step in
+                .init(
+                    text: "",
+                    toolCalls: [
+                        ToolCall(
+                            id: UUID().uuidString, name: "press_key",
+                            arguments: .object(["key": .string("key-\(step)")]))
+                    ])
+            })
         let loop = AgentLoop(
             provider: provider,
             executor: executor,
@@ -252,14 +268,19 @@ final class AgentLoopTests: XCTestCase {
     }
 
     func testAWarningComesBeforeTheStop() async throws {
-        let executor = ScriptedExecutor(repeating: .init(
-            content: [.text("ok")], stateFingerprint: "same"))
-        let provider = ScriptedProvider(steps: (0..<40).map { step in
-            .init(text: "", toolCalls: [
-                ToolCall(id: UUID().uuidString, name: "press_key",
-                         arguments: .object(["key": .string("key-\(step)")]))
-            ])
-        })
+        let executor = ScriptedExecutor(
+            repeating: .init(
+                content: [.text("ok")], stateFingerprint: "same"))
+        let provider = ScriptedProvider(
+            steps: (0..<40).map { step in
+                .init(
+                    text: "",
+                    toolCalls: [
+                        ToolCall(
+                            id: UUID().uuidString, name: "press_key",
+                            arguments: .object(["key": .string("key-\(step)")]))
+                    ])
+            })
         let loop = AgentLoop(
             provider: provider,
             executor: executor,
@@ -276,15 +297,20 @@ final class AgentLoopTests: XCTestCase {
     }
 
     func testANewScreenResetsTheStallCounter() async throws {
-        let executor = ScriptedExecutor(steps: (0..<30).map { step in
-            ToolResult(content: [.text("ok")], stateFingerprint: "screen-\(step / 5)")
-        })
-        let provider = ScriptedProvider(steps: (0..<30).map { step in
-            .init(text: "", toolCalls: [
-                ToolCall(id: UUID().uuidString, name: "press_key",
-                         arguments: .object(["key": .string("key-\(step)")]))
-            ])
-        })
+        let executor = ScriptedExecutor(
+            steps: (0..<30).map { step in
+                ToolResult(content: [.text("ok")], stateFingerprint: "screen-\(step / 5)")
+            })
+        let provider = ScriptedProvider(
+            steps: (0..<30).map { step in
+                .init(
+                    text: "",
+                    toolCalls: [
+                        ToolCall(
+                            id: UUID().uuidString, name: "press_key",
+                            arguments: .object(["key": .string("key-\(step)")]))
+                    ])
+            })
         let loop = AgentLoop(
             provider: provider,
             executor: executor,
@@ -337,9 +363,15 @@ final class AgentLoopTests: XCTestCase {
         }
         let messages: [ChatMessage] = [
             ChatMessage(role: .user, text: "start"),
-            ChatMessage(role: .tool, text: tree("Chrome", bundle: "com.google.Chrome", node: "AXButton \"Address\""), toolCallID: "1"),
-            ChatMessage(role: .tool, text: tree("Telegram", bundle: "ru.keepcoder.Telegram", node: "AXTextArea \"Composer\""), toolCallID: "2"),
-            ChatMessage(role: .tool, text: tree("Chrome", bundle: "com.google.Chrome", node: "AXButton \"NewAddress\""), toolCallID: "3"),
+            ChatMessage(
+                role: .tool, text: tree("Chrome", bundle: "com.google.Chrome", node: "AXButton \"Address\""),
+                toolCallID: "1"),
+            ChatMessage(
+                role: .tool, text: tree("Telegram", bundle: "ru.keepcoder.Telegram", node: "AXTextArea \"Composer\""),
+                toolCallID: "2"),
+            ChatMessage(
+                role: .tool, text: tree("Chrome", bundle: "com.google.Chrome", node: "AXButton \"NewAddress\""),
+                toolCallID: "3"),
         ]
         let trimmed = loop.trimmedHistory(messages)
         let bodies = trimmed.map(\.text)
@@ -408,28 +440,35 @@ final class AgentLoopTests: XCTestCase {
             options: .init(verbose: false)
         )
         let messages: [ChatMessage] = [
-            ChatMessage(role: .tool, text: """
-                Chrome — window "Filters"
-                Pressed element 1 (AXButton "Create").
-                Changed after the click (1 added):
-                + 7 AXButton "Confirm"
-                """, toolCallID: "a"),
-            ChatMessage(role: .tool, text: """
-                Chrome — window "Filters"
-                Pressed element 7 (AXButton "Confirm").
-                Changed after the click (1 added):
-                + 9 AXTextField "Label"
-                """, toolCallID: "b"),
+            ChatMessage(
+                role: .tool,
+                text: """
+                    Chrome — window "Filters"
+                    Pressed element 1 (AXButton "Create").
+                    Changed after the click (1 added):
+                    + 7 AXButton "Confirm"
+                    """, toolCallID: "a"),
+            ChatMessage(
+                role: .tool,
+                text: """
+                    Chrome — window "Filters"
+                    Pressed element 7 (AXButton "Confirm").
+                    Changed after the click (1 added):
+                    + 9 AXTextField "Label"
+                    """, toolCallID: "b"),
         ]
         let trimmed = loop.trimmedHistory(messages)
 
         XCTAssertTrue(trimmed[0].text.contains("superseded by a later action"))
-        XCTAssertFalse(trimmed[0].text.contains("AXButton \"Confirm\""),
-                       "the superseded diff body is gone")
-        XCTAssertTrue(trimmed[0].text.contains("Pressed element 1"),
-                      "what the action was stays")
-        XCTAssertTrue(trimmed[1].text.contains("+ 9 AXTextField \"Label\""),
-                      "the newest diff is intact")
+        XCTAssertFalse(
+            trimmed[0].text.contains("AXButton \"Confirm\""),
+            "the superseded diff body is gone")
+        XCTAssertTrue(
+            trimmed[0].text.contains("Pressed element 1"),
+            "what the action was stays")
+        XCTAssertTrue(
+            trimmed[1].text.contains("+ 9 AXTextField \"Label\""),
+            "the newest diff is intact")
     }
 
     func testTextOnlyMessagesArePreservedWhenImagesAreDropped() {
@@ -454,12 +493,16 @@ final class AgentLoopTests: XCTestCase {
         // following step re-sends the image, pays a failed round trip and only
         // then asks again without it — the exact cost the flag exists to avoid.
         let provider = ImageRefusingProvider(steps: [
-            Completion(text: "", toolCalls: [
-                ToolCall(id: "c1", name: "get_app_state", arguments: .object([:]))
-            ], stopReason: "tool_calls"),
-            Completion(text: "", toolCalls: [
-                ToolCall(id: "c2", name: "list_apps", arguments: .object([:]))
-            ], stopReason: "tool_calls"),
+            Completion(
+                text: "",
+                toolCalls: [
+                    ToolCall(id: "c1", name: "get_app_state", arguments: .object([:]))
+                ], stopReason: "tool_calls"),
+            Completion(
+                text: "",
+                toolCalls: [
+                    ToolCall(id: "c2", name: "list_apps", arguments: .object([:]))
+                ], stopReason: "tool_calls"),
             Completion(text: "Done.", toolCalls: [], stopReason: "stop"),
         ])
         let executor = ScriptedExecutor(steps: [
@@ -492,13 +535,15 @@ final class AgentLoopTests: XCTestCase {
         // click becomes a no-argument click, and the model reads the resulting
         // error as a fault of the tool.
         let provider = ScriptedProvider(steps: [
-            .init(text: "", toolCalls: [
-                ToolCall(
-                    id: "bad",
-                    name: "list_apps",
-                    arguments: .object([:]),
-                    argumentsError: #"{"include_installed":"#)
-            ]),
+            .init(
+                text: "",
+                toolCalls: [
+                    ToolCall(
+                        id: "bad",
+                        name: "list_apps",
+                        arguments: .object([:]),
+                        argumentsError: #"{"include_installed":"#)
+                ]),
             .init(text: "fixed", toolCalls: []),
         ])
         let executor = ScriptedExecutor(repeating: .text("should not run"))
@@ -527,9 +572,11 @@ final class AgentLoopTests: XCTestCase {
         // binary. One step is the smallest run that can say anything.
         for budget in [0, -5] {
             let provider = ScriptedProvider(steps: [
-                .init(text: "", toolCalls: [
-                    ToolCall(id: "c1", name: "list_apps", arguments: .object([:]))
-                ]),
+                .init(
+                    text: "",
+                    toolCalls: [
+                        ToolCall(id: "c1", name: "list_apps", arguments: .object([:]))
+                    ]),
                 .init(text: "never asked", toolCalls: []),
             ])
             let loop = AgentLoop(
@@ -611,8 +658,9 @@ final class AgentCancellationTests: XCTestCase {
     }
     private func assertCancelled(toolCalls: [ToolCall]) async {
         let task = Task {
-            let loop = AgentLoop(provider: CancellingProvider(toolCalls: toolCalls),
-                                 executor: ToolExecutor(), options: .init(verbose: false))
+            let loop = AgentLoop(
+                provider: CancellingProvider(toolCalls: toolCalls),
+                executor: ToolExecutor(), options: .init(verbose: false))
             return try await loop.run(task: "cancel")
         }
         do {
@@ -682,9 +730,11 @@ private final class RecordingObserver: AgentObserver, @unchecked Sendable {
 final class AgentStreamingTests: XCTestCase {
     func testStreamsTheCaptionWhileTheStepIsStillRunning() async throws {
         let provider = StreamingScriptedProvider(steps: [
-            .init(chunks: ["Открываю", " Telegram"], toolCalls: [
-                ToolCall(id: "c1", name: "list_apps", arguments: .object(["include_installed": .bool(false)]))
-            ]),
+            .init(
+                chunks: ["Открываю", " Telegram"],
+                toolCalls: [
+                    ToolCall(id: "c1", name: "list_apps", arguments: .object(["include_installed": .bool(false)]))
+                ]),
             .init(chunks: ["Готово"], toolCalls: []),
         ])
         let observer = RecordingObserver()

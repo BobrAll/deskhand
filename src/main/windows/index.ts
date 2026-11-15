@@ -5,22 +5,10 @@
  */
 
 import { app, BrowserWindow, screen } from 'electron'
-import {
-  CARD_MAX_WIDTH,
-  CARD_MIN_WIDTH,
-  CARD_NARROW_WIDTH,
-  CARD_VOICE_WIDTH,
-  CARD_WIDTH
-} from '@shared/metrics'
+import { CARD_MAX_WIDTH, CARD_MIN_WIDTH, CARD_NARROW_WIDTH, CARD_VOICE_WIDTH, CARD_WIDTH } from '@shared/metrics'
 import type { ScreenRect } from '@shared/types'
 import type { OverlayHost } from '../overlay/host'
-import {
-  boundsFor,
-  CARD_FOLDED_HEIGHT,
-  placeAnchor,
-  resizeAnchor,
-  type CardAnchor
-} from '../card'
+import { boundsFor, CARD_FOLDED_HEIGHT, placeAnchor, resizeAnchor, type CardAnchor } from '../card'
 import { hideFieldHighlight, showFieldHighlight } from '../fieldHighlight'
 import { clamp } from '../util'
 import { denyExternalLinks } from '../denyExternalLinks'
@@ -130,9 +118,7 @@ function createOverlayWindow(): BrowserWindow {
   win.webContents.session.setPermissionRequestHandler((_contents, permission, callback) => {
     callback(permission === 'media')
   })
-  win.webContents.session.setPermissionCheckHandler(
-    (_contents, permission) => permission === 'media'
-  )
+  win.webContents.session.setPermissionCheckHandler((_contents, permission) => permission === 'media')
 
   win.on('closed', () => {
     overlayWindow = null
@@ -164,7 +150,9 @@ function createOverlayWindow(): BrowserWindow {
     pendingShow = null
     if (pending) performShow(pending.height, pending.width, pending.activate)
   })
-  win.on('will-move', () => { resizeBounds = null })
+  win.on('will-move', () => {
+    resizeBounds = null
+  })
   loadPage(win, 'overlay')
   return win
 }
@@ -191,13 +179,7 @@ function positionOverlay(win: BrowserWindow, height: number, width: number): voi
  * Re-applies the remembered anchor to a new size, or places the card for the
  * first time when there is no anchor yet.
  */
-function resizeAtAnchor(
-  win: BrowserWindow,
-  height: number,
-  width: number,
-  pin = false,
-  typing = false
-): void {
+function resizeAtAnchor(win: BrowserWindow, height: number, width: number, pin = false, typing = false): void {
   if (!anchor) {
     positionOverlay(win, height, width)
     return
@@ -301,9 +283,7 @@ function presentOverlay(height: number, width: number, activate: boolean): void 
   // belongs to the window, so it sits between the pointer and whatever is under
   // it. The renderer asks for `CARD_VOICE_WIDTH` throughout the turn; this is
   // the same number applied at the moment the window is actually shown.
-  const safeWidth = Math.round(
-    clamp(voiceActive ? CARD_VOICE_WIDTH : width, CARD_MIN_WIDTH, CARD_WIDTH)
-  )
+  const safeWidth = Math.round(clamp(voiceActive ? CARD_VOICE_WIDTH : width, CARD_MIN_WIDTH, CARD_WIDTH))
 
   if (!overlayWindow) {
     // The window is created here and the show is remembered: the first paint can

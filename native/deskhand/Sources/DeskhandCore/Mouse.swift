@@ -1,6 +1,6 @@
-import Foundation
-import CoreGraphics
 import ApplicationServices
+import CoreGraphics
+import Foundation
 
 /// Mouse input: clicks, drags and scrolls, posted as real HID events so that
 /// apps which ignore accessibility actions (games, canvases, most web content)
@@ -64,12 +64,14 @@ public enum Mouse {
 
     public static func move(to point: CGPoint) {
         WindowServer.prepare()
-        guard let event = CGEvent(
-            mouseEventSource: SyntheticEvent.eventSource(),
-            mouseType: .mouseMoved,
-            mouseCursorPosition: point,
-            mouseButton: .left
-        ) else { return }
+        guard
+            let event = CGEvent(
+                mouseEventSource: SyntheticEvent.eventSource(),
+                mouseType: .mouseMoved,
+                mouseCursorPosition: point,
+                mouseButton: .left
+            )
+        else { return }
         SyntheticEvent.mark(event)
         event.post(tap: .cghidEventTap)
     }
@@ -97,17 +99,20 @@ public enum Mouse {
         Thread.sleep(forTimeInterval: Pace.hoverSettle)
 
         for index in 1...clicks {
-            guard let down = CGEvent(
-                mouseEventSource: SyntheticEvent.eventSource(),
-                mouseType: button.downType,
-                mouseCursorPosition: point,
-                mouseButton: button.cgButton
-            ), let up = CGEvent(
-                mouseEventSource: SyntheticEvent.eventSource(),
-                mouseType: button.upType,
-                mouseCursorPosition: point,
-                mouseButton: button.cgButton
-            ) else { continue }
+            guard
+                let down = CGEvent(
+                    mouseEventSource: SyntheticEvent.eventSource(),
+                    mouseType: button.downType,
+                    mouseCursorPosition: point,
+                    mouseButton: button.cgButton
+                ),
+                let up = CGEvent(
+                    mouseEventSource: SyntheticEvent.eventSource(),
+                    mouseType: button.upType,
+                    mouseCursorPosition: point,
+                    mouseButton: button.cgButton
+                )
+            else { continue }
 
             down.flags = modifiers
             up.flags = modifiers
@@ -137,12 +142,14 @@ public enum Mouse {
         move(to: start)
         Thread.sleep(forTimeInterval: Pace.dragStartSettle)
 
-        guard let down = CGEvent(
-            mouseEventSource: SyntheticEvent.eventSource(),
-            mouseType: button.downType,
-            mouseCursorPosition: start,
-            mouseButton: button.cgButton
-        ) else { return }
+        guard
+            let down = CGEvent(
+                mouseEventSource: SyntheticEvent.eventSource(),
+                mouseType: button.downType,
+                mouseCursorPosition: start,
+                mouseButton: button.cgButton
+            )
+        else { return }
         SyntheticEvent.mark(down)
         down.post(tap: .cghidEventTap)
         Thread.sleep(forTimeInterval: Pace.dragPressSettle)
@@ -157,24 +164,28 @@ public enum Mouse {
                 x: start.x + (end.x - start.x) * eased,
                 y: start.y + (end.y - start.y) * eased
             )
-            guard let dragged = CGEvent(
-                mouseEventSource: SyntheticEvent.eventSource(),
-                mouseType: button.dragType,
-                mouseCursorPosition: point,
-                mouseButton: button.cgButton
-            ) else { continue }
+            guard
+                let dragged = CGEvent(
+                    mouseEventSource: SyntheticEvent.eventSource(),
+                    mouseType: button.dragType,
+                    mouseCursorPosition: point,
+                    mouseButton: button.cgButton
+                )
+            else { continue }
             SyntheticEvent.mark(dragged)
             dragged.post(tap: .cghidEventTap)
             Thread.sleep(forTimeInterval: Pace.dragStep)
         }
 
         Thread.sleep(forTimeInterval: Pace.dragEndSettle)
-        guard let up = CGEvent(
-            mouseEventSource: SyntheticEvent.eventSource(),
-            mouseType: button.upType,
-            mouseCursorPosition: end,
-            mouseButton: button.cgButton
-        ) else { return }
+        guard
+            let up = CGEvent(
+                mouseEventSource: SyntheticEvent.eventSource(),
+                mouseType: button.upType,
+                mouseCursorPosition: end,
+                mouseButton: button.cgButton
+            )
+        else { return }
         SyntheticEvent.mark(up)
         up.post(tap: .cghidEventTap)
     }
@@ -225,14 +236,16 @@ public enum Mouse {
             let step = min(chunk, remaining)
             remaining -= step
             let (dy, dx) = direction.delta(amount: step * sign)
-            guard let event = CGEvent(
-                scrollWheelEvent2Source: SyntheticEvent.eventSource(),
-                units: .line,
-                wheelCount: 2,
-                wheel1: Int32(dy),
-                wheel2: Int32(dx),
-                wheel3: 0
-            ) else { continue }
+            guard
+                let event = CGEvent(
+                    scrollWheelEvent2Source: SyntheticEvent.eventSource(),
+                    units: .line,
+                    wheelCount: 2,
+                    wheel1: Int32(dy),
+                    wheel2: Int32(dx),
+                    wheel3: 0
+                )
+            else { continue }
             event.location = point
             SyntheticEvent.mark(event)
             event.post(tap: .cghidEventTap)

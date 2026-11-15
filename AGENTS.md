@@ -46,8 +46,16 @@
 - Keep `SyntheticEvent.tag` (`0x53434752`) equal to `kAgentEventTag` in `src/main/native/helper.m` so synthetic input does not abort the run.
 - Keep the card click-through during actions. Escape stops the run. Only inline approval captures clicks.
 
+## Formatting and lint
+
+- `npm run check` is the gate before a commit: types, ESLint, Prettier, both test suites and Swift style. CI runs the same checks except the Swift style comparison.
+- `npm run format` rewrites every file Prettier owns — TypeScript, scripts, JSON, CSS, HTML, Markdown, YAML — and Swift. `npm run format:check` only reports, and that is what the gate uses.
+- ESLint is where the bug-finding rules live: `react-hooks` catches a missed dependency and a conditional hook, `no-floating-promises` and `no-misused-promises` catch a promise nobody reads. Fix the call instead of silencing the rule; when dropping a promise is the intent, write `void`.
+- `npm run prepare` points `core.hooksPath` at `.githooks/`, so `npm install` enables a pre-commit hook that formats staged files and lints staged `src/**/*.{ts,tsx}`. A file that still has unstaged edits is skipped: staging it whole would pull those edits into the commit. The hook is a convenience; the gate is `npm run check`.
+- The one-time style migration is listed in `.git-blame-ignore-revs`. Make `git blame` skip it once per clone: `git config blame.ignoreRevsFile .git-blame-ignore-revs`.
+
 ## Build and test
 
 - Build the sidecar with `npm run build:agent` (universal) or `AGENT_ARCH=arm64 npm run build:agent`.
-- Both suites must pass for code changes. Run `npm test` from the root and `swift test` from `native/deskhand`.
-- `src/main/agent/timing.integration.test.ts` and `trace.integration.test.ts` need a built binary and the Accessibility grant. Without either they are reported as *skipped*, not failed: `agentAcceptsRuns` in `src/main/agent/grant.ts` sends one `run` to the real sidecar and reads the answer, and a refusal (`code: "accessibility"`) or a timeout turns both files into `describe.skipIf`. The wire contract still has `src/main/agent/sidecar.test.ts`, which replays a recorded transcript and needs neither.
+- Both suites must pass for code changes. Run `npm run check`, or `npm test` and `npm run test:swift` separately.
+- `src/main/agent/timing.integration.test.ts` and `trace.integration.test.ts` need a built binary and the Accessibility grant. Without either they are reported as _skipped_, not failed: `agentAcceptsRuns` in `src/main/agent/grant.ts` sends one `run` to the real sidecar and reads the answer, and a refusal (`code: "accessibility"`) or a timeout turns both files into `describe.skipIf`. The wire contract still has `src/main/agent/sidecar.test.ts`, which replays a recorded transcript and needs neither.

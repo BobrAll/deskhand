@@ -26,10 +26,11 @@ async function prepareModel() {
   await mkdir(speech, { recursive: true })
   const temporary = `${model}.${process.pid}.part`
   try {
-    execFileSync('curl', [
-      '--fail', '--location', '--silent', '--show-error', '--retry', '2',
-      '--max-time', '300', url, '-o', temporary
-    ], { stdio: 'inherit' })
+    execFileSync(
+      'curl',
+      ['--fail', '--location', '--silent', '--show-error', '--retry', '2', '--max-time', '300', url, '-o', temporary],
+      { stdio: 'inherit' }
+    )
     if (!(await verified(temporary))) throw new Error(`Unexpected SHA-256 for ${url}`)
     await rename(temporary, model)
   } finally {
@@ -38,8 +39,10 @@ async function prepareModel() {
 }
 
 if (process.platform === 'darwin') {
-  const required = ['transcribe-cli', ...['transcribe.cpp', 'ggml', 'miniz', 'silero-vad']
-    .map((name) => `transcribe-licenses/${name}.txt`)]
+  const required = [
+    'transcribe-cli',
+    ...['transcribe.cpp', 'ggml', 'miniz', 'silero-vad'].map((name) => `transcribe-licenses/${name}.txt`)
+  ]
   if (required.some((path) => !existsSync(join(resources, path)))) {
     const build = fileURLToPath(new URL('./build-transcribe.mjs', import.meta.url))
     execFileSync(process.execPath, [build], { stdio: 'inherit' })

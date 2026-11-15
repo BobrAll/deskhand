@@ -40,10 +40,12 @@ describe('resolveWidth: content', () => {
   })
 
   it('lets structured content use its wider cap', () => {
-    expect(width({
-      contentWidth: STRUCTURED_WIDTH,
-      contentMax: STRUCTURED_WIDTH
-    })).toBe(STRUCTURED_WIDTH)
+    expect(
+      width({
+        contentWidth: STRUCTURED_WIDTH,
+        contentMax: STRUCTURED_WIDTH
+      })
+    ).toBe(STRUCTURED_WIDTH)
   })
 })
 

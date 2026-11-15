@@ -1,6 +1,6 @@
-import Foundation
 import ApplicationServices
 import CoreGraphics
+import Foundation
 
 /// Element-level actions that go through the accessibility API rather than
 /// synthetic mouse events. These are more reliable than pixel clicks when the

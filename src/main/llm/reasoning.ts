@@ -10,9 +10,7 @@ export function disabledReasoning(baseUrl: string, model: string): object {
   if (new URL(baseUrl).hostname === 'openrouter.ai') {
     return { reasoning: { enabled: false } }
   }
-  return /^gpt-(?:5\.[1-9]|[6-9])/.test(modelName(model))
-    ? { reasoning_effort: 'none' }
-    : {}
+  return /^gpt-(?:5\.[1-9]|[6-9])/.test(modelName(model)) ? { reasoning_effort: 'none' } : {}
 }
 
 /** The model's own name: an OpenRouter vendor prefix (`openai/gpt-5`) is not part of it. */

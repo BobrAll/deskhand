@@ -36,7 +36,11 @@ const files = import.meta.glob('./speech/*.mp3', {
  * must not be swapped for a recording of another one.
  */
 function normalizeForLookup(text: string): string {
-  return text.toLowerCase().replace(/\s+/g, ' ').replace(/[\s.!?…]+$/, '').trim()
+  return text
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .replace(/[\s.!?…]+$/, '')
+    .trim()
 }
 
 const clipsByText = new Map<string, string>()
@@ -60,7 +64,6 @@ export function recordedLineCount(): number {
 /** Ids whose audio is missing or was rendered from different wording. */
 export function staleLines(): string[] {
   return speechLines()
-    .filter((line) => (manifest as Record<string, string>)[line.id] !== line.text ||
-      !files[`./speech/${line.id}.mp3`])
+    .filter((line) => (manifest as Record<string, string>)[line.id] !== line.text || !files[`./speech/${line.id}.mp3`])
     .map((line) => line.id)
 }

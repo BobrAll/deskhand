@@ -93,9 +93,7 @@ describe('AnthropicProvider: the request', () => {
     vi.stubGlobal('fetch', fetchMock)
     respond(sse(STOP))
 
-    await drain(
-      new AnthropicProvider().stream(messages, 'sk-ant', options({ baseUrl: 'https://proxy.example/v1/' }))
-    )
+    await drain(new AnthropicProvider().stream(messages, 'sk-ant', options({ baseUrl: 'https://proxy.example/v1/' })))
 
     expect(request().url).toBe('https://proxy.example/v1/messages')
   })
@@ -104,13 +102,7 @@ describe('AnthropicProvider: the request', () => {
     vi.stubGlobal('fetch', fetchMock)
     respond(sse(STOP))
 
-    await drain(
-      new AnthropicProvider('https://custom.example/v2').stream(
-        messages,
-        'sk-ant',
-        options({ baseUrl: '' })
-      )
-    )
+    await drain(new AnthropicProvider('https://custom.example/v2').stream(messages, 'sk-ant', options({ baseUrl: '' })))
 
     expect(request().url).toBe('https://custom.example/v2/messages')
   })
@@ -189,11 +181,7 @@ describe('AnthropicProvider: the body', () => {
     respond(sse(STOP))
 
     await drain(
-      new AnthropicProvider().stream(
-        [{ role: 'user', parts: [{ type: 'text', text: 'U' }] }],
-        'sk-ant',
-        options()
-      )
+      new AnthropicProvider().stream([{ role: 'user', parts: [{ type: 'text', text: 'U' }] }], 'sk-ant', options())
     )
 
     expect(request().body).not.toHaveProperty('system')
@@ -299,10 +287,7 @@ describe('AnthropicProvider: reading the stream', () => {
     vi.stubGlobal('fetch', fetchMock)
     respond(sse(textDelta('При'), textDelta('вет'), STOP))
 
-    expect(await drain(new AnthropicProvider().stream(messages, 'sk-ant', options()))).toEqual([
-      'При',
-      'вет'
-    ])
+    expect(await drain(new AnthropicProvider().stream(messages, 'sk-ant', options()))).toEqual(['При', 'вет'])
   })
 
   it('stops at message_stop and ignores anything after it', async () => {
@@ -326,9 +311,7 @@ describe('AnthropicProvider: reading the stream', () => {
       )
     )
 
-    expect(await drain(new AnthropicProvider().stream(messages, 'sk-ant', options()))).toEqual([
-      'real'
-    ])
+    expect(await drain(new AnthropicProvider().stream(messages, 'sk-ant', options()))).toEqual(['real'])
   })
 
   it('ignores a delta that is not a text_delta', async () => {
@@ -341,27 +324,21 @@ describe('AnthropicProvider: reading the stream', () => {
       )
     )
 
-    expect(await drain(new AnthropicProvider().stream(messages, 'sk-ant', options()))).toEqual([
-      'real'
-    ])
+    expect(await drain(new AnthropicProvider().stream(messages, 'sk-ant', options()))).toEqual(['real'])
   })
 
   it('ignores an empty text_delta', async () => {
     vi.stubGlobal('fetch', fetchMock)
     respond(sse(textDelta(''), textDelta('real'), STOP))
 
-    expect(await drain(new AnthropicProvider().stream(messages, 'sk-ant', options()))).toEqual([
-      'real'
-    ])
+    expect(await drain(new AnthropicProvider().stream(messages, 'sk-ant', options()))).toEqual(['real'])
   })
 
   it('skips a chunk that is not valid JSON', async () => {
     vi.stubGlobal('fetch', fetchMock)
     respond(sse('data: not json\n\n', textDelta('ok'), STOP))
 
-    expect(await drain(new AnthropicProvider().stream(messages, 'sk-ant', options()))).toEqual([
-      'ok'
-    ])
+    expect(await drain(new AnthropicProvider().stream(messages, 'sk-ant', options()))).toEqual(['ok'])
   })
 
   it('does not let a skipped event downgrade a turn that finished', async () => {
@@ -385,18 +362,14 @@ describe('AnthropicProvider: reading the stream', () => {
     vi.stubGlobal('fetch', fetchMock)
     respond(sse('data: null\n\n', 'data: 7\n\n', textDelta('ok'), STOP))
 
-    expect(await drain(new AnthropicProvider().stream(messages, 'sk-ant', options()))).toEqual([
-      'ok'
-    ])
+    expect(await drain(new AnthropicProvider().stream(messages, 'sk-ant', options()))).toEqual(['ok'])
   })
 
   it('keeps a delta split across chunks', async () => {
     vi.stubGlobal('fetch', fetchMock)
     respond(sse('data: {"type":"content_block_delta","delta":{"type":"text_del', 'ta","text":"слово"}}\n\n'))
 
-    expect(await drain(new AnthropicProvider().stream(messages, 'sk-ant', options()))).toEqual([
-      'слово'
-    ])
+    expect(await drain(new AnthropicProvider().stream(messages, 'sk-ant', options()))).toEqual(['слово'])
   })
 
   it('throws the error event the stream carries', async () => {
@@ -487,11 +460,7 @@ describe('AnthropicProvider: failures', () => {
     const controller = new AbortController()
     fetchMock.mockResolvedValue(new Response(brokenStream(textDelta('a'), new TypeError('terminated'))))
 
-    const stream = new AnthropicProvider().stream(
-      messages,
-      'sk-ant',
-      options({ signal: controller.signal })
-    )
+    const stream = new AnthropicProvider().stream(messages, 'sk-ant', options({ signal: controller.signal }))
     expect(await stream.next()).toEqual({ value: { delta: 'a' }, done: false })
     controller.abort()
     await expect(stream.next()).rejects.toThrow('Запрос отменён.')

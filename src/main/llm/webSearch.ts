@@ -1,7 +1,5 @@
 import { apiEndpoint, toProviderError, toTransportError } from './http'
-import {
-  isPlusVibeApi, providerInfo, resolveBaseUrl, resolveSearchModel
-} from '@shared/defaults'
+import { isPlusVibeApi, providerInfo, resolveBaseUrl, resolveSearchModel } from '@shared/defaults'
 import type { AppSettings, ProviderId } from '@shared/types'
 import { ProviderError } from './provider'
 
@@ -96,9 +94,10 @@ function searchRequest(
 ): SearchRequest {
   const userMessage = { role: 'user', content: prompt }
   const messages = [{ role: 'system', content: INSTRUCTION }, userMessage]
-  const headers: Record<string, string> = wire === 'anthropic'
-    ? { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' }
-    : { Authorization: `Bearer ${apiKey}` }
+  const headers: Record<string, string> =
+    wire === 'anthropic'
+      ? { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' }
+      : { Authorization: `Bearer ${apiKey}` }
   return {
     url: apiEndpoint(baseUrl, SEARCH_ENDPOINT[wire]).href,
     headers: { ...headers, 'content-type': 'application/json' },
@@ -117,26 +116,40 @@ function searchBody(
   switch (wire) {
     case 'anthropic':
       return {
-        model, max_tokens: maxTokens, system: INSTRUCTION, messages: [userMessage],
+        model,
+        max_tokens: maxTokens,
+        system: INSTRUCTION,
+        messages: [userMessage],
         tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: ANTHROPIC_SEARCH_MAX_USES }]
       }
     case 'openrouter':
       return {
-        model, max_tokens: maxTokens, messages,
-        tools: [{
-          type: 'openrouter:web_search',
-          parameters: { max_results: OPENROUTER_MAX_RESULTS, max_total_results: OPENROUTER_MAX_TOTAL_RESULTS }
-        }]
+        model,
+        max_tokens: maxTokens,
+        messages,
+        tools: [
+          {
+            type: 'openrouter:web_search',
+            parameters: { max_results: OPENROUTER_MAX_RESULTS, max_total_results: OPENROUTER_MAX_TOTAL_RESULTS }
+          }
+        ]
       }
     case 'responses':
       return {
-        model, instructions: INSTRUCTION, input: userMessage.content, store: false,
-        max_output_tokens: maxTokens, max_tool_calls: RESPONSES_MAX_TOOL_CALLS,
-        tools: [{ type: 'web_search', search_context_size: 'low' }], tool_choice: 'required'
+        model,
+        instructions: INSTRUCTION,
+        input: userMessage.content,
+        store: false,
+        max_output_tokens: maxTokens,
+        max_tool_calls: RESPONSES_MAX_TOOL_CALLS,
+        tools: [{ type: 'web_search', search_context_size: 'low' }],
+        tool_choice: 'required'
       }
     case 'chat':
       return {
-        model, messages, max_tokens: maxTokens,
+        model,
+        messages,
+        max_tokens: maxTokens,
         web_search_options: { search_context_size: 'low' }
       }
   }
@@ -157,7 +170,7 @@ async function postSearch(
       signal
     })
     if (!response.ok) throw await toProviderError(response, providerInfo(provider)?.label ?? provider)
-    return await response.json() as SearchResponse
+    return (await response.json()) as SearchResponse
   } catch (error) {
     if (timeout.aborted && !turnSignal.aborted) {
       throw new ProviderError('Веб-поиск не успел ответить. Попробуй ещё раз.', true)
@@ -177,10 +190,14 @@ async function postSearch(
  */
 function answerWithSources(result: SearchResponse, provider: ProviderId, plusVibe: boolean): string {
   const blocks = searchTextBlocks(result)
-  const answer = blocks.map((block) => block.text).join('\n\n').trim()
+  const answer = blocks
+    .map((block) => block.text)
+    .join('\n\n')
+    .trim()
   const links = sourceLinks(blocks)
   // OpenRouter reports server tool use without necessarily returning annotations.
-  const searched = links.length > 0 ||
+  const searched =
+    links.length > 0 ||
     (provider === 'openrouter' && (result.usage?.server_tool_use?.web_search_requests ?? 0) > 0) ||
     (plusVibe && hasInlineLink(answer))
   if (!answer || !searched) {
@@ -192,8 +209,13 @@ function answerWithSources(result: SearchResponse, provider: ProviderId, plusVib
 
 function sourceLinks(blocks: Array<{ citations?: Citation[] }>): string[] {
   const citations = blocks.flatMap((block) => block.citations ?? [])
-  return [...new Set(citations.map((citation) => citation.url)
-    .filter((url): url is string => typeof url === 'string' && /^https?:\/\/[^\s]+$/i.test(url)))]
+  return [
+    ...new Set(
+      citations
+        .map((citation) => citation.url)
+        .filter((url): url is string => typeof url === 'string' && /^https?:\/\/[^\s]+$/i.test(url))
+    )
+  ]
 }
 
 /** PlusVibe's explicit chat search returns source links in the answer itself. */
@@ -203,7 +225,8 @@ function hasInlineLink(answer: string): boolean {
 
 function searchTextBlocks(result: SearchResponse): Array<{ text?: string | null; citations?: Citation[] }> {
   if (result.output) {
-    return result.output.filter((item) => item.type === 'message')
+    return result.output
+      .filter((item) => item.type === 'message')
       .flatMap((item) => item.content ?? [])
       .filter((block) => block.type === 'output_text')
       .map((block) => ({
@@ -213,8 +236,10 @@ function searchTextBlocks(result: SearchResponse): Array<{ text?: string | null;
   }
   if (result.content) return result.content.filter((block) => block.type === 'text')
   const message = result.choices?.[0]?.message
-  return [{
-    text: message?.content,
-    citations: message?.annotations?.flatMap((annotation) => annotation.url_citation ?? [])
-  }]
+  return [
+    {
+      text: message?.content,
+      citations: message?.annotations?.flatMap((annotation) => annotation.url_citation ?? [])
+    }
+  ]
 }

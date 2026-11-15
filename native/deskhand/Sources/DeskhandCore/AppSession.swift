@@ -1,6 +1,6 @@
-import Foundation
 import ApplicationServices
 import CoreGraphics
+import Foundation
 
 /// How long to wait for an app to reflect an action in its accessibility tree.
 ///

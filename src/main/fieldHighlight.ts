@@ -14,12 +14,7 @@
 import type { BrowserWindow } from 'electron'
 import { CH } from '@shared/ipc'
 import type { ScreenRect } from '@shared/types'
-import {
-  createLayerWindow,
-  ensureLayerWindow,
-  placeLayer,
-  type LayerWindowState
-} from './layerWindow'
+import { createLayerWindow, ensureLayerWindow, placeLayer, type LayerWindowState } from './layerWindow'
 
 /**
  * The strip is a listening bar, not a repaint of the whole editor.

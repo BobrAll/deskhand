@@ -52,7 +52,9 @@ function buildSlice(arch, work) {
   execFileSync('swift', args, { cwd: project, stdio: 'inherit', env })
 
   const dir = execFileSync('swift', [...args, '--show-bin-path'], {
-    cwd: project, env, encoding: 'utf8'
+    cwd: project,
+    env,
+    encoding: 'utf8'
   }).trim()
   const binary = join(dir, 'deskhand-agent')
   if (!existsSync(binary)) {

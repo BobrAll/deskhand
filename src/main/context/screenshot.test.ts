@@ -9,15 +9,12 @@ const capture = vi.hoisted(() => ({
 }))
 
 vi.mock('node:child_process', () => ({
-  execFile: (
-    _command: string,
-    args: string[],
-    _options: unknown,
-    callback: (error: Error | null) => void
-  ) => {
+  execFile: (_command: string, args: string[], _options: unknown, callback: (error: Error | null) => void) => {
     capture.calls.push([...args])
-    const fail = args.includes('-l') ? capture.failWindow
-      : args.includes('-R') ? capture.failRectangle
+    const fail = args.includes('-l')
+      ? capture.failWindow
+      : args.includes('-R')
+        ? capture.failRectangle
         : capture.failFullScreen
     queueMicrotask(() => callback(fail ? new Error('capture refused') : null))
   }
@@ -45,8 +42,7 @@ vi.mock('electron', () => {
   }
 })
 
-const fullScreenCalls = (): string[][] =>
-  capture.calls.filter((args) => args[0] === '-x' && args.length === 2)
+const fullScreenCalls = (): string[][] => capture.calls.filter((args) => args[0] === '-x' && args.length === 2)
 
 const options = { maxSide: 1440, quality: 80 }
 
@@ -61,10 +57,7 @@ describe('captureScreenshot: the whole-screen fallback', () => {
   it('stays null when the window cannot be captured and the fallback is off', async () => {
     capture.failWindow = true
 
-    const shot = await captureScreenshot(
-      { windowId: 7, bounds: null, allowFullScreenFallback: false },
-      options
-    )
+    const shot = await captureScreenshot({ windowId: 7, bounds: null, allowFullScreenFallback: false }, options)
 
     expect(shot).toBeNull()
     expect(fullScreenCalls()).toHaveLength(0)
@@ -110,10 +103,7 @@ describe('captureScreenshot: the rectangle the picture covers', () => {
 
   it('uses the window bounds when they are known', async () => {
     // The fake image is 1440×900, so these bounds survive the aspect check.
-    const shot = await captureScreenshot(
-      { windowId: 7, bounds: { x: 10, y: 20, width: 1440, height: 900 } },
-      options
-    )
+    const shot = await captureScreenshot({ windowId: 7, bounds: { x: 10, y: 20, width: 1440, height: 900 } }, options)
 
     expect(shot?.area).toEqual({ x: 10, y: 20, width: 1440, height: 900 })
     expect(shot?.fullScreen).toBe(false)

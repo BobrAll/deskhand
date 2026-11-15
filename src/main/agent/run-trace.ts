@@ -14,19 +14,22 @@ interface RunTraceWriter {
 
 function openTrace(directory: string, filename: string): RunTraceWriter {
   const path = join(directory, filename)
-  let writes = mkdir(directory, { recursive: true, mode: 0o700 })
-    .then(() => writeFile(path, '[\n', { mode: 0o600, flag: 'wx' }))
+  let writes = mkdir(directory, { recursive: true, mode: 0o700 }).then(() =>
+    writeFile(path, '[\n', { mode: 0o600, flag: 'wx' })
+  )
   let first = true
   let failed = false
 
   function enqueue(content: () => string): void {
-    writes = writes.then(async () => {
-      if (!failed) await appendFile(path, content())
-    }).catch(() => {
-      failed = true
-      if (!warnedOnce) console.warn('[agent run trace] Unable to write the local trace')
-      warnedOnce = true
-    })
+    writes = writes
+      .then(async () => {
+        if (!failed) await appendFile(path, content())
+      })
+      .catch(() => {
+        failed = true
+        if (!warnedOnce) console.warn('[agent run trace] Unable to write the local trace')
+        warnedOnce = true
+      })
   }
 
   function record(row: unknown): void {

@@ -85,15 +85,15 @@ beforeEach(() => {
   delay.mockReset().mockImplementation(async (ms: number) => {
     state.order.push(`delay:${ms}`)
   })
-  waitFor.mockReset().mockImplementation(
-    async (check: () => Promise<boolean>, timeoutMs: number, intervalMs?: number) => {
+  waitFor
+    .mockReset()
+    .mockImplementation(async (check: () => Promise<boolean>, timeoutMs: number, intervalMs?: number) => {
       state.waitForCalls.push({ timeoutMs, intervalMs })
       // Run the real check once instead of polling: the loop itself is `util.ts`.
       const forced = state.waitForAnswers.shift()
       if (forced !== undefined) return forced
       return Boolean(await check())
-    }
-  )
+    })
   // The queue runs the task at once, so the recorded order is the real order.
   withClipboard.mockReset().mockImplementation(async (task: () => Promise<unknown>) => task())
 })
@@ -108,21 +108,14 @@ describe('pasteAnswer: the order of the calls', () => {
 
     expect(result).toEqual({ ok: true, copiedOnly: false })
     expect(helperActivate).toHaveBeenCalledWith({ bundleId: 'com.apple.TextEdit', pid: 900 })
-    expect(state.order).toEqual([
-      'clipboard.writeText:ответ',
-      'delay:40',
-      'delay:300',
-      'restoreClipboard'
-    ])
+    expect(state.order).toEqual(['clipboard.writeText:ответ', 'delay:40', 'delay:300', 'restoreClipboard'])
   })
 
   it('snapshots the clipboard before writing the answer', async () => {
     await pasteAnswer('ответ', target)
 
     expect(snapshotClipboard).toHaveBeenCalledTimes(1)
-    expect(snapshotClipboard.mock.invocationCallOrder[0]).toBeLessThan(
-      restoreClipboard.mock.invocationCallOrder[0]
-    )
+    expect(snapshotClipboard.mock.invocationCallOrder[0]).toBeLessThan(restoreClipboard.mock.invocationCallOrder[0])
   })
 
   it('sends Cmd+V between the write and the restore', async () => {
@@ -217,9 +210,7 @@ describe('pasteAnswer: falling back to the clipboard', () => {
     const result = await pasteAnswer('ответ', target)
 
     expect(result.copiedOnly).toBe(true)
-    expect(result.message).toBe(
-      'Не удалось вернуться в исходное приложение — ответ скопирован в буфер обмена.'
-    )
+    expect(result.message).toBe('Не удалось вернуться в исходное приложение — ответ скопирован в буфер обмена.')
     expect(helperSendKey).not.toHaveBeenCalled()
   })
 

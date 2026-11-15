@@ -13,12 +13,7 @@ import { BrowserWindow, screen } from 'electron'
 import { CH } from '@shared/ipc'
 import type { AgentCursorFrame, AgentCursorPhase, AgentEvent, ScreenRect } from '@shared/types'
 import { trace } from './trace'
-import {
-  createLayerWindow,
-  ensureLayerWindow,
-  placeLayer,
-  type LayerWindowState
-} from '../layerWindow'
+import { createLayerWindow, ensureLayerWindow, placeLayer, type LayerWindowState } from '../layerWindow'
 
 /** How long the renderer's fade-out runs before the window is actually hidden. */
 const CURSOR_FADE_MS = 160

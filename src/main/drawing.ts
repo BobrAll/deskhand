@@ -21,12 +21,7 @@
 import type { BrowserWindow } from 'electron'
 import { CH } from '@shared/ipc'
 import type { Annotation, DrawingPayload, DrawingShape, ScreenRect } from '@shared/types'
-import {
-  createLayerWindow,
-  ensureLayerWindow,
-  placeLayer,
-  type LayerWindowState
-} from './layerWindow'
+import { createLayerWindow, ensureLayerWindow, placeLayer, type LayerWindowState } from './layerWindow'
 import { watchForAbort, type AbortWatcher } from './native/helper'
 
 /** The renderer's fade-out; the window is hidden right after it. */
@@ -109,7 +104,11 @@ function toShapes(annotations: Annotation[], width: number, height: number): Dra
 }
 
 /** Draws `annotations` over the screen and makes the layer visible. */
-export async function showAnnotations(area: ScreenRect, annotations: Annotation[], onDismiss?: () => void): Promise<void> {
+export async function showAnnotations(
+  area: ScreenRect,
+  annotations: Annotation[],
+  onDismiss?: () => void
+): Promise<void> {
   if (annotations.length === 0) {
     hideAnnotations()
     return

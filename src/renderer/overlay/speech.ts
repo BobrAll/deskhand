@@ -117,15 +117,18 @@ export function speechText(text: string): string {
     .replace(/^\s*\|.*\|\s*$/gm, '')
 
   const blocks = speechBlocks(cleaned)
-    .map(block => block.replace(/[*_`~]/g, '').replace(/\s+/g, ' ').trim())
+    .map((block) =>
+      block
+        .replace(/[*_`~]/g, '')
+        .replace(/\s+/g, ' ')
+        .trim()
+    )
     .filter(Boolean)
   // Every block boundary is a pause: without punctuation the engine runs a list
   // or a heading into the next thought. The last block gets no closing full
   // stop — nothing follows it, so that would just be a stray separator.
   return blocks
-    .map((block, index) =>
-      index < blocks.length - 1 && !endsWithPause(block) ? `${block}.` : block
-    )
+    .map((block, index) => (index < blocks.length - 1 && !endsWithPause(block) ? `${block}.` : block))
     .join(' ')
 }
 

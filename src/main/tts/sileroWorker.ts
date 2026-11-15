@@ -168,12 +168,7 @@ export class SileroWorker {
   }
 
   /** Queues one phrase; `fallback` renders it again when the worker fails. */
-  render(
-    text: string,
-    output: string,
-    fallback: () => Promise<void>,
-    verify?: () => Promise<void>
-  ): Promise<void> {
+  render(text: string, output: string, fallback: () => Promise<void>, verify?: () => Promise<void>): Promise<void> {
     this.stopped = false
     return new Promise((resolve, reject) => {
       this.queue.push({ text, output, fallback, verify, resolve, reject })

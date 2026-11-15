@@ -136,9 +136,5 @@ export function Markdown({
   // width drag, the caret blinking, a notice — and parsing the whole answer
   // again on each of them is work that produces the identical tree.
   const blocks = useMemo(() => parseMarkdown(text, streaming), [text, streaming])
-  return (
-    <>
-      {blocks.map((block, index) => renderBlock(block, index, caret && index === blocks.length - 1))}
-    </>
-  )
+  return <>{blocks.map((block, index) => renderBlock(block, index, caret && index === blocks.length - 1))}</>
 }

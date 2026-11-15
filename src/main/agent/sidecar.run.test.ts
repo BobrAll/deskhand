@@ -85,16 +85,16 @@ describe('run request', () => {
     })
 
     const request = state.writes
-      .map((line) => JSON.parse(line) as {
-        method?: string
-        params?: { options?: { excluded_apps?: unknown } }
-      })
+      .map(
+        (line) =>
+          JSON.parse(line) as {
+            method?: string
+            params?: { options?: { excluded_apps?: unknown } }
+          }
+      )
       .find((line) => line.method === 'run')
 
-    expect(request?.params?.options?.excluded_apps).toEqual([
-      'com.apple.finder',
-      'com.1password.1password'
-    ])
+    expect(request?.params?.options?.excluded_apps).toEqual(['com.apple.finder', 'com.1password.1password'])
   })
 })
 
@@ -121,9 +121,7 @@ describe('a process that dies before the handshake', () => {
 
     state.diesAtStart = false
     const next = sidecar.run(RUN)
-    await vi.waitFor(() =>
-      expect(state.writes.some((line) => JSON.parse(line).method === 'run')).toBe(true)
-    )
+    await vi.waitFor(() => expect(state.writes.some((line) => JSON.parse(line).method === 'run')).toBe(true))
     await next
   })
 })

@@ -42,10 +42,7 @@ function withConnection(settings: AppSettings, input: ConnectionInput): AppSetti
  * Each step builds on the bundle the store answered with, so the values written
  * for one provider are what the next provider's save spreads.
  */
-export async function saveConnection(
-  store: ConnectionStore,
-  input: ConnectionInput
-): Promise<SettingsBundle> {
+export async function saveConnection(store: ConnectionStore, input: ConnectionInput): Promise<SettingsBundle> {
   const keyed = await store.setKey(input.provider, input.key)
   return store.save(withConnection(keyed.settings, input))
 }

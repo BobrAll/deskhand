@@ -20,10 +20,7 @@ let barCount = 0
 
 function layoutBars(): void {
   const width = Math.max(80, window.innerWidth)
-  const next = Math.max(
-    MIN_BARS,
-    Math.min(MAX_BARS, Math.floor((width - 16) / BAR_SPACING_PX))
-  )
+  const next = Math.max(MIN_BARS, Math.min(MAX_BARS, Math.floor((width - 16) / BAR_SPACING_PX)))
   if (next === barCount) return
   barCount = next
   bars.replaceChildren(

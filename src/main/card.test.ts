@@ -292,14 +292,28 @@ describe('card: resizing at the anchor', () => {
   it('keeps the left edge while the user drags the right one', () => {
     // The edge under the pointer has to follow the pointer, so the card grows
     // away from its own left edge instead of away from the anchor.
-    const next = resizeAnchor({ anchor: base, bounds: inPlace, height: 31, width: 480, workAreaAt: () => SCREEN, pin: true })
+    const next = resizeAnchor({
+      anchor: base,
+      bounds: inPlace,
+      height: 31,
+      width: 480,
+      workAreaAt: () => SCREEN,
+      pin: true
+    })
 
     expect(next.x).toBe(710)
     expect(next.pinned).toBe(true)
   })
 
   it('keeps the left edge for the resizes that follow the drag', () => {
-    const dragged = resizeAnchor({ anchor: base, bounds: inPlace, height: 31, width: 480, workAreaAt: () => SCREEN, pin: true })
+    const dragged = resizeAnchor({
+      anchor: base,
+      bounds: inPlace,
+      height: 31,
+      width: 480,
+      workAreaAt: () => SCREEN,
+      pin: true
+    })
     const bounds = boundsFor(dragged, 31, 480)
     // A content-driven resize with no `pin`: the answer reflowed, the person did
     // not touch the edge. The card must stay where the drag left it.

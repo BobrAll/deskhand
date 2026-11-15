@@ -66,10 +66,7 @@ export interface FieldSelection {
  * `focusedField` — and `null` once the field no longer has focus, because a
  * range it merely remembers is not something the user is looking at.
  */
-export function hasTextSelection(
-  pageSelection: string,
-  focusedField: FieldSelection | null
-): boolean {
+export function hasTextSelection(pageSelection: string, focusedField: FieldSelection | null): boolean {
   if (pageSelection !== '') return true
   return focusedField !== null && focusedField.selectionStart !== focusedField.selectionEnd
 }

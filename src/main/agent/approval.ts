@@ -60,22 +60,15 @@ const ENGLISH_WORDS =
   'accept terms|install)\\b'
 
 const COMMITTING_ACTION = new RegExp(
-  [
-    PAYMENT_WORDS,
-    SENDING_WORDS,
-    DELETION_WORDS,
-    ACCESS_WORDS,
-    PASSWORD_WORDS,
-    AGREEMENT_WORDS,
-    ENGLISH_WORDS
-  ].join('|'),
+  [PAYMENT_WORDS, SENDING_WORDS, DELETION_WORDS, ACCESS_WORDS, PASSWORD_WORDS, AGREEMENT_WORDS, ENGLISH_WORDS].join(
+    '|'
+  ),
   'i'
 )
 
 const MESSAGE_FIELD = /сообщени|письмо|комментари|\b(?:message|reply|comment|chat)\b/i
 
-const SECRET =
-  /api[- ]?key|api[- ]?ключ|парол|password|seed phrase|секретн\S* ключ|passphrase|токен|token/i
+const SECRET = /api[- ]?key|api[- ]?ключ|парол|password|seed phrase|секретн\S* ключ|passphrase|токен|token/i
 
 /** Keys that submit something, in the xdotool grammar the agent uses. */
 const SUBMIT_KEY = /(^|\+)(Return|KP_Enter|enter)$/i
@@ -95,13 +88,7 @@ const FINDER_BUNDLE_ID = 'com.apple.finder'
  * about them at all. These are the ones it does ask about and the answer is
  * usually yes.
  */
-const HARMLESS = new Set([
-  'scroll',
-  'drag',
-  'select_text',
-  'activate_app',
-  'perform_secondary_action'
-])
+const HARMLESS = new Set(['scroll', 'drag', 'select_text', 'activate_app', 'perform_secondary_action'])
 
 function text(value: unknown): string {
   return typeof value === 'string' ? value : ''
@@ -110,14 +97,7 @@ function text(value: unknown): string {
 /** Everything the call is about, for the keyword match to look at. */
 function matchableText(request: AgentToolRequest): string {
   const args = request.arguments
-  return [
-    request.title,
-    request.label,
-    text(args.label),
-    text(args.name),
-    text(args.action),
-    request.narration
-  ]
+  return [request.title, request.label, text(args.label), text(args.name), text(args.action), request.narration]
     .filter(Boolean)
     .join(' ')
     .normalize('NFKC')
@@ -205,9 +185,11 @@ function keyCommits(context: string, request: AgentToolRequest): boolean {
   const key = text(request.arguments.key)
   const submit = SUBMIT_KEY.test(key)
   const command = COMMAND_MODIFIER.test(key)
-  return (submit && COMMITTING_ACTION.test(context)) ||
+  return (
+    (submit && COMMITTING_ACTION.test(context)) ||
     (submit && (command || MESSAGE_FIELD.test(context))) ||
     (request.bundleId === FINDER_BUNDLE_ID && command && FINDER_DELETE_KEY.test(key))
+  )
 }
 
 /**
@@ -240,16 +222,15 @@ export function classifyCall(request: AgentToolRequest, rememberedKeys: string[]
   if (request.tool === 'type_text' || request.tool === 'set_value') return { kind: 'allow' }
   if (request.tool === 'click' && request.textField) return { kind: 'allow' }
 
-  const critical = request.tool === 'press_key'
-    ? keyCommits(context, request)
-    : COMMITTING_ACTION.test(context)
+  const critical = request.tool === 'press_key' ? keyCommits(context, request) : COMMITTING_ACTION.test(context)
   if (!critical) return { kind: 'allow' }
 
   const subject = confirmationSubject(request)
 
   return {
     kind: 'confirm',
-    detail: `${subject}${request.app ? ` — ${request.app}` : ''}\n\n` +
+    detail:
+      `${subject}${request.app ? ` — ${request.app}` : ''}\n\n` +
       'Проверь последствия в приложении: для оплаты — продавца, сумму и подписку; ' +
       'для отправки — получателя и содержимое. «Больше не спрашивать» запомнит это действие ' +
       'для этого приложения.'

@@ -1,6 +1,6 @@
-import Foundation
 import ApplicationServices
 import CoreGraphics
+import Foundation
 
 /// A flattened, index-addressable view of an application's accessibility tree.
 public struct AXSnapshot: Sendable {
@@ -279,7 +279,8 @@ public enum AXTreeWalker {
             let hasArea = (frame?.width ?? 0) > 0 && (frame?.height ?? 0) > 0
             let isInteractive = !actions.isEmpty || settable
 
-            let emit = !(isLayoutScaffolding(role: role)
+            let emit =
+                !(isLayoutScaffolding(role: role)
                 && !hasText && identifier == nil && !isInteractive)
                 && (hasArea || hasText)
 
@@ -308,7 +309,8 @@ public enum AXTreeWalker {
 
             let childResult = element.childrenResult()
             if childResult.childrenRefused, emit,
-               isContainerHidingChildren(role: role, frame: frame) {
+                isContainerHidingChildren(role: role, frame: frame)
+            {
                 // Record that the subtree is missing, not empty. Only patch the
                 // node this element just produced: when it was filtered out,
                 // `nodes.last` belongs to an ancestor.

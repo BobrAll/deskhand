@@ -35,8 +35,8 @@ function nameTexts(element: AxElementInfo): string[] {
     /^(?:AXButton|AXToolbarButton|AXCheckBox|AXRadioButton|AXSlider|AXSwitch)$/.test(element.role) &&
     /^(?:[+-]?\d+(?:[.,]\d+)?|true|false)$/i.test(value ?? '')
   const textValue = element.editable || stateValue ? null : value
-  return [element.title, element.description, element.help, textValue].filter(
-    (text): text is string => Boolean(text?.trim())
+  return [element.title, element.description, element.help, textValue].filter((text): text is string =>
+    Boolean(text?.trim())
   )
 }
 
@@ -155,11 +155,7 @@ function isListable(
  * scrolled out of the window — are dropped: the model cannot have seen them, and
  * naming one would aim a click below the window's edge.
  */
-export function formatOutline(
-  probe: AxProbe,
-  windowBounds: ScreenRect | null,
-  captureArea: ScreenRect
-): string | null {
+export function formatOutline(probe: AxProbe, windowBounds: ScreenRect | null, captureArea: ScreenRect): string | null {
   const seen = new Set<string>()
   const rows: { x: number; y: number; line: string }[] = []
 
@@ -181,9 +177,7 @@ export function formatOutline(
   }
 
   if (rows.length === 0) return null
-  rows.sort((a, b) =>
-    Math.abs(a.y - b.y) > SAME_ROW_POINTS ? a.y - b.y : a.x - b.x
-  )
+  rows.sort((a, b) => (Math.abs(a.y - b.y) > SAME_ROW_POINTS ? a.y - b.y : a.x - b.x))
   const kept = rows.slice(0, MAX_ITEMS)
 
   return [
@@ -205,8 +199,10 @@ export async function describeScreen(
 ): Promise<string | null> {
   const probe = await helperProbe(pid)
   if (!probe || probe.targets.length === 0) return null
-  onDrawingTargets?.(probe.targets
-    .filter((element) => isListable(element, captureArea, windowBounds))
-    .map((element) => ({ ...element, pid: element.pid ?? probe.pid })))
+  onDrawingTargets?.(
+    probe.targets
+      .filter((element) => isListable(element, captureArea, windowBounds))
+      .map((element) => ({ ...element, pid: element.pid ?? probe.pid }))
+  )
   return formatOutline(probe, windowBounds, captureArea)
 }

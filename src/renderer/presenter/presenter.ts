@@ -32,13 +32,7 @@ const TIP_X = (5 / ARROW_BOX) * ARROW_SIZE
 const TIP_Y = (3.2 / ARROW_BOX) * ARROW_SIZE
 
 /** Gestures that deserve a faint ring where they land. */
-const RINGING: ReadonlySet<AgentGesture> = new Set<AgentGesture>([
-  'click',
-  'secondary',
-  'activate',
-  'drag',
-  'scroll'
-])
+const RINGING: ReadonlySet<AgentGesture> = new Set<AgentGesture>(['click', 'secondary', 'activate', 'drag', 'scroll'])
 
 export interface PresenterLayer {
   render(frame: AgentPointerFrame): void
@@ -53,10 +47,7 @@ function arrow(): SVGSVGElement {
   path.setAttribute('class', 'arrow')
   // A slim, rounded pointer rather than the system arrow: the mark should read
   // as "here", not as a second mouse the user might try to grab.
-  path.setAttribute(
-    'd',
-    'M5 3.2 L20.4 13.6 L13.4 15 L16.6 22.2 L13.8 23.4 L10.6 16.2 L5 20.9 Z'
-  )
+  path.setAttribute('d', 'M5 3.2 L20.4 13.6 L13.4 15 L16.6 22.2 L13.8 23.4 L10.6 16.2 L5 20.9 Z')
   svg.append(path)
   return svg
 }

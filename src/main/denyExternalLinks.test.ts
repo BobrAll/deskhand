@@ -57,7 +57,14 @@ function navigate(url: string): { allowed: boolean; opened: string | null } {
   if (!env.navigate) throw new Error('no navigation guard installed')
   env.opened.length = 0
   let prevented = false
-  env.navigate({ preventDefault: () => { prevented = true } }, url)
+  env.navigate(
+    {
+      preventDefault: () => {
+        prevented = true
+      }
+    },
+    url
+  )
   return { allowed: !prevented, opened: env.opened[0] ?? null }
 }
 

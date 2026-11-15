@@ -191,7 +191,6 @@ const INSERT_BASE =
   'всего ответа, без пояснений и вступлений. Разметку используй только там, где она ' +
   'несёт структуру: списки и таблицы. Заголовки, жирный и курсив не нужны.'
 
-
 /**
  * The note that turns a request into a follow-up.
  *
@@ -270,10 +269,7 @@ function formatInstruction(options: InstructionOptions): string {
   // is not the action that was asked for. It still has to be able to draw — the
   // note cannot replace the tool, only qualify it.
   const base = mode === 'insert' ? INSERT_BASE : OVERLAY_BASE
-  const tools = [
-    draw ? DRAW_TOOL : '',
-    actReason ? ACT_UNAVAILABLE(actReason, actAsked) : ''
-  ]
+  const tools = [draw ? DRAW_TOOL : '', actReason ? ACT_UNAVAILABLE(actReason, actAsked) : '']
     .filter(Boolean)
     .join('\n\n')
   return tools ? `${base}\n\n${tools}` : base
@@ -313,8 +309,7 @@ function contextBlock(input: RequestInput): string[] {
     lines.push(`Приложен скриншот — ${what}. Используй его как основной контекст.`)
     if (input.draw) {
       lines.push(
-        'Все координаты @point считай по этому изображению: (0,0) — его ' +
-          'левый верхний угол, (1,1) — правый нижний.'
+        'Все координаты @point считай по этому изображению: (0,0) — его ' + 'левый верхний угол, (1,1) — правый нижний.'
       )
     }
   } else if (input.requestedScreenshot) {

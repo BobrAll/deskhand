@@ -117,8 +117,12 @@ function call(overrides: Partial<AgentToolRequest> = {}): AgentToolRequest {
 }
 
 const PROVIDER = {
-  wire: 'openai' as const, baseUrl: 'https://example.test', model: 'm',
-  apiKey: 'k', maxTokens: 1024, temperature: 0
+  wire: 'openai' as const,
+  baseUrl: 'https://example.test',
+  model: 'm',
+  apiKey: 'k',
+  maxTokens: 1024,
+  temperature: 0
 }
 
 function harness(options: { maxTokens?: number } = {}) {
@@ -143,13 +147,14 @@ function harness(options: { maxTokens?: number } = {}) {
     last: () => events.at(-1)!,
     /** Everything this run asked the trace to record. */
     trace: () => state.traceEvents.filter((line) => line.event !== 'agent.start'),
-    run: (prompt = 'Нажми «Купить»', history?: { question: string; answer: string }[]) => controller.run({
-      prompt,
-      appName: 'Safari',
-      windowTitle: 'Магазин',
-      ...(history ? { history } : {}),
-      provider: { ...PROVIDER, ...(options.maxTokens ? { maxTokens: options.maxTokens } : {}) }
-    })
+    run: (prompt = 'Нажми «Купить»', history?: { question: string; answer: string }[]) =>
+      controller.run({
+        prompt,
+        appName: 'Safari',
+        windowTitle: 'Магазин',
+        ...(history ? { history } : {}),
+        provider: { ...PROVIDER, ...(options.maxTokens ? { maxTokens: options.maxTokens } : {}) }
+      })
   }
 }
 
@@ -181,7 +186,9 @@ describe('availability: three separate reasons, three separate fixes', () => {
     const { controller } = harness()
 
     expect(controller.availability()).toEqual({
-      enabled: false, ready: false, reason: 'Агентный режим выключен в настройках.'
+      enabled: false,
+      ready: false,
+      reason: 'Агентный режим выключен в настройках.'
     })
   })
 
@@ -198,7 +205,9 @@ describe('availability: three separate reasons, three separate fixes', () => {
     const { controller } = harness()
 
     expect(controller.availability()).toMatchObject({
-      enabled: true, ready: false, needsAccessibility: true
+      enabled: true,
+      ready: false,
+      needsAccessibility: true
     })
     expect(controller.availability().reason).toContain('Универсальный доступ')
   })
@@ -269,7 +278,11 @@ describe('a run that gave up', () => {
   })
 
   it('says what happened in Russian, with the ending the number needs', async () => {
-    for (const [total, ending] of [[1, '1 шаг'], [3, '3 шага'], [8, '8 шагов']] as const) {
+    for (const [total, ending] of [
+      [1, '1 шаг'],
+      [3, '3 шага'],
+      [8, '8 шагов']
+    ] as const) {
       state.maxSteps = total
       state.runs = []
       const h = harness()
@@ -308,8 +321,9 @@ describe('a run that gave up', () => {
     state.emit({ kind: 'done', answer: 'Готово.', complete: true })
     await running
 
-    expect(h.trace().find((line) => line.event === 'agent.warned'))
-      .toMatchObject({ reason: 'the same call repeated without a change' })
+    expect(h.trace().find((line) => line.event === 'agent.warned')).toMatchObject({
+      reason: 'the same call repeated without a change'
+    })
     expect(h.trace().some((line) => line.event === 'agent.stopped')).toBe(false)
   })
 
@@ -384,8 +398,10 @@ describe('a run that gave up', () => {
     state.emit({ kind: 'done', complete: false, answer: 'Stopped.' })
     await running
 
-    expect(h.trace().find((line) => line.event === 'agent.stopped'))
-      .toMatchObject({ reason: 'the step budget ran out', step: 3 })
+    expect(h.trace().find((line) => line.event === 'agent.stopped')).toMatchObject({
+      reason: 'the step budget ran out',
+      step: 3
+    })
   })
 })
 
@@ -425,8 +441,7 @@ describe('a run that works', () => {
     const running = h.run()
     await vi.waitFor(() => expect(state.runs).toHaveLength(1))
 
-    const text =
-      'Открываю вкладку, нахожу поле поиска, ввожу запрос и смотрю на результаты. '.repeat(3)
+    const text = 'Открываю вкладку, нахожу поле поиска, ввожу запрос и смотрю на результаты. '.repeat(3)
     state.emit({ kind: 'stream', step: 1, text })
     const streamed = h.last().label
     state.emit({ kind: 'narration', step: 1, text })
@@ -666,9 +681,7 @@ describe('the question in the card', () => {
     state.emit({ kind: 'approval', request: call() })
     state.abort('escape')
 
-    expect(state.approvals).toEqual([
-      { id: 'call-1', allow: false, reason: 'The user declined the action.' }
-    ])
+    expect(state.approvals).toEqual([{ id: 'call-1', allow: false, reason: 'The user declined the action.' }])
     expect(state.cancels).toBe(0)
     expect(h.last()).toMatchObject({ phase: 'acting', label: 'Действие отклонено.' })
 
@@ -854,9 +867,7 @@ describe('the question in the card', () => {
 
     state.emit({ kind: 'done', complete: true, answer: '' })
     const result = await running
-    expect(result.actions).toEqual([
-      { tool: 'type_text', label: 'Секреты и пароли введи вручную.', ok: false }
-    ])
+    expect(result.actions).toEqual([{ tool: 'type_text', label: 'Секреты и пароли введи вручную.', ok: false }])
   })
 
   it('ignores an answer for a question that is no longer open', async () => {
@@ -889,9 +900,7 @@ describe('stopping', () => {
     // the agent is blocked on it.
     // The refusal reaches the model as a tool result, so that sentence is
     // English; the card keeps its own Russian one, published by `stop()`.
-    expect(state.approvals).toEqual([
-      { id: 'call-1', allow: false, reason: 'The run was cancelled by the user.' }
-    ])
+    expect(state.approvals).toEqual([{ id: 'call-1', allow: false, reason: 'The run was cancelled by the user.' }])
     expect(state.cancels).toBe(1)
     expect(h.last()).toMatchObject({ phase: 'aborted', message: 'Остановлено: ты взял мышь.' })
 
@@ -1008,7 +1017,11 @@ describe('the trace a run leaves behind', () => {
     })
     state.emit({ kind: 'tool', step: 1, name: 'get_app_state', args: { app: 'Finder' } })
     state.emit({
-      kind: 'result', step: 1, name: 'get_app_state', ok: true, text: 'tree',
+      kind: 'result',
+      step: 1,
+      name: 'get_app_state',
+      ok: true,
+      text: 'tree',
       timing: { wallMs: 493.02, treeMs: 476.35, captureMs: 12.1, imageBytes: 151812 }
     })
     state.emit({
@@ -1028,16 +1041,26 @@ describe('the trace a run leaves behind', () => {
 
     const llm = lines.find((line) => line.event === 'agent.llm')!
     expect(llm).toMatchObject({
-      step: 1, llmMs: 1432.5, promptBytes: 20823, history: 4, calls: 1,
-      inputTokens: 900, outputTokens: 40
+      step: 1,
+      llmMs: 1432.5,
+      promptBytes: 20823,
+      history: 4,
+      calls: 1,
+      inputTokens: 900,
+      outputTokens: 40
     })
 
     // The phases are what makes a 493 ms call diagnosable: without the split it
     // is indistinguishable from a slow model, and the fix is in a different file.
     const call = lines.find((line) => line.event === 'agent.call')!
     expect(call).toMatchObject({
-      step: 1, tool: 'get_app_state', ok: true,
-      wallMs: 493, treeMs: 476.4, captureMs: 12.1, imageBytes: 151812
+      step: 1,
+      tool: 'get_app_state',
+      ok: true,
+      wallMs: 493,
+      treeMs: 476.4,
+      captureMs: 12.1,
+      imageBytes: 151812
     })
     // A phase that did not run is absent, not zero.
     expect('encodeMs' in call).toBe(false)

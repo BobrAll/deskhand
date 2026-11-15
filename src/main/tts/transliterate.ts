@@ -35,17 +35,61 @@ function dictionaryForm(word: string): string | undefined {
 
 /** How a letter is pronounced when an acronym is spelled out. */
 const LETTER_NAMES: Record<string, string> = {
-  a: 'эй', b: 'би', c: 'си', d: 'ди', e: 'и', f: 'эф', g: 'джи',
-  h: 'эйч', i: 'ай', j: 'джей', k: 'кей', l: 'эл', m: 'эм', n: 'эн',
-  o: 'оу', p: 'пи', q: 'кью', r: 'ар', s: 'эс', t: 'ти', u: 'ю',
-  v: 'ви', w: 'дабл ю', x: 'экс', y: 'уай', z: 'зед'
+  a: 'эй',
+  b: 'би',
+  c: 'си',
+  d: 'ди',
+  e: 'и',
+  f: 'эф',
+  g: 'джи',
+  h: 'эйч',
+  i: 'ай',
+  j: 'джей',
+  k: 'кей',
+  l: 'эл',
+  m: 'эм',
+  n: 'эн',
+  o: 'оу',
+  p: 'пи',
+  q: 'кью',
+  r: 'ар',
+  s: 'эс',
+  t: 'ти',
+  u: 'ю',
+  v: 'ви',
+  w: 'дабл ю',
+  x: 'экс',
+  y: 'уай',
+  z: 'зед'
 }
 
 const LETTERS: Record<string, string> = {
-  a: 'а', b: 'б', c: 'к', d: 'д', e: 'е', f: 'ф', g: 'г', h: 'х',
-  i: 'и', j: 'дж', k: 'к', l: 'л', m: 'м', n: 'н', o: 'о', p: 'п',
-  q: 'к', r: 'р', s: 'с', t: 'т', u: 'у', v: 'в', w: 'в', x: 'кс',
-  y: 'и', z: 'з'
+  a: 'а',
+  b: 'б',
+  c: 'к',
+  d: 'д',
+  e: 'е',
+  f: 'ф',
+  g: 'г',
+  h: 'х',
+  i: 'и',
+  j: 'дж',
+  k: 'к',
+  l: 'л',
+  m: 'м',
+  n: 'н',
+  o: 'о',
+  p: 'п',
+  q: 'к',
+  r: 'р',
+  s: 'с',
+  t: 'т',
+  u: 'у',
+  v: 'в',
+  w: 'в',
+  x: 'кс',
+  y: 'и',
+  z: 'з'
 }
 
 /** Long value of a vowel before a silent final `e`: `file` → файл. */
@@ -89,8 +133,15 @@ const DIGRAPHS: Array<[string, string]> = [
 
 /** Latin letters that decomposition does not split into a base letter and a mark. */
 const FOLDED_LETTERS: Record<string, string> = {
-  'ß': 'ss', 'æ': 'ae', 'œ': 'oe', 'ø': 'o', 'ł': 'l',
-  'đ': 'd', 'ð': 'd', 'þ': 'th', 'ı': 'i'
+  ß: 'ss',
+  æ: 'ae',
+  œ: 'oe',
+  ø: 'o',
+  ł: 'l',
+  đ: 'd',
+  ð: 'd',
+  þ: 'th',
+  ı: 'i'
 }
 
 /** One pattern for the same letters, so the map and the match cannot drift apart. */
@@ -162,7 +213,7 @@ function ruleTransliterate(input: string): string {
   const { marked: word, longVowel } = applyFinalE(input.toLowerCase())
 
   let out = ''
-  for (let index = 0; index < word.length; ) {
+  for (let index = 0; index < word.length;) {
     const char = word[index]
     if (char === LONG_MARK) {
       out += LONG_VOWELS[longVowel] ?? 'е'
@@ -215,9 +266,7 @@ function ruleTransliterate(input: string): string {
  */
 function pluralOf(word: string): string | null {
   if (!word.endsWith('s')) return null
-  const stems = word.endsWith('es')
-    ? [word.slice(0, -1), word.slice(0, -2)]
-    : [word.slice(0, -1)]
+  const stems = word.endsWith('es') ? [word.slice(0, -1), word.slice(0, -2)] : [word.slice(0, -1)]
   for (const stem of stems) {
     // A two-letter stem is a function word (`us`, `it`), not a noun that takes
     // an English plural; `uses` must not become «асис».
@@ -299,10 +348,7 @@ function transliterateWord(word: string, pronunciations: Readonly<Record<string,
  * `pronunciations` carries the model's hints for words the dictionary does not
  * know; only the string sent to synthesis is affected.
  */
-export function transliterate(
-  text: string,
-  pronunciations: Readonly<Record<string, string>> = {}
-): string {
+export function transliterate(text: string, pronunciations: Readonly<Record<string, string>> = {}): string {
   return text.replace(LATIN_WORD, (token) => {
     const whole = dictionaryForm(foldLatin(token).toLowerCase())
     if (whole) return whole

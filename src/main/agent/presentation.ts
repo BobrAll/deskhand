@@ -27,12 +27,7 @@
 import { BrowserWindow, screen } from 'electron'
 import { CH } from '@shared/ipc'
 import type { AgentEvent, AgentPointerFrame, AgentPresentation, ScreenRect } from '@shared/types'
-import {
-  createLayerWindow,
-  ensureLayerWindow,
-  placeLayer,
-  type LayerWindowState
-} from '../layerWindow'
+import { createLayerWindow, ensureLayerWindow, placeLayer, type LayerWindowState } from '../layerWindow'
 
 /** The renderer's fade-out; the window is hidden right after it. */
 const POINTER_FADE_MS = 240
@@ -188,10 +183,7 @@ export function paintAgentPresentation(action: AgentPresentation): void {
  * so the arrow enters from an edge. On any normal step there is no origin: the
  * renderer transitions from wherever the arrow already is.
  */
-function travelOrigin(
-  bounds: ScreenRect,
-  moved: boolean
-): { x: number; y: number } | null {
+function travelOrigin(bounds: ScreenRect, moved: boolean): { x: number; y: number } | null {
   if (!visible) {
     const cursor = screen.getCursorScreenPoint()
     const inside =

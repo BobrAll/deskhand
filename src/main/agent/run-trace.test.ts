@@ -53,14 +53,10 @@ describe('createRunTrace', () => {
       await trace.close()
 
       const [filename] = readdirSync(join(root, 'agent-runs'))
-      const rows: Array<{ event: string }> = JSON.parse(
-        readFileSync(join(root, 'agent-runs', filename), 'utf8')
-      )
+      const rows: Array<{ event: string }> = JSON.parse(readFileSync(join(root, 'agent-runs', filename), 'utf8'))
       expect(rows.map((row) => row.event)).toEqual(['start', 'model-request'])
 
-      const dialogue: Array<{ event: string }> = JSON.parse(
-        readFileSync(join(root, 'agent-dialogs', filename), 'utf8')
-      )
+      const dialogue: Array<{ event: string }> = JSON.parse(readFileSync(join(root, 'agent-dialogs', filename), 'utf8'))
       expect(dialogue.map((row) => row.event)).toEqual(['model-request'])
     } finally {
       rmSync(root, { recursive: true, force: true })

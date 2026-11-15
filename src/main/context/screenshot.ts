@@ -133,9 +133,7 @@ async function captureRectangle(rect: ScreenRect, file: string, options: { omitS
   const height = Math.round(rect.height)
   if (width < MIN_CAPTURE_SIDE || height < MIN_CAPTURE_SIDE) return false
   const region = `${Math.round(rect.x)},${Math.round(rect.y)},${width},${height}`
-  const args = options.omitShadow
-    ? ['-x', '-o', '-R', region, file]
-    : ['-x', '-R', region, file]
+  const args = options.omitShadow ? ['-x', '-o', '-R', region, file] : ['-x', '-R', region, file]
   try {
     await run('screencapture', args)
     return true
@@ -274,4 +272,3 @@ export async function captureScreenshot(
     await rm(dir, { recursive: true, force: true }).catch(() => undefined)
   }
 }
-

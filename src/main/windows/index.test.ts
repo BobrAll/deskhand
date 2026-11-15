@@ -14,7 +14,11 @@ interface WindowDouble {
   setFocusable: ReturnType<typeof vi.fn>
 }
 const state = vi.hoisted(() => ({
-  hidden: false, windows: [] as WindowDouble[], unhide: vi.fn(), focus: vi.fn(), vibrancy: vi.fn()
+  hidden: false,
+  windows: [] as WindowDouble[],
+  unhide: vi.fn(),
+  focus: vi.fn(),
+  vibrancy: vi.fn()
 }))
 vi.mock('electron', async () => {
   const { EventEmitter } = await import('node:events')
@@ -27,8 +31,12 @@ vi.mock('electron', async () => {
       on: vi.fn(),
       session: { setPermissionRequestHandler: vi.fn(), setPermissionCheckHandler: vi.fn() }
     }
-    show = vi.fn(() => { this.visible = true })
-    showInactive = vi.fn(() => { this.visible = true })
+    show = vi.fn(() => {
+      this.visible = true
+    })
+    showInactive = vi.fn(() => {
+      this.visible = true
+    })
     focus = vi.fn()
     blur = vi.fn()
     setAlwaysOnTop = vi.fn()
@@ -40,17 +48,30 @@ vi.mock('electron', async () => {
       this.options = options
       state.windows.push(this)
     }
-    isDestroyed(): boolean { return false }
-    isVisible(): boolean { return this.visible }
-    getBounds(): ScreenRect { return this.bounds }
-    setBounds(bounds: ScreenRect): void { this.bounds = bounds }
-    hide(): void { this.visible = false }
+    isDestroyed(): boolean {
+      return false
+    }
+    isVisible(): boolean {
+      return this.visible
+    }
+    getBounds(): ScreenRect {
+      return this.bounds
+    }
+    setBounds(bounds: ScreenRect): void {
+      this.bounds = bounds
+    }
+    hide(): void {
+      this.visible = false
+    }
   }
   return {
     BrowserWindow: Window,
     app: {
       isHidden: () => state.hidden,
-      show: () => { state.hidden = false; state.unhide() },
+      show: () => {
+        state.hidden = false
+        state.unhide()
+      },
       focus: state.focus
     },
     screen: {

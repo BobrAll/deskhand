@@ -2,10 +2,16 @@ import { beforeEach, expect, it, vi } from 'vitest'
 
 const disk = vi.hoisted(() => ({ data: {} as Record<string, unknown> }))
 
-vi.mock('electron-store', () => ({ default: class {
-  get store() { return structuredClone(disk.data) }
-  set store(value: Record<string, unknown>) { disk.data = structuredClone(value) }
-} }))
+vi.mock('electron-store', () => ({
+  default: class {
+    get store() {
+      return structuredClone(disk.data)
+    }
+    set store(value: Record<string, unknown>) {
+      disk.data = structuredClone(value)
+    }
+  }
+}))
 
 beforeEach(() => {
   vi.resetModules()
@@ -27,7 +33,10 @@ it('loads only the latest command after a restart', async () => {
 
 it('migrates older exchanges to the latest command without its answer', async () => {
   disk.data = {
-    exchanges: [{ ...command, question: 'Старый запрос', answer: 'Старый ответ' }, { ...command, answer: 'Готово' }]
+    exchanges: [
+      { ...command, question: 'Старый запрос', answer: 'Старый ответ' },
+      { ...command, answer: 'Готово' }
+    ]
   }
   const { readPreviousCommand } = await import('./history')
   expect(readPreviousCommand([])).toBe(command.question)

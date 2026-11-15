@@ -122,10 +122,8 @@ function targetBounds(shape: DrawingShape): Rect {
 }
 
 function overlap(a: Rect, b: Rect): number {
-  const width = Math.min(a.right, b.right + LABEL_OVERLAP_GAP) -
-    Math.max(a.left, b.left - LABEL_OVERLAP_GAP)
-  const height = Math.min(a.bottom, b.bottom + LABEL_OVERLAP_GAP) -
-    Math.max(a.top, b.top - LABEL_OVERLAP_GAP)
+  const width = Math.min(a.right, b.right + LABEL_OVERLAP_GAP) - Math.max(a.left, b.left - LABEL_OVERLAP_GAP)
+  const height = Math.min(a.bottom, b.bottom + LABEL_OVERLAP_GAP) - Math.max(a.top, b.top - LABEL_OVERLAP_GAP)
   return Math.max(0, width) * Math.max(0, height)
 }
 
@@ -147,13 +145,13 @@ function labelPlacements(
   const above = { x: left, y: top - height - LABEL_GAP }
   const after = { x: right + LABEL_GAP, y: top }
   const before = { x: left - width - LABEL_GAP, y: top }
-  const candidates = shape.kind === 'underline'
-    ? [below, above, after, before]
-    : [after, before, below, above]
-  const alternatives = obstacles.flatMap((obstacle) => [
-    { x: left, y: obstacle.top - height - LABEL_GAP },
-    { x: left, y: obstacle.bottom + LABEL_GAP }
-  ]).sort((a, b) => Math.abs(a.y - top) - Math.abs(b.y - top))
+  const candidates = shape.kind === 'underline' ? [below, above, after, before] : [after, before, below, above]
+  const alternatives = obstacles
+    .flatMap((obstacle) => [
+      { x: left, y: obstacle.top - height - LABEL_GAP },
+      { x: left, y: obstacle.bottom + LABEL_GAP }
+    ])
+    .sort((a, b) => Math.abs(a.y - top) - Math.abs(b.y - top))
 
   return [...candidates, ...alternatives].map(({ x, y }) => {
     const clampedX = Math.max(LABEL_MARGIN, Math.min(x, screen.width - width - LABEL_MARGIN))

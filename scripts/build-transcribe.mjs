@@ -18,15 +18,23 @@ function run(command, args) {
 try {
   if (!process.argv[2]) {
     run('git', [
-      'clone', '--depth', '1', '--branch', version,
-      'https://github.com/handy-computer/transcribe.cpp.git', source
+      'clone',
+      '--depth',
+      '1',
+      '--branch',
+      version,
+      'https://github.com/handy-computer/transcribe.cpp.git',
+      source
     ])
   }
   const binaries = []
   for (const arch of ['arm64', 'x86_64']) {
     const build = join(work, arch)
     run('cmake', [
-      '-S', source, '-B', build,
+      '-S',
+      source,
+      '-B',
+      build,
       '-DCMAKE_BUILD_TYPE=Release',
       '-DCMAKE_OSX_DEPLOYMENT_TARGET=11.0',
       `-DCMAKE_OSX_ARCHITECTURES=${arch}`,

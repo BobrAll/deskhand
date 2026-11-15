@@ -1,5 +1,5 @@
-import Foundation
 import CoreGraphics
+import Foundation
 
 /// One action described in screen terms: what it is, where it lands, and which
 /// window it belongs to.

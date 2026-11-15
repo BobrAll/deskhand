@@ -210,12 +210,8 @@ describe('[OI]Provider: the request', () => {
       .mockResolvedValueOnce(new Response(sse(dataEvent({ choices: [] }))))
       .mockResolvedValueOnce(new Response(sse(dataEvent({ choices: [] }))))
 
-    await drain(
-      provider().stream(messages, '', options({ extraBody: { stream_options: { include_usage: false } } }))
-    )
-    await drain(
-      provider().stream(messages, '', options({ extraBody: { stream_options: undefined } }))
-    )
+    await drain(provider().stream(messages, '', options({ extraBody: { stream_options: { include_usage: false } } })))
+    await drain(provider().stream(messages, '', options({ extraBody: { stream_options: undefined } })))
 
     const body = (index: number): Record<string, unknown> =>
       JSON.parse((fetchMock.mock.calls[index] as [string, RequestInit])[1].body as string)
@@ -230,7 +226,15 @@ describe('[OI]Provider: the request', () => {
 
     await drain(
       provider().stream(
-        [{ role: 'user', parts: [{ type: 'text', text: '  первая  ' }, { type: 'text', text: 'вторая' }] }],
+        [
+          {
+            role: 'user',
+            parts: [
+              { type: 'text', text: '  первая  ' },
+              { type: 'text', text: 'вторая' }
+            ]
+          }
+        ],
         '',
         options()
       )
@@ -300,11 +304,7 @@ describe('[OI]Provider: reading the stream', () => {
     vi.stubGlobal('fetch', fetchMock)
     respond(sse(delta('При'), delta('вет'), delta('!')))
 
-    expect(await drain(provider().stream(messages, '', options()))).toEqual([
-      'При',
-      'вет',
-      '!'
-    ])
+    expect(await drain(provider().stream(messages, '', options()))).toEqual(['При', 'вет', '!'])
   })
 
   it('stops at [DONE] and ignores anything after it', async () => {
@@ -364,9 +364,7 @@ describe('[OI]Provider: reading the stream', () => {
     vi.stubGlobal('fetch', fetchMock)
     respond(sse(dataEvent({ error: { message: 'rate limited' } })))
 
-    await expect(drain(provider().stream(messages, '', options()))).rejects.toThrow(
-      'Ошибка модели: rate limited'
-    )
+    await expect(drain(provider().stream(messages, '', options()))).rejects.toThrow('Ошибка модели: rate limited')
   })
 
   it.each([
@@ -377,9 +375,7 @@ describe('[OI]Provider: reading the stream', () => {
     vi.stubGlobal('fetch', fetchMock)
     respond(sse(delta('partial'), dataEvent({ error })))
 
-    await expect(drain(provider().stream(messages, '', options()))).rejects.toThrow(
-      `Ошибка модели: ${detail}`
-    )
+    await expect(drain(provider().stream(messages, '', options()))).rejects.toThrow(`Ошибка модели: ${detail}`)
   })
 
   it('ignores a chunk that is not an object', async () => {
@@ -416,9 +412,7 @@ describe('[OI]Provider: reading the stream', () => {
     vi.stubGlobal('fetch', fetchMock)
     respond(null)
 
-    await expect(drain(provider().stream(messages, '', options()))).rejects.toThrow(
-      'Пустой ответ от сервиса модели.'
-    )
+    await expect(drain(provider().stream(messages, '', options()))).rejects.toThrow('Пустой ответ от сервиса модели.')
   })
 })
 
@@ -467,9 +461,9 @@ describe('[OI]Provider: failures', () => {
     controller.abort()
     fetchMock.mockRejectedValue(new Error('The operation was aborted'))
 
-    await expect(
-      drain(provider().stream(messages, '', options({ signal: controller.signal })))
-    ).rejects.toThrow('Запрос отменён.')
+    await expect(drain(provider().stream(messages, '', options({ signal: controller.signal })))).rejects.toThrow(
+      'Запрос отменён.'
+    )
   })
 })
 
@@ -484,9 +478,7 @@ describe('OpenRouterProvider: the same dialect plus attribution', () => {
 
     await drain(new OpenRouterProvider().stream(messages, 'sk-or', options({ baseUrl: '' })))
 
-    expect((fetchMock.mock.calls[0] as [string])[0]).toBe(
-      'https://openrouter.ai/api/v1/chat/completions'
-    )
+    expect((fetchMock.mock.calls[0] as [string])[0]).toBe('https://openrouter.ai/api/v1/chat/completions')
   })
 
   it('adds exactly two attribution headers on top of the [OI] ones', async () => {
@@ -524,9 +516,9 @@ describe('OpenRouterProvider: the same dialect plus attribution', () => {
     vi.stubGlobal('fetch', fetchMock)
     respond(null, 402)
 
-    await expect(
-      drain(new OpenRouterProvider().stream(messages, 'sk-or', options()))
-    ).rejects.toThrow('Ключ OpenRouter действителен, но на счёте нет средств.')
+    await expect(drain(new OpenRouterProvider().stream(messages, 'sk-or', options()))).rejects.toThrow(
+      'Ключ OpenRouter действителен, но на счёте нет средств.'
+    )
   })
 
   it('reads the stream exactly as [OI] does', async () => {

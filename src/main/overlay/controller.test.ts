@@ -28,12 +28,7 @@ import { captureScreenshot } from '../context/screenshot'
 import type { CaptureTarget } from '../context/screenshot'
 import { getProvider } from '../llm'
 import { searchWeb } from '../llm/webSearch'
-import {
-  helperActivate,
-  helperFocused,
-  helperFrontApplication,
-  helperVisibleBundleIds
-} from '../native/helper'
+import { helperActivate, helperFocused, helperFrontApplication, helperVisibleBundleIds } from '../native/helper'
 import type { RawFrontApp } from '../native/helper'
 import { buildTurnRequest } from './request'
 import { applyHistorySettings } from './history'
@@ -80,7 +75,11 @@ vi.mock('electron', () => ({
   BrowserWindow: { getAllWindows: () => [] },
   systemPreferences: { isTrustedAccessibilityClient: () => true }
 }))
-vi.mock('electron-store', () => ({ default: class { store = {} } }))
+vi.mock('electron-store', () => ({
+  default: class {
+    store = {}
+  }
+}))
 vi.mock('../settings/store', () => ({
   getSettings: () => state.settings,
   patchSettings: (patch: Partial<AppSettings>) => Object.assign(state.settings, patch)
@@ -153,25 +152,31 @@ vi.mock('../llm/webSearch', () => ({ searchWeb: vi.fn() }))
 vi.mock('../util', () => ({ delay: vi.fn().mockResolvedValue(undefined) }))
 vi.mock('./request', () => ({
   buildTurnRequest: vi.fn(async () => ({
-    messages: [], maxTokens: 1024, area: null, canDraw: false, useImage: state.useImage
+    messages: [],
+    maxTokens: 1024,
+    area: null,
+    canDraw: false,
+    useImage: state.useImage
   }))
 }))
 vi.mock('../turnStream', async () => {
   const { ProviderError } = await import('../llm/provider')
   return {
-    consumeTurnStream: vi.fn(async (options: {
-      onText: (text: string) => void
-      onAnnotations?: (annotations: Annotation[]) => void
-    }) => {
-      state.streams += 1
-      if (state.imageRefusedOnce && state.streams === 1) {
-        throw new ProviderError('Модель не принимает изображения', true, 400, true)
+    consumeTurnStream: vi.fn(
+      async (options: { onText: (text: string) => void; onAnnotations?: (annotations: Annotation[]) => void }) => {
+        state.streams += 1
+        if (state.imageRefusedOnce && state.streams === 1) {
+          throw new ProviderError('Модель не принимает изображения', true, 400, true)
+        }
+        if (state.fail) throw new Error('Request failed')
+        if (state.annotations.length > 0) options.onAnnotations?.(state.annotations)
+        if (state.stream) {
+          options.onText(state.text)
+          state.afterChunk()
+        }
+        return { text: state.text, webLookup: state.webLookup }
       }
-      if (state.fail) throw new Error('Request failed')
-      if (state.annotations.length > 0) options.onAnnotations?.(state.annotations)
-      if (state.stream) { options.onText(state.text); state.afterChunk() }
-      return { text: state.text, webLookup: state.webLookup }
-    })
+    )
   }
 })
 
@@ -210,22 +215,43 @@ async function harness(openCard = true) {
   let visible = false
   const send = vi.fn()
   const win = {
-    isVisible: () => visible, isDestroyed: () => false, setContentProtection: vi.fn(), focus: vi.fn(), webContents: { send }
+    isVisible: () => visible,
+    isDestroyed: () => false,
+    setContentProtection: vi.fn(),
+    focus: vi.fn(),
+    webContents: { send }
   } as unknown as BrowserWindow
   const host: OverlayHost = {
-    prewarm: vi.fn(), show: vi.fn(() => { visible = true }),
-    showInactive: vi.fn(() => { visible = true }),
-    hide: vi.fn(() => { visible = false }), window: () => win,
-    resize: vi.fn(), setDrawing: vi.fn(), setVoice: vi.fn(), setPassthrough: vi.fn(),
-    focus: vi.fn(), showField: vi.fn(), hideField: vi.fn()
+    prewarm: vi.fn(),
+    show: vi.fn(() => {
+      visible = true
+    }),
+    showInactive: vi.fn(() => {
+      visible = true
+    }),
+    hide: vi.fn(() => {
+      visible = false
+    }),
+    window: () => win,
+    resize: vi.fn(),
+    setDrawing: vi.fn(),
+    setVoice: vi.fn(),
+    setPassthrough: vi.fn(),
+    focus: vi.fn(),
+    showField: vi.fn(),
+    hideField: vi.fn()
   }
   const controller = createOverlayController(host)
   if (openCard) await controller.open()
   vi.mocked(host.showInactive).mockClear()
   vi.mocked(host.show).mockClear()
   const request: SendRequest = {
-    requestId: 'r1', prompt: 'Вопрос', mode: 'analyze', voice: true,
-    includeSelection: false, includeScreenshot: false
+    requestId: 'r1',
+    prompt: 'Вопрос',
+    mode: 'analyze',
+    voice: true,
+    includeSelection: false,
+    includeScreenshot: false
   }
   return { controller, host, request, send, visible: () => visible }
 }
@@ -233,7 +259,9 @@ async function harness(openCard = true) {
 /** A promise the test resolves when the mocked work may finish. */
 function gate(): { wait: Promise<void>; release: () => void } {
   let release!: () => void
-  const wait = new Promise<void>((resolve) => { release = resolve })
+  const wait = new Promise<void>((resolve) => {
+    release = resolve
+  })
   return { wait, release }
 }
 
@@ -250,7 +278,10 @@ const noteApp: ActiveAppInfo = {
 describe('routing: the agent or the writer', () => {
   it('sends an action request to the agent when the mode is ready', async () => {
     state.agentReady = true
-    state.agentResult = { answer: 'Экспорт сохранён без вложений.', actions: [{ tool: 'click', label: 'Нажал «Экспорт»', ok: true }] }
+    state.agentResult = {
+      answer: 'Экспорт сохранён без вложений.',
+      actions: [{ tool: 'click', label: 'Нажал «Экспорт»', ok: true }]
+    }
     const h = await harness()
 
     await h.controller.send({ ...h.request, voice: false, prompt: 'Нажми «Экспорт»' })
@@ -263,9 +294,13 @@ describe('routing: the agent or the writer', () => {
     // The writer was never called: an action must not pay for a text round whose
     // only job would be to guess what the agent is about to do anyway.
     expect(buildTurnRequest).not.toHaveBeenCalled()
-    expect(h.send).toHaveBeenCalledWith('overlay:stream', expect.objectContaining({
-      type: 'done', text: 'Экспорт сохранён без вложений.'
-    }))
+    expect(h.send).toHaveBeenCalledWith(
+      'overlay:stream',
+      expect.objectContaining({
+        type: 'done',
+        text: 'Экспорт сохранён без вложений.'
+      })
+    )
   })
 
   it('brings back the card for a successful action without a written report', async () => {
@@ -275,9 +310,13 @@ describe('routing: the agent or the writer', () => {
 
     await h.controller.send({ ...h.request, voice: false, prompt: 'Открой новую вкладку' })
 
-    expect(h.send).toHaveBeenCalledWith('overlay:stream', expect.objectContaining({
-      type: 'done', text: ''
-    }))
+    expect(h.send).toHaveBeenCalledWith(
+      'overlay:stream',
+      expect.objectContaining({
+        type: 'done',
+        text: ''
+      })
+    )
     expect(h.host.showInactive).toHaveBeenCalled()
   })
 
@@ -300,9 +339,11 @@ describe('routing: the agent or the writer', () => {
     expect(state.agentCalls).toHaveLength(0)
     // The reason travels in the prompt, which is what produces "я не могу нажать,
     // вот почему" instead of a silent arrow at the button.
-    expect(buildTurnRequest).toHaveBeenLastCalledWith(expect.objectContaining({
-      availability: expect.objectContaining({ ready: false, reason: 'нет доступа' })
-    }))
+    expect(buildTurnRequest).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        availability: expect.objectContaining({ ready: false, reason: 'нет доступа' })
+      })
+    )
     expect(h.send).toHaveBeenCalledWith('overlay:stream', expect.objectContaining({ type: 'done' }))
   })
 
@@ -311,7 +352,10 @@ describe('routing: the agent or the writer', () => {
     const h = await harness()
 
     await h.controller.send({
-      ...h.request, voice: false, prompt: 'Нажми', refine: { direction: 'shorter', baseAnswer: 'Длинный ответ.' }
+      ...h.request,
+      voice: false,
+      prompt: 'Нажми',
+      refine: { direction: 'shorter', baseAnswer: 'Длинный ответ.' }
     })
 
     expect(state.agentCalls).toHaveLength(0)
@@ -335,11 +379,14 @@ describe('an excluded target', () => {
     await h.controller.send({ ...h.request, voice: false })
 
     expect(buildTurnRequest).not.toHaveBeenCalled()
-    expect(h.send).toHaveBeenCalledWith('overlay:stream', expect.objectContaining({
-      type: 'error',
-      requestId: 'r1',
-      message: expect.stringContaining('исключ')
-    }))
+    expect(h.send).toHaveBeenCalledWith(
+      'overlay:stream',
+      expect.objectContaining({
+        type: 'error',
+        requestId: 'r1',
+        message: expect.stringContaining('исключ')
+      })
+    )
     expect(h.visible()).toBe(true)
   })
 })
@@ -431,9 +478,13 @@ describe('background web lookup', () => {
       await h.controller.send({ ...h.request, prompt, includeScreenshot: true })
 
       expect(searchWeb).toHaveBeenCalledWith(prompt, state.settings, 'test-key', expect.any(AbortSignal))
-      expect(h.send).toHaveBeenCalledWith('overlay:stream', expect.objectContaining({
-        type: 'done', text: 'Ответ со ссылкой на источник.'
-      }))
+      expect(h.send).toHaveBeenCalledWith(
+        'overlay:stream',
+        expect.objectContaining({
+          type: 'done',
+          text: 'Ответ со ссылкой на источник.'
+        })
+      )
     }
   )
 
@@ -444,9 +495,13 @@ describe('background web lookup', () => {
     await h.controller.send({ ...h.request, prompt: 'Курс доллара' })
 
     expect(state.agentCalls).toHaveLength(0)
-    expect(h.send).toHaveBeenCalledWith('overlay:stream', expect.objectContaining({
-      type: 'error', message: 'Веб-поиск недоступен'
-    }))
+    expect(h.send).toHaveBeenCalledWith(
+      'overlay:stream',
+      expect.objectContaining({
+        type: 'error',
+        message: 'Веб-поиск недоступен'
+      })
+    )
   })
 })
 
@@ -474,9 +529,13 @@ describe('the agent turn on the card', () => {
     await h.controller.send({ ...h.request, voice: false, prompt: 'Открой вкладку' })
 
     expect(h.visible()).toBe(true)
-    expect(h.send).toHaveBeenCalledWith('overlay:stream', expect.objectContaining({
-      type: 'done', text: 'Вкладка открыта.'
-    }))
+    expect(h.send).toHaveBeenCalledWith(
+      'overlay:stream',
+      expect.objectContaining({
+        type: 'done',
+        text: 'Вкладка открыта.'
+      })
+    )
   })
 
   it('reports a blocked run as an answer instead of an empty card', async () => {
@@ -485,22 +544,33 @@ describe('the agent turn on the card', () => {
 
     await h.controller.send({ ...h.request, voice: false, prompt: 'Нажми «ОК»' })
 
-    expect(h.send).toHaveBeenCalledWith('overlay:stream', expect.objectContaining({
-      type: 'done', text: 'Агентный режим выключен.'
-    }))
+    expect(h.send).toHaveBeenCalledWith(
+      'overlay:stream',
+      expect.objectContaining({
+        type: 'done',
+        text: 'Агентный режим выключен.'
+      })
+    )
   })
 
   it('says something when the agent stopped without an answer', async () => {
     const h = await harness()
     state.agentResult = {
-      answer: '', actions: [{ tool: 'click', label: 'Нажал', ok: true }], aborted: true, message: 'Остановлено.'
+      answer: '',
+      actions: [{ tool: 'click', label: 'Нажал', ok: true }],
+      aborted: true,
+      message: 'Остановлено.'
     }
 
     await h.controller.send({ ...h.request, voice: false, prompt: 'Нажми «ОК»' })
 
-    expect(h.send).toHaveBeenCalledWith('overlay:stream', expect.objectContaining({
-      type: 'done', text: 'Остановлено.'
-    }))
+    expect(h.send).toHaveBeenCalledWith(
+      'overlay:stream',
+      expect.objectContaining({
+        type: 'done',
+        text: 'Остановлено.'
+      })
+    )
   })
 })
 
@@ -558,9 +628,14 @@ describe('stopping the agent with the turn', () => {
       expect(state.agentStop).toHaveBeenCalledOnce()
       run.release()
       await sending
-      expect(h.send).toHaveBeenCalledWith('overlay:stream', expect.objectContaining({
-        type: 'error', code: 'timeout', message: 'Время выполнения истекло. Результат не подтверждён.'
-      }))
+      expect(h.send).toHaveBeenCalledWith(
+        'overlay:stream',
+        expect.objectContaining({
+          type: 'error',
+          code: 'timeout',
+          message: 'Время выполнения истекло. Результат не подтверждён.'
+        })
+      )
     } finally {
       vi.useRealTimers()
     }
@@ -597,9 +672,13 @@ describe('a provider that refuses the screenshot', () => {
 
     // Two rounds: the refused one, then the same question without the picture.
     expect(state.streams).toBe(2)
-    expect(h.send).toHaveBeenCalledWith('overlay:stream', expect.objectContaining({
-      type: 'done', text: 'Ответ'
-    }))
+    expect(h.send).toHaveBeenCalledWith(
+      'overlay:stream',
+      expect.objectContaining({
+        type: 'done',
+        text: 'Ответ'
+      })
+    )
   })
 
   it('says why the answer has no drawing', async () => {
@@ -609,9 +688,8 @@ describe('a provider that refuses the screenshot', () => {
 
     await h.controller.send({ ...h.request, voice: false })
 
-    const stateEvent = h.send.mock.calls
-      .filter(([channel]) => channel === 'overlay:state')
-      .at(-1)?.[1] as { warnings: string[] } | undefined
+    const stateEvent = h.send.mock.calls.filter(([channel]) => channel === 'overlay:state').at(-1)?.[1] as
+      { warnings: string[] } | undefined
     expect(stateEvent?.warnings.join(' ')).toContain('не принимает изображения')
   })
 
@@ -633,9 +711,8 @@ describe('a provider that refuses the screenshot', () => {
 
     await h.controller.send({ ...h.request, voice: false, prompt: 'Нажми «Экспорт»' })
 
-    const stateEvent = h.send.mock.calls
-      .filter(([channel]) => channel === 'overlay:state')
-      .at(-1)?.[1] as { warnings: string[] } | undefined
+    const stateEvent = h.send.mock.calls.filter(([channel]) => channel === 'overlay:state').at(-1)?.[1] as
+      { warnings: string[] } | undefined
     expect(stateEvent?.warnings.join(' ')).toContain('продолжаю без скриншотов')
   })
 })
@@ -659,7 +736,9 @@ describe('voice result visibility', () => {
   it('keeps the transcript on screen while the turn is already running', async () => {
     const h = await harness()
     let release!: () => void
-    const gate = new Promise<void>((resolve) => { release = resolve })
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
     vi.mocked(consumeTurnStream).mockImplementationOnce(async (options) => {
       await gate
       options.onText('Ответ')
@@ -712,16 +791,26 @@ describe('voice result visibility', () => {
   it('prepares a protected screenshot for a spoken turn', async () => {
     const h = await harness()
     const shot = {
-      dataUrl: 'data:image/jpeg;base64,abc', width: 1440, height: 900, bytes: 3,
-      capturedAt: Date.now(), area: { x: 0, y: 0, width: 1440, height: 900 }, fullScreen: true
+      dataUrl: 'data:image/jpeg;base64,abc',
+      width: 1440,
+      height: 900,
+      bytes: 3,
+      capturedAt: Date.now(),
+      area: { x: 0, y: 0, width: 1440, height: 900 },
+      fullScreen: true
     }
     vi.mocked(captureScreenshot).mockClear().mockResolvedValueOnce(shot)
     vi.mocked(getProvider).mockClear()
     const prepare = vi.fn<typeof buildTurnRequest>(async ({ ensureFreshScreenshot }) => {
       expect(await ensureFreshScreenshot()).toBe(shot)
       return {
-        messages: [], maxTokens: 1024, area: shot.area, screenshot: shot, useImage: true,
-        canDraw: true, abandoned: false
+        messages: [],
+        maxTokens: 1024,
+        area: shot.area,
+        screenshot: shot,
+        useImage: true,
+        canDraw: true,
+        abandoned: false
       }
     })
     vi.mocked(buildTurnRequest).mockImplementationOnce(prepare)
@@ -760,10 +849,13 @@ describe('voice result visibility', () => {
     state.text = text
     await h.controller.send(h.request)
     expect(h.visible()).toBe(true)
-    expect(h.send).toHaveBeenCalledWith('overlay:stream', expect.objectContaining({
-      type: 'done',
-      text: expect.stringContaining('Не удалось выполнить запрос')
-    }))
+    expect(h.send).toHaveBeenCalledWith(
+      'overlay:stream',
+      expect.objectContaining({
+        type: 'done',
+        text: expect.stringContaining('Не удалось выполнить запрос')
+      })
+    )
   })
 
   it('shows a failed request instead of leaving its error in an invisible panel', async () => {
@@ -772,7 +864,10 @@ describe('voice result visibility', () => {
     state.fail = true
     await h.controller.send(h.request)
     expect(h.visible()).toBe(true)
-    expect(h.send).toHaveBeenCalledWith('overlay:stream', expect.objectContaining({ type: 'error', message: 'Request failed' }))
+    expect(h.send).toHaveBeenCalledWith(
+      'overlay:stream',
+      expect.objectContaining({ type: 'error', message: 'Request failed' })
+    )
   })
 
   it('does not hide an empty result of a typed request', async () => {
@@ -843,12 +938,14 @@ describe('dictation without the card', () => {
     await h.controller.beginDictation()
 
     expect(helperFocused).toHaveBeenCalledWith(900)
-    await vi.waitFor(() => expect(h.host.showField).toHaveBeenCalledWith({
-      x: 10,
-      y: 20,
-      width: 300,
-      height: 24
-    }))
+    await vi.waitFor(() =>
+      expect(h.host.showField).toHaveBeenCalledWith({
+        x: 10,
+        y: 20,
+        width: 300,
+        height: 24
+      })
+    )
   })
 
   it('does not mark a focused element that cannot take text', async () => {
@@ -933,10 +1030,12 @@ describe('dictation without the card', () => {
     h.controller.endDictation(true)
 
     expect(h.visible()).toBe(false)
-    await vi.waitFor(() => expect(helperActivate).toHaveBeenCalledWith({
-      bundleId: 'com.apple.TextEdit',
-      pid: 900
-    }))
+    await vi.waitFor(() =>
+      expect(helperActivate).toHaveBeenCalledWith({
+        bundleId: 'com.apple.TextEdit',
+        pid: 900
+      })
+    )
   })
 
   it('closes a card that owned the keyboard and gives focus back to its app', async () => {
@@ -948,10 +1047,12 @@ describe('dictation without the card', () => {
     h.controller.endDictation()
 
     expect(h.visible()).toBe(false)
-    await vi.waitFor(() => expect(helperActivate).toHaveBeenCalledWith({
-      bundleId: 'com.apple.TextEdit',
-      pid: 900
-    }))
+    await vi.waitFor(() =>
+      expect(helperActivate).toHaveBeenCalledWith({
+        bundleId: 'com.apple.TextEdit',
+        pid: 900
+      })
+    )
   })
 
   it('does not let a card that is still opening take the keyboard', async () => {
@@ -1033,19 +1134,25 @@ describe('conversation across cards', () => {
     expect(h.controller.state()?.sessionId).not.toBe(previousSession)
 
     await h.controller.send({ ...h.request, requestId: 'r2', prompt: 'Повтори' })
-    expect(buildTurnRequest).toHaveBeenLastCalledWith(expect.objectContaining({
-      previousCommand: h.request.prompt,
-      history: []
-    }))
+    expect(buildTurnRequest).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        previousCommand: h.request.prompt,
+        history: []
+      })
+    )
 
     await h.controller.send({ ...h.request, requestId: 'r3', prompt: 'Что дальше?' })
-    expect(buildTurnRequest).toHaveBeenLastCalledWith(expect.objectContaining({
-      previousCommand: undefined,
-      history: [expect.objectContaining({
-        question: 'Повтори',
-        answer: state.text
-      })]
-    }))
+    expect(buildTurnRequest).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        previousCommand: undefined,
+        history: [
+          expect.objectContaining({
+            question: 'Повтори',
+            answer: state.text
+          })
+        ]
+      })
+    )
   })
 })
 
@@ -1061,9 +1168,13 @@ describe('feedback before request preparation', () => {
     await h.controller.send({ ...h.request, voice: false, prompt: 'Открой новую вкладку' })
     expect(beginAgentTurn).toHaveBeenCalledWith(true)
     expect(endAgentTurn).toHaveBeenCalledWith(42)
-    expect(h.send).toHaveBeenCalledWith('overlay:stream', expect.objectContaining({
-      type: 'done', text: 'Context unavailable'
-    }))
+    expect(h.send).toHaveBeenCalledWith(
+      'overlay:stream',
+      expect.objectContaining({
+        type: 'done',
+        text: 'Context unavailable'
+      })
+    )
   })
 })
 
@@ -1151,9 +1262,8 @@ describe('a capture that no longer represents the screen', () => {
 
   /** The last context the controller published to the card. */
   function lastContextUpdate(h: Harness): { screenshot: ScreenshotInfo | null } | undefined {
-    return h.send.mock.calls
-      .filter(([channel]) => channel === CH.overlay.contextUpdate)
-      .at(-1)?.[1] as { screenshot: ScreenshotInfo | null } | undefined
+    return h.send.mock.calls.filter(([channel]) => channel === CH.overlay.contextUpdate).at(-1)?.[1] as
+      { screenshot: ScreenshotInfo | null } | undefined
   }
 
   /** A frame old enough that the next request has to take a new one. */
@@ -1254,9 +1364,10 @@ describe('a capture that no longer represents the screen', () => {
     })
     const h = await harness()
     const drawn = (): number | undefined =>
-      (h.send.mock.calls
-        .filter(([channel]) => channel === CH.overlay.annotations)
-        .at(-1)?.[1] as { count: number } | undefined)?.count
+      (
+        h.send.mock.calls.filter(([channel]) => channel === CH.overlay.annotations).at(-1)?.[1] as
+          { count: number } | undefined
+      )?.count
 
     // A turn leaves one shape on the screen next to the frame it was measured
     // against.
@@ -1295,7 +1406,9 @@ describe('focus on the way back', () => {
   it('does not hide a card that opened while focus was going back', async () => {
     state.activeApp = noteApp
     let release!: () => void
-    const activation = new Promise<boolean>((resolve) => { release = () => resolve(false) })
+    const activation = new Promise<boolean>((resolve) => {
+      release = () => resolve(false)
+    })
     vi.mocked(helperActivate).mockReturnValueOnce(activation)
     const h = await harness()
 

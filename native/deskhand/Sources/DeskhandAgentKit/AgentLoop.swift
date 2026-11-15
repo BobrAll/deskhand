@@ -1,6 +1,6 @@
-import Foundation
 import DeskhandCore
 import DeskhandLLM
+import Foundation
 
 /// What the loop needs from the tool layer.
 ///
@@ -97,7 +97,7 @@ public final class AgentLoop {
     /// A miss costs a failed step, not silence — the ordinary error path still
     /// reports it.
     private static func isImageRefusal(_ error: Error) -> Bool {
-        guard case let LLMError.http(status, body) = error, status == 400 || status == 422 else {
+        guard case LLMError.http(let status, let body) = error, status == 400 || status == 422 else {
             return false
         }
         let lower = body.lowercased()
@@ -186,7 +186,8 @@ public final class AgentLoop {
     public func run(
         task: String,
         cancel: CancelToken? = nil,
-        finalResponseInstruction: String = "When you have no more tools to call, briefly summarize what you did and the outcome in the user's language."
+        finalResponseInstruction: String =
+            "When you have no more tools to call, briefly summarize what you did and the outcome in the user's language."
     ) async throws -> String {
         var messages: [ChatMessage] = [ChatMessage(role: .user, text: task)]
         var lastCallSignature: String?
@@ -238,28 +239,35 @@ public final class AgentLoop {
             let completion = turn.completion
             let llmMilliseconds = turn.milliseconds
             if let record = ModelTrace.record {
-                record("model-completion", [
-                    "step": .number(Double(step)),
-                    "text": .string(completion.text),
-                    "stop_reason": completion.stopReason.map(JSONValue.string) ?? .null,
-                    "tool_calls": .array(completion.toolCalls.map { call in
-                        .object(["id": .string(call.id), "name": .string(call.name), "arguments": call.arguments])
-                    }),
-                ])
+                record(
+                    "model-completion",
+                    [
+                        "step": .number(Double(step)),
+                        "text": .string(completion.text),
+                        "stop_reason": completion.stopReason.map(JSONValue.string) ?? .null,
+                        "tool_calls": .array(
+                            completion.toolCalls.map { call in
+                                .object([
+                                    "id": .string(call.id), "name": .string(call.name), "arguments": call.arguments,
+                                ])
+                            }),
+                    ])
             }
             timingLog.record(TimingLabel.model, milliseconds: llmMilliseconds)
             // The host records this as the step's cost. It is emitted before the
             // branch below so the step that ends the run is timed too: the last
             // round trip is usually the most expensive one, and a timeline that
             // stops one line short of the answer is a timeline nobody trusts.
-            observer?.stepTimed(step, timing: StepTiming(
-                llmMilliseconds: llmMilliseconds,
-                promptBytes: promptBytes,
-                historyMessages: prompt.count,
-                callCount: completion.toolCalls.count,
-                inputTokens: completion.usage?.inputTokens,
-                outputTokens: completion.usage?.outputTokens
-            ))
+            observer?.stepTimed(
+                step,
+                timing: StepTiming(
+                    llmMilliseconds: llmMilliseconds,
+                    promptBytes: promptBytes,
+                    historyMessages: prompt.count,
+                    callCount: completion.toolCalls.count,
+                    inputTokens: completion.usage?.inputTokens,
+                    outputTokens: completion.usage?.outputTokens
+                ))
 
             // Only narration that leads into tool calls is logged; the final
             // answer is printed once by the CLI, so echoing it here too would
@@ -268,8 +276,9 @@ public final class AgentLoop {
                 log("assistant: \(completion.text.prefix(400))")
             }
             if options.timings {
-                logTiming(step: step, llm: llmMilliseconds, promptBytes: promptBytes,
-                          history: prompt.count, completion: completion)
+                logTiming(
+                    step: step, llm: llmMilliseconds, promptBytes: promptBytes,
+                    history: prompt.count, completion: completion)
             }
 
             try cancel?.check()
@@ -300,11 +309,12 @@ public final class AgentLoop {
 
             observer?.stepAnswered(step, narration: completion.text, calls: completion.toolCalls)
 
-            messages.append(ChatMessage(
-                role: .assistant,
-                text: completion.text,
-                toolCalls: completion.toolCalls
-            ))
+            messages.append(
+                ChatMessage(
+                    role: .assistant,
+                    text: completion.text,
+                    toolCalls: completion.toolCalls
+                ))
 
             // The executor is asked to verify only the last call of the batch:
             // an intermediate step would pay for a tree walk nobody reads.
@@ -337,12 +347,13 @@ public final class AgentLoop {
                     // the old call at its word recorded a run as abandoned when
                     // it went on to succeed.
                     observer?.loopWarned("the same call repeated without a change")
-                    messages.append(ChatMessage(
-                        role: .tool,
-                        text: warning,
-                        toolCallID: call.id,
-                        isError: true
-                    ))
+                    messages.append(
+                        ChatMessage(
+                            role: .tool,
+                            text: warning,
+                            toolCallID: call.id,
+                            isError: true
+                        ))
                     continue
                 }
 
@@ -363,12 +374,13 @@ public final class AgentLoop {
                 }
 
                 let text = result.plainText
-                messages.append(ChatMessage(
-                    role: .tool,
-                    text: text.isEmpty ? "(no output)" : text,
-                    toolCallID: call.id,
-                    isError: result.isError
-                ))
+                messages.append(
+                    ChatMessage(
+                        role: .tool,
+                        text: text.isEmpty ? "(no output)" : text,
+                        toolCallID: call.id,
+                        isError: result.isError
+                    ))
                 if let fingerprint = result.stateFingerprint { stepFingerprint = fingerprint }
 
                 // A failed step invalidates the assumptions the later steps in
@@ -387,12 +399,13 @@ public final class AgentLoop {
                             the app state before continuing.
                             """
                         for skipped in batch[(position + 1)...] {
-                            messages.append(ChatMessage(
-                                role: .tool,
-                                text: note,
-                                toolCallID: skipped.id,
-                                isError: true
-                            ))
+                            messages.append(
+                                ChatMessage(
+                                    role: .tool,
+                                    text: note,
+                                    toolCallID: skipped.id,
+                                    isError: true
+                                ))
                         }
                         log("batch stopped after \(call.name) failed (\(remaining) skipped)")
                     }
@@ -405,11 +418,12 @@ public final class AgentLoop {
                 // user message. `trimmedHistory` drops the older ones.
                 let images = (result.isError || imagesRefused) ? [] : result.images
                 if !images.isEmpty {
-                    messages.append(ChatMessage(
-                        role: .user,
-                        text: "Screenshot of the current window:",
-                        images: images
-                    ))
+                    messages.append(
+                        ChatMessage(
+                            role: .user,
+                            text: "Screenshot of the current window:",
+                            images: images
+                        ))
                 }
             }
 
@@ -437,15 +451,16 @@ public final class AgentLoop {
                     log("warning: \(stalled) steps without a new screen")
                     observer?.loopWarned("the run keeps returning to the same screen")
                     warnedStall = true
-                    messages.append(ChatMessage(
-                        role: .user,
-                        text: """
-                            This is the same screen you have been on for \(stalled) steps. Nothing \
-                            has moved, so the next repetition will not move it either: try a \
-                            different route — a menu, a keyboard shortcut, or opening the page \
-                            directly — or say what is blocking the task.
-                            """
-                    ))
+                    messages.append(
+                        ChatMessage(
+                            role: .user,
+                            text: """
+                                This is the same screen you have been on for \(stalled) steps. Nothing \
+                                has moved, so the next repetition will not move it either: try a \
+                                different route — a menu, a keyboard shortcut, or opening the page \
+                                directly — or say what is blocking the task.
+                                """
+                        ))
                 }
             }
         }
@@ -510,15 +525,16 @@ public final class AgentLoop {
         let llm = rows.first { $0.label == TimingLabel.model }?.total ?? 0
         let tools = rows.filter { $0.label.hasPrefix(TimingLabel.toolPrefix) }
             .reduce(0) { $0 + $1.total }
-        observer?.runFinished(RunReport(
-            steps: totals.steps,
-            calls: totals.calls,
-            failedCalls: totals.failedCalls,
-            totalMilliseconds: clock.milliseconds,
-            llmMilliseconds: llm,
-            toolMilliseconds: tools,
-            table: options.timings ? timingLog.report() : ""
-        ))
+        observer?.runFinished(
+            RunReport(
+                steps: totals.steps,
+                calls: totals.calls,
+                failedCalls: totals.failedCalls,
+                totalMilliseconds: clock.milliseconds,
+                llmMilliseconds: llm,
+                toolMilliseconds: tools,
+                table: options.timings ? timingLog.report() : ""
+            ))
     }
 
     private func recordToolTimings(_ tool: ToolTimings, name: String) {
@@ -779,7 +795,8 @@ public final class AgentLoop {
     /// keeps unparseable results from all sharing one bucket.
     static func appKey(forTreeMessage text: String) -> String {
         guard let close = text.firstIndex(of: "]"),
-              let open = text[text.startIndex..<close].lastIndex(of: "[") else {
+            let open = text[text.startIndex..<close].lastIndex(of: "[")
+        else {
             return String(text.prefix(40))
         }
         return String(text[text.index(after: open)..<close])

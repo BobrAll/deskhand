@@ -199,11 +199,7 @@ function audioContext(): AudioContext {
  * every Electron build without shipping a worklet bundle; the load is trivial.
  * The returned function detaches the nodes and leaves the context running.
  */
-function openGraph(
-  context: AudioContext,
-  stream: MediaStream,
-  onBlock: (block: Float32Array) => void
-): () => void {
+function openGraph(context: AudioContext, stream: MediaStream, onBlock: (block: Float32Array) => void): () => void {
   const source = context.createMediaStreamSource(stream)
   const processor = context.createScriptProcessor(4096, 1, 1)
   processor.onaudioprocess = (event) => onBlock(event.inputBuffer.getChannelData(0))

@@ -84,10 +84,7 @@ export function patchSettings(patch: Partial<AppSettings>): AppSettings {
     memoryFallback = null
     writeFailed = false
   } catch (error) {
-    console.warn(
-      '[store] settings were not saved; the change lasts only until the app quits:',
-      error
-    )
+    console.warn('[store] settings were not saved; the change lasts only until the app quits:', error)
     memoryFallback = next
     writeFailed = true
   }

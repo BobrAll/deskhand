@@ -261,9 +261,7 @@ export function useVoice(): VoiceHook {
       if (event.phase === 'idle' && (event.text || event.error)) {
         clearLinger()
         lingerRef.current = window.setTimeout(() => {
-          setState((prev) => (prev.phase === 'idle'
-            ? { ...prev, message: null, error: false, code: null }
-            : prev))
+          setState((prev) => (prev.phase === 'idle' ? { ...prev, message: null, error: false, code: null } : prev))
         }, LINGER_MS)
       }
     })
@@ -271,27 +269,34 @@ export function useVoice(): VoiceHook {
     // The press that opened this card happened before this component existed, so
     // the `record` broadcast may have been missed. Pulling the phase closes that
     // window; without it the first turn of every session records nothing.
-    void api.attach().then((pending) => {
-      if (pending.phase === 'listening' && !recorderRef.current) {
-        void beginCapture(pending.maxDurationMs)
-      } else if (pending.phase === 'transcribing') {
-        // The key came up (or the recorder finished) before this component
-        // subscribed. The bars still have to be there for the rest of the
-        // recognition — otherwise a short phrase shows no animation at all.
-        setState({ phase: 'transcribing', level: 0, message: null, error: false, code: null, at: null })
-      }
-    }).catch(() => {
-      // Nothing to attach to: the card still has to open. `ready` gates the whole
-      // overlay, so leaving it false would blank the window on a failed pull.
-    }).finally(() => setReady(true))
+    void api
+      .attach()
+      .then((pending) => {
+        if (pending.phase === 'listening' && !recorderRef.current) {
+          void beginCapture(pending.maxDurationMs)
+        } else if (pending.phase === 'transcribing') {
+          // The key came up (or the recorder finished) before this component
+          // subscribed. The bars still have to be there for the rest of the
+          // recognition — otherwise a short phrase shows no animation at all.
+          setState({ phase: 'transcribing', level: 0, message: null, error: false, code: null, at: null })
+        }
+      })
+      .catch(() => {
+        // Nothing to attach to: the card still has to open. `ready` gates the whole
+        // overlay, so leaving it false would blank the window on a failed pull.
+      })
+      .finally(() => setReady(true))
 
     // Warming the microphone is the expensive part of the first turn on macOS,
     // and doing it here — while the user is not speaking — is what keeps the first
     // phrase after launch from losing its beginning. On a machine without a model
     // or a tap there is nothing to warm.
-    void api.status().then((status) => {
-      if (status.ready && status.enabled) void primeRecorder()
-    }).catch(() => null)
+    void api
+      .status()
+      .then((status) => {
+        if (status.ready && status.enabled) void primeRecorder()
+      })
+      .catch(() => null)
 
     return () => {
       offRecord()

@@ -203,12 +203,18 @@ describe('the installed scripts', () => {
 describe('installing the model', () => {
   it('removes the partial file when a download dies halfway', async () => {
     state.missing.add(`${MODELS_DIR}/acoustic_v5_6_ru.onnx`)
-    vi.stubGlobal('fetch', async () => new Response(new ReadableStream({
-      start(controller) {
-        controller.enqueue(new Uint8Array([1, 2, 3]))
-        controller.error(new Error('сеть пропала'))
-      }
-    })))
+    vi.stubGlobal(
+      'fetch',
+      async () =>
+        new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(new Uint8Array([1, 2, 3]))
+              controller.error(new Error('сеть пропала'))
+            }
+          })
+        )
+    )
 
     const { installSilero } = await import('./silero')
     const failure = await installSilero(() => undefined)

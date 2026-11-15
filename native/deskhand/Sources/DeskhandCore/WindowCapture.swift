@@ -1,8 +1,8 @@
-import Foundation
-import CoreGraphics
-import ScreenCaptureKit
 import AppKit
+import CoreGraphics
+import Foundation
 import ImageIO
+import ScreenCaptureKit
 import UniformTypeIdentifiers
 
 /// Window capture.
@@ -195,19 +195,23 @@ public enum WindowCapture {
     /// at this quality it is a fraction of that, the text stays readable, and
     /// the request reaches the model sooner.
     static func encodeJPEG(_ image: CGImage, quality: Double = 0.7) -> Data? {
-        encode(image, type: UTType.jpeg, properties: [
-            kCGImageDestinationLossyCompressionQuality: quality,
-        ] as CFDictionary)
+        encode(
+            image, type: UTType.jpeg,
+            properties: [
+                kCGImageDestinationLossyCompressionQuality: quality
+            ] as CFDictionary)
     }
 
     private static func encode(_ image: CGImage, type: UTType, properties: CFDictionary?) -> Data? {
         let data = NSMutableData()
-        guard let destination = CGImageDestinationCreateWithData(
-            data as CFMutableData,
-            type.identifier as CFString,
-            1,
-            nil
-        ) else { return nil }
+        guard
+            let destination = CGImageDestinationCreateWithData(
+                data as CFMutableData,
+                type.identifier as CFString,
+                1,
+                nil
+            )
+        else { return nil }
         CGImageDestinationAddImage(destination, image, properties)
         guard CGImageDestinationFinalize(destination) else { return nil }
         return data as Data

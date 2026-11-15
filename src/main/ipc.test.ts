@@ -220,9 +220,7 @@ describe('registerIpc: every channel has exactly one handler', () => {
   it('wires no channel that is not in the shared map', () => {
     wire()
     const known = new Set(channels.map(([, channel]) => channel))
-    const extra = [...electron.handles.keys(), ...electron.ons.keys()].filter(
-      (channel) => !known.has(channel)
-    )
+    const extra = [...electron.handles.keys(), ...electron.ons.keys()].filter((channel) => !known.has(channel))
     expect(extra).toEqual([])
   })
 
@@ -334,9 +332,7 @@ describe('registerIpc: the handlers reach their dependency', () => {
 
   it('reports copy failures instead of throwing into the renderer', async () => {
     const deps = fakeDeps()
-    ;(deps.overlay.copy as unknown as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
-      new Error('clipboard busy')
-    )
+    ;(deps.overlay.copy as unknown as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error('clipboard busy'))
     electron.reset()
     registerIpc(deps)
 

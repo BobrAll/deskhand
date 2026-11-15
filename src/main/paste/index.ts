@@ -32,12 +32,16 @@ async function focusTarget(target: ActiveAppInfo | null): Promise<boolean> {
 
   // Waiting for the app to actually become frontmost is what makes Cmd+V land in
   // the right window instead of in whatever had focus a moment ago.
-  return waitFor(async () => {
-    const front = await helperFrontWindow()
-    if (!front) return false
-    if (front.bundleId && front.bundleId === target.bundleId) return true
-    return target.pid > 0 && front.pid === target.pid
-  }, FOCUS_TIMEOUT_MS, FOCUS_POLL_MS)
+  return waitFor(
+    async () => {
+      const front = await helperFrontWindow()
+      if (!front) return false
+      if (front.bundleId && front.bundleId === target.bundleId) return true
+      return target.pid > 0 && front.pid === target.pid
+    },
+    FOCUS_TIMEOUT_MS,
+    FOCUS_POLL_MS
+  )
 }
 
 /**

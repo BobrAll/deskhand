@@ -1,5 +1,5 @@
-import Foundation
 import DeskhandCore
+import Foundation
 
 /// OpenAI chat-completions wire format.
 ///
@@ -31,9 +31,10 @@ public struct OpenAICompatibleProvider: StreamingChatProvider {
         systemPrompt: String
     ) async throws -> Completion {
         try requireKey()
-        let request = makeRequest(payload: makePayload(
-            messages: messages, tools: tools, systemPrompt: systemPrompt, stream: false
-        ))
+        let request = makeRequest(
+            payload: makePayload(
+                messages: messages, tools: tools, systemPrompt: systemPrompt, stream: false
+            ))
         let exchange = ModelTrace.start(request)
 
         let data: Data
@@ -66,9 +67,10 @@ public struct OpenAICompatibleProvider: StreamingChatProvider {
         onText: (String) -> Void
     ) async throws -> Completion {
         try requireKey()
-        let request = makeRequest(payload: makePayload(
-            messages: messages, tools: tools, systemPrompt: systemPrompt, stream: true
-        ))
+        let request = makeRequest(
+            payload: makePayload(
+                messages: messages, tools: tools, systemPrompt: systemPrompt, stream: true
+            ))
         let exchange = ModelTrace.start(request)
 
         let bytes: URLSession.AsyncBytes
@@ -103,7 +105,8 @@ public struct OpenAICompatibleProvider: StreamingChatProvider {
         // completion anyway. Trust the content type rather than spending the
         // body on an SSE parser that will find no `data:` lines in it.
         if let contentType = http.value(forHTTPHeaderField: "Content-Type"),
-           contentType.lowercased().contains("application/json") {
+            contentType.lowercased().contains("application/json")
+        {
             let body = await bytes.prefixData(limit: 16 * 1024 * 1024)
             exchange?.response(body, status: http.statusCode)
             return try decode(body)
@@ -253,46 +256,54 @@ public struct OpenAICompatibleProvider: StreamingChatProvider {
     func encodeMessages(_ messages: [ChatMessage], systemPrompt: String) -> [JSONValue] {
         var out: [JSONValue] = []
         if !systemPrompt.isEmpty {
-            out.append(.object([
-                "role": .string("system"),
-                "content": .string(systemPrompt),
-            ]))
+            out.append(
+                .object([
+                    "role": .string("system"),
+                    "content": .string(systemPrompt),
+                ]))
         }
 
         for message in messages {
             switch message.role {
             case .system:
-                out.append(.object([
-                    "role": .string("system"),
-                    "content": .string(message.text),
-                ]))
+                out.append(
+                    .object([
+                        "role": .string("system"),
+                        "content": .string(message.text),
+                    ]))
 
             case .user:
                 if message.images.isEmpty {
-                    out.append(.object([
-                        "role": .string("user"),
-                        "content": .string(message.text),
-                    ]))
+                    out.append(
+                        .object([
+                            "role": .string("user"),
+                            "content": .string(message.text),
+                        ]))
                 } else {
                     var parts: [JSONValue] = []
                     if !message.text.isEmpty {
-                        parts.append(.object([
-                            "type": .string("text"),
-                            "text": .string(message.text),
-                        ]))
+                        parts.append(
+                            .object([
+                                "type": .string("text"),
+                                "text": .string(message.text),
+                            ]))
                     }
                     for image in message.images {
-                        parts.append(.object([
-                            "type": .string("image_url"),
-                            "image_url": .object([
-                                "url": .string("data:\(WindowCapture.mimeType(of: image));base64," + image.base64EncodedString()),
-                            ]),
-                        ]))
+                        parts.append(
+                            .object([
+                                "type": .string("image_url"),
+                                "image_url": .object([
+                                    "url": .string(
+                                        "data:\(WindowCapture.mimeType(of: image));base64,"
+                                            + image.base64EncodedString())
+                                ]),
+                            ]))
                     }
-                    out.append(.object([
-                        "role": .string("user"),
-                        "content": .array(parts),
-                    ]))
+                    out.append(
+                        .object([
+                            "role": .string("user"),
+                            "content": .array(parts),
+                        ]))
                 }
 
             case .assistant:
@@ -301,25 +312,27 @@ public struct OpenAICompatibleProvider: StreamingChatProvider {
                     "content": message.text.isEmpty ? .null : .string(message.text),
                 ]
                 if !message.toolCalls.isEmpty {
-                    object["tool_calls"] = .array(message.toolCalls.map { call in
-                        .object([
-                            "id": .string(call.id),
-                            "type": .string("function"),
-                            "function": .object([
-                                "name": .string(call.name),
-                                "arguments": .string(call.arguments.serialized()),
-                            ]),
-                        ])
-                    })
+                    object["tool_calls"] = .array(
+                        message.toolCalls.map { call in
+                            .object([
+                                "id": .string(call.id),
+                                "type": .string("function"),
+                                "function": .object([
+                                    "name": .string(call.name),
+                                    "arguments": .string(call.arguments.serialized()),
+                                ]),
+                            ])
+                        })
                 }
                 out.append(.object(object))
 
             case .tool:
-                out.append(.object([
-                    "role": .string("tool"),
-                    "tool_call_id": .string(message.toolCallID ?? ""),
-                    "content": .string(message.text),
-                ]))
+                out.append(
+                    .object([
+                        "role": .string("tool"),
+                        "tool_call_id": .string(message.toolCallID ?? ""),
+                        "content": .string(message.text),
+                    ]))
             }
         }
         return out

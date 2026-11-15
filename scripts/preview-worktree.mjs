@@ -1,5 +1,19 @@
 import { execFileSync, spawn } from 'node:child_process'
-import { constants, copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, renameSync, rmSync, symlinkSync, unlinkSync, accessSync } from 'node:fs'
+import {
+  constants,
+  copyFileSync,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readlinkSync,
+  renameSync,
+  rmSync,
+  symlinkSync,
+  unlinkSync,
+  accessSync
+} from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -17,14 +31,17 @@ function git(cwd, ...args) {
 }
 
 function worktrees() {
-  return git(root, 'worktree', 'list', '--porcelain', '-z').split('\0\0').filter(Boolean).map((record) => {
-    const fields = record.split('\0')
-    return {
-      path: fields[0].slice('worktree '.length),
-      branch: fields.find((field) => field.startsWith('branch '))?.slice('branch refs/heads/'.length),
-      head: fields.find((field) => field.startsWith('HEAD '))?.slice('HEAD '.length)
-    }
-  })
+  return git(root, 'worktree', 'list', '--porcelain', '-z')
+    .split('\0\0')
+    .filter(Boolean)
+    .map((record) => {
+      const fields = record.split('\0')
+      return {
+        path: fields[0].slice('worktree '.length),
+        branch: fields.find((field) => field.startsWith('branch '))?.slice('branch refs/heads/'.length),
+        head: fields.find((field) => field.startsWith('HEAD '))?.slice('HEAD '.length)
+      }
+    })
 }
 
 function label(tree) {
@@ -33,9 +50,12 @@ function label(tree) {
 
 async function selectTarget(trees) {
   if (targetArg) {
-    const matches = trees.filter((tree) =>
-      tree.path === resolve(targetArg) || tree.branch === targetArg ||
-      (tree.head?.startsWith(targetArg) && /^[a-f0-9]{7,40}$/.test(targetArg)))
+    const matches = trees.filter(
+      (tree) =>
+        tree.path === resolve(targetArg) ||
+        tree.branch === targetArg ||
+        (tree.head?.startsWith(targetArg) && /^[a-f0-9]{7,40}$/.test(targetArg))
+    )
     if (matches.length === 1) return matches[0]
     throw new Error('Укажи однозначную ветку или путь к worktree.')
   }
@@ -67,14 +87,25 @@ function executable(path) {
 function sameInputs(source, target, paths) {
   const tracked = (cwd) => git(cwd, 'ls-files', '-z', '--', ...paths)
   const files = tracked(source)
-  return Boolean(files) && files === tracked(target) &&
-    files.split('\0').filter(Boolean).every((file) => sameFile(join(source, file), join(target, file)))
+  return (
+    Boolean(files) &&
+    files === tracked(target) &&
+    files
+      .split('\0')
+      .filter(Boolean)
+      .every((file) => sameFile(join(source, file), join(target, file)))
+  )
 }
 
 const nativeResources = [
   { binary: 'deskhand-helper', build: 'build-helper', inputs: ['src/main/native/helper.m'] },
   { binary: 'deskhand-agent', build: 'build-agent', inputs: ['native/deskhand'] },
-  { binary: 'transcribe-cli', build: 'build-transcribe', inputs: [], extra: ['transcribe.cpp', 'ggml', 'miniz', 'silero-vad'].map((name) => `transcribe-licenses/${name}.txt`) },
+  {
+    binary: 'transcribe-cli',
+    build: 'build-transcribe',
+    inputs: [],
+    extra: ['transcribe.cpp', 'ggml', 'miniz', 'silero-vad'].map((name) => `transcribe-licenses/${name}.txt`)
+  },
   { binary: 'whisper-cli', build: 'build-whisper', inputs: [] }
 ]
 
@@ -117,7 +148,8 @@ function prepareResources(source, target, inspectOnly) {
     const output = join(resources, binary)
     const files = [binary, ...extra]
     const buildScript = `scripts/${build}.mjs`
-    const reusable = sameInputs(source, target, [buildScript, ...inputs]) &&
+    const reusable =
+      sameInputs(source, target, [buildScript, ...inputs]) &&
       executable(join(source, 'resources', binary)) &&
       extra.every((file) => existsSync(join(source, 'resources', file)))
     if (reusable) {
@@ -134,8 +166,11 @@ function prepareResources(source, target, inspectOnly) {
   }
 
   const model = 'resources/speech/gigaam-v3-e2e-rnnt-Q4_K_M.gguf'
-  if (sameInputs(source, target, ['scripts/prepare-speech.mjs']) &&
-      existsSync(join(source, model)) && !existsSync(join(target, model))) {
+  if (
+    sameInputs(source, target, ['scripts/prepare-speech.mjs']) &&
+    existsSync(join(source, model)) &&
+    !existsSync(join(target, model))
+  ) {
     console.log('Модель распознавания: готовый файл из основного checkout')
     if (!inspectOnly) {
       copyResource(join(source, model), join(target, model))
@@ -238,8 +273,12 @@ async function main() {
       process.off('SIGTERM', forwardSignal)
     }
   } finally {
-    if (!localModules && lstatSync(modules, { throwIfNoEntry: false })?.isSymbolicLink() &&
-        readlinkSync(modules) === sharedModules) unlinkSync(modules)
+    if (
+      !localModules &&
+      lstatSync(modules, { throwIfNoEntry: false })?.isSymbolicLink() &&
+      readlinkSync(modules) === sharedModules
+    )
+      unlinkSync(modules)
   }
 }
 

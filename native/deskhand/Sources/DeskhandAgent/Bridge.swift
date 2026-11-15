@@ -1,9 +1,9 @@
-import Foundation
 import AppKit
 import ApplicationServices
+import DeskhandAgentKit
 import DeskhandCore
 import DeskhandLLM
-import DeskhandAgentKit
+import Foundation
 
 /// The sidecar protocol.
 ///
@@ -127,9 +127,12 @@ final class Bridge: @unchecked Sendable {
 
     private func handleRequest(_ line: String) {
         guard let value = try? JSONValue.parse(line), let message = value.objectValue else {
-            emit(["event": .string("error"), "params": .object([
-                "message": .string("could not parse a request line"),
-            ])])
+            emit([
+                "event": .string("error"),
+                "params": .object([
+                    "message": .string("could not parse a request line")
+                ]),
+            ])
             return
         }
         let id = message["id"]
@@ -141,10 +144,12 @@ final class Bridge: @unchecked Sendable {
             respond(id: id, result: .object(["pong": .bool(true)]))
         case "permissions":
             let status = SystemPermissions.current()
-            respond(id: id, result: .object([
-                "accessibility": .bool(status.accessibility),
-                "screen_recording": .bool(status.screenRecording),
-            ]))
+            respond(
+                id: id,
+                result: .object([
+                    "accessibility": .bool(status.accessibility),
+                    "screen_recording": .bool(status.screenRecording),
+                ]))
         case "run":
             startRun(id: id, params: params)
         case "cancel":
@@ -187,17 +192,21 @@ final class Bridge: @unchecked Sendable {
         let permissions = SystemPermissions.current()
         guard permissions.accessibility else {
             finishRun(handle)
-            emit(["event": .string("error"), "params": .object([
-                "message": .string("Нет разрешения «Универсальный доступ»."),
-                "code": .string("accessibility"),
-            ])])
+            emit([
+                "event": .string("error"),
+                "params": .object([
+                    "message": .string("Нет разрешения «Универсальный доступ»."),
+                    "code": .string("accessibility"),
+                ]),
+            ])
             respond(id: id, error: "accessibility permission is required")
             return
         }
 
         let options = loopOptions(from: params["options"])
-        let excluded = Set((params["options"]?["excluded_apps"]?.arrayValue ?? [])
-            .compactMap(\.stringValue))
+        let excluded = Set(
+            (params["options"]?["excluded_apps"]?.arrayValue ?? [])
+                .compactMap(\.stringValue))
         let executor = ToolExecutor(excludedBundleIds: excluded)
         let provider = ProviderFactory.make(config: config)
         let loop = AgentLoop(provider: provider, executor: executor, options: options)
@@ -269,14 +278,20 @@ final class Bridge: @unchecked Sendable {
             // only had the text could not tell "the model finished" from
             // "the budget ran out" — and the app drew a checkmark over the
             // second one.
-            self.emit(["event": .string("done"), "params": .object([
-                "answer": .string(answer),
-                "complete": .bool(loop.finished),
-            ])])
+            self.emit([
+                "event": .string("done"),
+                "params": .object([
+                    "answer": .string(answer),
+                    "complete": .bool(loop.finished),
+                ]),
+            ])
         } else if let failure {
-            self.emit(["event": .string("error"), "params": .object([
-                "message": .string(failure),
-            ])])
+            self.emit([
+                "event": .string("error"),
+                "params": .object([
+                    "message": .string(failure)
+                ]),
+            ])
         } else {
             self.emit(["event": .string("cancelled"), "params": .object([:])])
         }
@@ -453,9 +468,13 @@ final class Bridge: @unchecked Sendable {
             emit(["event": .string("error"), "params": .object(["message": .string(error)])])
             return
         }
-        writer.write(JSONValue.object(["id": id, "error": .object([
-            "message": .string(error),
-        ])]).serialized())
+        writer.write(
+            JSONValue.object([
+                "id": id,
+                "error": .object([
+                    "message": .string(error)
+                ]),
+            ]).serialized())
     }
 
     // MARK: - Configuration
@@ -537,27 +556,36 @@ private final class BridgeObserver: AgentObserver, @unchecked Sendable {
     }
 
     func stepStarted(_ step: Int, of total: Int) {
-        bridge.emit(["event": .string("step"), "params": .object([
-            "step": .number(Double(step)),
-            "total": .number(Double(total)),
-        ])])
+        bridge.emit([
+            "event": .string("step"),
+            "params": .object([
+                "step": .number(Double(step)),
+                "total": .number(Double(total)),
+            ]),
+        ])
     }
 
     func stepStreamed(_ step: Int, text: String) {
         guard !text.isEmpty else { return }
         streamedSteps.insert(step)
-        bridge.emit(["event": .string("stream"), "params": .object([
-            "step": .number(Double(step)),
-            "text": .string(text),
-        ])])
+        bridge.emit([
+            "event": .string("stream"),
+            "params": .object([
+                "step": .number(Double(step)),
+                "text": .string(text),
+            ]),
+        ])
     }
 
     func stepAnswered(_ step: Int, narration: String, calls: [ToolCall]) {
         guard !calls.isEmpty, !narration.isEmpty, !streamedSteps.contains(step) else { return }
-        bridge.emit(["event": .string("narration"), "params": .object([
-            "step": .number(Double(step)),
-            "text": .string(narration),
-        ])])
+        bridge.emit([
+            "event": .string("narration"),
+            "params": .object([
+                "step": .number(Double(step)),
+                "text": .string(narration),
+            ]),
+        ])
     }
 
     func toolStarted(_ step: Int, call: ToolCall, narration: String) {
@@ -609,15 +637,21 @@ private final class BridgeObserver: AgentObserver, @unchecked Sendable {
     }
 
     func loopWarned(_ reason: String) {
-        bridge.emit(["event": .string("warning"), "params": .object([
-            "reason": .string(reason),
-        ])])
+        bridge.emit([
+            "event": .string("warning"),
+            "params": .object([
+                "reason": .string(reason)
+            ]),
+        ])
     }
 
     func loopStopped(_ reason: String) {
-        bridge.emit(["event": .string("stopped"), "params": .object([
-            "reason": .string(reason),
-        ])])
+        bridge.emit([
+            "event": .string("stopped"),
+            "params": .object([
+                "reason": .string(reason)
+            ]),
+        ])
     }
 
     func runFinished(_ report: RunReport) {

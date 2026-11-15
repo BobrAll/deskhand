@@ -32,8 +32,8 @@ enum ValueRole {
     static func isState(_ role: String) -> Bool {
         switch role {
         case kAXCheckBoxRole, kAXRadioButtonRole, kAXSliderRole,
-             kAXScrollBarRole, kAXIncrementorRole, kAXPopUpButtonRole,
-             kAXMenuButtonRole, kAXProgressIndicatorRole, kAXDisclosureTriangleRole:
+            kAXScrollBarRole, kAXIncrementorRole, kAXPopUpButtonRole,
+            kAXMenuButtonRole, kAXProgressIndicatorRole, kAXDisclosureTriangleRole:
             return true
         default:
             return false

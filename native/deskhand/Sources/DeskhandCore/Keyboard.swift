@@ -1,6 +1,6 @@
-import Foundation
-import CoreGraphics
 import ApplicationServices
+import CoreGraphics
+import Foundation
 
 /// The modifier spellings every caller accepts.
 ///
@@ -121,9 +121,10 @@ public enum Keyboard {
             return
         }
         let source = SyntheticEvent.eventSource()
-        guard let down = CGEvent(
-            keyboardEventSource: source, virtualKey: key.keyCode, keyDown: true),
-              let up = CGEvent(
+        guard
+            let down = CGEvent(
+                keyboardEventSource: source, virtualKey: key.keyCode, keyDown: true),
+            let up = CGEvent(
                 keyboardEventSource: source, virtualKey: key.keyCode, keyDown: false)
         else { return }
         down.flags = key.flags
@@ -173,7 +174,7 @@ public enum Keyboard {
     ) {
         var mutable = unit
         guard let down = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: true),
-              let up = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: false)
+            let up = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: false)
         else { return }
         down.keyboardSetUnicodeString(stringLength: 1, unicodeString: &mutable)
         up.keyboardSetUnicodeString(stringLength: 1, unicodeString: &mutable)

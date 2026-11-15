@@ -1,5 +1,5 @@
-import Foundation
 import AppKit
+import Foundation
 
 /// A blocking wait that keeps the main run loop alive.
 ///

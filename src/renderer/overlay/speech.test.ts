@@ -3,25 +3,26 @@ import { answerIsSpoken, automaticSpeech, requestedReading, speechText } from '.
 
 describe('spoken replies', () => {
   it('removes code, tables, URLs and tool instructions', () => {
-    expect(speechText('# Итог\n**Текст** [ссылка](https://example.com)\n```js\nalert(1)\n```\n@point 0.2 0.3\n| A | B |')).toBe('Итог. Текст ссылка')
+    expect(
+      speechText('# Итог\n**Текст** [ссылка](https://example.com)\n```js\nalert(1)\n```\n@point 0.2 0.3\n| A | B |')
+    ).toBe('Итог. Текст ссылка')
   })
   it('drops the code block when the answer ends before its closing fence', () => {
     expect(speechText('Вот пример.\n```js\nconsole.log(1)')).toBe('Вот пример.')
   })
   it('separates list items so each gets its own pause', () => {
-    expect(speechText('- Первый пункт\n- Второй пункт\n- Третий пункт'))
-      .toBe('Первый пункт. Второй пункт. Третий пункт')
+    expect(speechText('- Первый пункт\n- Второй пункт\n- Третий пункт')).toBe(
+      'Первый пункт. Второй пункт. Третий пункт'
+    )
   })
   it('keeps ordered numbers and separates those items too', () => {
     expect(speechText('1. Первый шаг\n2. Второй шаг')).toBe('1. Первый шаг. 2. Второй шаг')
   })
   it('puts a boundary after a heading and between paragraphs', () => {
-    expect(speechText('# Заголовок\nПервый абзац\n\nВторой абзац.'))
-      .toBe('Заголовок. Первый абзац. Второй абзац.')
+    expect(speechText('# Заголовок\nПервый абзац\n\nВторой абзац.')).toBe('Заголовок. Первый абзац. Второй абзац.')
   })
   it('does not pause inside a hand-wrapped paragraph', () => {
-    expect(speechText('Длинное предложение\nпродолжается здесь.'))
-      .toBe('Длинное предложение продолжается здесь.')
+    expect(speechText('Длинное предложение\nпродолжается здесь.')).toBe('Длинное предложение продолжается здесь.')
   })
   it('does not double punctuation at a boundary', () => {
     expect(speechText('Готово!\n- Ещё?')).toBe('Готово! Ещё?')
@@ -42,7 +43,8 @@ describe('spoken replies', () => {
     }
   })
   it('still drops code blocks, tables and URLs', () => {
-    const text = 'Первый абзац.\n```js\nconsole.log(1)\n```\nСсылка: https://example.com/page\n| A | B |\n| 1 | 2 |\nВторой абзац.'
+    const text =
+      'Первый абзац.\n```js\nconsole.log(1)\n```\nСсылка: https://example.com/page\n| A | B |\n| 1 | 2 |\nВторой абзац.'
     expect(speechText(text)).toBe('Первый абзац. Ссылка: Второй абзац.')
   })
   it('leaves Russian text with ordinary punctuation unchanged', () => {
@@ -52,7 +54,9 @@ describe('spoken replies', () => {
   it('keeps generated text and media commands silent', () => {
     expect(automaticSpeech('Напиши ответ на сообщение', 'Привет!')).toBe('')
     expect(automaticSpeech('Включи музыку', 'Готово.')).toBe('')
-    expect(automaticSpeech('Включи музыку', 'Не удалось открыть приложение.', true)).toBe('Не удалось открыть приложение.')
+    expect(automaticSpeech('Включи музыку', 'Не удалось открыть приложение.', true)).toBe(
+      'Не удалось открыть приложение.'
+    )
   })
   it('reads successful replies fully', () => {
     const answer = 'Раз. Два. Три. Четыре.'

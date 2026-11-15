@@ -1,6 +1,6 @@
-import Foundation
 import ApplicationServices
 import CoreGraphics
+import Foundation
 
 /// System-level permission checks. Deskhand needs two grants on macOS:
 /// Accessibility (to read and drive other apps' UI) and Screen Recording

@@ -191,7 +191,11 @@ export function toTransportError(error: unknown, signal: AbortSignal): ProviderE
   }
   const message = error instanceof Error ? error.message : String(error)
   if (/abort/i.test(message)) return new ProviderError('Запрос отменён.', false)
-  if (/ENOTFOUND|EAI_AGAIN|ENETUNREACH|ECONNRESET|EPIPE|fetch failed|network|terminated|socket hang up|other side closed/i.test(message)) {
+  if (
+    /ENOTFOUND|EAI_AGAIN|ENETUNREACH|ECONNRESET|EPIPE|fetch failed|network|terminated|socket hang up|other side closed/i.test(
+      message
+    )
+  ) {
     return new ProviderError('Нет соединения с интернетом или сервис недоступен.', true)
   }
   if (/timeout|timed out/i.test(message)) {

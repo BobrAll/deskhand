@@ -30,7 +30,12 @@ const LINE_CHARS = 300
  * last for a traceback.
  */
 function edgeLine(lines: string[]): string {
-  return lines.find((line) => line.trim())?.trim().slice(0, LINE_CHARS) ?? ''
+  return (
+    lines
+      .find((line) => line.trim())
+      ?.trim()
+      .slice(0, LINE_CHARS) ?? ''
+  )
 }
 
 export function firstLine(text: string): string {
