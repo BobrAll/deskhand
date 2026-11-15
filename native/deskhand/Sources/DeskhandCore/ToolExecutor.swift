@@ -1,6 +1,6 @@
-import Foundation
 import ApplicationServices
 import CoreGraphics
+import Foundation
 
 /// Content returned by a tool call, in the transport-neutral form the agent
 /// loop feeds back to the model: text blocks and image blocks.
@@ -144,14 +144,15 @@ public final class ToolExecutor: @unchecked Sendable {
             let context = await policyContext(
                 name: name, arguments: arguments, narration: narration)
             switch policy.authorize(context) {
-                case .allow:
-                    break
-                case .deny(let reason):
-                    var denied = ToolResult.failure(reason.isEmpty
+            case .allow:
+                break
+            case .deny(let reason):
+                var denied = ToolResult.failure(
+                    reason.isEmpty
                         ? "The user did not allow this action."
                         : reason)
-                    denied.timings.wall = clock.milliseconds
-                    return denied
+                denied.timings.wall = clock.milliseconds
+                return denied
             }
         }
 
@@ -161,7 +162,8 @@ public final class ToolExecutor: @unchecked Sendable {
         // screen, so the only cost is a few dictionary lookups. The presenter
         // returns immediately by contract; anything it draws happens elsewhere.
         if MutatingTools.isMutating(name), let presenter,
-           let action = presentation(for: name, arguments: arguments) {
+            let action = presentation(for: name, arguments: arguments)
+        {
             presenter.present(action)
         }
 
@@ -240,7 +242,8 @@ public final class ToolExecutor: @unchecked Sendable {
         guard let snapshot = session.adoptPreview() else {
             var text = diffText
             if !diff.added.isEmpty {
-                text += "\nIndices from the last tree still work for elements that existed. "
+                text +=
+                    "\nIndices from the last tree still work for elements that existed. "
                     + "Call get_app_state to address a node that just appeared."
             }
             return ToolResult(
@@ -254,9 +257,10 @@ public final class ToolExecutor: @unchecked Sendable {
                 // first bracketed bundle identifier in the result.
                 .text(stateHeader(snapshot)),
                 .text(message),
-                .text(diffText + "\nThe tree below is fresh. Element numbers are stable for the"
-                    + " whole run, so the ones you already used still mean the same controls."
-                    + " Call get_app_state only for a screenshot."),
+                .text(
+                    diffText + "\nThe tree below is fresh. Element numbers are stable for the"
+                        + " whole run, so the ones you already used still mean the same controls."
+                        + " Call get_app_state only for a screenshot."),
                 .text(treeBlock(snapshot)),
             ],
             timings: timings,
@@ -314,21 +318,26 @@ public final class ToolExecutor: @unchecked Sendable {
         if let point, let hit = session.smallestNode(containing: point) {
             text += " The point landed on " + describe(hit)
             if let frame = hit.frame {
-                text += " at \(integerText(frame.origin.x)),\(integerText(frame.origin.y)) "
+                text +=
+                    " at \(integerText(frame.origin.x)),\(integerText(frame.origin.y)) "
                     + "\(integerText(frame.width))x\(integerText(frame.height))"
             }
             text += "."
             if hit.childrenRefused {
                 if let count = hit.declaredItemCount {
-                    text += " That node holds \(count) item\(count == 1 ? "" : "s") but does not"
+                    text +=
+                        " That node holds \(count) item\(count == 1 ? "" : "s") but does not"
                         + " expose them, so nothing inside it has an index."
                 } else {
-                    text += " That node does not expose its contents, so nothing inside it has an"
+                    text +=
+                        " That node does not expose its contents, so nothing inside it has an"
                         + " index."
                 }
-                text += " A different pixel may work, but reaching the item by name (a"
+                text +=
+                    " A different pixel may work, but reaching the item by name (a"
                     + " search or filter field) is more reliable than aiming by position."
-                text += " Such lists also often need a second click or Return to open an item,"
+                text +=
+                    " Such lists also often need a second click or Return to open an item,"
                     + " so try click_count: 2 before giving up on this point."
             }
         }
@@ -513,7 +522,7 @@ public final class ToolExecutor: @unchecked Sendable {
         let target = canonicalPath(path)
         return knownApps.contains { app in
             guard let bundle = app.bundleIdentifier, excludedBundleIds.contains(bundle),
-                  let appPath = app.path
+                let appPath = app.path
             else { return false }
             return canonicalPath(appPath) == target
         }
@@ -560,13 +569,14 @@ public final class ToolExecutor: @unchecked Sendable {
     private func knownSession(for query: String) -> AppSession? {
         let existing = allSessions()
         if let match = existing.first(where: { $0.app.name == query })
-            ?? existing.first(where: { $0.app.bundleIdentifier == query }) {
+            ?? existing.first(where: { $0.app.bundleIdentifier == query })
+        {
             return isExcluded(match.app) ? nil : match
         }
         // A query nothing has touched yet: resolve it against the running apps
         // only, so the policy can name the app before the first tool ran.
         guard let handle = try? AppCatalog.resolve(query),
-              let running = AppCatalog.runningApps().first(where: { $0.pid == handle.pid })
+            let running = AppCatalog.runningApps().first(where: { $0.pid == handle.pid })
         else { return nil }
         // The policy/presentation path must not read an excluded app either:
         // naming it would refresh its tree and describe its controls before the
@@ -590,7 +600,8 @@ public final class ToolExecutor: @unchecked Sendable {
     /// the window and say "here", which is useful on its own.
     private func presentation(for name: String, arguments: JSONValue) -> ActionPresentation? {
         guard let query = arguments["app"]?.stringValue, !query.isEmpty,
-              let session = knownSession(for: query) else { return nil }
+            let session = knownSession(for: query)
+        else { return nil }
 
         var action = ActionPresentation(
             tool: name,
@@ -602,7 +613,8 @@ public final class ToolExecutor: @unchecked Sendable {
         )
 
         if let index = arguments["element_index"]?.intValue,
-           let node = try? session.node(at: index) {
+            let node = try? session.node(at: index)
+        {
             action.elementFrame = node.frame
             action.point = try? session.centre(of: index)
         }
@@ -612,15 +624,17 @@ public final class ToolExecutor: @unchecked Sendable {
             // A coordinate click has no element index, so the screenshot mapper
             // is the only thing that can turn its pixels into screen points.
             if action.point == nil,
-               let x = arguments["x"]?.doubleValue,
-               let y = arguments["y"]?.doubleValue,
-               let mapper = session.coordinateMapper {
+                let x = arguments["x"]?.doubleValue,
+                let y = arguments["y"]?.doubleValue,
+                let mapper = session.coordinateMapper
+            {
                 action.point = mapper.screenPoint(fromImagePixel: CGPoint(x: x, y: y))
             }
         case "drag":
             if let x = arguments["from_x"]?.doubleValue,
-               let y = arguments["from_y"]?.doubleValue,
-               let mapper = session.coordinateMapper {
+                let y = arguments["from_y"]?.doubleValue,
+                let mapper = session.coordinateMapper
+            {
                 action.point = mapper.screenPoint(fromImagePixel: CGPoint(x: x, y: y))
             }
         case "scroll", "press_key", "type_text":
@@ -673,23 +687,26 @@ public final class ToolExecutor: @unchecked Sendable {
             if let capture = session.lastCapture {
                 blocks.append(.image(capture.imageData))
                 let frame = capture.windowFrame
-                blocks.append(.text(
-                    """
-                    Screenshot: \(capture.pixelWidth)x\(capture.pixelHeight) px, window at \
-                    \(integerText(frame.origin.x)),\(integerText(frame.origin.y)) size \(integerText(frame.width))x\(integerText(frame.height)) pt, \
-                    scale \(String(format: "%.2f", capture.scale)). Click coordinates are in screenshot pixels.
-                    """))
+                blocks.append(
+                    .text(
+                        """
+                        Screenshot: \(capture.pixelWidth)x\(capture.pixelHeight) px, window at \
+                        \(integerText(frame.origin.x)),\(integerText(frame.origin.y)) size \(integerText(frame.width))x\(integerText(frame.height)) pt, \
+                        scale \(String(format: "%.2f", capture.scale)). Click coordinates are in screenshot pixels.
+                        """))
             } else {
                 // Say what actually went wrong. "Permission may be missing" is
                 // only true when it is; otherwise the model is sent after a
                 // setting that is already granted.
-                let reason = session.lastCaptureError
+                let reason =
+                    session.lastCaptureError
                     ?? (permissions.screenRecording
                         ? "the window could not be captured"
                         : "Screen Recording permission is not granted")
-                blocks.append(.text(
-                    "No screenshot available: \(reason). The tree below is still current; "
-                        + "address elements by index or ask again for a screenshot."))
+                blocks.append(
+                    .text(
+                        "No screenshot available: \(reason). The tree below is still current; "
+                            + "address elements by index or ask again for a screenshot."))
             }
         }
 
@@ -862,7 +879,8 @@ public final class ToolExecutor: @unchecked Sendable {
         let warning = bringToFrontChecked(session, actionLabel: "the click")
         Mouse.click(at: point, button: button, count: count, modifiers: modifiers)
         let clickedPoint = elementIndex == nil ? point : nil
-        var message = "Clicked \(button.rawValue) at screen "
+        var message =
+            "Clicked \(button.rawValue) at screen "
             + "\(integerText(point.x)),\(integerText(point.y)) x\(count)."
             + (warning ?? "")
         // Clicking a container is aiming at a region, not at an item: the
@@ -870,20 +888,24 @@ public final class ToolExecutor: @unchecked Sendable {
         // point is what reacted. Say so, otherwise a step that happened to
         // work looks like the index did something meaningful.
         if let index = elementIndex,
-           let clicked = try? session.node(at: index), clicked.childrenRefused {
+            let clicked = try? session.node(at: index), clicked.childrenRefused
+        {
             if let count = clicked.declaredItemCount {
-                message += " Element \(index) is a container holding \(count)"
+                message +=
+                    " Element \(index) is a container holding \(count)"
                     + " item\(count == 1 ? "" : "s") it does not expose, so the click landed on"
                     + " whatever was at that point rather than on an indexed item."
             } else {
-                message += " Element \(index) is a container that does not expose its contents,"
+                message +=
+                    " Element \(index) is a container that does not expose its contents,"
                     + " so the click landed on whatever was at that point."
             }
             // Lists drawn by the app itself (chat lists, tables, custom views)
             // commonly treat a single click as a selection and need a second
             // one, or a Return, to open the item. Saying so here saves the model
             // from concluding that its aim was wrong and starting over.
-            message += " A single click in such a list often only selects; if nothing opened,"
+            message +=
+                " A single click in such a list often only selects; if nothing opened,"
                 + " try click_count: 2, or press Return."
         }
         return finish(
@@ -927,7 +949,8 @@ public final class ToolExecutor: @unchecked Sendable {
             guard ElementActions.focus(element) else { throw error }
             ElementActions.selectAll(element)
             Keyboard.typeString(value, to: .process(session.pid))
-            message = "Typed \"\(value)\" into element \(index), which does not accept a value"
+            message =
+                "Typed \"\(value)\" into element \(index), which does not accept a value"
                 + " directly but accepts typing."
         }
         let submitted = (args["submit"]?.boolValue ?? false) && isTextField
@@ -941,7 +964,8 @@ public final class ToolExecutor: @unchecked Sendable {
             // job — the page does not change until Return. Saying it here stops
             // the model from reading "no change in the tree" as a failed edit
             // and typing again.
-            message += " A text field keeps the value without acting on it: pass submit: true,"
+            message +=
+                " A text field keeps the value without acting on it: pass submit: true,"
                 + " or press Return, to commit it if this was an address bar or a search box."
         }
         return finish(
@@ -996,12 +1020,14 @@ public final class ToolExecutor: @unchecked Sendable {
 
         bringToFront(session)
         Mouse.scroll(at: point, direction: direction, pages: pages)
-        var message = "Scrolled \(direction.rawValue) \(pages) page(s) at "
+        var message =
+            "Scrolled \(direction.rawValue) \(pages) page(s) at "
             + "\(integerText(point.x)),\(integerText(point.y))."
         if pages < requestedPages {
             // A model that asked for 10 000 pages would otherwise believe it
             // moved the whole document when the cap stopped it at 20.
-            message += " The requested \(requestedPages) page(s) were capped at \(pages);"
+            message +=
+                " The requested \(requestedPages) page(s) were capped at \(pages);"
                 + " repeat the scroll if the content is still not where you need it."
         }
         return finish(
@@ -1120,4 +1146,3 @@ public enum ToolError: Error, CustomStringConvertible {
         }
     }
 }
-

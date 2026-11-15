@@ -62,11 +62,7 @@ export interface BuildTurnRequestInput {
   /** Takes a fresh screenshot when the current one is too old. */
   ensureFreshScreenshot: () => Promise<ScreenshotInfo | null>
   /** Reads names and coordinates for drawing and acting. Best effort. */
-  describeScreen: (
-    pid: number | null,
-    bounds: ScreenRect | null,
-    area: ScreenRect
-  ) => Promise<string | null>
+  describeScreen: (pid: number | null, bounds: ScreenRect | null, area: ScreenRect) => Promise<string | null>
   /** Whether the abort signal has fired since the last await. */
   aborted: () => boolean
 }
@@ -154,7 +150,7 @@ export async function buildTurnRequest(input: BuildTurnRequestInput): Promise<Tu
   // The rectangle the model is looking through. Captured once, before the
   // request, because it is the frame every returned coordinate refers to: a live
   // re-capture mid-stream must not shift the shapes already being painted.
-  const area = shot ? shot.area : session.snapshot.screenshot?.area ?? null
+  const area = shot ? shot.area : (session.snapshot.screenshot?.area ?? null)
   // Drawing and acting are only honest when the model can actually see the
   // target. Without an image the coordinates would be invented, and a confident
   // arrow — or worse, a confident click — aimed at the wrong pixel is worse
@@ -183,11 +179,7 @@ export async function buildTurnRequest(input: BuildTurnRequestInput): Promise<Tu
    */
   const outline = canDraw
     ? await input
-        .describeScreen(
-          session.target?.pid ?? null,
-          session.snapshot.activeApp?.bounds ?? null,
-          area as ScreenRect
-        )
+        .describeScreen(session.target?.pid ?? null, session.snapshot.activeApp?.bounds ?? null, area as ScreenRect)
         .catch(() => null)
     : null
 
@@ -237,14 +229,18 @@ export async function buildTurnRequest(input: BuildTurnRequestInput): Promise<Tu
   const messages: ChatMessage[] = [
     {
       role: 'system',
-      parts: [{
-        type: 'text',
-        text: [
-          settings.systemPrompt.trim(),
-          modeInstruction,
-          !refine && allowsWebLookup(request.prompt) ? WEB_LOOKUP_INSTRUCTION : ''
-        ].filter(Boolean).join('\n\n')
-      }]
+      parts: [
+        {
+          type: 'text',
+          text: [
+            settings.systemPrompt.trim(),
+            modeInstruction,
+            !refine && allowsWebLookup(request.prompt) ? WEB_LOOKUP_INSTRUCTION : ''
+          ]
+            .filter(Boolean)
+            .join('\n\n')
+        }
+      ]
     },
     ...historyMessages,
     { role: 'user', parts }

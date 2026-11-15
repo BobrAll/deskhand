@@ -30,10 +30,7 @@ export interface ApplyStatusText {
 }
 
 /** What the footer says for a given state, or `null` when it says nothing. */
-export function applyStatusText(
-  state: ApplyState,
-  holdReason: string | null
-): ApplyStatusText | null {
+export function applyStatusText(state: ApplyState, holdReason: string | null): ApplyStatusText | null {
   if (state === 'idle') return null
 
   if (state === 'pending') return { text: 'Применяю…', isProblem: false }
@@ -48,11 +45,7 @@ export function ApplyStatus(props: { state: ApplyState; holdReason: string | nul
   if (!status) return null
 
   return (
-    <span
-      className={`status ${status.isProblem ? 'err' : 'ok'}`}
-      title={props.holdReason ?? undefined}
-      role="status"
-    >
+    <span className={`status ${status.isProblem ? 'err' : 'ok'}`} title={props.holdReason ?? undefined} role="status">
       {status.text}
     </span>
   )

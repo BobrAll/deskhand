@@ -13,9 +13,7 @@ import { parseInline, parseMarkdown } from './markdown'
 
 describe('inline markers', () => {
   it('reads bold, italics and inline code', () => {
-    expect(parseInline('**жирный**')).toEqual([
-      { kind: 'strong', children: [{ kind: 'text', text: 'жирный' }] }
-    ])
+    expect(parseInline('**жирный**')).toEqual([{ kind: 'strong', children: [{ kind: 'text', text: 'жирный' }] }])
     expect(parseInline('a *b* c')).toEqual([
       { kind: 'text', text: 'a ' },
       { kind: 'em', children: [{ kind: 'text', text: 'b' }] },
@@ -29,9 +27,7 @@ describe('inline markers', () => {
   })
 
   it('reads a link and a bare URL', () => {
-    expect(parseInline('[док](https://x.dev/a)')).toEqual([
-      { kind: 'link', text: 'док', href: 'https://x.dev/a' }
-    ])
+    expect(parseInline('[док](https://x.dev/a)')).toEqual([{ kind: 'link', text: 'док', href: 'https://x.dev/a' }])
     expect(parseInline('см. https://x.dev/a.')).toEqual([
       { kind: 'text', text: 'см. ' },
       { kind: 'link', text: 'https://x.dev/a', href: 'https://x.dev/a' },
@@ -64,10 +60,7 @@ describe('blocks', () => {
     expect(parseMarkdown('первая\nвторая')).toEqual([
       {
         kind: 'paragraph',
-        lines: [
-          [{ kind: 'text', text: 'первая' }],
-          [{ kind: 'text', text: 'вторая' }]
-        ]
+        lines: [[{ kind: 'text', text: 'первая' }], [{ kind: 'text', text: 'вторая' }]]
       }
     ])
   })
@@ -77,9 +70,7 @@ describe('blocks', () => {
   })
 
   it('reads headings at their level', () => {
-    expect(parseMarkdown('## Итог')).toEqual([
-      { kind: 'heading', level: 2, inlines: [{ kind: 'text', text: 'Итог' }] }
-    ])
+    expect(parseMarkdown('## Итог')).toEqual([{ kind: 'heading', level: 2, inlines: [{ kind: 'text', text: 'Итог' }] }])
   })
 
   it('reads bullet and ordered lists, including the starting number', () => {
@@ -102,10 +93,7 @@ describe('blocks', () => {
   })
 
   it('ends a paragraph where a list begins, even without a blank line', () => {
-    expect(parseMarkdown('вот варианты:\n- один').map((block) => block.kind)).toEqual([
-      'paragraph',
-      'list'
-    ])
+    expect(parseMarkdown('вот варианты:\n- один').map((block) => block.kind)).toEqual(['paragraph', 'list'])
   })
 
   it('reads a rule, not a bullet', () => {
@@ -113,15 +101,11 @@ describe('blocks', () => {
   })
 
   it('keeps fenced code verbatim', () => {
-    expect(parseMarkdown('```ts\nconst a = 1\n```')).toEqual([
-      { kind: 'code', lang: 'ts', text: 'const a = 1' }
-    ])
+    expect(parseMarkdown('```ts\nconst a = 1\n```')).toEqual([{ kind: 'code', lang: 'ts', text: 'const a = 1' }])
   })
 
   it('treats an unterminated fence as code to the end', () => {
-    expect(parseMarkdown('```\nconst a = 1')).toEqual([
-      { kind: 'code', lang: '', text: 'const a = 1' }
-    ])
+    expect(parseMarkdown('```\nconst a = 1')).toEqual([{ kind: 'code', lang: '', text: 'const a = 1' }])
   })
 
   it('renders nothing for an empty answer', () => {
@@ -179,9 +163,7 @@ describe('tables', () => {
 
   it('keeps an escaped pipe inside a cell', () => {
     const [table] = parseMarkdown('| a | b |\n|---|---|\n| x \\| y | 2 |')
-    expect(table.kind === 'table' && table.rows[0][0]).toEqual([
-      { kind: 'text', text: 'x | y' }
-    ])
+    expect(table.kind === 'table' && table.rows[0][0]).toEqual([{ kind: 'text', text: 'x | y' }])
   })
 
   it('does not mistake prose with a pipe followed by a rule for a table', () => {

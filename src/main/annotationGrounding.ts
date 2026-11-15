@@ -36,11 +36,7 @@ function isTargetFrame(rect: ScreenRect, area: ScreenRect): boolean {
 }
 
 /** Use exact, unambiguous AX names; never guess between repeated labels. */
-export function groundAnnotation(
-  annotation: Annotation,
-  targets: AxElementInfo[],
-  area: ScreenRect
-): Annotation {
+export function groundAnnotation(annotation: Annotation, targets: AxElementInfo[], area: ScreenRect): Annotation {
   if (!annotation.label || area.width <= 0 || area.height <= 0) return annotation
   const name = normalized(annotation.label)
   if (!name) return annotation
@@ -52,8 +48,7 @@ export function groundAnnotation(
   const rect = matches[0].frame
   if (!isTargetFrame(rect, area)) return annotation
   const from = { x: (rect.x - area.x) / area.width, y: (rect.y - area.y) / area.height }
-  const to = { x: (rect.x + rect.width - area.x) / area.width,
-    y: (rect.y + rect.height - area.y) / area.height }
+  const to = { x: (rect.x + rect.width - area.x) / area.width, y: (rect.y + rect.height - area.y) / area.height }
   if (annotation.kind === 'arrow') {
     return { ...annotation, to: { x: (from.x + to.x) / 2, y: (from.y + to.y) / 2 } }
   }

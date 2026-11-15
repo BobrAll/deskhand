@@ -210,9 +210,7 @@ export function setSettingsHeld(held: boolean): void {
  * window is not an answer.
  */
 export function openAppWindows(): BrowserWindow[] {
-  return [settingsWindow, onboardingWindow].filter(
-    (win): win is BrowserWindow => win !== null && !win.isDestroyed()
-  )
+  return [settingsWindow, onboardingWindow].filter((win): win is BrowserWindow => win !== null && !win.isDestroyed())
 }
 
 /**

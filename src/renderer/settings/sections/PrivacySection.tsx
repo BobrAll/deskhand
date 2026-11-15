@@ -36,11 +36,14 @@ export function PrivacySection({
     let latest = 0
     const refresh = () => {
       const request = ++latest
-      void window.deskhand.permissions.status().then((next) => {
-        if (request === latest) {
-          setBundle((prev) => (prev ? { ...prev, permissions: next } : prev))
-        }
-      }).catch(() => undefined)
+      void window.deskhand.permissions
+        .status()
+        .then((next) => {
+          if (request === latest) {
+            setBundle((prev) => (prev ? { ...prev, permissions: next } : prev))
+          }
+        })
+        .catch(() => undefined)
     }
     refresh()
     window.addEventListener('focus', refresh)
@@ -77,11 +80,13 @@ export function PrivacySection({
       </nav>
 
       <div id={`${navId}-permissions`} hidden={view !== 'permissions'}>
-        <Group footnote={
-          permissions && Object.values(permissions).some(Boolean)
-            ? 'Чтобы отозвать доступ, выключи Deskhand в открывшемся разделе macOS.'
-            : undefined
-        }>
+        <Group
+          footnote={
+            permissions && Object.values(permissions).some(Boolean)
+              ? 'Чтобы отозвать доступ, выключи Deskhand в открывшемся разделе macOS.'
+              : undefined
+          }
+        >
           <PermissionRow
             title="Универсальный доступ"
             hint="Читать выделенный текст и вставлять ответ; управлять мышью — только если включён режим «Агент»."
@@ -131,9 +136,11 @@ export function PrivacySection({
           />
           <Row
             title="Ключи API"
-            hint={encryptionAvailable
-              ? 'Шифрование средствами macOS доступно.'
-              : 'Шифрование ключей средствами macOS недоступно.'}
+            hint={
+              encryptionAvailable
+                ? 'Шифрование средствами macOS доступно.'
+                : 'Шифрование ключей средствами macOS недоступно.'
+            }
           />
         </Group>
       </div>

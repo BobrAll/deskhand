@@ -161,8 +161,7 @@ describe('layoutCard: the rest of the card', () => {
     const agentStatus = 'Нажимаю «Экспорт»'
     const hint = 'Esc — остановить'
     const withHint = layoutCard(input({ agentStatus, agentHint: hint, agentRunning: true }))
-    const measured = (agentStatus.length + 2 + hint.length) * POINTS_PER_CHAR +
-      AGENT_ROW_CHROME + CARET_SLACK
+    const measured = (agentStatus.length + 2 + hint.length) * POINTS_PER_CHAR + AGENT_ROW_CHROME + CARET_SLACK
 
     // The line wants more than the content cap; the point is that the hint is
     // part of the measurement instead of being clipped by a width that forgot it.

@@ -1,6 +1,14 @@
 import { useEffect, useId, useRef, useState } from 'react'
 import type { AppSettings, KeyStatus, ModelListResult, ProviderId } from '@shared/types'
-import { DEFAULT_SYSTEM_PROMPT, PROVIDERS, SETTINGS_BOUNDS, normalizeBaseUrl, parseExtraBody, providerInfo, searchModelFallback } from '@shared/defaults'
+import {
+  DEFAULT_SYSTEM_PROMPT,
+  PROVIDERS,
+  SETTINGS_BOUNDS,
+  normalizeBaseUrl,
+  parseExtraBody,
+  providerInfo,
+  searchModelFallback
+} from '@shared/defaults'
 import { Disclosure, Group, Row, Toggle } from '../Row'
 
 interface ProviderSectionProps {
@@ -39,7 +47,7 @@ export function ProviderSection({
   const modelIdRef = useRef<HTMLInputElement>(null)
   useEffect(() => {
     if (view === 'models' && catalog) {
-      (catalog.ok ? modelListRef.current : modelIdRef.current)?.focus()
+      ;(catalog.ok ? modelListRef.current : modelIdRef.current)?.focus()
     }
   }, [view, catalog])
 
@@ -55,9 +63,10 @@ export function ProviderSection({
   const baseUrlError = invalidBaseUrls.includes(draft.provider)
     ? 'Некорректный адрес: нужен http(s)-адрес вида https://host/v1.'
     : null
-  const extraBodyError = parseExtraBody(draft.extraBody[draft.provider]) === null
-    ? 'Нужен JSON-объект, например {"reasoning_effort": "none"}. Пока он не исправлен, параметры не отправляются.'
-    : null
+  const extraBodyError =
+    parseExtraBody(draft.extraBody[draft.provider]) === null
+      ? 'Нужен JSON-объект, например {"reasoning_effort": "none"}. Пока он не исправлен, параметры не отправляются.'
+      : null
 
   const chooseModel = (value: string) => patch({ models: { ...draft.models, [provider]: value } })
 
@@ -74,15 +83,15 @@ export function ProviderSection({
   async function saveOrLoad(load: boolean) {
     setBusy(true)
     try {
-      if (!keyStatus?.configured && !await onSaveKey()) return
+      if (!keyStatus?.configured && !(await onSaveKey())) return
       if (!load) return
       setCatalog(null)
       const result = await window.deskhand.settings.listModels(provider, baseUrl)
       setCatalog(result)
-      setView((current) => current === 'connection' ? 'models' : current)
+      setView((current) => (current === 'connection' ? 'models' : current))
     } catch {
       setCatalog({ ok: false, message: 'Не удалось загрузить список моделей.' })
-      setView((current) => current === 'connection' ? 'models' : current)
+      setView((current) => (current === 'connection' ? 'models' : current))
     } finally {
       setBusy(false)
     }
@@ -131,11 +140,7 @@ export function ProviderSection({
           <Row
             stacked
             title={`Ключ API ${info?.label ?? ''}`.trim()}
-            hint={
-              keyStatus?.configured
-                ? 'Ключ лежит в Keychain и никогда не показывается целиком.'
-                : undefined
-            }
+            hint={keyStatus?.configured ? 'Ключ лежит в Keychain и никогда не показывается целиком.' : undefined}
           >
             {keyStatus?.configured ? (
               <div className="row-actions">
@@ -157,10 +162,7 @@ export function ProviderSection({
                     if (event.key === 'Enter' && keyInput.trim() && !busy) void saveOrLoad(!baseUrlError)
                   }}
                 />
-                <button
-                  disabled={busy || !keyInput.trim()}
-                  onClick={() => void saveOrLoad(false)}
-                >
+                <button disabled={busy || !keyInput.trim()} onClick={() => void saveOrLoad(false)}>
                   Сохранить ключ
                 </button>
               </div>
@@ -198,7 +200,13 @@ export function ProviderSection({
             </div>
           </Disclosure>
           {baseUrlError && (
-            <Row hint={<span className="row-hint err" role="status">{baseUrlError}</span>} />
+            <Row
+              hint={
+                <span className="row-hint err" role="status">
+                  {baseUrlError}
+                </span>
+              }
+            />
           )}
           <Row>
             <button
@@ -224,16 +232,27 @@ export function ProviderSection({
                   if (event.target.value) chooseModel(event.target.value)
                 }}
               >
-                <option value="" disabled>Выбери из списка</option>
-                {catalog.models.map((id) => <option key={id} value={id}>{id}</option>)}
+                <option value="" disabled>
+                  Выбери из списка
+                </option>
+                {catalog.models.map((id) => (
+                  <option key={id} value={id}>
+                    {id}
+                  </option>
+                ))}
               </select>
             </Row>
           ) : (
-            <Row stacked hint={
-              catalog
-                ? <span role="status">{catalog.message} Введи ID модели вручную или повтори загрузку.</span>
-                : 'Загрузи список в «Подключении» или введи ID модели.'
-            }>
+            <Row
+              stacked
+              hint={
+                catalog ? (
+                  <span role="status">{catalog.message} Введи ID модели вручную или повтори загрузку.</span>
+                ) : (
+                  'Загрузи список в «Подключении» или введи ID модели.'
+                )
+              }
+            >
               <button onClick={() => setView('connection')}>Открыть подключение</button>
             </Row>
           )}
@@ -250,11 +269,7 @@ export function ProviderSection({
 
         <Disclosure title="Дополнительно">
           <Group title="Поиск в интернете">
-            <Row
-              stacked
-              title="Модель веб-поиска"
-              hint={`Пустое поле — ${fallbackSearchModel}.`}
-            >
+            <Row stacked title="Модель веб-поиска" hint={`Пустое поле — ${fallbackSearchModel}.`}>
               <div className="row-actions">
                 <input
                   id="search-model"
@@ -293,9 +308,7 @@ export function ProviderSection({
                 aria-label="Дополнительные параметры запроса"
                 placeholder='{"reasoning_effort": "none"}'
                 spellCheck={false}
-                onChange={(event) =>
-                  patch({ extraBody: { ...draft.extraBody, [draft.provider]: event.target.value } })
-                }
+                onChange={(event) => patch({ extraBody: { ...draft.extraBody, [draft.provider]: event.target.value } })}
               />
               {extraBodyError && <div className="row-hint err">{extraBodyError}</div>}
             </Row>

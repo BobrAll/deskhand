@@ -79,7 +79,11 @@ describe('metrics: the widths have one source', () => {
     for (const name of ['CARD_WIDTH', 'CARD_NARROW_WIDTH', 'CARD_VOICE_WIDTH']) {
       expect(cardWidth, name).toContain(name)
     }
-    for (const file of ['renderer/overlay/cardWidth.ts', 'renderer/overlay/App.tsx', 'renderer/overlay/cardMetrics.ts']) {
+    for (const file of [
+      'renderer/overlay/cardWidth.ts',
+      'renderer/overlay/App.tsx',
+      'renderer/overlay/cardMetrics.ts'
+    ]) {
       expect(read(file), file).not.toMatch(/const (NARROW_WIDTH|VOICE_WIDTH|FULL_WIDTH) = \d/)
     }
   })

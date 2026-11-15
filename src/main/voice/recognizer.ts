@@ -75,10 +75,7 @@ export function modelsDir(): string {
  */
 export function resolveBinary(engine: 'whisper' | 'transcribe' = 'whisper'): string | null {
   const name = binaryName(engine)
-  const candidates = resourceCandidates(name, [
-    join('/opt/homebrew/bin', name),
-    join('/usr/local/bin', name)
-  ])
+  const candidates = resourceCandidates(name, [join('/opt/homebrew/bin', name), join('/usr/local/bin', name)])
   return candidates.find((candidate) => existsSync(candidate)) ?? null
 }
 
@@ -120,8 +117,7 @@ function modelIdFor(path: string): string {
 
 function gigaamModelPath(): string | null {
   const legacyDownload = join(modelsDir(), BUNDLED_VOICE_MODEL.file)
-  return [...resourceCandidates(join('speech', BUNDLED_VOICE_MODEL.file)), legacyDownload]
-    .find(existsSync) ?? null
+  return [...resourceCandidates(join('speech', BUNDLED_VOICE_MODEL.file)), legacyDownload].find(existsSync) ?? null
 }
 
 /**
@@ -217,8 +213,7 @@ export async function voiceStatus(): Promise<VoiceStatus> {
 // ---------------------------------------------------------------------------
 
 /** These are whisper's own artefacts for silence, never something the user said. */
-const NON_SPEECH =
-  /^[\[(（]?\s*(music|applause|silence|blank_audio|no speech|inaudible)\s*[\])）]?[.!]?$/i
+const NON_SPEECH = /^[\[(（]?\s*(music|applause|silence|blank_audio|no speech|inaudible)\s*[\])）]?[.!]?$/i
 
 /** Drops timestamps and non-speech markers, then joins what is left. */
 function cleanTranscript(raw: string): string {
@@ -264,9 +259,7 @@ export async function transcribe(options: TranscribeOptions): Promise<Transcribe
   if (!binary) return notStarted(`Не найден ${binaryName(engine)}.`)
 
   if (!model.path) {
-    const message = selected?.id === BUNDLED_VOICE_MODEL.id
-      ? MISSING_BUNDLED_MODEL
-      : 'Не скачана модель распознавания.'
+    const message = selected?.id === BUNDLED_VOICE_MODEL.id ? MISSING_BUNDLED_MODEL : 'Не скачана модель распознавания.'
     return notStarted(message)
   }
 
@@ -291,9 +284,7 @@ export async function transcribe(options: TranscribeOptions): Promise<Transcribe
     // even if the transcript cannot be read. A missing file becomes the ordinary
     // "nothing recognised" sentence instead of a raw Node error in the card.
     spawned = true
-    const text = cleanTranscript(
-      engine === 'transcribe' ? await readFile(transcriptPath, 'utf8').catch(() => '') : raw
-    )
+    const text = cleanTranscript(engine === 'transcribe' ? await readFile(transcriptPath, 'utf8').catch(() => '') : raw)
     if (!text) {
       // Silence is not alarming, but it must not look like a successful empty
       // answer either: the card would sit there with nothing in it.
@@ -468,10 +459,7 @@ export function isDownloading(id: string): boolean {
  * Written to a `.part` file and renamed only when complete, so an interrupted
  * download can never be picked up by `resolveVoiceModel()` as a usable model.
  */
-export function downloadModel(
-  id: string,
-  onProgress: (progress: DownloadProgress) => void
-): Promise<void> {
+export function downloadModel(id: string, onProgress: (progress: DownloadProgress) => void): Promise<void> {
   const running = downloads.get(id)
   if (running) return running
 

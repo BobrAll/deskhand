@@ -11,13 +11,7 @@ import { dialog, ipcMain } from 'electron'
 import { CH } from '@shared/ipc'
 import { BUNDLED_VOICE_MODEL, PROVIDERS } from '@shared/defaults'
 import { PREVIEW_LINE } from '@shared/tts'
-import type {
-  AppSettings,
-  ContextFlags,
-  DownloadProgress,
-  ProviderId,
-  SendRequest
-} from '@shared/types'
+import type { AppSettings, ContextFlags, DownloadProgress, ProviderId, SendRequest } from '@shared/types'
 import type { ActionResult, AppPickResult, SettingsBundle } from '@shared/api'
 import type { OverlayController } from './overlay'
 import { applyHistorySettings } from './overlay/history'
@@ -43,18 +37,8 @@ import {
 import { getSettings, patchSettings } from './settings/store'
 import { ttsStatus, synthesize, prefetchPronunciations } from './tts'
 import { installSilero, removeSilero } from './tts/silero'
-import {
-  closeOnboardingWindow,
-  closeSettingsWindow,
-  setSettingsHeld,
-  openSettingsWindow
-} from './windows'
-import {
-  deleteModel,
-  downloadModel,
-  importModel,
-  voiceStatus
-} from './voice/recognizer'
+import { closeOnboardingWindow, closeSettingsWindow, setSettingsHeld, openSettingsWindow } from './windows'
+import { deleteModel, downloadModel, importModel, voiceStatus } from './voice/recognizer'
 
 const PROVIDER_IDS: ProviderId[] = PROVIDERS.map((provider) => provider.id)
 
@@ -108,7 +92,11 @@ async function pickApplication(): Promise<AppPickResult | null> {
   const appPath = result.filePaths[0]
   const bundleId = await readBundleId(appPath)
   if (!bundleId) return null
-  const name = appPath.split('/').pop()?.replace(/\.app$/, '') ?? bundleId
+  const name =
+    appPath
+      .split('/')
+      .pop()
+      ?.replace(/\.app$/, '') ?? bundleId
   return { bundleId, name }
 }
 
@@ -135,8 +123,10 @@ async function applySettingsSideEffects(
   next: AppSettings,
   deps: Pick<IpcDeps, 'applyHotkey' | 'applyLaunchAtLogin' | 'voice'>
 ): Promise<SettingsBundle | null> {
-  if (next.rememberConversation !== previous.rememberConversation ||
-    JSON.stringify(next.excludedApps) !== JSON.stringify(previous.excludedApps)) {
+  if (
+    next.rememberConversation !== previous.rememberConversation ||
+    JSON.stringify(next.excludedApps) !== JSON.stringify(previous.excludedApps)
+  ) {
     applyHistorySettings(next.rememberConversation, next.excludedApps)
   }
 
@@ -206,13 +196,9 @@ function registerOverlayHandlers(overlay: OverlayController): void {
   ipcMain.on(CH.overlay.setFlags, (_event, flags: ContextFlags) => overlay.setFlags(flags))
   ipcMain.on(CH.overlay.clearDrawing, () => overlay.clearDrawing())
   ipcMain.on(CH.overlay.typing, (_event, typing: boolean) => overlay.setTyping(Boolean(typing)))
-  ipcMain.on(CH.overlay.resize, (
-    _event,
-    height: number,
-    width?: number,
-    pin?: boolean,
-    typing?: boolean
-  ) => overlay.resize(height, width, Boolean(pin), Boolean(typing)))
+  ipcMain.on(CH.overlay.resize, (_event, height: number, width?: number, pin?: boolean, typing?: boolean) =>
+    overlay.resize(height, width, Boolean(pin), Boolean(typing))
+  )
   ipcMain.on(CH.overlay.close, () => overlay.close())
 
   ipcMain.handle(CH.overlay.copy, async (_event, text: string): Promise<ActionResult> => {
@@ -285,12 +271,9 @@ function registerPermissionHandlers(): void {
     return readPermissions()
   })
   ipcMain.handle(CH.permissions.requestMicrophone, () => requestMicrophonePermission())
-  ipcMain.on(
-    CH.permissions.open,
-    (_event, kind: PermissionPane) => {
-      openPermissionPane(kind)
-    }
-  )
+  ipcMain.on(CH.permissions.open, (_event, kind: PermissionPane) => {
+    openPermissionPane(kind)
+  })
 }
 
 // ---- onboarding ----------------------------------------------------------
@@ -424,9 +407,7 @@ function registerAgentHandlers(overlay: OverlayController): void {
   ipcMain.handle(CH.agent.availability, () => overlay.agentAvailability())
   // Persisting the switch itself: it cannot start a run and it cannot move the
   // cursor — the settings tab and the card both use it, and nothing else does.
-  ipcMain.handle(CH.agent.setEnabled, (_event, enabled: boolean) =>
-    overlay.setAgentEnabled(Boolean(enabled))
-  )
+  ipcMain.handle(CH.agent.setEnabled, (_event, enabled: boolean) => overlay.setAgentEnabled(Boolean(enabled)))
   ipcMain.handle(CH.agent.clearApprovals, () => {
     patchSettings({ agent: { ...getSettings().agent, rememberedApprovals: [] } })
   })

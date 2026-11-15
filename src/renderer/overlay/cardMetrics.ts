@@ -71,8 +71,7 @@ export const MAX_FIELD_HEIGHT = 84
  * through `fieldRef`, so this only covers a measurement taken before the first
  * paint — and the two are the same value.
  */
-export const FIELD_FONT =
-  "13px -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', Arial, sans-serif"
+export const FIELD_FONT = "13px -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', Arial, sans-serif"
 
 /**
  * The two places the card prints smaller than the field it measured.

@@ -54,7 +54,12 @@ function ModelList({ activeModel, installed, progress, deleting, downloadError, 
 }
 
 export function VoiceInput({
-  active, voice, savedVoice, microphoneGranted, onOpenMicrophoneSettings, onVoiceChange
+  active,
+  voice,
+  savedVoice,
+  microphoneGranted,
+  onOpenMicrophoneSettings,
+  onVoiceChange
 }: VoiceInputProps) {
   const {
     model: savedModel,
@@ -75,18 +80,26 @@ export function VoiceInput({
     const request = ++voiceStatusRequest.current
     void window.deskhand.voice
       .status()
-      .then((next) => { if (request === voiceStatusRequest.current) setStatus(next) })
-      .catch(() => { if (request === voiceStatusRequest.current) setStatus(null) })
+      .then((next) => {
+        if (request === voiceStatusRequest.current) setStatus(next)
+      })
+      .catch(() => {
+        if (request === voiceStatusRequest.current) setStatus(null)
+      })
   }, [])
 
   useEffect(() => {
     refreshVoice()
   }, [refreshVoice, savedModel, savedVoiceEnabled, savedHotkey, savedDictationHotkey])
 
-  useEffect(() => window.deskhand.voice.onDownloadProgress((event) => {
-    if (event.error) setDownloadError(event.error)
-    if (!event.done) setProgress(event)
-  }), [])
+  useEffect(
+    () =>
+      window.deskhand.voice.onDownloadProgress((event) => {
+        if (event.error) setDownloadError(event.error)
+        if (!event.done) setProgress(event)
+      }),
+    []
+  )
 
   const installed = useMemo(() => new Set(status?.installed ?? []), [status])
 
@@ -155,7 +168,7 @@ export function VoiceInput({
   }
 
   // Reflect a click on an installed model while its settings are being saved.
-  const selectedModel = installed.has(voice.model) ? voice.model : status?.activeModel ?? null
+  const selectedModel = installed.has(voice.model) ? voice.model : (status?.activeModel ?? null)
   const selected = voiceModel(selectedModel ?? '')
   const modelName = selected?.label ?? selectedModel
 
@@ -163,17 +176,9 @@ export function VoiceInput({
     <>
       <MicrophoneCheck visible={active} onOpenMicrophoneSettings={onOpenMicrophoneSettings} />
       <Group title="Запись и команды">
-        <ToggleRow
-          title="Голосовой ввод"
-          checked={voice.enabled}
-          onChange={(enabled) => onVoiceChange({ enabled })}
-        />
+        <ToggleRow title="Голосовой ввод" checked={voice.enabled} onChange={(enabled) => onVoiceChange({ enabled })} />
         <Row title="Клавиша записи" hint="Удерживай её, пока говоришь.">
-          <HotkeyField
-            value={voice.hotkey}
-            allowModifiersOnly
-            onChange={(hotkey) => onVoiceChange({ hotkey })}
-          />
+          <HotkeyField value={voice.hotkey} allowModifiersOnly onChange={(hotkey) => onVoiceChange({ hotkey })} />
         </Row>
         <Row title="Клавиша вставки" hint="Удерживай, чтобы вставить текст туда, где стоит курсор.">
           <HotkeyField
@@ -182,18 +187,15 @@ export function VoiceInput({
             onChange={(dictationHotkey) => onVoiceChange({ dictationHotkey })}
           />
         </Row>
-        <Row
-          title="После записи"
-          hint="Для клавиши записи. Клавиша вставки всегда вставляет текст."
-        >
+        <Row title="После записи" hint="Для клавиши записи. Клавиша вставки всегда вставляет текст.">
           <select
             aria-label="После записи"
             value={voice.action === 'dictate' ? 'dictate' : voice.autoSend ? 'send' : 'review'}
             onChange={(event) => {
               const action = event.target.value
-              onVoiceChange(action === 'dictate'
-                ? { action: 'dictate' }
-                : { action: 'command', autoSend: action === 'send' })
+              onVoiceChange(
+                action === 'dictate' ? { action: 'dictate' } : { action: 'command', autoSend: action === 'send' }
+              )
             }}
           >
             <option value="review">Подготовить запрос</option>
@@ -213,12 +215,16 @@ export function VoiceInput({
       <Group title="Распознавание речи">
         <Row
           title={modelName ?? (status ? 'Модель недоступна' : 'Модель распознавания')}
-          hint={voice.model !== savedModel
-            ? 'Применяю модель…'
-            : status?.detail
-              ?? (selectedModel === BUNDLED_VOICE_MODEL.id
-                ? 'Встроенная модель для русского языка.'
-                : selectedModel ? 'Речь распознаётся на этом Mac.' : 'Проверяю модель…')}
+          hint={
+            voice.model !== savedModel
+              ? 'Применяю модель…'
+              : (status?.detail ??
+                (selectedModel === BUNDLED_VOICE_MODEL.id
+                  ? 'Встроенная модель для русского языка.'
+                  : selectedModel
+                    ? 'Речь распознаётся на этом Mac.'
+                    : 'Проверяю модель…'))
+          }
         />
         {selectedModel && selectedModel !== BUNDLED_VOICE_MODEL.id && (
           <Row title="Язык речи">
@@ -228,7 +234,9 @@ export function VoiceInput({
               onChange={(event) => onVoiceChange({ language: event.target.value })}
             >
               {WHISPER_LANGUAGES.map((language) => (
-                <option key={language.id} value={language.id}>{language.label}</option>
+                <option key={language.id} value={language.id}>
+                  {language.label}
+                </option>
               ))}
             </select>
           </Row>
@@ -236,7 +244,10 @@ export function VoiceInput({
         <Disclosure title="Управление моделями">
           {voice.model !== BUNDLED_VOICE_MODEL.id && installed.has(BUNDLED_VOICE_MODEL.id) && (
             <Row title={BUNDLED_VOICE_MODEL.label} hint="Встроенная модель для русского языка.">
-              <button disabled={progress !== null || deleting !== null} onClick={() => onVoiceChange({ model: BUNDLED_VOICE_MODEL.id })}>
+              <button
+                disabled={progress !== null || deleting !== null}
+                onClick={() => onVoiceChange({ model: BUNDLED_VOICE_MODEL.id })}
+              >
                 Использовать GigaAM
               </button>
             </Row>

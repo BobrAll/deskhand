@@ -80,8 +80,8 @@ export function normalizeBaseUrl(input: unknown): string {
   const suffix = suffixStart === -1 ? '' : value.slice(suffixStart)
   const root = suffixStart === -1 ? value : value.slice(0, suffixStart)
   // Users often paste the full endpoint instead of the API root.
-  value = root.replace(/\/+$/, '')
-    .replace(/\/(chat\/completions|messages|responses|audio\/speech|models|key)$/i, '') + suffix
+  value =
+    root.replace(/\/+$/, '').replace(/\/(chat\/completions|messages|responses|audio\/speech|models|key)$/i, '') + suffix
   if (!/^https?:\/\/[^\s/]+/i.test(value)) return ''
   try {
     // Throws on things like "https://" with no host.
@@ -383,11 +383,7 @@ function bool(value: unknown, fallback: boolean): boolean {
 }
 
 /** A stored number rounded to a whole value and kept inside the setting's range. */
-function boundedInt(
-  value: unknown,
-  bounds: { readonly min: number; readonly max: number },
-  fallback: number
-): number {
+function boundedInt(value: unknown, bounds: { readonly min: number; readonly max: number }, fallback: number): number {
   return Math.round(clamp(value, bounds.min, bounds.max, fallback))
 }
 
@@ -413,9 +409,7 @@ function sanitizeVoiceModel(value: unknown): string {
 
 /** A short language code, lower-cased; `auto` passes through like any other. */
 function sanitizeLanguage(value: unknown): string {
-  return typeof value === 'string' && value.trim()
-    ? value.trim().toLowerCase().slice(0, 8)
-    : DEFAULT_VOICE.language
+  return typeof value === 'string' && value.trim() ? value.trim().toLowerCase().slice(0, 8) : DEFAULT_VOICE.language
 }
 
 function sanitizeHotkey(value: unknown, fallback: string): string {
@@ -433,7 +427,9 @@ function sanitizeDuration(value: unknown, min: number, max: number, fallback: nu
 }
 
 function sanitizeVoice(input: unknown): VoiceSettings {
-  const raw = (typeof input === 'object' && input !== null ? input : {}) as Partial<VoiceSettings> & { dialogue?: unknown }
+  const raw = (typeof input === 'object' && input !== null ? input : {}) as Partial<VoiceSettings> & {
+    dialogue?: unknown
+  }
   // Settings from before the split have no `dictationHotkey`. When the only
   // stored hold is the old default, move it to the new pair instead of keeping
   // the retired combination forever; an explicit choice survives once the new
@@ -450,12 +446,7 @@ function sanitizeVoice(input: unknown): VoiceSettings {
     agentFeedback: raw.agentFeedback !== false,
     autoSend: bool(raw.autoSend, DEFAULT_VOICE.autoSend),
     minDurationMs: sanitizeDuration(raw.minDurationMs, 0, 5_000, DEFAULT_VOICE.minDurationMs),
-    maxDurationMs: sanitizeDuration(
-      raw.maxDurationMs,
-      1_000,
-      MAX_VOICE_DURATION_MS,
-      DEFAULT_VOICE.maxDurationMs
-    )
+    maxDurationMs: sanitizeDuration(raw.maxDurationMs, 1_000, MAX_VOICE_DURATION_MS, DEFAULT_VOICE.maxDurationMs)
   }
 }
 
@@ -503,7 +494,11 @@ function sanitizeAgent(input: unknown): AgentSettings {
   const raw = (typeof input === 'object' && input !== null ? input : {}) as Partial<AgentSettings>
   return {
     rememberedApprovals: Array.isArray(raw.rememberedApprovals)
-      ? [...new Set(raw.rememberedApprovals.filter(value => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value)))].slice(-MAX_REMEMBERED_APPROVALS)
+      ? [
+          ...new Set(
+            raw.rememberedApprovals.filter((value) => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value))
+          )
+        ].slice(-MAX_REMEMBERED_APPROVALS)
       : [],
     enabled: bool(raw.enabled, DEFAULT_AGENT.enabled),
     // Only the floor is enforced: a typo cannot produce a zero-step run, but the
@@ -523,9 +518,10 @@ function sanitizeAgent(input: unknown): AgentSettings {
 /** Coerces anything coming from disk or IPC into a valid settings object. */
 export function normalizeSettings(input: unknown): AppSettings {
   const raw = (typeof input === 'object' && input !== null ? input : {}) as Partial<AppSettings>
-  const baseUrls = (
-    typeof raw.baseUrls === 'object' && raw.baseUrls !== null ? raw.baseUrls : {}
-  ) as Record<string, unknown>
+  const baseUrls = (typeof raw.baseUrls === 'object' && raw.baseUrls !== null ? raw.baseUrls : {}) as Record<
+    string,
+    unknown
+  >
   return {
     provider: PROVIDERS.some((provider) => provider.id === raw.provider)
       ? (raw.provider as ProviderId)
@@ -544,21 +540,11 @@ export function normalizeSettings(input: unknown): AppSettings {
       SETTINGS_BOUNDS.temperature.max,
       DEFAULT_SETTINGS.temperature
     ),
-    maxTokens: boundedInt(
-      raw.maxTokens,
-      SETTINGS_BOUNDS.maxTokens,
-      DEFAULT_SETTINGS.maxTokens
-    ),
+    maxTokens: boundedInt(raw.maxTokens, SETTINGS_BOUNDS.maxTokens, DEFAULT_SETTINGS.maxTokens),
     systemPrompt:
-      typeof raw.systemPrompt === 'string' && raw.systemPrompt.trim()
-        ? raw.systemPrompt
-        : DEFAULT_SYSTEM_PROMPT,
-    hotkey:
-      typeof raw.hotkey === 'string' && raw.hotkey.trim() ? raw.hotkey.trim() : DEFAULT_SETTINGS.hotkey,
-    captureScreenshotByDefault: bool(
-      raw.captureScreenshotByDefault,
-      DEFAULT_SETTINGS.captureScreenshotByDefault
-    ),
+      typeof raw.systemPrompt === 'string' && raw.systemPrompt.trim() ? raw.systemPrompt : DEFAULT_SYSTEM_PROMPT,
+    hotkey: typeof raw.hotkey === 'string' && raw.hotkey.trim() ? raw.hotkey.trim() : DEFAULT_SETTINGS.hotkey,
+    captureScreenshotByDefault: bool(raw.captureScreenshotByDefault, DEFAULT_SETTINGS.captureScreenshotByDefault),
     screenshotMaxSide: boundedInt(
       raw.screenshotMaxSide,
       SETTINGS_BOUNDS.screenshotMaxSide,

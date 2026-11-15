@@ -1,4 +1,5 @@
 import XCTest
+
 @testable import DeskhandCore
 
 /// The picture of an action is a vocabulary, and a vocabulary has to stay

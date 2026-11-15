@@ -34,10 +34,7 @@ const ACTION = new RegExp(`(^|[^а-яё])(${ACTION_STEMS})`, 'i')
  * so that an imperative is not defeated by a question word later in the same
  * sentence («открой вкладку и скажи, где я»).
  */
-const ACTION_AT_START = new RegExp(
-  `^(пожалуйста[,\\s]+|давай[,\\s]+)?(${ACTION_STEMS}|сделай)`,
-  'i'
-)
+const ACTION_AT_START = new RegExp(`^(пожалуйста[,\\s]+|давай[,\\s]+)?(${ACTION_STEMS}|сделай)`, 'i')
 
 /**
  * «Сделай» asks for the thing to be done, wherever it stands.
@@ -82,8 +79,7 @@ export function looksLikeAction(text: string): boolean {
  * Only the start of the text or a clause after "and"/"then" counts, so a verb
  * merely mentioned inside an English sentence is not enough.
  */
-const BROWSER_COMMAND =
-  /(?:^|\b(?:and|then)\s+)(?:please\s+)?(?:open|launch|click|press|go to|navigate to)\b/i
+const BROWSER_COMMAND = /(?:^|\b(?:and|then)\s+)(?:please\s+)?(?:open|launch|click|press|go to|navigate to)\b/i
 
 /**
  * A Russian imperative that follows a question in the same sentence
@@ -93,8 +89,7 @@ const BROWSER_COMMAND =
  * consulted — its question filter returns before the general action match — so
  * without this the trailing request would be treated as background search.
  */
-const FOLLOWING_ACTION =
-  /\s(?:и|затем|потом)\s+(?:открой|нажми|запусти|перейди|скачай|отправь)(?![а-яё])/i
+const FOLLOWING_ACTION = /\s(?:и|затем|потом)\s+(?:открой|нажми|запусти|перейди|скачай|отправь)(?![а-яё])/i
 
 /**
  * Whether a background web lookup is appropriate: true only when the prompt asks

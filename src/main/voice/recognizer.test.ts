@@ -165,11 +165,14 @@ beforeEach(async () => {
   state.madeDirs = []
   state.fetchResponses = []
   state.cpuCount = 8
-  vi.stubGlobal('fetch', vi.fn(async () => {
-    const next = state.fetchResponses.shift()
-    if (!next) throw new Error('unexpected fetch')
-    return next()
-  }))
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async () => {
+      const next = state.fetchResponses.shift()
+      if (!next) throw new Error('unexpected fetch')
+      return next()
+    })
+  )
   recognizer = await load()
 })
 
@@ -216,7 +219,10 @@ describe('resolveVoiceModel', () => {
     state.dirs['/userdata/models'] = [GIGAAM_FILE]
 
     expect(await recognizer.voiceStatus()).toMatchObject({
-      ready: true, activeModel: GIGAAM, installed: [GIGAAM], modelPath
+      ready: true,
+      activeModel: GIGAAM,
+      installed: [GIGAAM],
+      modelPath
     })
   })
 
@@ -308,9 +314,7 @@ describe('voiceStatus', () => {
     const status = await recognizer.voiceStatus()
 
     expect(status.ready).toBe(false)
-    expect(status.detail).toBe(
-      'Не найден whisper-cli — пересобери приложение (npm run build:whisper).'
-    )
+    expect(status.detail).toBe('Не найден whisper-cli — пересобери приложение (npm run build:whisper).')
   })
 
   it('names the model the settings point at when it is missing', async () => {
@@ -350,16 +354,21 @@ describe('transcribe', () => {
     state.transcript = 'Открой настройки.'
 
     expect(await recognizer.voiceStatus()).toMatchObject({
-      ready: true, activeModel: GIGAAM, installed: [GIGAAM], modelPath: model
+      ready: true,
+      activeModel: GIGAAM,
+      installed: [GIGAAM],
+      modelPath: model
     })
     expect(await recognizer.transcribe({ wav: WAV })).toMatchObject({
       ok: true,
       text: state.transcript
     })
-    expect(state.spawned).toEqual([{
-      binary,
-      args: ['-m', model, '-l', 'ru', '--timestamps', 'none', '-o', expect.any(String), expect.any(String)]
-    }])
+    expect(state.spawned).toEqual([
+      {
+        binary,
+        args: ['-m', model, '-l', 'ru', '--timestamps', 'none', '-o', expect.any(String), expect.any(String)]
+      }
+    ])
     expect(fetch).not.toHaveBeenCalled()
   })
 
@@ -370,10 +379,15 @@ describe('transcribe', () => {
     state.transcript = 'Открой настройки.'
 
     expect(await recognizer.voiceStatus()).toMatchObject({
-      ready: true, activeModel: GIGAAM, binaryPath: binary
+      ready: true,
+      activeModel: GIGAAM,
+      binaryPath: binary
     })
     expect(await recognizer.transcribe({ wav: WAV })).toMatchObject({ ok: true })
-    expect(state.spawned[0]).toMatchObject({ binary, args: ['-m', model, '-l', 'ru', ...Array(5).fill(expect.any(String))] })
+    expect(state.spawned[0]).toMatchObject({
+      binary,
+      args: ['-m', model, '-l', 'ru', ...Array(5).fill(expect.any(String))]
+    })
   })
 
   it('requires the selected GigaAM weights even when Whisper weights are installed', async () => {
@@ -382,7 +396,9 @@ describe('transcribe', () => {
     state.dirs['/userdata/models'] = ['ggml-small-q5_1.bin']
     state.sizes['/userdata/models/ggml-small-q5_1.bin'] = 181
     expect(await recognizer.voiceStatus()).toMatchObject({
-      ready: false, modelPath: null, detail: expect.stringContaining('В приложении нет модели GigaAM')
+      ready: false,
+      modelPath: null,
+      detail: expect.stringContaining('В приложении нет модели GigaAM')
     })
   })
 
@@ -522,9 +538,7 @@ describe('transcribe', () => {
     ready()
     state.whisper = { stdout: '', stderr: '', code: 3, emitError: false }
 
-    expect((await recognizer.transcribe({ wav: WAV })).message).toBe(
-      'whisper-cli завершился с кодом 3.'
-    )
+    expect((await recognizer.transcribe({ wav: WAV })).message).toBe('whisper-cli завершился с кодом 3.')
   })
 
   it('accepts a non-zero exit when whisper printed a transcript anyway', async () => {
@@ -690,16 +704,12 @@ describe('downloadModel', () => {
   })
 
   it('downloads into a `.part` file and renames it when complete', async () => {
-    state.fetchResponses = [
-      async () => new Response(bodyOf('model-bytes'), { status: 200 })
-    ]
+    state.fetchResponses = [async () => new Response(bodyOf('model-bytes'), { status: 200 })]
     const progress: Array<{ done: boolean; received: number }> = []
 
     await recognizer.downloadModel('tiny', (event) => progress.push(event))
 
-    expect(state.renamed).toEqual([
-      ['/userdata/models/ggml-tiny.bin.part', '/userdata/models/ggml-tiny.bin']
-    ])
+    expect(state.renamed).toEqual([['/userdata/models/ggml-tiny.bin.part', '/userdata/models/ggml-tiny.bin']])
     expect(progress.at(-1)).toMatchObject({ done: true })
   })
 
@@ -709,18 +719,14 @@ describe('downloadModel', () => {
     await recognizer.downloadModel('tiny', () => undefined)
 
     const url = (globalThis.fetch as unknown as { mock: { calls: string[][] } }).mock.calls[0][0]
-    expect(url).toBe(
-      'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin'
-    )
+    expect(url).toBe('https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin')
   })
 
   it('reports an HTTP failure, removes the part file and rethrows', async () => {
     state.fetchResponses = [async () => new Response('nope', { status: 404 })]
     const progress: Array<{ error?: string }> = []
 
-    await expect(
-      recognizer.downloadModel('tiny', (event) => progress.push(event))
-    ).rejects.toThrow('HTTP 404')
+    await expect(recognizer.downloadModel('tiny', (event) => progress.push(event))).rejects.toThrow('HTTP 404')
     expect(state.removed).toContain('/userdata/models/ggml-tiny.bin.part')
     expect(progress.at(-1)?.error).toBe('HTTP 404')
   })
@@ -740,10 +746,12 @@ describe('downloadModel', () => {
 
       await vi.advanceTimersByTimeAsync(30_000)
       await failure
-      expect(report).toHaveBeenLastCalledWith(expect.objectContaining({
-        done: true,
-        error: expect.stringContaining('Сервер загрузки модели не отвечает')
-      }))
+      expect(report).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          done: true,
+          error: expect.stringContaining('Сервер загрузки модели не отвечает')
+        })
+      )
       expect(recognizer.isDownloading('tiny')).toBe(false)
       expect(state.renamed).toHaveLength(0)
 
@@ -783,10 +791,7 @@ describe('deleteModel', () => {
     await recognizer.deleteModel('tiny')
     await recognizer.deleteModel('ggml-custom.bin')
 
-    expect(state.removed).toEqual([
-      '/userdata/models/ggml-tiny.bin',
-      '/userdata/models/ggml-custom.bin'
-    ])
+    expect(state.removed).toEqual(['/userdata/models/ggml-tiny.bin', '/userdata/models/ggml-custom.bin'])
   })
 
   it('does not allow downloading or deleting the bundled model', async () => {

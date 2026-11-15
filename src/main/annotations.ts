@@ -202,9 +202,7 @@ export function parseAnnotationLine(line: string): ParsedLine | null {
  */
 export function isDrawable(annotation: Annotation): boolean {
   const { from, to, kind } = annotation
-  const inside = [from, to].every(
-    (point) => point.x >= 0 && point.x <= 1 && point.y >= 0 && point.y <= 1
-  )
+  const inside = [from, to].every((point) => point.x >= 0 && point.x <= 1 && point.y >= 0 && point.y <= 1)
   if (!inside) return false
   const width = Math.abs(to.x - from.x)
   const height = Math.abs(to.y - from.y)

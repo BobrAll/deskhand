@@ -129,7 +129,10 @@ console.log('\napps')
   const { json } = run('apps')
   check('apps is an array', Array.isArray(json.apps))
   const list = Array.isArray(json.apps) ? json.apps : []
-  check('every entry has bundleId and name', list.every((app) => typeof app.bundleId === 'string' && typeof app.name === 'string'))
+  check(
+    'every entry has bundleId and name',
+    list.every((app) => typeof app.bundleId === 'string' && typeof app.name === 'string')
+  )
   // The list is the settings picker: it must not be empty on a normal desktop.
   check('is not empty', list.length > 0, `${list.length} apps`)
 }

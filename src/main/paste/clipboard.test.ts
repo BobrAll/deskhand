@@ -20,23 +20,15 @@ vi.mock('electron', () => ({
     readImage: () => ({ toPNG: () => Buffer.from('png-bytes') }),
     writeText: (text: string) => state.order.push(`writeText:${text}`),
     writeImage: (image: unknown) => state.order.push(`writeImage:${JSON.stringify(image)}`),
-    writeBookmark: (title: string, url: string) =>
-      state.order.push(`writeBookmark:${title}|${url}`),
-    write: (data: { text?: string; html?: string; rtf?: string }) =>
-      state.order.push(`write:${JSON.stringify(data)}`)
+    writeBookmark: (title: string, url: string) => state.order.push(`writeBookmark:${title}|${url}`),
+    write: (data: { text?: string; html?: string; rtf?: string }) => state.order.push(`write:${JSON.stringify(data)}`)
   },
   nativeImage: {
     createFromBuffer: (buffer: Buffer) => ({ buffer: buffer.toString() })
   }
 }))
 
-import {
-  copyText,
-  restoreClipboard,
-  snapshotClipboard,
-  withClipboard,
-  type ClipboardSnapshot
-} from './clipboard'
+import { copyText, restoreClipboard, snapshotClipboard, withClipboard, type ClipboardSnapshot } from './clipboard'
 
 beforeEach(() => {
   state.order = []
@@ -171,10 +163,7 @@ describe('restoreClipboard: what gets written back', () => {
   it('restores text, HTML and RTF together', () => {
     restoreClipboard({ ...empty, text: 'текст', html: '<b>текст</b>', rtf: '{\\rtf1}' })
 
-    expect(state.order).toEqual([
-      'clear',
-      'write:{"text":"текст","html":"<b>текст</b>","rtf":"{\\\\rtf1}"}'
-    ])
+    expect(state.order).toEqual(['clear', 'write:{"text":"текст","html":"<b>текст</b>","rtf":"{\\\\rtf1}"}'])
   })
 
   it('writes nothing when the snapshot was empty', () => {

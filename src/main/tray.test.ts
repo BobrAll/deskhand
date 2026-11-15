@@ -133,12 +133,7 @@ describe('createTray: the menu', () => {
     createTray(actions())
 
     expect(env.template.filter((entry) => entry.type === 'separator')).toHaveLength(3)
-    for (const label of [
-      'Настройки…',
-      'Права доступа и первый запуск…',
-      'Папка данных',
-      'Выйти из Deskhand'
-    ]) {
+    for (const label of ['Настройки…', 'Права доступа и первый запуск…', 'Папка данных', 'Выйти из Deskhand']) {
       expect(item(label), label).toBeDefined()
     }
   })

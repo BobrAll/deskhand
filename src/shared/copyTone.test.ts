@@ -29,8 +29,7 @@ const ALLOWED: Record<string, string> = {
 }
 
 /** The polite pronouns, matched as whole words so «выбор» and «выделение» do not trip. */
-const POLITE_PRONOUN =
-  /(?<![\p{L}])(?:вы|вас|вам|ваш|ваша|ваше|ваши|вашего|вашей|вашу|вашим|вашими|ваших)(?![\p{L}])/iu
+const POLITE_PRONOUN = /(?<![\p{L}])(?:вы|вас|вам|ваш|ваша|ваше|ваши|вашего|вашей|вашу|вашим|вашими|ваших)(?![\p{L}])/iu
 
 /** The polite imperative forms, which carry no pronoun at all. */
 const POLITE_IMPERATIVE =
@@ -67,8 +66,7 @@ function violations(): string[] {
       .split('\n')
       .flatMap((line, index) => {
         if (isComment(line)) return []
-        const hit =
-          POLITE_PRONOUN.exec(line) ?? POLITE_IMPERATIVE.exec(line) ?? POLITE_FORMULA.exec(line)
+        const hit = POLITE_PRONOUN.exec(line) ?? POLITE_IMPERATIVE.exec(line) ?? POLITE_FORMULA.exec(line)
         return hit ? [`${name}:${index + 1}  ${hit[0]}  →  ${line.trim()}`] : []
       })
   })
@@ -84,8 +82,7 @@ describe('copy: the app addresses the user as «ты»', () => {
     // permission nobody needs, and the next reader would think it was.
     for (const [name, reason] of Object.entries(ALLOWED)) {
       const text = readFileSync(join(ROOT, name), 'utf8')
-      const found =
-        POLITE_PRONOUN.test(text) || POLITE_IMPERATIVE.test(text) || POLITE_FORMULA.test(text)
+      const found = POLITE_PRONOUN.test(text) || POLITE_IMPERATIVE.test(text) || POLITE_FORMULA.test(text)
       expect(found, `${name} no longer needs its exemption (${reason})`).toBe(true)
     }
   })

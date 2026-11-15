@@ -68,14 +68,8 @@ const CACHE_KEY_SEPARATOR = '\u0000'
  * to another never plays the previous voice's file. The key is deliberately not
  * part of it — rotating a key does not change the voice.
  */
-function cacheKey(
-  settings: TtsSettings,
-  text: string,
-  hints: Readonly<Record<string, string>> = {}
-): string {
-  const identity = settings.engine === 'silero'
-    ? sileroIdentity(settings, hints)
-    : remoteIdentity(settings)
+function cacheKey(settings: TtsSettings, text: string, hints: Readonly<Record<string, string>> = {}): string {
+  const identity = settings.engine === 'silero' ? sileroIdentity(settings, hints) : remoteIdentity(settings)
   return createHash('sha256')
     .update([...identity, text].join(CACHE_KEY_SEPARATOR))
     .digest('hex')
@@ -89,10 +83,7 @@ function cacheKey(
  * part of it because a line first spoken before a hint arrived must not keep the
  * rule-based pronunciation forever.
  */
-function sileroIdentity(
-  settings: TtsSettings,
-  hints: Readonly<Record<string, string>>
-): Array<string | number> {
+function sileroIdentity(settings: TtsSettings, hints: Readonly<Record<string, string>>): Array<string | number> {
   const spelling = Object.entries(hints)
     .sort(([left], [right]) => left.localeCompare(right))
     .map(([word, pronunciation]) => `${word}=${pronunciation}`)
@@ -183,10 +174,12 @@ async function pruneCache(): Promise<void> {
     const dir = cacheDir()
     const names = (await readdir(dir)).filter((name) => name.endsWith('.mp3') || name.endsWith('.wav'))
     if (names.length <= CACHE_LIMIT) return
-    const dated = await Promise.all(names.map(async (name) => {
-      const info = await stat(join(dir, name)).catch(() => null)
-      return { name, at: info?.mtimeMs ?? 0 }
-    }))
+    const dated = await Promise.all(
+      names.map(async (name) => {
+        const info = await stat(join(dir, name)).catch(() => null)
+        return { name, at: info?.mtimeMs ?? 0 }
+      })
+    )
     dated.sort((left, right) => left.at - right.at)
     for (const { name } of dated.slice(0, dated.length - CACHE_LIMIT)) {
       await unlink(join(dir, name)).catch(() => undefined)
@@ -264,9 +257,11 @@ export async function synthesize(text: string, localOnly = false): Promise<TtsRe
   if (startedDuringRead) return startedDuringRead
   if (cached) return cached
 
-  const job = (settings.tts.engine === 'silero'
-    ? synthesizeSilero(line, sileroSpeaker(settings.tts.sileroVoice), hints)
-    : requestSynthesis(line, settings.tts))
+  const job = (
+    settings.tts.engine === 'silero'
+      ? synthesizeSilero(line, sileroSpeaker(settings.tts.sileroVoice), hints)
+      : requestSynthesis(line, settings.tts)
+  )
     .then(async (result): Promise<TtsResult> => {
       if (result.ok) {
         await writeCache(key, extension, Buffer.from(result.audio, 'base64'))

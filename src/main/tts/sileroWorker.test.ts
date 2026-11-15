@@ -43,10 +43,7 @@ function asChild(child: FakeChild): SileroWorkerChild {
   return child as unknown as SileroWorkerChild
 }
 
-function createWorker(
-  spawnWorker: () => SileroWorkerChild,
-  options: Partial<SileroWorkerOptions> = {}
-): SileroWorker {
+function createWorker(spawnWorker: () => SileroWorkerChild, options: Partial<SileroWorkerOptions> = {}): SileroWorker {
   return new SileroWorker({
     spawnWorker,
     requestTimeoutMs: 1000,
@@ -88,7 +85,9 @@ describe('the warm Silero worker', () => {
     const child = new FakeChild()
     // A real EPIPE arrives asynchronously; emitting it inside `write` would be
     // caught by the write's own try/catch even without the stream listener.
-    child.onWrite = () => { queueMicrotask(() => child.stdin.emit('error', new Error('EPIPE'))) }
+    child.onWrite = () => {
+      queueMicrotask(() => child.stdin.emit('error', new Error('EPIPE')))
+    }
     const worker = createWorker(() => asChild(child))
     const fallback = vi.fn(async () => undefined)
 
@@ -107,8 +106,7 @@ describe('the warm Silero worker', () => {
       throw new Error('one-shot failed')
     })
 
-    await expect(worker.render('Тишина.', '/tmp/silent.wav', fallback))
-      .rejects.toThrow('one-shot failed')
+    await expect(worker.render('Тишина.', '/tmp/silent.wav', fallback)).rejects.toThrow('one-shot failed')
 
     expect(child.kill).toHaveBeenCalledWith('SIGKILL')
     expect(fallback).toHaveBeenCalledTimes(1)
@@ -128,8 +126,16 @@ describe('the warm Silero worker', () => {
     }
     const worker = createWorker(() => asChild(child))
 
-    const first = worker.render('Первый.', '/tmp/one.wav', vi.fn(async () => undefined))
-    const second = worker.render('Второй.', '/tmp/two.wav', vi.fn(async () => undefined))
+    const first = worker.render(
+      'Первый.',
+      '/tmp/one.wav',
+      vi.fn(async () => undefined)
+    )
+    const second = worker.render(
+      'Второй.',
+      '/tmp/two.wav',
+      vi.fn(async () => undefined)
+    )
 
     await vi.waitFor(() => expect(child.requests).toHaveLength(1))
     expect(child.requests[0].text).toBe('Первый.')
@@ -145,7 +151,9 @@ describe('the warm Silero worker', () => {
   it('checks the produced file inside the queue before the next phrase', async () => {
     const child = answeringChild()
     const worker = createWorker(() => asChild(child))
-    const verify = vi.fn(async () => { throw new Error('empty output') })
+    const verify = vi.fn(async () => {
+      throw new Error('empty output')
+    })
     const fallback = vi.fn(async () => undefined)
 
     await worker.render('Пустой файл.', '/tmp/empty.wav', fallback, verify)
@@ -217,7 +225,11 @@ describe('the warm Silero worker', () => {
     const child = answeringChild()
     const worker = createWorker(() => asChild(child), { idleTimeoutMs: 10, killGraceMs: 20 })
 
-    await worker.render('Строка.', '/tmp/line.wav', vi.fn(async () => undefined))
+    await worker.render(
+      'Строка.',
+      '/tmp/line.wav',
+      vi.fn(async () => undefined)
+    )
 
     await vi.waitFor(() => expect(child.kill).toHaveBeenCalledWith('SIGTERM'))
     await vi.waitFor(() => expect(child.kill).toHaveBeenCalledWith('SIGKILL'))

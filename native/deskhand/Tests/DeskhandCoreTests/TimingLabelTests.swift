@@ -1,4 +1,5 @@
 import XCTest
+
 @testable import DeskhandCore
 
 /// The timing labels are a contract between the producer in `AgentLoop` and the

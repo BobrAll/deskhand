@@ -24,12 +24,14 @@ const EXCLUDED = [PASSWORDS.bundleId]
 
 describe('captureTargetFor: no excluded apps', () => {
   it('asks for the whole display even when the visible list is unknown', () => {
-    expect(captureTargetFor({
-      observed: SAFARI,
-      remembered: null,
-      excludedApps: [],
-      visibleBundleIds: null
-    })).toEqual({
+    expect(
+      captureTargetFor({
+        observed: SAFARI,
+        remembered: null,
+        excludedApps: [],
+        visibleBundleIds: null
+      })
+    ).toEqual({
       windowId: 7,
       bounds: SAFARI.bounds,
       fullDisplay: true
@@ -39,12 +41,14 @@ describe('captureTargetFor: no excluded apps', () => {
 
 describe('captureTargetFor: with excluded apps', () => {
   it('restores the whole display when no excluded app has a window on screen', () => {
-    expect(captureTargetFor({
-      observed: SAFARI,
-      remembered: null,
-      excludedApps: EXCLUDED,
-      visibleBundleIds: [SAFARI.bundleId, 'com.apple.Finder']
-    })).toEqual({
+    expect(
+      captureTargetFor({
+        observed: SAFARI,
+        remembered: null,
+        excludedApps: EXCLUDED,
+        visibleBundleIds: [SAFARI.bundleId, 'com.apple.Finder']
+      })
+    ).toEqual({
       windowId: 7,
       bounds: SAFARI.bounds,
       fullDisplay: true
@@ -52,12 +56,14 @@ describe('captureTargetFor: with excluded apps', () => {
   })
 
   it('captures only the window when an excluded app has a window on screen', () => {
-    expect(captureTargetFor({
-      observed: SAFARI,
-      remembered: null,
-      excludedApps: EXCLUDED,
-      visibleBundleIds: [SAFARI.bundleId, PASSWORDS.bundleId]
-    })).toEqual({
+    expect(
+      captureTargetFor({
+        observed: SAFARI,
+        remembered: null,
+        excludedApps: EXCLUDED,
+        visibleBundleIds: [SAFARI.bundleId, PASSWORDS.bundleId]
+      })
+    ).toEqual({
       windowId: 7,
       bounds: SAFARI.bounds,
       fullDisplay: false,
@@ -66,12 +72,14 @@ describe('captureTargetFor: with excluded apps', () => {
   })
 
   it('stays conservative when the visible list is unknown', () => {
-    expect(captureTargetFor({
-      observed: SAFARI,
-      remembered: null,
-      excludedApps: EXCLUDED,
-      visibleBundleIds: null
-    })).toEqual({
+    expect(
+      captureTargetFor({
+        observed: SAFARI,
+        remembered: null,
+        excludedApps: EXCLUDED,
+        visibleBundleIds: null
+      })
+    ).toEqual({
       windowId: 7,
       bounds: SAFARI.bounds,
       fullDisplay: false,
@@ -80,12 +88,14 @@ describe('captureTargetFor: with excluded apps', () => {
   })
 
   it('uses the remembered window when the card itself is in front', () => {
-    expect(captureTargetFor({
-      observed: null,
-      remembered: SAFARI,
-      excludedApps: EXCLUDED,
-      visibleBundleIds: []
-    })).toEqual({
+    expect(
+      captureTargetFor({
+        observed: null,
+        remembered: SAFARI,
+        excludedApps: EXCLUDED,
+        visibleBundleIds: []
+      })
+    ).toEqual({
       windowId: 7,
       bounds: SAFARI.bounds,
       fullDisplay: true
@@ -93,20 +103,24 @@ describe('captureTargetFor: with excluded apps', () => {
   })
 
   it('refuses a window that is on the exclusion list now', () => {
-    expect(captureTargetFor({
-      observed: PASSWORDS,
-      remembered: SAFARI,
-      excludedApps: EXCLUDED,
-      visibleBundleIds: [PASSWORDS.bundleId]
-    })).toBeNull()
+    expect(
+      captureTargetFor({
+        observed: PASSWORDS,
+        remembered: SAFARI,
+        excludedApps: EXCLUDED,
+        visibleBundleIds: [PASSWORDS.bundleId]
+      })
+    ).toBeNull()
   })
 
   it('refuses the remembered window when nothing can be observed', () => {
-    expect(captureTargetFor({
-      observed: null,
-      remembered: PASSWORDS,
-      excludedApps: EXCLUDED,
-      visibleBundleIds: [PASSWORDS.bundleId]
-    })).toBeNull()
+    expect(
+      captureTargetFor({
+        observed: null,
+        remembered: PASSWORDS,
+        excludedApps: EXCLUDED,
+        visibleBundleIds: [PASSWORDS.bundleId]
+      })
+    ).toBeNull()
   })
 })

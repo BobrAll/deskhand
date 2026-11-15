@@ -142,10 +142,7 @@ describe('pointer: normalised coordinates become screen points', () => {
 
   it('numbers the shapes so the renderer can stagger them', async () => {
     const { showAnnotations } = await loadDrawing()
-    await showAnnotations(AREA, [
-      shape('arrow', [0.1, 0.1], [0.2, 0.2]),
-      shape('circle', [0.3, 0.3], [0.5, 0.5])
-    ])
+    await showAnnotations(AREA, [shape('arrow', [0.1, 0.1], [0.2, 0.2]), shape('circle', [0.3, 0.3], [0.5, 0.5])])
 
     expect(lastPayload().shapes.map((entry) => entry.id)).toEqual(['0', '1'])
   })
@@ -200,9 +197,7 @@ describe('pointer: the layer', () => {
   it('moves the layer when the rectangle moves, rounding to whole points', async () => {
     const { showAnnotations } = await loadDrawing()
     await showAnnotations(AREA, [shape('arrow', [0.1, 0.1], [0.2, 0.2])])
-    await showAnnotations({ x: 100.4, y: 199.6, width: 800.2, height: 600 }, [
-      shape('arrow', [0.1, 0.1], [0.2, 0.2])
-    ])
+    await showAnnotations({ x: 100.4, y: 199.6, width: 800.2, height: 600 }, [shape('arrow', [0.1, 0.1], [0.2, 0.2])])
 
     expect(env.bounds.at(-1)).toEqual({ x: 100, y: 200, width: 800, height: 600 })
   })

@@ -46,9 +46,7 @@ function readSecrets(): Record<string, unknown> {
   if (!opened) return {}
   try {
     const secrets: unknown = opened.get('secrets')
-    return typeof secrets === 'object' && secrets !== null
-      ? (secrets as Record<string, unknown>)
-      : {}
+    return typeof secrets === 'object' && secrets !== null ? (secrets as Record<string, unknown>) : {}
   } catch (error) {
     console.warn('[secrets] unable to read the secrets file:', error)
     return {}
@@ -57,9 +55,10 @@ function readSecrets(): Record<string, unknown> {
 
 /** The slots a key can be read from, ready to be written back. */
 function storedSlots(): Record<string, string> {
-  return Object.fromEntries(
-    Object.entries(readSecrets()).filter(([, value]) => typeof value === 'string')
-  ) as Record<string, string>
+  return Object.fromEntries(Object.entries(readSecrets()).filter(([, value]) => typeof value === 'string')) as Record<
+    string,
+    string
+  >
 }
 
 /** safeStorage is only usable after `app.ready`. */

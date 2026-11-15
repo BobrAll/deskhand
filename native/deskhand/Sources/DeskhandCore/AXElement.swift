@@ -1,6 +1,6 @@
-import Foundation
-import ApplicationServices
 import AppKit
+import ApplicationServices
+import Foundation
 
 /// Thin, safe wrapper around `AXUIElement`. All attribute reads are defensive:
 /// other applications can return arbitrary types, or fail mid-traversal.
@@ -159,13 +159,13 @@ public struct AXElement {
     /// same values from different calls.
     static func rect(position: CFTypeRef?, size: CFTypeRef?) -> CGRect? {
         guard let position, let size,
-              CFGetTypeID(position) == AXValueGetTypeID(),
-              CFGetTypeID(size) == AXValueGetTypeID()
+            CFGetTypeID(position) == AXValueGetTypeID(),
+            CFGetTypeID(size) == AXValueGetTypeID()
         else { return nil }
         var point = CGPoint.zero
         var dimensions = CGSize.zero
         guard AXValueGetValue(position as! AXValue, .cgPoint, &point),
-              AXValueGetValue(size as! AXValue, .cgSize, &dimensions)
+            AXValueGetValue(size as! AXValue, .cgSize, &dimensions)
         else { return nil }
         return CGRect(origin: point, size: dimensions)
     }
@@ -251,8 +251,8 @@ public struct AXWalkedValues {
 
     private func raw(_ attribute: String) -> CFTypeRef? {
         guard let batched,
-              let position = AXElement.walkedAttributes.firstIndex(of: attribute),
-              position < batched.count
+            let position = AXElement.walkedAttributes.firstIndex(of: attribute),
+            position < batched.count
         else {
             var value: CFTypeRef?
             guard AXUIElementCopyAttributeValue(element.raw, attribute as CFString, &value) == .success

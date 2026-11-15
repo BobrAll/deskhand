@@ -1,8 +1,8 @@
-import Foundation
 import AppKit
+import DeskhandAgentKit
 import DeskhandCore
 import DeskhandLLM
-import DeskhandAgentKit
+import Foundation
 
 /// `deskhand-agent` — a standalone BYOK agent that drives the desktop.
 ///
@@ -96,7 +96,8 @@ func parseArguments() throws -> CLI {
 }
 
 func printUsage() {
-    print("""
+    print(
+        """
         deskhand-agent — drive a macOS app with any vision-capable model (BYOK)
 
         USAGE
@@ -174,10 +175,13 @@ do {
 // config discovery, usage, the final print — belongs to the other mode.
 if cli.serve {
     let bridge = Bridge()
-    bridge.emit(["event": .string("ready"), "params": .object([
-        "version": .string("1"),
-        "tools": .number(Double(ToolSurface.definitions().count)),
-    ])])
+    bridge.emit([
+        "event": .string("ready"),
+        "params": .object([
+            "version": .string("1"),
+            "tools": .number(Double(ToolSurface.definitions().count)),
+        ]),
+    ])
     Thread.detachNewThread { bridge.readLoop() }
     // The main thread stays here, pumping the run loop: replies from the window
     // server and from ScreenCaptureKit are delivered to it, and a parked main
@@ -209,13 +213,15 @@ if cli.printResolvedConfig {
 // anyone using OpenRouter, a gateway, or a local server. Say so on stderr rather
 // than discovering it as an opaque 401 later.
 if !cli.quietAboutDefaults, config.baseURL.absoluteString == ProviderConfig().baseURL.absoluteString {
-    FileHandle.standardError.write(Data("""
+    FileHandle.standardError.write(
+        Data(
+            """
 
-        note: no base_url configured, so requests go to \(config.endpointURL.absoluteString).
-              To use another endpoint, pass --base-url / -b, set DESKHAND_BASE_URL, or add
-              base_url to ~/.deskhand/config.toml.
+            note: no base_url configured, so requests go to \(config.endpointURL.absoluteString).
+                  To use another endpoint, pass --base-url / -b, set DESKHAND_BASE_URL, or add
+                  base_url to ~/.deskhand/config.toml.
 
-        """.utf8))
+            """.utf8))
 }
 
 guard let task = cli.task, !task.isEmpty else {
@@ -226,21 +232,25 @@ guard let task = cli.task, !task.isEmpty else {
 let permissions = SystemPermissions.current()
 if !permissions.accessibility {
     SystemPermissions.requestAccessibility()
-    FileHandle.standardError.write(Data("""
+    FileHandle.standardError.write(
+        Data(
+            """
 
-        Accessibility permission is required. Deskhand has opened the prompt; enable the \
-        terminal app you are running this from in System Settings > Privacy & Security > \
-        Accessibility, then run the command again.
+            Accessibility permission is required. Deskhand has opened the prompt; enable the \
+            terminal app you are running this from in System Settings > Privacy & Security > \
+            Accessibility, then run the command again.
 
-        """.utf8))
+            """.utf8))
     exit(1)
 }
 if !permissions.screenRecording {
     SystemPermissions.requestScreenRecording()
-    FileHandle.standardError.write(Data("""
-        Screen Recording permission is required for screenshots. Grant it, then rerun.
+    FileHandle.standardError.write(
+        Data(
+            """
+            Screen Recording permission is required for screenshots. Grant it, then rerun.
 
-        """.utf8))
+            """.utf8))
     exit(1)
 }
 

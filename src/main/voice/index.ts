@@ -15,13 +15,7 @@
  */
 
 import { CH } from '@shared/ipc'
-import type {
-  TranscribeResult,
-  VoiceAction,
-  VoiceErrorCode,
-  VoiceEvent,
-  VoicePhase
-} from '@shared/types'
+import type { TranscribeResult, VoiceAction, VoiceErrorCode, VoiceEvent, VoicePhase } from '@shared/types'
 import { pasteAnswer } from '../paste'
 import { helperBinary } from '../native/helper'
 import { getSettings } from '../settings/store'
@@ -281,8 +275,7 @@ export function createVoiceController(host: VoiceHost) {
       // A missing binary or model has nothing to load; the settings window
       // already explains it, so a background attempt would only fail silently.
       const status = await voiceStatus().catch(() => null)
-      if (warmingModel !== model || !status?.ready || !warmAvailable() ||
-        getSettings().voice.model !== model) return
+      if (warmingModel !== model || !status?.ready || !warmAvailable() || getSettings().voice.model !== model) return
       const loaded = await warmRecognizer()
       if (loaded && getSettings().voice.model === model) warmedModel = model
     } finally {
@@ -321,10 +314,7 @@ export function createVoiceController(host: VoiceHost) {
     host.emit(CH.voice.event, payload)
   }
 
-  function setPhase(
-    next: VoicePhase,
-    extra?: { text?: string; error?: string; code?: VoiceErrorCode }
-  ): void {
+  function setPhase(next: VoicePhase, extra?: { text?: string; error?: string; code?: VoiceErrorCode }): void {
     phase = next
     startedAt = Date.now()
     level = 0
@@ -385,9 +375,7 @@ export function createVoiceController(host: VoiceHost) {
     recordingTimer = setTimeout(() => {
       if (mine !== turn) return
       abortTurnWithError(
-        busy
-          ? 'Распознавание не ответило — попробуй ещё раз.'
-          : 'Запись не дошла до распознавания — попробуй ещё раз.',
+        busy ? 'Распознавание не ответило — попробуй ещё раз.' : 'Запись не дошла до распознавания — попробуй ещё раз.',
         busy ? 'transcribeFailed' : 'recordFailed'
       )
     }, limit)
@@ -604,11 +592,7 @@ export function createVoiceController(host: VoiceHost) {
    * to its `voice:recorded` call. The two wordings differ because one is read by
    * a person and the other is only a log line in the caller.
    */
-  function endTurnWithoutSpeech(
-    code: VoiceErrorCode,
-    error: string,
-    message: string
-  ): TranscribeResult {
+  function endTurnWithoutSpeech(code: VoiceErrorCode, error: string, message: string): TranscribeResult {
     busy = false
     finishIdle({ error, code })
     return { ok: false, text: '', ms: 0, message }
@@ -630,20 +614,12 @@ export function createVoiceController(host: VoiceHost) {
 
     if (!result) {
       // No recorder at all: the microphone never opened.
-      return endTurnWithoutSpeech(
-        'noMic',
-        'Запись не удалась — микрофон недоступен.',
-        'Запись не удалась.'
-      )
+      return endTurnWithoutSpeech('noMic', 'Запись не удалась — микрофон недоступен.', 'Запись не удалась.')
     }
     if (!result.wavBase64) {
       // The recorder ran but found no speech: silence, or a press too short to be
       // a phrase. An error message would be wrong — nothing failed.
-      return endTurnWithoutSpeech(
-        'notHeard',
-        'Ничего не расслышал — попробуй ещё раз.',
-        'Речь не распознана.'
-      )
+      return endTurnWithoutSpeech('notHeard', 'Ничего не расслышал — попробуй ещё раз.', 'Речь не распознана.')
     }
 
     busy = true
@@ -670,8 +646,10 @@ export function createVoiceController(host: VoiceHost) {
       // One line per turn: enough to diagnose a complaint, never the transcript
       // itself — what the user said is not log material. Audio length separates
       // "the model was slow" from "the phrase was long".
-      console.log(`[voice] ${transcribed.ok ? 'ok' : 'failed'} in ${transcribed.ms} мс, ` +
-        `${Math.round(result.durationMs)} мс аудио, модель ${model}`)
+      console.log(
+        `[voice] ${transcribed.ok ? 'ok' : 'failed'} in ${transcribed.ms} мс, ` +
+          `${Math.round(result.durationMs)} мс аудио, модель ${model}`
+      )
       if (mine !== turn) {
         // The user started another phrase while this one was being recognised.
         // The card already belongs to the newer turn, and both the text and the
@@ -782,9 +760,9 @@ export function createVoiceController(host: VoiceHost) {
     const dictationParsed = parseAccelerator(settings.voice.dictationHotkey)
     const shared = Boolean(
       primaryParsed &&
-        dictationParsed &&
-        primaryParsed.keyCode === dictationParsed.keyCode &&
-        primaryParsed.flags === dictationParsed.flags
+      dictationParsed &&
+      primaryParsed.keyCode === dictationParsed.keyCode &&
+      primaryParsed.flags === dictationParsed.flags
     )
     if (shared) dictation.stop()
     const dictationError = shared ? null : dictation.start(settings.voice.dictationHotkey)

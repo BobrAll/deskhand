@@ -84,10 +84,7 @@ beforeEach(() => {
   state.spawnThrows = false
   state.timers = []
   vi.spyOn(console, 'warn').mockImplementation(() => undefined)
-  vi.spyOn(globalThis, 'setTimeout').mockImplementation(((
-    fn: () => void,
-    ms?: number
-  ) => {
+  vi.spyOn(globalThis, 'setTimeout').mockImplementation(((fn: () => void, ms?: number) => {
     const timer = { fn, ms: ms ?? 0, cleared: false }
     state.timers.push(timer)
     return timer as unknown as NodeJS.Timeout
@@ -200,11 +197,7 @@ describe('VoiceKeyListener: starting', () => {
     const { listener: tap } = listener()
 
     expect(tap.start('Control+Alt')).toBeNull()
-    expect(state.children[0].args).toEqual([
-      'voice',
-      String(MODIFIER_ONLY),
-      String(CONTROL | OPTION)
-    ])
+    expect(state.children[0].args).toEqual(['voice', String(MODIFIER_ONLY), String(CONTROL | OPTION)])
   })
 
   it('omits `swallow` when the options say so', () => {
@@ -305,9 +298,7 @@ describe('VoiceKeyListener: reading helper events', () => {
 
     state.children[0].stdout.emit('{"error":"accessibility-denied"}')
 
-    expect(errors).toEqual([
-      'Нет доступа «Универсальный доступ» — удержание клавиши не работает.'
-    ])
+    expect(errors).toEqual(['Нет доступа «Универсальный доступ» — удержание клавиши не работает.'])
     expect(tap.lastError).toBe(errors[0])
   })
 
@@ -412,9 +403,7 @@ describe('VoiceKeyListener: restart and stop', () => {
     expect(delays).toEqual([1000, 2000, 4000, 8000, 16000, 30000])
     expect(state.children).toHaveLength(7)
     expect(tap.listening).toBe(false)
-    expect(console.warn).toHaveBeenCalledWith(
-      expect.stringContaining('died 6 times without a healthy run')
-    )
+    expect(console.warn).toHaveBeenCalledWith(expect.stringContaining('died 6 times without a healthy run'))
   })
 
   it('forgives the earlier failures after a long healthy run', () => {
@@ -467,9 +456,7 @@ describe('VoiceKeyListener: restart and stop', () => {
 
     state.children[0].exit(1)
 
-    expect(errors).toEqual([
-      'Слушатель клавиатуры не запустился — проверь «Универсальный доступ».'
-    ])
+    expect(errors).toEqual(['Слушатель клавиатуры не запустился — проверь «Универсальный доступ».'])
     expect(state.timers).toHaveLength(0)
   })
 

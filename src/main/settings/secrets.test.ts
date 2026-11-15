@@ -146,10 +146,7 @@ describe('secrets: getApiKey', () => {
     fake.data.secrets = { openai: `enc:${b64('enc(sk)')}` }
     const secrets = await loadSecrets()
     expect(secrets.getApiKey('openai')).toBeNull()
-    expect(warn).toHaveBeenCalledWith(
-      expect.stringContaining('cannot be decrypted'),
-      expect.anything()
-    )
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('cannot be decrypted'), expect.anything())
     warn.mockRestore()
   })
 
@@ -256,10 +253,7 @@ describe('secrets: setApiKey', () => {
     fake.data.secrets = { anthropic: `plain:${b64('a')}` }
     const secrets = await loadSecrets()
     secrets.setApiKey('openai', 'sk-1')
-    expect(Object.keys(fake.data.secrets as Record<string, string>).sort()).toEqual([
-      'anthropic',
-      'openai'
-    ])
+    expect(Object.keys(fake.data.secrets as Record<string, string>).sort()).toEqual(['anthropic', 'openai'])
   })
 
   it('deletes the key when the new value is blank', async () => {

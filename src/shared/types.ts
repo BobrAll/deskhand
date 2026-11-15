@@ -359,16 +359,7 @@ export interface AgentCursorFrame {
  * an animation, never to decide whether the action is allowed: the host has
  * already approved the call by the time this arrives.
  */
-export type AgentGesture =
-  | 'click'
-  | 'secondary'
-  | 'type'
-  | 'value'
-  | 'select'
-  | 'key'
-  | 'scroll'
-  | 'drag'
-  | 'activate'
+export type AgentGesture = 'click' | 'secondary' | 'type' | 'value' | 'select' | 'key' | 'scroll' | 'drag' | 'activate'
 
 /**
  * One action, in screen terms, as the agent reports it just before acting.
@@ -429,12 +420,7 @@ export type VoicePhase = 'idle' | 'listening' | 'transcribing'
  * decides whether to say something out loud. Matching on the sentence would
  * break the moment the wording changes.
  */
-export type VoiceErrorCode =
-  | 'notHeard'
-  | 'recordFailed'
-  | 'transcribeFailed'
-  | 'noMic'
-  | 'recordTooLong'
+export type VoiceErrorCode = 'notHeard' | 'recordFailed' | 'transcribeFailed' | 'noMic' | 'recordTooLong'
 
 export interface VoiceEvent {
   phase: VoicePhase
@@ -863,9 +849,7 @@ export interface PasteResult {
   message?: string
 }
 
-export type ModelListResult =
-  | { ok: true; models: string[] }
-  | { ok: false; message: string }
+export type ModelListResult = { ok: true; models: string[] } | { ok: false; message: string }
 
 export interface TestKeyResult {
   ok: boolean

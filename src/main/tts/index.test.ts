@@ -64,7 +64,9 @@ vi.mock('node:fs/promises', async (importOriginal) => {
   return {
     ...actual,
     mkdir: async () => undefined,
-    writeFile: async (path: string, data: Buffer) => { fake.cache.set(path, data) },
+    writeFile: async (path: string, data: Buffer) => {
+      fake.cache.set(path, data)
+    },
     readFile: async (path: string) => {
       const hit = fake.cache.get(path)
       if (!hit) throw new Error('ENOENT')
@@ -72,7 +74,9 @@ vi.mock('node:fs/promises', async (importOriginal) => {
     },
     readdir: async () => [...fake.cache.keys()].map((path) => path.split('/').pop() as string),
     stat: async () => ({ mtimeMs: 0 }),
-    unlink: async (path: string) => { fake.cache.delete(path) }
+    unlink: async (path: string) => {
+      fake.cache.delete(path)
+    }
   }
 })
 
@@ -124,13 +128,16 @@ beforeEach(() => {
   pronounce.hints = {}
   pronounce.calls = []
   pronounce.prefetch = []
-  vi.stubGlobal('fetch', vi.fn(async (url: string, init: RequestInit) => {
-    fake.calls.push({ url, body: JSON.parse(String(init.body)) })
-    return new Response(new Uint8Array([1, 2, 3]), {
-      status: 200,
-      headers: { 'Content-Type': 'audio/mpeg' }
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (url: string, init: RequestInit) => {
+      fake.calls.push({ url, body: JSON.parse(String(init.body)) })
+      return new Response(new Uint8Array([1, 2, 3]), {
+        status: 200,
+        headers: { 'Content-Type': 'audio/mpeg' }
+      })
     })
-  }))
+  )
 })
 
 afterEach(() => {
@@ -142,19 +149,15 @@ describe('live synthesis', () => {
   it('is off until every part of the configuration is present', async () => {
     const { ttsBlockReason } = await load()
     expect(ttsBlockReason(CONFIGURED)).toBeNull()
-    expect(ttsBlockReason({ ...CONFIGURED, tts: { ...CONFIGURED.tts, enabled: false } }))
-      .toContain('выключен')
-    expect(ttsBlockReason({ ...CONFIGURED, tts: { ...CONFIGURED.tts, baseUrl: '' } }))
-      .toContain('адрес')
-    expect(ttsBlockReason({ ...CONFIGURED, tts: { ...CONFIGURED.tts, model: '' } }))
-      .toContain('модель')
-    expect(ttsBlockReason({ ...CONFIGURED, tts: { ...CONFIGURED.tts, voice: '' } }))
-      .toContain('голос')
+    expect(ttsBlockReason({ ...CONFIGURED, tts: { ...CONFIGURED.tts, enabled: false } })).toContain('выключен')
+    expect(ttsBlockReason({ ...CONFIGURED, tts: { ...CONFIGURED.tts, baseUrl: '' } })).toContain('адрес')
+    expect(ttsBlockReason({ ...CONFIGURED, tts: { ...CONFIGURED.tts, model: '' } })).toContain('модель')
+    expect(ttsBlockReason({ ...CONFIGURED, tts: { ...CONFIGURED.tts, voice: '' } })).toContain('голос')
     fake.key = null
     expect(ttsBlockReason(CONFIGURED)).toContain('ключ')
   })
 
-  it('sends the user\'s endpoint, model, voice and style, and nothing else', async () => {
+  it("sends the user's endpoint, model, voice and style, and nothing else", async () => {
     const { synthesize } = await load()
     const result = await synthesize('Готово.')
     expect(result.ok).toBe(true)
@@ -183,7 +186,10 @@ describe('live synthesis', () => {
   })
 
   it('degrades instead of throwing when the service refuses', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => new Response('nope', { status: 400 })))
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('nope', { status: 400 }))
+    )
     const { synthesize } = await load()
     const result = await synthesize('Готово.')
     expect(result.ok).toBe(false)
@@ -307,4 +313,3 @@ describe('prefetching pronunciation hints', () => {
     expect(pronounce.prefetch).toEqual(['Открой Figma'])
   })
 })
-

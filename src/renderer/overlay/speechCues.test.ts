@@ -94,8 +94,7 @@ describe('speechLine: rotation inside a state', () => {
       const group = SPEECH_BANK[cue]
       if (group.length < 2) continue
       for (let index = 0; index < group.length * 3; index += 1) {
-        expect(speechLine(cue, index)?.id, `${cue} at ${index}`)
-          .not.toBe(speechLine(cue, index + 1)?.id)
+        expect(speechLine(cue, index)?.id, `${cue} at ${index}`).not.toBe(speechLine(cue, index + 1)?.id)
       }
     }
   })
@@ -108,10 +107,25 @@ describe('speechLine: rotation inside a state', () => {
 describe('speechLine: the bank is what ships', () => {
   it('has a recording group for every cue the gate can allow', () => {
     const allowed: SpeechCue[] = [
-      'notHeard', 'recordFailed', 'transcribeFailed', 'noMic', 'recordTooLong',
-      'agentProgress', 'approval', 'approved', 'denied', 'remembered',
-      'agentBlocked', 'secret', 'longWait', 'done', 'incomplete', 'failed',
-      'stopped', 'timeout', 'textReady'
+      'notHeard',
+      'recordFailed',
+      'transcribeFailed',
+      'noMic',
+      'recordTooLong',
+      'agentProgress',
+      'approval',
+      'approved',
+      'denied',
+      'remembered',
+      'agentBlocked',
+      'secret',
+      'longWait',
+      'done',
+      'incomplete',
+      'failed',
+      'stopped',
+      'timeout',
+      'textReady'
     ]
     for (const cue of allowed) {
       expect(SPEECH_BANK[cue].length, cue).toBeGreaterThan(0)

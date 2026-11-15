@@ -61,9 +61,7 @@ describe('getActiveApp', () => {
       front({ windowTitle: null, bounds: null, windowId: null, accessibility: false })
     )
 
-    expect(await getActiveApp()).toEqual(
-      app({ windowTitle: null, bounds: null, windowId: null })
-    )
+    expect(await getActiveApp()).toEqual(app({ windowTitle: null, bounds: null, windowId: null }))
   })
 
   it('keeps a zero pid: it means "unknown", not "missing"', async () => {

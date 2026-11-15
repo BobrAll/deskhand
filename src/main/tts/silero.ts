@@ -46,7 +46,8 @@ import { transliterate } from './transliterate'
 /** Pinned: a new release changes the file list and the hashes below. */
 const RUNTIME_VERSION = 'v0.5.0'
 /** The commit behind the tag: a moved tag must not change what pip installs. */
-const RUNTIME_URL = 'https://github.com/some1-in-here/silero-tts-onnx/archive/10e5698504e14b39ffd5f72dc2c7b02bd7893747.tar.gz'
+const RUNTIME_URL =
+  'https://github.com/some1-in-here/silero-tts-onnx/archive/10e5698504e14b39ffd5f72dc2c7b02bd7893747.tar.gz'
 const RELEASE_URL = `https://github.com/some1-in-here/silero-tts-onnx/releases/download/${RUNTIME_VERSION}`
 
 /**
@@ -307,7 +308,7 @@ export async function removeSilero(): Promise<void> {
  */
 async function ensureScript(path: string, content: string): Promise<string> {
   try {
-    if (await readFile(path, 'utf8') === content) return path
+    if ((await readFile(path, 'utf8')) === content) return path
   } catch {
     /* the script appears on first use */
   }
@@ -373,10 +374,11 @@ function workerFor(speaker: string, script: string): SileroWorker {
 
   const models = sileroModelsDir()
   const worker = new SileroWorker({
-    spawnWorker: () => spawn(venvPython(), [script, models, speaker], {
-      env: sileroEnvironment(),
-      stdio: ['pipe', 'pipe', 'pipe']
-    }),
+    spawnWorker: () =>
+      spawn(venvPython(), [script, models, speaker], {
+        env: sileroEnvironment(),
+        stdio: ['pipe', 'pipe', 'pipe']
+      }),
     requestTimeoutMs: SYNTHESIS_TIMEOUT_MS,
     idleTimeoutMs: WORKER_IDLE_TIMEOUT_MS,
     onTimeout: () => {
@@ -398,12 +400,7 @@ function exitReason(code: number | null, signal: NodeJS.Signals | null): string 
   return 'Процесс завершился без кода.'
 }
 
-function spawnCaptured(
-  command: string,
-  args: string[],
-  env: NodeJS.ProcessEnv,
-  timeoutMs: number
-): Promise<void> {
+function spawnCaptured(command: string, args: string[], env: NodeJS.ProcessEnv, timeoutMs: number): Promise<void> {
   if (shuttingDown) return Promise.reject(new Error('Синтез остановлен.'))
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, { env, stdio: ['ignore', 'ignore', 'pipe'] })
@@ -485,15 +482,10 @@ async function renderThroughWorker(
     workerUnavailableFor = key
     workerUnavailableUntil = 0
   }
-  await workerFor(speaker, script).render(
-    job.text,
-    job.output,
-    renderOnceShot,
-    async () => {
-      const audio = await readFile(job.output)
-      if (audio.length === 0) throw new Error('Silero вернул пустой файл.')
-    }
-  )
+  await workerFor(speaker, script).render(job.text, job.output, renderOnceShot, async () => {
+    const audio = await readFile(job.output)
+    if (audio.length === 0) throw new Error('Silero вернул пустой файл.')
+  })
 }
 
 /**
@@ -514,7 +506,7 @@ export async function synthesizeSilero(
   if (!sileroRuntimeReady()) return { ok: false, message: 'Silero не установлен.' }
   if (!sileroModelsReady()) return { ok: false, message: 'Нет модели Silero V5.6 RU.' }
 
-  const pronunciations = hints ?? await resolvePronunciations(text)
+  const pronunciations = hints ?? (await resolvePronunciations(text))
   const spoken = transliterate(text, pronunciations)
   if (!spoken.trim()) return { ok: false, message: 'Нечего произносить.' }
 

@@ -30,13 +30,20 @@ interface InstallListProps {
 }
 
 export function InstallList({
-  entries, active, installed, progress, deleting, error, extras, onPick, onDownload, onImport, onRemove
+  entries,
+  active,
+  installed,
+  progress,
+  deleting,
+  error,
+  extras,
+  onPick,
+  onDownload,
+  onImport,
+  onRemove
 }: InstallListProps) {
   const [downloadId, setDownloadId] = useState('')
-  const ready = [
-    ...entries.filter(({ id }) => installed.has(id)),
-    ...extras.map((id) => ({ id, label: id }))
-  ]
+  const ready = [...entries.filter(({ id }) => installed.has(id)), ...extras.map((id) => ({ id, label: id }))]
   const available = entries.filter(({ id }) => !installed.has(id))
   const selected = available.find(({ id }) => id === (progress?.model ?? downloadId))
   const busy = progress !== null || deleting !== null
@@ -50,11 +57,19 @@ export function InstallList({
               <div key={id} className="model-row" data-active={active === id}>
                 <span className="model-name">{label}</span>
                 <div className="model-actions">
-                  {active === id
-                    ? <span className="model-state ok">Активна</span>
-                    : <button className="model-state" disabled={busy} onClick={() => onPick(id)}>Использовать</button>}
-                  <button className="model-state" disabled={busy} aria-label={`Удалить ${label}`}
-                    onClick={() => onRemove(id, label)}>
+                  {active === id ? (
+                    <span className="model-state ok">Активна</span>
+                  ) : (
+                    <button className="model-state" disabled={busy} onClick={() => onPick(id)}>
+                      Использовать
+                    </button>
+                  )}
+                  <button
+                    className="model-state"
+                    disabled={busy}
+                    aria-label={`Удалить ${label}`}
+                    onClick={() => onRemove(id, label)}
+                  >
                     {deleting === id ? 'Удаляю…' : 'Удалить'}
                   </button>
                 </div>
@@ -64,27 +79,60 @@ export function InstallList({
         </Row>
       )}
       {available.length > 0 && (
-        <Row stacked title="Скачать модель Whisper" hint={selected?.meta ?? 'Whisper распознаёт речь на разных языках.'}>
+        <Row
+          stacked
+          title="Скачать модель Whisper"
+          hint={selected?.meta ?? 'Whisper распознаёт речь на разных языках.'}
+        >
           <div className="row-actions">
-            <select aria-label="Модель Whisper для скачивания" disabled={busy} value={selected?.id ?? ''}
-              onChange={(event) => setDownloadId(event.target.value)}>
-              <option value="" disabled>Выбери модель</option>
-              {available.map(({ id, label }) => <option key={id} value={id}>{label}</option>)}
+            <select
+              aria-label="Модель Whisper для скачивания"
+              disabled={busy}
+              value={selected?.id ?? ''}
+              onChange={(event) => setDownloadId(event.target.value)}
+            >
+              <option value="" disabled>
+                Выбери модель
+              </option>
+              {available.map(({ id, label }) => (
+                <option key={id} value={id}>
+                  {label}
+                </option>
+              ))}
             </select>
-            <button disabled={busy || !selected} onClick={() => { if (selected) onDownload(selected.id) }}>Скачать</button>
+            <button
+              disabled={busy || !selected}
+              onClick={() => {
+                if (selected) onDownload(selected.id)
+              }}
+            >
+              Скачать
+            </button>
           </div>
           {progress && (
             <div className="row-hint" role="status">
               {progress.total > 0
                 ? `${megabytes(progress.received)} из ${megabytes(progress.total)}`
-                : progress.received > 0 ? megabytes(progress.received) : 'Подключаюсь…'}
+                : progress.received > 0
+                  ? megabytes(progress.received)
+                  : 'Подключаюсь…'}
             </div>
           )}
         </Row>
       )}
-      {error && <Row hint={<span className="row-hint err" role="alert">{error}</span>} />}
+      {error && (
+        <Row
+          hint={
+            <span className="row-hint err" role="alert">
+              {error}
+            </span>
+          }
+        />
+      )}
       <Row title="Файл модели" hint="Импортируй модель Whisper с этого Mac.">
-        <button disabled={busy} onClick={onImport}>Импортировать модель Whisper</button>
+        <button disabled={busy} onClick={onImport}>
+          Импортировать модель Whisper
+        </button>
       </Row>
     </>
   )

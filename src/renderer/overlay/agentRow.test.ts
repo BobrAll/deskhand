@@ -35,11 +35,13 @@ describe('the agent row’s mark', () => {
 
 describe('the agent row’s label', () => {
   it('says what happened when the task was not finished', () => {
-    const label = agentLabel(event({
-      phase: 'done',
-      completed: false,
-      message: 'Не успел за 3 шага — задача осталась невыполненной.'
-    }))
+    const label = agentLabel(
+      event({
+        phase: 'done',
+        completed: false,
+        message: 'Не успел за 3 шага — задача осталась невыполненной.'
+      })
+    )
 
     expect(label).toContain('Не успел')
   })
@@ -54,8 +56,7 @@ describe('the agent row’s label', () => {
   })
 
   it('leaves the closing sentence to the answer', () => {
-    expect(agentLabel(event({ phase: 'done', completed: true, label: 'Сообщение отправлено.' })))
-      .toBeNull()
+    expect(agentLabel(event({ phase: 'done', completed: true, label: 'Сообщение отправлено.' }))).toBeNull()
   })
 
   it('shows a short startup label', () => {
@@ -76,7 +77,8 @@ describe('the agent row’s label', () => {
   })
 
   it('shows the stop reason on an aborted run', () => {
-    expect(agentLabel(event({ phase: 'aborted', message: 'Остановлено: ты взял мышь.' })))
-      .toBe('Остановлено: ты взял мышь.')
+    expect(agentLabel(event({ phase: 'aborted', message: 'Остановлено: ты взял мышь.' }))).toBe(
+      'Остановлено: ты взял мышь.'
+    )
   })
 })

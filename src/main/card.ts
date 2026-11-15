@@ -94,10 +94,7 @@ export interface CardAnchor {
 }
 
 /** Remaining room on either side of the pointer, inside the given work area. */
-export function roomAround(
-  point: ScreenPoint,
-  area: ScreenRect
-): { below: number; above: number } {
+export function roomAround(point: ScreenPoint, area: ScreenRect): { below: number; above: number } {
   return {
     below: area.y + area.height - CARD_MARGIN - (point.y + CARD_GAP),
     above: point.y - CARD_GAP - (area.y + CARD_MARGIN)
@@ -122,11 +119,7 @@ export function xFor(placed: CardAnchor, width: number): number {
 export function yFor(placed: CardAnchor, height: number): number {
   const raw = placed.above ? placed.point.y - CARD_GAP - height : placed.point.y + CARD_GAP
   const max = placed.area.y + placed.area.height - height - CARD_MARGIN
-  return clamp(
-    raw,
-    placed.area.y + CARD_MARGIN,
-    Math.max(placed.area.y + CARD_MARGIN, max)
-  )
+  return clamp(raw, placed.area.y + CARD_MARGIN, Math.max(placed.area.y + CARD_MARGIN, max))
 }
 
 /**
@@ -135,12 +128,7 @@ export function yFor(placed: CardAnchor, height: number): number {
  * Placed down-and-right of the pointer, flipped left near the right edge and
  * above near the bottom edge.
  */
-export function placeAnchor(
-  point: ScreenPoint,
-  area: ScreenRect,
-  height: number,
-  width: number
-): CardAnchor {
+export function placeAnchor(point: ScreenPoint, area: ScreenRect, height: number, width: number): CardAnchor {
   const right = point.x + CARD_GAP + width <= area.x + area.width - CARD_MARGIN
 
   const room = roomAround(point, area)
@@ -166,8 +154,7 @@ export function boundsFor(anchor: CardAnchor, height: number, width: number): Sc
 }
 
 function coversPoint(rect: ScreenRect, point: ScreenPoint): boolean {
-  return point.x >= rect.x && point.x < rect.x + rect.width &&
-    point.y >= rect.y && point.y < rect.y + rect.height
+  return point.x >= rect.x && point.x < rect.x + rect.width && point.y >= rect.y && point.y < rect.y + rect.height
 }
 
 /**

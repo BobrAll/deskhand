@@ -1,6 +1,6 @@
-import Foundation
 import AppKit
 import CoreGraphics
+import Foundation
 
 /// Guarantees the process has a connection to the window server.
 ///

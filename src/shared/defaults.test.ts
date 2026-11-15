@@ -29,8 +29,7 @@ describe('parseExtraBody', () => {
   })
 
   it('drops fields that would replace the conversation or the stream', () => {
-    expect(parseExtraBody('{"stream": false, "messages": [], "model": "x", "top_p": 0.5}'))
-      .toEqual({ top_p: 0.5 })
+    expect(parseExtraBody('{"stream": false, "messages": [], "model": "x", "top_p": 0.5}')).toEqual({ top_p: 0.5 })
   })
 })
 
@@ -96,9 +95,7 @@ describe('normalizeSettings: partial data', () => {
   })
 
   it('keeps a non-blank systemPrompt verbatim, without trimming', () => {
-    expect(normalizeSettings({ systemPrompt: '  свой промпт  ' }).systemPrompt).toBe(
-      '  свой промпт  '
-    )
+    expect(normalizeSettings({ systemPrompt: '  свой промпт  ' }).systemPrompt).toBe('  свой промпт  ')
   })
 })
 
@@ -240,21 +237,15 @@ describe('normalizeSettings: numeric clamps', () => {
 
   it('falls back on non-numeric or non-finite numbers', () => {
     for (const value of ['1.5', NaN, Infinity, null, {}, []]) {
-      expect(normalizeSettings({ temperature: value }).temperature, String(value)).toBe(
-        DEFAULT_SETTINGS.temperature
-      )
+      expect(normalizeSettings({ temperature: value }).temperature, String(value)).toBe(DEFAULT_SETTINGS.temperature)
     }
   })
 })
 
 describe('normalizeSettings: booleans', () => {
   it('keeps booleans and falls back on anything else', () => {
-    expect(normalizeSettings({ captureScreenshotByDefault: false }).captureScreenshotByDefault).toBe(
-      false
-    )
-    expect(normalizeSettings({ captureScreenshotByDefault: true }).captureScreenshotByDefault).toBe(
-      true
-    )
+    expect(normalizeSettings({ captureScreenshotByDefault: false }).captureScreenshotByDefault).toBe(false)
+    expect(normalizeSettings({ captureScreenshotByDefault: true }).captureScreenshotByDefault).toBe(true)
     // A string is not a boolean: the field keeps its default rather than truthiness.
     expect(normalizeSettings({ launchAtLogin: 'true' }).launchAtLogin).toBe(false)
     expect(normalizeSettings({ launchAtLogin: 1 }).launchAtLogin).toBe(false)
@@ -307,12 +298,8 @@ describe('normalizeSettings: voice', () => {
 
   it('lowercases and truncates the language', () => {
     expect(normalizeSettings({ voice: { language: 'EN' } }).voice.language).toBe('en')
-    expect(normalizeSettings({ voice: { language: 'ОченьДлинный' } }).voice.language).toBe(
-      'оченьдли'
-    )
-    expect(normalizeSettings({ voice: { language: '   ' } }).voice.language).toBe(
-      DEFAULT_VOICE.language
-    )
+    expect(normalizeSettings({ voice: { language: 'ОченьДлинный' } }).voice.language).toBe('оченьдли')
+    expect(normalizeSettings({ voice: { language: '   ' } }).voice.language).toBe(DEFAULT_VOICE.language)
   })
 
   it('treats any action other than dictate as command', () => {
@@ -325,9 +312,7 @@ describe('normalizeSettings: voice', () => {
     expect(normalizeSettings({ voice: { minDurationMs: -100 } }).voice.minDurationMs).toBe(0)
     expect(normalizeSettings({ voice: { minDurationMs: 99999 } }).voice.minDurationMs).toBe(5000)
     expect(normalizeSettings({ voice: { maxDurationMs: 10 } }).voice.maxDurationMs).toBe(1000)
-    expect(normalizeSettings({ voice: { maxDurationMs: 9999999 } }).voice.maxDurationMs).toBe(
-      600_000
-    )
+    expect(normalizeSettings({ voice: { maxDurationMs: 9999999 } }).voice.maxDurationMs).toBe(600_000)
   })
 
   it('keeps the boolean flags', () => {
@@ -350,9 +335,7 @@ describe('normalizeSettings: voice', () => {
     expect(normalizeSettings({ voice: { dictationHotkey: '  ' } }).voice.dictationHotkey).toBe(
       DEFAULT_VOICE.dictationHotkey
     )
-    expect(normalizeSettings({ voice: { dictationHotkey: ' Cmd+1 ' } }).voice.dictationHotkey).toBe(
-      'Cmd+1'
-    )
+    expect(normalizeSettings({ voice: { dictationHotkey: ' Cmd+1 ' } }).voice.dictationHotkey).toBe('Cmd+1')
   })
 
   it('moves the retired default hold to the new pair once', () => {
@@ -382,8 +365,11 @@ describe('normalizeSettings: agent', () => {
   it('keeps the flags and falls back on non-booleans', () => {
     const result = normalizeSettings({
       agent: {
-        enabled: true, abortOnMouseMove: 'yes', verifyResult: false,
-        showActions: false, saveRunTraces: 'yes'
+        enabled: true,
+        abortOnMouseMove: 'yes',
+        verifyResult: false,
+        showActions: false,
+        saveRunTraces: 'yes'
       }
     })
 
@@ -406,14 +392,23 @@ describe('normalizeSettings: agent', () => {
     // object with keys nothing reads, and must not fail on them either.
     const result = normalizeSettings({
       agent: {
-        enabled: true, startDelayMs: 900, stepDelayMs: 420,
-        allowTyping: false, allowShortcuts: false, semanticActions: false
+        enabled: true,
+        startDelayMs: 900,
+        stepDelayMs: 420,
+        allowTyping: false,
+        allowShortcuts: false,
+        semanticActions: false
       }
     })
 
     expect(Object.keys(result.agent).sort()).toEqual([
-      'abortOnMouseMove', 'enabled', 'maxSteps', 'rememberedApprovals',
-      'saveRunTraces', 'showActions', 'verifyResult'
+      'abortOnMouseMove',
+      'enabled',
+      'maxSteps',
+      'rememberedApprovals',
+      'saveRunTraces',
+      'showActions',
+      'verifyResult'
     ])
     expect(result.agent.enabled).toBe(true)
   })

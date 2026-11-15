@@ -12,10 +12,13 @@ describe('listProviderModels', () => {
     vi.stubGlobal('fetch', fetch)
 
     await expect(listProviderModels('openai', 'example', '')).resolves.toEqual({ ok: true, models: ['a', 'z'] })
-    expect(fetch).toHaveBeenCalledWith(new URL('https://api.openai.com/v1/models'), expect.objectContaining({
-      headers: { Authorization: 'Bearer example' },
-      redirect: 'error'
-    }))
+    expect(fetch).toHaveBeenCalledWith(
+      new URL('https://api.openai.com/v1/models'),
+      expect.objectContaining({
+        headers: { Authorization: 'Bearer example' },
+        redirect: 'error'
+      })
+    )
   })
 
   it('uses the override and reads further pages from Anthropic-compatible APIs', async () => {
@@ -29,12 +32,10 @@ describe('listProviderModels', () => {
     vi.stubGlobal('fetch', fetch)
 
     await expect(listProviderModels('anthropic', 'example', 'https://gateway.example/v1/')).resolves.toEqual({
-      ok: true, models: ['first', 'second']
+      ok: true,
+      models: ['first', 'second']
     })
-    expect(requests).toEqual([
-      'https://gateway.example/v1/models',
-      'https://gateway.example/v1/models?after_id=first'
-    ])
+    expect(requests).toEqual(['https://gateway.example/v1/models', 'https://gateway.example/v1/models?after_id=first'])
     expect(fetch.mock.calls).toHaveLength(2)
   })
 
@@ -44,7 +45,9 @@ describe('listProviderModels', () => {
 
     await expect(listProviderModels('openrouter', 'example', 'invalid')).resolves.toMatchObject({ ok: false })
     expect(fetch).not.toHaveBeenCalled()
-    await expect(listProviderModels('openrouter', 'example', 'https://gateway.example/v1')).resolves.toMatchObject({ ok: false })
+    await expect(listProviderModels('openrouter', 'example', 'https://gateway.example/v1')).resolves.toMatchObject({
+      ok: false
+    })
     expect(fetch).toHaveBeenCalledTimes(1)
   })
 })

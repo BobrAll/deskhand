@@ -194,14 +194,16 @@ function startDeferredServices(settings: AppSettings): void {
       console.error('[app] deferred startup step failed:', error)
     }
   }
-  attempt(() => createTray({
-    openAssistant: () => {
-      void overlay.open()
-    },
-    openSettings: () => openSettingsWindow(),
-    openOnboarding: () => openOnboardingWindow(),
-    quit
-  }))
+  attempt(() =>
+    createTray({
+      openAssistant: () => {
+        void overlay.open()
+      },
+      openSettings: () => openSettingsWindow(),
+      openOnboarding: () => openOnboardingWindow(),
+      quit
+    })
+  )
   attempt(() => applyLaunchAtLogin(settings.launchAtLogin))
   attempt(reportStartupPermissions)
 }

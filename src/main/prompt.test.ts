@@ -183,9 +183,7 @@ describe('buildRequest: context block', () => {
   })
 
   it('says the screenshot is missing when one was requested but is absent', () => {
-    expect(request({ imageAttached: false }).userText).toContain(
-      'Скриншот недоступен, опирайся только на текст.'
-    )
+    expect(request({ imageAttached: false }).userText).toContain('Скриншот недоступен, опирайся только на текст.')
   })
 
   it('explains the coordinate system only when a tool needs it', () => {
@@ -224,9 +222,7 @@ describe('buildRequest: context block', () => {
 
 describe('buildRequest: mode instruction', () => {
   it('uses the overlay format for analyze', () => {
-    expect(request({ mode: 'analyze', draw: false }).modeInstruction).toContain(
-      'краткий разбор для показа в оверлее'
-    )
+    expect(request({ mode: 'analyze', draw: false }).modeInstruction).toContain('краткий разбор для показа в оверлее')
   })
 
   it('names the markdown the card can actually render', () => {
@@ -249,17 +245,13 @@ describe('buildRequest: mode instruction', () => {
   })
 
   it('uses the insert format for insert', () => {
-    expect(request({ mode: 'insert', draw: false }).modeInstruction).toContain(
-      'только готовый текст для вставки'
-    )
+    expect(request({ mode: 'insert', draw: false }).modeInstruction).toContain('только готовый текст для вставки')
   })
 
   it('adds the drawing tool after the format', () => {
     const { modeInstruction } = request({ draw: true })
 
-    expect(modeInstruction.indexOf('Формат ответа')).toBeLessThan(
-      modeInstruction.indexOf('@point')
-    )
+    expect(modeInstruction.indexOf('Формат ответа')).toBeLessThan(modeInstruction.indexOf('@point'))
   })
 
   it('appends the drawing tool after the answer format', () => {

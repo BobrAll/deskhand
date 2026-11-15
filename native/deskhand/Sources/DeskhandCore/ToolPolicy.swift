@@ -1,5 +1,5 @@
-import Foundation
 import ApplicationServices
+import Foundation
 
 /// One tool call offered to the policy, with everything a decision needs.
 ///
@@ -60,8 +60,7 @@ public struct ToolCallContext: Sendable {
         var parts: [String] = [tool]
         if let bundleIdentifier { parts.append(bundleIdentifier) }
         if let role { parts.append(role) }
-        if let title, !title.isEmpty { parts.append(title) }
-        else if let label, !label.isEmpty { parts.append(label) }
+        if let title, !title.isEmpty { parts.append(title) } else if let label, !label.isEmpty { parts.append(label) }
         switch tool {
         case "press_key":
             if let key = arguments["key"]?.stringValue { parts.append(key) }
@@ -81,7 +80,7 @@ public struct ToolCallContext: Sendable {
             }
         case "drag":
             guard let from = Self.quantisedPoint(arguments, x: "from_x", y: "from_y"),
-                  let to = Self.quantisedPoint(arguments, x: "to_x", y: "to_y")
+                let to = Self.quantisedPoint(arguments, x: "to_x", y: "to_y")
             else { return "" }
             parts.append("from@\(from)")
             parts.append("to@\(to)")
@@ -109,9 +108,9 @@ public struct ToolCallContext: Sendable {
         y yKey: String
     ) -> String? {
         guard let x = arguments[xKey]?.doubleValue,
-              let y = arguments[yKey]?.doubleValue,
-              x.isFinite, y.isFinite,
-              abs(x) <= 1_000_000, abs(y) <= 1_000_000
+            let y = arguments[yKey]?.doubleValue,
+            x.isFinite, y.isFinite,
+            abs(x) <= 1_000_000, abs(y) <= 1_000_000
         else { return nil }
         let step = 10.0
         return "\(Int((x / step).rounded())),\(Int((y / step).rounded()))"

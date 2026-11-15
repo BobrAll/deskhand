@@ -18,9 +18,7 @@ describe('describeProviderStatus: the statuses both callers share', () => {
   it('names the provider and points at the key for 401 and 403', () => {
     for (const status of [401, 403]) {
       const text = describeProviderStatus(status, { label: 'OpenAI' })
-      expect(text.message, String(status)).toBe(
-        'Ключ OpenAI не принят. Проверь ключ в настройках.'
-      )
+      expect(text.message, String(status)).toBe('Ключ OpenAI не принят. Проверь ключ в настройках.')
       expect(text.retryable, String(status)).toBe(false)
     }
   })
@@ -66,8 +64,6 @@ describe('describeProviderStatus: the 404 means two different things', () => {
   })
 
   it('points the key probe at the base URL', () => {
-    expect(describeProviderStatus(404, { label: 'OpenAI', probe: true }).message).toContain(
-      'base URL'
-    )
+    expect(describeProviderStatus(404, { label: 'OpenAI', probe: true }).message).toContain('base URL')
   })
 })

@@ -24,9 +24,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { agentAcceptsRuns } from './grant'
 import { translate, type AgentSidecarEvent, type Message } from './sidecar'
 
-const BINARY = fileURLToPath(
-  new URL('../../../native/deskhand/.build/release/deskhand-agent', import.meta.url)
-)
+const BINARY = fileURLToPath(new URL('../../../native/deskhand/.build/release/deskhand-agent', import.meta.url))
 const built = existsSync(BINARY)
 const canRun = built && (await agentAcceptsRuns(BINARY))
 
@@ -55,47 +53,65 @@ function startModel(): Promise<void> {
       if (mode === 'spin') {
         // Always asks for another call, so the loop can only end on its budget.
         response.writeHead(200, { 'Content-Type': 'application/json' })
-        response.end(JSON.stringify({
-          id: `c${round}`, object: 'chat.completion',
-          choices: [{ index: 0, finish_reason: 'tool_calls', message: {
-            role: 'assistant', content: 'Смотрю.',
-            tool_calls: [{
-              id: `c${round}`, type: 'function',
-              function: { name: 'list_apps', arguments: '{}' }
-            }]
-          } }],
-          usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 }
-        }))
-        return
-      }
-      const message = round === 1
-        ? {
-            role: 'assistant',
-            content: 'Смотрю приложения.',
-            tool_calls: [
-              { id: 'c1', type: 'function', function: { name: 'list_apps', arguments: '{}' } },
+        response.end(
+          JSON.stringify({
+            id: `c${round}`,
+            object: 'chat.completion',
+            choices: [
               {
-                id: 'c2',
-                type: 'function',
-                function: {
-                  name: 'get_app_state',
-                  arguments: JSON.stringify({ app: 'Finder', include_screenshot: false })
+                index: 0,
+                finish_reason: 'tool_calls',
+                message: {
+                  role: 'assistant',
+                  content: 'Смотрю.',
+                  tool_calls: [
+                    {
+                      id: `c${round}`,
+                      type: 'function',
+                      function: { name: 'list_apps', arguments: '{}' }
+                    }
+                  ]
                 }
               }
-            ]
-          }
-        : { role: 'assistant', content: 'Готово: посмотрел.' }
+            ],
+            usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 }
+          })
+        )
+        return
+      }
+      const message =
+        round === 1
+          ? {
+              role: 'assistant',
+              content: 'Смотрю приложения.',
+              tool_calls: [
+                { id: 'c1', type: 'function', function: { name: 'list_apps', arguments: '{}' } },
+                {
+                  id: 'c2',
+                  type: 'function',
+                  function: {
+                    name: 'get_app_state',
+                    arguments: JSON.stringify({ app: 'Finder', include_screenshot: false })
+                  }
+                }
+              ]
+            }
+          : { role: 'assistant', content: 'Готово: посмотрел.' }
       response.writeHead(200, { 'Content-Type': 'application/json' })
-      response.end(JSON.stringify({
-        id: `c${round}`,
-        object: 'chat.completion',
-        choices: [{
-          index: 0,
-          message,
-          finish_reason: round === 1 ? 'tool_calls' : 'stop'
-        }],
-        usage: { prompt_tokens: 120, completion_tokens: 30, total_tokens: 150 }
-      }))
+      response.end(
+        JSON.stringify({
+          id: `c${round}`,
+          object: 'chat.completion',
+          choices: [
+            {
+              index: 0,
+              message,
+              finish_reason: round === 1 ? 'tool_calls' : 'stop'
+            }
+          ],
+          usage: { prompt_tokens: 120, completion_tokens: 30, total_tokens: 150 }
+        })
+      )
     })
   })
   return new Promise((resolve) => {
@@ -144,24 +160,32 @@ function runAgent(task: string, maxSteps = 3): Promise<AgentSidecarEvent[]> {
         }
       }
     })
-    child.stderr.on('data', () => { /* the agent's own log; not asserted on */ })
+    child.stderr.on('data', () => {
+      /* the agent's own log; not asserted on */
+    })
     child.on('error', (error) => {
       clearTimeout(timer)
       reject(error)
     })
 
-    child.stdin.write(JSON.stringify({
-      id: 1,
-      method: 'run',
-      params: {
-        task,
-        provider: {
-          wire: 'openai', base_url: baseUrl, model: 'stub',
-          api_key: 'test', max_tokens: 512, temperature: 0
-        },
-        options: { max_steps: maxSteps, verify_actions: false, verbose: false, timings: true }
-      }
-    }) + '\n')
+    child.stdin.write(
+      JSON.stringify({
+        id: 1,
+        method: 'run',
+        params: {
+          task,
+          provider: {
+            wire: 'openai',
+            base_url: baseUrl,
+            model: 'stub',
+            api_key: 'test',
+            max_tokens: 512,
+            temperature: 0
+          },
+          options: { max_steps: maxSteps, verify_actions: false, verbose: false, timings: true }
+        }
+      }) + '\n'
+    )
   })
 }
 
@@ -204,8 +228,7 @@ describe.skipIf(!canRun)('a run that never finishes is reported as unfinished', 
 
       expect(kinds).toContain('stopped')
       expect(kinds.indexOf('stopped')).toBeLessThan(kinds.indexOf('done'))
-      expect(events.find((event) => event.kind === 'stopped'))
-        .toMatchObject({ reason: 'the step budget ran out' })
+      expect(events.find((event) => event.kind === 'stopped')).toMatchObject({ reason: 'the step budget ran out' })
     } finally {
       mode = 'batch'
     }

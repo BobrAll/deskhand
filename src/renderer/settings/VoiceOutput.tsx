@@ -13,7 +13,8 @@ import { Disclosure, Group, Row, ToggleRow } from './Row'
 /** The local macOS voice for the preview line, waited for while Chromium fills its list. */
 async function systemPreviewVoice(stillWanted: () => boolean): Promise<SpeechSynthesisVoice | null> {
   for (let attempt = 0; attempt < SPEECH_VOICE_RETRIES; attempt++) {
-    const voice = window.speechSynthesis?.getVoices()
+    const voice = window.speechSynthesis
+      ?.getVoices()
       .find((candidate) => candidate.localService && candidate.lang.toLowerCase().startsWith('ru'))
     if (voice) return voice
     if (!stillWanted()) return null
@@ -64,9 +65,7 @@ function setupProgressText(progress: TtsSetupProgress): string {
 }
 
 /** How the assistant sounds: which voice reads the answer, and the engine behind it. */
-export function VoiceOutput({
-  active, voice, tts, savedTts, onVoiceChange, onTtsChange
-}: VoiceOutputProps) {
+export function VoiceOutput({ active, voice, tts, savedTts, onVoiceChange, onTtsChange }: VoiceOutputProps) {
   const [speech, setSpeech] = useState<TtsStatus | null>(null)
   const [statusFailed, setStatusFailed] = useState(false)
   const [keyError, setKeyError] = useState<string | null>(null)
@@ -88,8 +87,11 @@ export function VoiceOutput({
   const refreshTts = useCallback(() => {
     const request = ++ttsStatusRequest.current
     setStatusFailed(false)
-    void window.deskhand.tts.status()
-      .then((next) => { if (request === ttsStatusRequest.current) setSpeech(next) })
+    void window.deskhand.tts
+      .status()
+      .then((next) => {
+        if (request === ttsStatusRequest.current) setSpeech(next)
+      })
       .catch(() => {
         if (request !== ttsStatusRequest.current) return
         setSpeech(null)
@@ -100,10 +102,14 @@ export function VoiceOutput({
   useEffect(() => {
     refreshTts()
   }, [refreshTts, savedTtsConfig])
-  useEffect(() => window.deskhand.tts.onSetupProgress((progress) => {
-    setSetupProgress(progress.done ? null : progress)
-    if (progress.error) setSetupError(progress.error)
-  }), [])
+  useEffect(
+    () =>
+      window.deskhand.tts.onSetupProgress((progress) => {
+        setSetupProgress(progress.done ? null : progress)
+        if (progress.error) setSetupError(progress.error)
+      }),
+    []
+  )
   async function changeTtsKey(action: 'save' | 'remove'): Promise<void> {
     const key = ttsKey.trim()
     if (keyPending.current || (action === 'save' && !key)) return
@@ -119,7 +125,11 @@ export function VoiceOutput({
       }
       refreshTts()
     } catch {
-      setKeyError(action === 'save' ? 'Не удалось сохранить ключ. Попробуй ещё раз.' : 'Не удалось удалить ключ. Попробуй ещё раз.')
+      setKeyError(
+        action === 'save'
+          ? 'Не удалось сохранить ключ. Попробуй ещё раз.'
+          : 'Не удалось удалить ключ. Попробуй ещё раз.'
+      )
     } finally {
       keyPending.current = false
       setKeyBusy(false)
@@ -141,7 +151,11 @@ export function VoiceOutput({
         await window.deskhand.tts.removeSilero()
       }
     } catch {
-      setSetupError(action === 'install' ? 'Не удалось установить Silero. Попробуй ещё раз.' : 'Не удалось удалить Silero. Попробуй ещё раз.')
+      setSetupError(
+        action === 'install'
+          ? 'Не удалось установить Silero. Попробуй ещё раз.'
+          : 'Не удалось удалить Silero. Попробуй ещё раз.'
+      )
     } finally {
       setupPending.current = false
       setSetupBusy(false)
@@ -225,11 +239,11 @@ export function VoiceOutput({
     if (statusFailed) previewHint = 'Не удалось проверить настройки нейроголоса.'
     else if (!matchingStatus) previewHint = 'Проверяю настройки нейроголоса…'
     else if (!matchingStatus.configured) {
-      previewHint = mode === 'silero'
-        ? 'До настройки Silero ответы читает голос macOS.'
-        : 'До подключения сервиса ответы читает голос macOS.'
-    }
-    else previewHint = matchingStatus.reason ?? 'Пример выбранного нейроголоса.'
+      previewHint =
+        mode === 'silero'
+          ? 'До настройки Silero ответы читает голос macOS.'
+          : 'До подключения сервиса ответы читает голос macOS.'
+    } else previewHint = matchingStatus.reason ?? 'Пример выбранного нейроголоса.'
   }
 
   return (
@@ -256,12 +270,16 @@ export function VoiceOutput({
         </Row>
         {mode !== 'off' && (
           <Row title="Пример голоса" hint={<span role="status">{previewError ?? previewHint}</span>}>
-            {neural && statusFailed
-              ? <button onClick={refreshTts}>Повторить проверку</button>
-              : <button disabled={previewing || !previewReady || (neural && (setupBusy || keyBusy))}
-                  onClick={() => void previewVoice()}>
-                  {previewing ? 'Играет…' : 'Послушать пример'}
-                </button>}
+            {neural && statusFailed ? (
+              <button onClick={refreshTts}>Повторить проверку</button>
+            ) : (
+              <button
+                disabled={previewing || !previewReady || (neural && (setupBusy || keyBusy))}
+                onClick={() => void previewVoice()}
+              >
+                {previewing ? 'Играет…' : 'Послушать пример'}
+              </button>
+            )}
           </Row>
         )}
       </Group>
@@ -276,24 +294,37 @@ export function VoiceOutput({
                 onChange={(event) => onTtsChange({ sileroVoice: event.target.value })}
               >
                 {SILERO_SPEAKERS.map((speaker) => (
-                  <option key={speaker} value={speaker}>{speaker}</option>
+                  <option key={speaker} value={speaker}>
+                    {speaker}
+                  </option>
                 ))}
               </select>
             </Row>
           )}
           <Row
             title={sileroInstalled === false ? 'Модель не установлена' : 'Модель Silero'}
-            hint={setupError
-              ? <span className="row-hint err" role="alert">{setupError}</span>
-              : setupProgress
-                ? <span role="status">{setupProgressText(setupProgress)}</span>
-                : sileroInstalled
-                  ? 'Скачанные веса работают офлайн.'
-                  : sileroInstalled === false ? 'Скачай один раз. Нужно около 300 МБ и Python 3.12+.'
-                    : statusFailed ? 'Статус установки недоступен.' : 'Проверяю установку…'}
+            hint={
+              setupError ? (
+                <span className="row-hint err" role="alert">
+                  {setupError}
+                </span>
+              ) : setupProgress ? (
+                <span role="status">{setupProgressText(setupProgress)}</span>
+              ) : sileroInstalled ? (
+                'Скачанные веса работают офлайн.'
+              ) : sileroInstalled === false ? (
+                'Скачай один раз. Нужно около 300 МБ и Python 3.12+.'
+              ) : statusFailed ? (
+                'Статус установки недоступен.'
+              ) : (
+                'Проверяю установку…'
+              )
+            }
           >
             {sileroInstalled === true && (
-              <button className="ghost" disabled={setupBusy} onClick={() => void changeSilero('remove')}>Удалить модель</button>
+              <button className="ghost" disabled={setupBusy} onClick={() => void changeSilero('remove')}>
+                Удалить модель
+              </button>
             )}
             {sileroInstalled === false && (
               <button disabled={setupBusy} onClick={() => void changeSilero('install')}>
@@ -318,36 +349,75 @@ export function VoiceOutput({
       {mode === 'remote' && (
         <Group title="Сервис озвучки по API" footnote="Подключи OpenAI-совместимый сервис синтеза речи.">
           <Row title={<label htmlFor="voice-api-url">Адрес API</label>}>
-            <input id="voice-api-url" value={tts.baseUrl} placeholder="https://host/v1" spellCheck={false}
-              onChange={(event) => onTtsChange({ baseUrl: event.target.value })} />
+            <input
+              id="voice-api-url"
+              value={tts.baseUrl}
+              placeholder="https://host/v1"
+              spellCheck={false}
+              onChange={(event) => onTtsChange({ baseUrl: event.target.value })}
+            />
           </Row>
           <Row title={<label htmlFor="voice-api-model">Модель</label>}>
-            <input id="voice-api-model" value={tts.model} placeholder="ID модели" spellCheck={false}
-              onChange={(event) => onTtsChange({ model: event.target.value })} />
+            <input
+              id="voice-api-model"
+              value={tts.model}
+              placeholder="ID модели"
+              spellCheck={false}
+              onChange={(event) => onTtsChange({ model: event.target.value })}
+            />
           </Row>
           <Row title={<label htmlFor="voice-api-speaker">Голос</label>}>
-            <input id="voice-api-speaker" value={tts.voice} placeholder="Имя голоса" spellCheck={false}
-              onChange={(event) => onTtsChange({ voice: event.target.value })} />
+            <input
+              id="voice-api-speaker"
+              value={tts.voice}
+              placeholder="Имя голоса"
+              spellCheck={false}
+              onChange={(event) => onTtsChange({ voice: event.target.value })}
+            />
           </Row>
-          <Row title={speech?.keyConfigured ? 'Ключ API' : <label htmlFor="voice-api-key">Ключ API</label>}
-            hint={keyError
-              ? <span className="row-hint err" role="alert">{keyError}</span>
-              : speech?.keyConfigured ? 'Сохранён в Keychain.' : undefined}>
+          <Row
+            title={speech?.keyConfigured ? 'Ключ API' : <label htmlFor="voice-api-key">Ключ API</label>}
+            hint={
+              keyError ? (
+                <span className="row-hint err" role="alert">
+                  {keyError}
+                </span>
+              ) : speech?.keyConfigured ? (
+                'Сохранён в Keychain.'
+              ) : undefined
+            }
+          >
             {speech?.keyConfigured ? (
-              <button className="ghost" disabled={keyBusy} onClick={() => void changeTtsKey('remove')}>Удалить ключ</button>
+              <button className="ghost" disabled={keyBusy} onClick={() => void changeTtsKey('remove')}>
+                Удалить ключ
+              </button>
             ) : (
               <div className="row-actions">
-                <input id="voice-api-key" type="password" disabled={keyBusy} value={ttsKey} placeholder="Ключ сервиса"
+                <input
+                  id="voice-api-key"
+                  type="password"
+                  disabled={keyBusy}
+                  value={ttsKey}
+                  placeholder="Ключ сервиса"
                   onChange={(event) => setTtsKeyInput(event.target.value)}
-                  onKeyDown={(event) => { if (event.key === 'Enter') void changeTtsKey('save') }} />
-                <button disabled={keyBusy || !ttsKey.trim()} onClick={() => void changeTtsKey('save')}>Сохранить</button>
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') void changeTtsKey('save')
+                  }}
+                />
+                <button disabled={keyBusy || !ttsKey.trim()} onClick={() => void changeTtsKey('save')}>
+                  Сохранить
+                </button>
               </div>
             )}
           </Row>
           <Disclosure title="Стиль речи">
             <Row title={<label htmlFor="voice-api-style">Инструкция для голоса</label>}>
-              <input id="voice-api-style" value={tts.style} placeholder="Например, спокойно"
-                onChange={(event) => onTtsChange({ style: event.target.value })} />
+              <input
+                id="voice-api-style"
+                value={tts.style}
+                placeholder="Например, спокойно"
+                onChange={(event) => onTtsChange({ style: event.target.value })}
+              />
             </Row>
           </Disclosure>
           {!tts.enabled && (

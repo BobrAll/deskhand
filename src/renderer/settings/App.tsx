@@ -26,13 +26,7 @@ import { PROVIDERS } from '@shared/defaults'
 import type { AppPickResult, RunningAppInfo, SettingsBundle } from '@shared/api'
 import { WindowBrand } from '../styles/WindowBrand'
 import { HotkeyField } from './HotkeyField'
-import {
-  hasUnsaved,
-  holdReasonFor,
-  invalidBaseUrlProviders,
-  writeCoversDraft,
-  writableSettings
-} from './applyGate'
+import { hasUnsaved, holdReasonFor, invalidBaseUrlProviders, writeCoversDraft, writableSettings } from './applyGate'
 import { ApplyStatus, type ApplyState } from './ApplyStatus'
 import { AgentTab } from './AgentTab'
 import { VoiceTab } from './VoiceTab'
@@ -195,9 +189,7 @@ export function App() {
       })
       .catch((error: unknown) => {
         console.error('[settings] load failed:', error)
-        setLoadError(
-          error instanceof Error ? error.message : 'Не удалось загрузить настройки.'
-        )
+        setLoadError(error instanceof Error ? error.message : 'Не удалось загрузить настройки.')
       })
     void window.deskhand.settings
       .runningApps()
@@ -247,22 +239,14 @@ export function App() {
   const setAgentEnabled = useCallback(async (enabled: boolean): Promise<AgentAvailability> => {
     const availability = await window.deskhand.agent.setEnabled(enabled)
     setBundle((prev) =>
-      prev
-        ? { ...prev, settings: { ...prev.settings, agent: { ...prev.settings.agent, enabled } } }
-        : prev
+      prev ? { ...prev, settings: { ...prev.settings, agent: { ...prev.settings.agent, enabled } } } : prev
     )
     return availability
   }, [])
 
-  const invalidBaseUrls = useMemo(
-    () => (draft ? invalidBaseUrlProviders(draft) : []),
-    [draft]
-  )
+  const invalidBaseUrls = useMemo(() => (draft ? invalidBaseUrlProviders(draft) : []), [draft])
 
-  const holdReason = useMemo(
-    () => (draft ? holdReasonFor(draft, invalidBaseUrls) : null),
-    [draft, invalidBaseUrls]
-  )
+  const holdReason = useMemo(() => (draft ? holdReasonFor(draft, invalidBaseUrls) : null), [draft, invalidBaseUrls])
 
   /**
    * What was last written, verbatim.
@@ -419,10 +403,7 @@ export function App() {
   }, [applyState])
 
   /** Whether the draft holds anything that is not on disk yet. */
-  const unsaved = useCallback(
-    (value: AppSettings): boolean => hasUnsaved(value, bundle, writtenRef.current),
-    [bundle]
-  )
+  const unsaved = useCallback((value: AppSettings): boolean => hasUnsaved(value, bundle, writtenRef.current), [bundle])
 
   /**
    * The draft as it can actually be written, for the explicit paths (⌘S, closing).
@@ -564,7 +545,9 @@ export function App() {
       <main className="content">
         <header className="pane-head">
           <div className="pane-heading">
-            <span className="pane-icon"><NavIcon tab={tab} /></span>
+            <span className="pane-icon">
+              <NavIcon tab={tab} />
+            </span>
             <div>
               <h1>{PANE[tab].title}</h1>
               <p className="pane-sub">{PANE[tab].subtitle}</p>
@@ -599,13 +582,7 @@ export function App() {
             />
           )}
 
-          {tab === 'agent' && (
-            <AgentTab
-              agent={draft.agent}
-              onChange={patchAgent}
-              onEnabledChange={setAgentEnabled}
-            />
-          )}
+          {tab === 'agent' && <AgentTab agent={draft.agent} onChange={patchAgent} onEnabledChange={setAgentEnabled} />}
 
           {tab === 'privacy' && (
             <PrivacySection

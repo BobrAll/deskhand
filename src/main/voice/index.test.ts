@@ -920,9 +920,14 @@ describe('createVoiceController: recognizer warm-up', () => {
   })
 
   it('does not mark the model warm when the recognizer never spawned', async () => {
-    state.transcribed = () => Promise.resolve({
-      ok: false, text: '', ms: 0, message: 'нет модели', spawned: false
-    })
+    state.transcribed = () =>
+      Promise.resolve({
+        ok: false,
+        text: '',
+        ms: 0,
+        message: 'нет модели',
+        spawned: false
+      })
     const voice = createVoiceController(makeHost())
     voice.applySettings()
     voice.press()
@@ -1177,10 +1182,7 @@ describe('createVoiceController: settings and lifecycle', () => {
 
     voice.applySettings()
 
-    expect(state.listeners.map((entry) => entry.accelerator)).toEqual([
-      'Alt+Shift+Space',
-      'Fn+Control'
-    ])
+    expect(state.listeners.map((entry) => entry.accelerator)).toEqual(['Alt+Shift+Space', 'Fn+Control'])
   })
 
   it('leaves the dictation listener stopped when both hotkeys are the same', () => {
@@ -1258,9 +1260,16 @@ describe('voice indicator presentation', () => {
   it('chooses a fresh session before revealing the old window', () => {
     const host = makeHost()
     const calls: string[] = []
-    host.isOpen = () => { calls.push('isOpen'); return false }
-    host.open = async () => { calls.push('open') }
-    host.showIndicator = () => { calls.push('indicator') }
+    host.isOpen = () => {
+      calls.push('isOpen')
+      return false
+    }
+    host.open = async () => {
+      calls.push('open')
+    }
+    host.showIndicator = () => {
+      calls.push('indicator')
+    }
     const voice = createVoiceController(host)
     voice.press()
     expect(calls).toEqual(['isOpen', 'open', 'indicator'])

@@ -415,11 +415,13 @@ export class AgentSidecar {
   /** Answers a pending confirmation. */
   approve(id: string, allow: boolean, reason?: string): void {
     if (!this.alive) return
-    this.child?.stdin.write(requestLine(++this.counter, 'approval', {
-      id,
-      allow,
-      ...(reason ? { reason } : {})
-    }))
+    this.child?.stdin.write(
+      requestLine(++this.counter, 'approval', {
+        id,
+        allow,
+        ...(reason ? { reason } : {})
+      })
+    )
   }
 
   /** Stops the run in flight; the process stays up for the next one. */
@@ -507,9 +509,7 @@ function wireProvider(provider: AgentProvider): Record<string, unknown> {
     api_key: provider.apiKey,
     max_tokens: provider.maxTokens,
     temperature: provider.temperature,
-    ...(provider.extraBody && Object.keys(provider.extraBody).length > 0
-      ? { extra_body: provider.extraBody }
-      : {}),
+    ...(provider.extraBody && Object.keys(provider.extraBody).length > 0 ? { extra_body: provider.extraBody } : {}),
     ...(provider.headers ? { headers: provider.headers } : {})
   }
 }
@@ -522,11 +522,7 @@ function wireProvider(provider: AgentProvider): Record<string, unknown> {
  * between a tool that does not screenshot and one that screenshots instantly,
  * and a `0` would erase it.
  */
-function optionalNumber(
-  params: Record<string, unknown>,
-  wire: string,
-  local: string
-): Record<string, number> {
+function optionalNumber(params: Record<string, unknown>, wire: string, local: string): Record<string, number> {
   const value = params[wire]
   return typeof value === 'number' && Number.isFinite(value) ? { [local]: value } : {}
 }
@@ -571,10 +567,14 @@ function screenRectParam(value: unknown): ScreenRect | undefined {
   const width = raw.width
   const height = raw.height
   if (
-    typeof x !== 'number' || !Number.isFinite(x) ||
-    typeof y !== 'number' || !Number.isFinite(y) ||
-    typeof width !== 'number' || !Number.isFinite(width) ||
-    typeof height !== 'number' || !Number.isFinite(height)
+    typeof x !== 'number' ||
+    !Number.isFinite(x) ||
+    typeof y !== 'number' ||
+    !Number.isFinite(y) ||
+    typeof width !== 'number' ||
+    !Number.isFinite(width) ||
+    typeof height !== 'number' ||
+    !Number.isFinite(height)
   ) {
     return undefined
   }
@@ -675,10 +675,7 @@ function translatePresent(params: Record<string, unknown>): EventOf<'present'> {
       app: textParam(params, 'app') || undefined,
       bundleId: textParam(params, 'bundle_id') || undefined,
       pid: typeof params.pid === 'number' ? params.pid : undefined,
-      point:
-        typeof params.x === 'number' && typeof params.y === 'number'
-          ? { x: params.x, y: params.y }
-          : undefined,
+      point: typeof params.x === 'number' && typeof params.y === 'number' ? { x: params.x, y: params.y } : undefined,
       target: screenRectParam(params.target),
       window: screenRectParam(params.window)
     }

@@ -57,7 +57,9 @@ describe('translate: a recorded transcript from the real agent', () => {
 
   it('reads the model’s own sentence about what it is doing', () => {
     expect(translate(parsed[4])).toEqual({
-      kind: 'narration', step: 1, text: 'Смотрю, какие приложения открыты.'
+      kind: 'narration',
+      step: 1,
+      text: 'Смотрю, какие приложения открыты.'
     })
   })
 
@@ -95,18 +97,24 @@ describe('translate: a recorded transcript from the real agent', () => {
 
   it('reads the closing answer, and whether the run actually finished', () => {
     expect(translate(parsed[11])).toEqual({
-      kind: 'done', answer: 'Готово: приложения перечислены.', complete: true
+      kind: 'done',
+      answer: 'Готово: приложения перечислены.',
+      complete: true
     })
   })
 
   it('reads a run that stopped at its budget as unfinished', () => {
     // The loop returns a closing sentence on this path too, so the flag is the
     // only thing that distinguishes it from success.
-    expect(translate({
-      event: 'done',
-      params: { answer: 'Stopped after 3 steps without finishing the task.', complete: false }
-    })).toEqual({
-      kind: 'done', answer: 'Stopped after 3 steps without finishing the task.', complete: false
+    expect(
+      translate({
+        event: 'done',
+        params: { answer: 'Stopped after 3 steps without finishing the task.', complete: false }
+      })
+    ).toEqual({
+      kind: 'done',
+      answer: 'Stopped after 3 steps without finishing the task.',
+      complete: false
     })
   })
 
@@ -114,8 +122,7 @@ describe('translate: a recorded transcript from the real agent', () => {
     // A missing field is not a failure: an agent built before this flag existed
     // still describes a run that ended, and turning those into errors would
     // break every run against a stale binary.
-    expect(translate({ event: 'done', params: { answer: 'Готово.' } }))
-      .toMatchObject({ complete: true })
+    expect(translate({ event: 'done', params: { answer: 'Готово.' } })).toMatchObject({ complete: true })
   })
 
   it('produces no event for a plain acknowledgement', () => {
@@ -128,8 +135,17 @@ describe('translate: a recorded transcript from the real agent', () => {
     const events = parsed.map(translate).filter(Boolean)
 
     expect(events.map((event) => event!.kind)).toEqual([
-      'ready', 'step', 'stepTiming', 'narration', 'tool', 'result',
-      'step', 'stepTiming', 'narration', 'runReport', 'done'
+      'ready',
+      'step',
+      'stepTiming',
+      'narration',
+      'tool',
+      'result',
+      'step',
+      'stepTiming',
+      'narration',
+      'runReport',
+      'done'
     ])
   })
 })
@@ -174,37 +190,38 @@ describe('translate: the fields the card depends on', () => {
   it('defaults `ok` to true and a missing argument object to empty', () => {
     // The agent omits `ok` for a successful call rather than sending `true`; a
     // missing field must not read as a failure.
-    expect(translate({ event: 'result', params: { name: 'click', step: 1 } }))
-      .toMatchObject({ ok: true })
-    expect(translate({ event: 'tool', params: { name: 'click', step: 1 } }))
-      .toMatchObject({ args: {} })
+    expect(translate({ event: 'result', params: { name: 'click', step: 1 } })).toMatchObject({ ok: true })
+    expect(translate({ event: 'tool', params: { name: 'click', step: 1 } })).toMatchObject({ args: {} })
   })
 
   it('reads a failure as a failure', () => {
-    expect(translate({ event: 'result', params: { name: 'click', ok: false, step: 1 } }))
-      .toMatchObject({ ok: false })
+    expect(translate({ event: 'result', params: { name: 'click', ok: false, step: 1 } })).toMatchObject({ ok: false })
   })
 
   it('reads a stop with its reason', () => {
-    expect(translate({ event: 'stopped', params: { reason: 'loop detected: 3 identical calls' } }))
-      .toEqual({ kind: 'stopped', reason: 'loop detected: 3 identical calls' })
+    expect(translate({ event: 'stopped', params: { reason: 'loop detected: 3 identical calls' } })).toEqual({
+      kind: 'stopped',
+      reason: 'loop detected: 3 identical calls'
+    })
   })
 
   it('reads the picture of an action, with its target and window', () => {
-    expect(translate({
-      event: 'present',
-      params: {
-        tool: 'click',
-        gesture: 'click',
-        app: 'Safari',
-        bundle_id: 'com.apple.Safari',
-        pid: 42,
-        x: 120.5,
-        y: 300,
-        target: { x: 100, y: 290, width: 40, height: 20 },
-        window: { x: 10, y: 20, width: 800, height: 600 }
-      }
-    })).toEqual({
+    expect(
+      translate({
+        event: 'present',
+        params: {
+          tool: 'click',
+          gesture: 'click',
+          app: 'Safari',
+          bundle_id: 'com.apple.Safari',
+          pid: 42,
+          x: 120.5,
+          y: 300,
+          target: { x: 100, y: 290, width: 40, height: 20 },
+          window: { x: 10, y: 20, width: 800, height: 600 }
+        }
+      })
+    ).toEqual({
       kind: 'present',
       presentation: {
         tool: 'click',
@@ -236,16 +253,21 @@ describe('translate: the fields the card depends on', () => {
   })
 
   it('shows an unknown gesture as a click instead of dropping the picture', () => {
-    expect(translate({
-      event: 'present',
-      params: { tool: 'new_tool', gesture: 'teleport' }
-    })).toMatchObject({ kind: 'present', presentation: { gesture: 'click' } })
+    expect(
+      translate({
+        event: 'present',
+        params: { tool: 'new_tool', gesture: 'teleport' }
+      })
+    ).toMatchObject({ kind: 'present', presentation: { gesture: 'click' } })
   })
 
   it('reads a cancellation and an error', () => {
     expect(translate({ event: 'cancelled' })).toEqual({ kind: 'cancelled' })
-    expect(translate({ event: 'error', params: { message: 'нет доступа', code: 'permission' } }))
-      .toEqual({ kind: 'error', message: 'нет доступа', code: 'permission' })
+    expect(translate({ event: 'error', params: { message: 'нет доступа', code: 'permission' } })).toEqual({
+      kind: 'error',
+      message: 'нет доступа',
+      code: 'permission'
+    })
   })
 
   it('splits a call into the phases that actually ran', () => {
@@ -254,15 +276,25 @@ describe('translate: the fields the card depends on', () => {
     const event = translate({
       event: 'result',
       params: {
-        name: 'get_app_state', ok: true, step: 1,
-        text: 'tree', wall_ms: 493.02, tree_ms: 476.35, capture_ms: 12.1, encode_ms: 4.6,
+        name: 'get_app_state',
+        ok: true,
+        step: 1,
+        text: 'tree',
+        wall_ms: 493.02,
+        tree_ms: 476.35,
+        capture_ms: 12.1,
+        encode_ms: 4.6,
         image_bytes: 151812
       }
     })
 
     expect(event).toMatchObject({
       timing: {
-        wallMs: 493.02, treeMs: 476.35, captureMs: 12.1, encodeMs: 4.6, imageBytes: 151812
+        wallMs: 493.02,
+        treeMs: 476.35,
+        captureMs: 12.1,
+        encodeMs: 4.6,
+        imageBytes: 151812
       }
     })
   })
@@ -296,17 +328,21 @@ describe('translate: the fields the card depends on', () => {
   it('reads the prose while the step is still running', () => {
     // The same caption as `narration`, but it arrives before the model stops
     // writing. The card can show it while the round trip is still in flight.
-    expect(translate({
-      event: 'stream',
-      params: { step: 1, text: 'Открываю Telegram' }
-    })).toEqual({ kind: 'stream', step: 1, text: 'Открываю Telegram' })
+    expect(
+      translate({
+        event: 'stream',
+        params: { step: 1, text: 'Открываю Telegram' }
+      })
+    ).toEqual({ kind: 'stream', step: 1, text: 'Открываю Telegram' })
   })
 
   it('reads a step with no narration, which is still a step the user waited for', () => {
-    expect(translate({
-      event: 'step-timing',
-      params: { step: 2, llm_ms: 900, prompt_bytes: 20000, history: 12, calls: 0 }
-    })).toEqual({
+    expect(
+      translate({
+        event: 'step-timing',
+        params: { step: 2, llm_ms: 900, prompt_bytes: 20000, history: 12, calls: 0 }
+      })
+    ).toEqual({
       kind: 'stepTiming',
       step: 2,
       timing: { llmMs: 900, promptBytes: 20000, history: 12, calls: 0 }
@@ -331,8 +367,7 @@ describe('translate: the fields the card depends on', () => {
   })
 
   it('survives a malformed event instead of throwing', () => {
-    expect(translate({ event: 'step', params: { step: 'два' } }))
-      .toEqual({ kind: 'step', step: 0, total: 0 })
+    expect(translate({ event: 'step', params: { step: 'два' } })).toEqual({ kind: 'step', step: 0, total: 0 })
     expect(translate({ event: 'tool' })).toMatchObject({ name: '', args: {} })
   })
 })

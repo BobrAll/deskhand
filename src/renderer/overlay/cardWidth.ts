@@ -43,12 +43,7 @@ export function userWidthCeiling(availWidth: number): number {
  * cannot be narrower than `CARD_WIDTH` — its buttons need that much — and a drag
  * that ignored it would snap back on release.
  */
-export function draggedWidth(
-  startWidth: number,
-  delta: number,
-  availWidth: number,
-  min = CARD_MIN_WIDTH
-): number {
+export function draggedWidth(startWidth: number, delta: number, availWidth: number, min = CARD_MIN_WIDTH): number {
   return Math.round(clamp(startWidth + delta, min, userWidthCeiling(availWidth)))
 }
 

@@ -68,9 +68,7 @@ describe('ResponseStream: a marker cut by a chunk boundary', () => {
     expect(stream.push('Готово\n@po')).toEqual({ text: 'Готово\n', annotations: [] })
     expect(stream.push(`int arrow 0.5 0.8 0.82 0.11 «Сюда»\n`)).toEqual({
       text: '',
-      annotations: [
-        { kind: 'arrow', from: { x: 0.5, y: 0.8 }, to: { x: 0.82, y: 0.11 }, label: 'Сюда' }
-      ]
+      annotations: [{ kind: 'arrow', from: { x: 0.5, y: 0.8 }, to: { x: 0.82, y: 0.11 }, label: 'Сюда' }]
     })
   })
 
@@ -221,9 +219,7 @@ describe('ResponseStream: CRLF and empty lines', () => {
     const out = whole('a\r\n@point arrow 0.1 0.2 0.3 0.4 «x»\r\n')
 
     expect(out.text).toBe('a\r\n')
-    expect(out.annotations).toEqual([
-      { kind: 'arrow', from: { x: 0.1, y: 0.2 }, to: { x: 0.3, y: 0.4 }, label: 'x' }
-    ])
+    expect(out.annotations).toEqual([{ kind: 'arrow', from: { x: 0.1, y: 0.2 }, to: { x: 0.3, y: 0.4 }, label: 'x' }])
   })
 
   it('keeps empty lines', () => {
@@ -327,9 +323,7 @@ describe('ResponseStream: any chunking gives an identical result', () => {
     for (const input of corpus) {
       const reference = read([input])
       for (let seed = 1; seed <= 20; seed += 1) {
-        expect(read(randomChunks(input, seed)), `${JSON.stringify(input)} seed ${seed}`).toEqual(
-          reference
-        )
+        expect(read(randomChunks(input, seed)), `${JSON.stringify(input)} seed ${seed}`).toEqual(reference)
       }
     }
   })
@@ -351,7 +345,10 @@ describe('ResponseStream: any chunking gives an identical result', () => {
     expect(wholeLine.annotations).toEqual([])
     // Every split of the same output gives the same answer: no drawing, and the
     // marker line printed as the text the model wrote.
-    for (const split of [['x ', `${CIRCLE_LINE}\n`], ['x @point ci', `rcle 0.42 0.31 0.52 0.41 «Экспорт»\n`]]) {
+    for (const split of [
+      ['x ', `${CIRCLE_LINE}\n`],
+      ['x @point ci', `rcle 0.42 0.31 0.52 0.41 «Экспорт»\n`]
+    ]) {
       expect(run(split), JSON.stringify(split)).toEqual(wholeLine)
     }
   })

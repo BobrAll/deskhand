@@ -23,9 +23,7 @@ function run(command, args) {
   execFileSync(command, args, { cwd: root, stdio: 'inherit' })
 }
 
-const staged = git('diff', '--cached', '--name-only', '--diff-filter=ACMR', '-z')
-  .split('\0')
-  .filter(Boolean)
+const staged = git('diff', '--cached', '--name-only', '--diff-filter=ACMR', '-z').split('\0').filter(Boolean)
 
 // Prettier ignores what `.prettierignore` names anyway; the explicit list keeps
 // a vendored binary or a Swift file from reaching it at all.

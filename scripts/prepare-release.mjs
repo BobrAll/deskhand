@@ -6,13 +6,7 @@ import { chmod, readFile, writeFile } from 'node:fs/promises'
 import { createReadStream, existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import {
-  ARTIFACTS,
-  certificateLeaf,
-  isPinned,
-  pinInstaller,
-  readSigningPin
-} from './lib/release.mjs'
+import { ARTIFACTS, certificateLeaf, isPinned, pinInstaller, readSigningPin } from './lib/release.mjs'
 
 const root = fileURLToPath(new URL('..', import.meta.url))
 const release = join(root, 'release')
@@ -31,8 +25,7 @@ for (const name of ARTIFACTS) {
   }
 }
 
-const appDir = ['mac-universal', 'mac-arm64', 'mac']
-  .find((name) => existsSync(join(release, name, 'Deskhand.app')))
+const appDir = ['mac-universal', 'mac-arm64', 'mac'].find((name) => existsSync(join(release, name, 'Deskhand.app')))
 if (!appDir) {
   throw new Error('В release нет собранного приложения.')
 }

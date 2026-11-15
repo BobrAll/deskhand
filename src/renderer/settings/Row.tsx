@@ -54,11 +54,7 @@ export function Row({ title, hint, stacked, children }: RowProps) {
         </div>
       )}
       {children &&
-        (stacked ? (
-          <div className="row-body">{children}</div>
-        ) : (
-          <div className="row-control">{children}</div>
-        ))}
+        (stacked ? <div className="row-body">{children}</div> : <div className="row-control">{children}</div>)}
     </div>
   )
 }

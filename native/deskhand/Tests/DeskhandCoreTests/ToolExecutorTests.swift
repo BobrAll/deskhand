@@ -1,5 +1,6 @@
-import XCTest
 import ApplicationServices
+import XCTest
+
 @testable import DeskhandCore
 
 /// Records what the executor offered the policy before a mutating call.

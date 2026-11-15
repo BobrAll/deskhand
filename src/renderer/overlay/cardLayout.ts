@@ -162,19 +162,23 @@ export function layoutCard(input: CardLayoutInput): CardLayout {
     ? Math.ceil(measureLine(input.answer, input.font)) + ANSWER_CHROME + CARET_SLACK
     : 0
   const actionsWidth = input.hasAnswer
-    ? Math.ceil(measureLine(
-        // The widest the strip can get, measured once so the card does not grow
-        // when the answer finishes, the remaining buttons appear, or copy
-        // confirms itself. «Вернуть» is the longer of the width labels;
-        // «✓ Скопировано» is the longer of the copy labels.
-        `${input.speaking ? 'Остановить озвучку' : 'Прослушать'} Вернуть ✓ Скопировано`,
-        ACTIONS_FONT
-      )) + ACTIONS_CHROME
+    ? Math.ceil(
+        measureLine(
+          // The widest the strip can get, measured once so the card does not grow
+          // when the answer finishes, the remaining buttons appear, or copy
+          // confirms itself. «Вернуть» is the longer of the width labels;
+          // «✓ Скопировано» is the longer of the copy labels.
+          `${input.speaking ? 'Остановить озвучку' : 'Прослушать'} Вернуть ✓ Скопировано`,
+          ACTIONS_FONT
+        )
+      ) + ACTIONS_CHROME
     : 0
   const agentLine = [input.agentStatus, input.agentHint].filter(Boolean).join('  ')
   const agentWidth = agentLine
     ? Math.ceil(measureLine(agentLine, AGENT_FONT)) +
-      AGENT_ROW_CHROME + (input.agentRunning ? 0 : AGENT_STATUS_INSET) + CARET_SLACK
+      AGENT_ROW_CHROME +
+      (input.agentRunning ? 0 : AGENT_STATUS_INSET) +
+      CARET_SLACK
     : 0
 
   const inputWidth = input.agentRunning ? CARD_NARROW_WIDTH : composedWidth

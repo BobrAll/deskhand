@@ -9,13 +9,13 @@ describe('transliterate', () => {
   })
 
   it('keeps the Russian text and the punctuation in place', () => {
-    expect(transliterate('Открой файл README и проверь pull request.'))
-      .toBe('Открой файл р+идми и проверь пул рикв+ест.')
+    expect(transliterate('Открой файл README и проверь pull request.')).toBe(
+      'Открой файл р+идми и проверь пул рикв+ест.'
+    )
   })
 
   it('uses Russian readings for the common English function words', () => {
-    expect(transliterate('Check the pull request on GitHub.'))
-      .toBe('чек зэ пул рикв+ест он гитх+аб.')
+    expect(transliterate('Check the pull request on GitHub.')).toBe('чек зэ пул рикв+ест он гитх+аб.')
     expect(transliterate('This is for you.')).toBe('зис из фор ю.')
   })
 
@@ -24,10 +24,8 @@ describe('transliterate', () => {
   })
 
   it('stresses compound names on the part a Russian speaker stresses', () => {
-    expect(transliterate('JavaScript и TypeScript'))
-      .toBe('джаваскр+ипт и тайпскр+ипт')
-    expect(transliterate('Microsoft Electron'))
-      .toBe('майкрос+офт электр+он')
+    expect(transliterate('JavaScript и TypeScript')).toBe('джаваскр+ипт и тайпскр+ипт')
+    expect(transliterate('Microsoft Electron')).toBe('майкрос+офт электр+он')
   })
 
   it('spells acronyms letter by letter', () => {
@@ -46,20 +44,21 @@ describe('transliterate', () => {
   })
 
   it('keeps the common voweled abbreviations as letter names', () => {
-    expect(transliterate('ASAP QA CEO KPI SLA UAT OOO'))
-      .toBe('эй эс эй пи кью эй си и оу кей пи ай эс эл эй ю эй ти оу оу оу')
+    expect(transliterate('ASAP QA CEO KPI SLA UAT OOO')).toBe(
+      'эй эс эй пи кью эй си и оу кей пи ай эс эл эй ю эй ти оу оу оу'
+    )
     expect(transliterate('VUE')).toBe('вью')
     expect(unknownWords('ASAP QA CEO KPI SLA UAT OOO VUE')).toEqual([])
   })
 
   it('recognises lowercase abbreviations that the letter rules would mangle', () => {
-    expect(transliterate('api url id http html json'))
-      .toBe('эй пи ай ю ар эл ай ди эйч ти ти пи эйч ти эм эл дж+ейсон')
+    expect(transliterate('api url id http html json')).toBe('эй пи ай ю ар эл ай ди эйч ти ти пи эйч ти эм эл дж+ейсон')
   })
 
   it('carries the stress of a known word into its plural', () => {
-    expect(transliterate('tokens updates caches services classes windows URLs'))
-      .toBe('т+окенс апд+ейтс к+эшис с+ервисис классис у+индоуз ю ар элс')
+    expect(transliterate('tokens updates caches services classes windows URLs')).toBe(
+      'т+окенс апд+ейтс к+эшис с+ервисис классис у+индоуз ю ар элс'
+    )
   })
 
   it('does not put a space inside a word joined by an apostrophe', () => {
@@ -86,8 +85,7 @@ describe('transliterate', () => {
 
   it('uses a model hint for a word the dictionary does not know', () => {
     expect(transliterate('localhost', { localhost: 'локалх+ост' })).toBe('локалх+ост')
-    expect(transliterate('Открой localhost.', { localhost: 'локалх+ост' }))
-      .toBe('Открой локалх+ост.')
+    expect(transliterate('Открой localhost.', { localhost: 'локалх+ост' })).toBe('Открой локалх+ост.')
   })
 
   it('falls back to rules for a word the dictionary does not know', () => {

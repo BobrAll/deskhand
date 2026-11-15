@@ -53,8 +53,12 @@ describe('keyFromEvent: the physical key', () => {
 
 describe('modifierParts: what was held', () => {
   it('spells the modifiers in the accelerator order', () => {
-    expect(modifierParts(press('KeyK', { shift: true, alt: true, ctrl: true, meta: true }), false))
-      .toEqual(['Command', 'Control', 'Alt', 'Shift'])
+    expect(modifierParts(press('KeyK', { shift: true, alt: true, ctrl: true, meta: true }), false)).toEqual([
+      'Command',
+      'Control',
+      'Alt',
+      'Shift'
+    ])
   })
 
   it('keeps Fn only where the field accepts modifier holds', () => {
@@ -73,8 +77,7 @@ describe('toAccelerator: the recorded shortcut', () => {
   })
 
   it('records punctuation and the modifier order', () => {
-    expect(toAccelerator(press('BracketLeft', { meta: true, shift: true }), false))
-      .toBe('Command+Shift+[')
+    expect(toAccelerator(press('BracketLeft', { meta: true, shift: true }), false)).toBe('Command+Shift+[')
   })
 
   it('refuses a bare key, so ordinary typing never becomes a shortcut', () => {

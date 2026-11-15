@@ -40,9 +40,7 @@ describe('readSse: the event stream', () => {
   it('keeps a chunk boundary in the middle of an event from splitting it', async () => {
     const whole = await collect(['data: {"delta":"привет"}\n\n'])
     const byChar = await collect('data: {"delta":"привет"}\n\n'.split(''))
-    const byTwo = await collect(
-      ('data: {"delta":"привет"}\n\n' + 'data: [DONE]\n\n').match(/[\s\S]{1,2}/g) ?? []
-    )
+    const byTwo = await collect(('data: {"delta":"привет"}\n\n' + 'data: [DONE]\n\n').match(/[\s\S]{1,2}/g) ?? [])
 
     expect(byChar).toEqual(whole)
     expect(byTwo).toEqual([{ data: '{"delta":"привет"}' }, { data: '[DONE]' }])
@@ -84,12 +82,8 @@ describe('readSse: the event stream', () => {
   })
 
   it('reads the event name', async () => {
-    expect(await collect(['event: message\ndata: hi\n\n'])).toEqual([
-      { event: 'message', data: 'hi' }
-    ])
-    expect(await collect(['event:  message  \ndata: hi\n\n'])).toEqual([
-      { event: 'message', data: 'hi' }
-    ])
+    expect(await collect(['event: message\ndata: hi\n\n'])).toEqual([{ event: 'message', data: 'hi' }])
+    expect(await collect(['event:  message  \ndata: hi\n\n'])).toEqual([{ event: 'message', data: 'hi' }])
   })
 
   it('joins several data lines with a newline', async () => {
@@ -157,12 +151,7 @@ describe('readSse: the event stream', () => {
 })
 
 describe('toProviderError: the status map', () => {
-
-  async function errorFor(
-    status: number,
-    text = '',
-    label = 'OpenAI'
-  ): Promise<ProviderError> {
+  async function errorFor(status: number, text = '', label = 'OpenAI'): Promise<ProviderError> {
     return toProviderError(new Response(text, { status }), label)
   }
 
@@ -201,9 +190,7 @@ describe('toProviderError: the status map', () => {
 
   it('maps 429 to a rate limit, and marks it retryable', async () => {
     const error = await errorFor(429)
-    expect(error.message).toBe(
-      'Ключ OpenAI действителен, но лимит запросов исчерпан. Попробуй позже.'
-    )
+    expect(error.message).toBe('Ключ OpenAI действителен, но лимит запросов исчерпан. Попробуй позже.')
     expect(error.retryable).toBe(true)
     expect(error.status).toBe(429)
   })
@@ -211,9 +198,7 @@ describe('toProviderError: the status map', () => {
   it('maps any 5xx to a temporary outage, and marks it retryable', async () => {
     for (const status of [500, 502, 503, 504, 599]) {
       const error = await errorFor(status)
-      expect(error.message, String(status)).toBe(
-        `Сервис OpenAI временно недоступен (${status}).`
-      )
+      expect(error.message, String(status)).toBe(`Сервис OpenAI временно недоступен (${status}).`)
       expect(error.retryable, String(status)).toBe(true)
       expect(error.status, String(status)).toBe(status)
     }
@@ -237,9 +222,7 @@ describe('toProviderError: the detail in the body', () => {
   it('reads `error.message` from a JSON body', async () => {
     const text = JSON.stringify({ error: { message: 'model not found', type: 'x' } })
     const error = await toProviderError(new Response(text, { status: 404 }), 'OpenAI')
-    expect(error.message).toBe(
-      'Модель не найдена у OpenAI. Проверь название модели. (model not found)'
-    )
+    expect(error.message).toBe('Модель не найдена у OpenAI. Проверь название модели. (model not found)')
   })
 
   it('falls back to a top-level `message`', async () => {

@@ -146,8 +146,7 @@ export function ensureLayerWindow(
   create: () => BrowserWindow,
   options: EnsureLayerWindowOptions = {}
 ): Promise<BrowserWindow | null> {
-  const stillOpen = (): BrowserWindow | null =>
-    state.window && !state.window.isDestroyed() ? state.window : null
+  const stillOpen = (): BrowserWindow | null => (state.window && !state.window.isDestroyed() ? state.window : null)
 
   const live = state.window
   if (live && !live.isDestroyed() && state.loaded) return state.loaded.then(stillOpen)

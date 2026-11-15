@@ -22,11 +22,7 @@ import { app } from 'electron'
  */
 export function resourceCandidates(name: string, extra: string[] = []): string[] {
   if (app.isPackaged) return [join(process.resourcesPath, name)]
-  return [
-    join(app.getAppPath(), 'resources', name),
-    ...extra,
-    join(process.cwd(), 'resources', name)
-  ]
+  return [join(app.getAppPath(), 'resources', name), ...extra, join(process.cwd(), 'resources', name)]
 }
 
 /**

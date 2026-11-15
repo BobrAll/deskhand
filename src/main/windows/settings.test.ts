@@ -32,7 +32,9 @@ vi.mock('electron', async () => {
       super()
       state.windows.push(this)
     }
-    isDestroyed(): boolean { return this.destroyed }
+    isDestroyed(): boolean {
+      return this.destroyed
+    }
     close(): void {
       const event = { preventDefault: vi.fn() }
       this.emit('close', event)
@@ -71,10 +73,16 @@ describe('settings window lifecycle', () => {
     api.openSettingsWindow()
     const win = state.windows[0]
     expect(win.options).toMatchObject({
-      width: 980, height: 760, minWidth: 820, minHeight: 560, show: false,
+      width: 980,
+      height: 760,
+      minWidth: 820,
+      minHeight: 560,
+      show: false,
       webPreferences: {
         preload: expect.stringContaining('/preload/index.js'),
-        sandbox: false, contextIsolation: true, nodeIntegration: false
+        sandbox: false,
+        contextIsolation: true,
+        nodeIntegration: false
       }
     })
     expect(win.show).not.toHaveBeenCalled()

@@ -10,10 +10,19 @@ import {
   type ChatMessage,
   type ContentPart,
   type LlmProvider,
-  type StreamChunk, type StreamEnd,
+  type StreamChunk,
+  type StreamEnd,
   type StreamOptions
 } from './provider'
-import { apiEndpoint, apiRoot, parseSseJson, providerErrorMessage, readProviderSse, toProviderError, toTransportError } from './http'
+import {
+  apiEndpoint,
+  apiRoot,
+  parseSseJson,
+  providerErrorMessage,
+  readProviderSse,
+  toProviderError,
+  toTransportError
+} from './http'
 
 type AnthropicBlock =
   | { type: 'text'; text: string }
@@ -109,15 +118,11 @@ export class AnthropicProvider implements LlmProvider {
       .trim()
 
     const turns = messages
-      .filter((message): message is ChatMessage & { role: 'user' | 'assistant' } =>
-        message.role !== 'system'
-      )
-      .map(
-        (message): AnthropicMessage => ({
-          role: message.role,
-          content: encodeBlocks(message.parts)
-        })
-      )
+      .filter((message): message is ChatMessage & { role: 'user' | 'assistant' } => message.role !== 'system')
+      .map((message): AnthropicMessage => ({
+        role: message.role,
+        content: encodeBlocks(message.parts)
+      }))
 
     return {
       model: options.model,

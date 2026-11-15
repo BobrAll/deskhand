@@ -38,11 +38,7 @@ function probeMessage(status: number, provider: ProviderId, body: string): strin
  * @param baseUrl Optional override (usually the unsaved value from the settings
  *   form). An empty string means "use the provider default".
  */
-export async function testApiKey(
-  provider: ProviderId,
-  key: string,
-  baseUrl?: string
-): Promise<TestKeyResult> {
+export async function testApiKey(provider: ProviderId, key: string, baseUrl?: string): Promise<TestKeyResult> {
   const apiKey = key.trim()
   if (!apiKey) return { ok: false, message: 'Введи ключ.' }
 
@@ -77,11 +73,7 @@ export async function testApiKey(
   }
 }
 
-export async function listProviderModels(
-  provider: ProviderId,
-  key: string,
-  baseUrl: string
-): Promise<ModelListResult> {
+export async function listProviderModels(provider: ProviderId, key: string, baseUrl: string): Promise<ModelListResult> {
   if (!key.trim()) return { ok: false, message: 'Сохрани ключ API.' }
   if (baseUrl.trim() && !normalizeBaseUrl(baseUrl)) {
     return { ok: false, message: 'Проверь Base URL.' }
@@ -103,7 +95,7 @@ export async function listProviderModels(
         return { ok: false, message: probeMessage(response.status, provider, '') }
       }
 
-      const page = await response.json() as { data?: unknown; has_more?: unknown; last_id?: unknown } | null
+      const page = (await response.json()) as { data?: unknown; has_more?: unknown; last_id?: unknown } | null
       if (!Array.isArray(page?.data)) return { ok: false, message: 'Сервис вернул список в неизвестном формате.' }
 
       for (const entry of page.data) {

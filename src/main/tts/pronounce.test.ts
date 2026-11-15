@@ -29,14 +29,18 @@ vi.mock('node:fs/promises', async (importOriginal) => {
       if (!hit) throw new Error('ENOENT')
       return hit
     },
-    writeFile: async (path: string, data: string) => { fake.files.set(path, data) },
+    writeFile: async (path: string, data: string) => {
+      fake.files.set(path, data)
+    },
     rename: async (from: string, to: string) => {
       const data = fake.files.get(from)
       if (data === undefined) throw new Error('ENOENT')
       fake.files.delete(from)
       fake.files.set(to, data)
     },
-    rm: async (path: string) => { fake.files.delete(path) }
+    rm: async (path: string) => {
+      fake.files.delete(path)
+    }
   }
 })
 
@@ -171,7 +175,9 @@ describe('resolvePronunciations', () => {
 
   it('shares one lookup between lines that need the same word', async () => {
     let release!: () => void
-    fake.gate = new Promise<void>((resolve) => { release = resolve })
+    fake.gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
     fake.reply = JSON.stringify({ localhost: 'локалх+ост' })
     const { resolvePronunciations } = await import('./pronounce')
 
@@ -188,7 +194,9 @@ describe('resolvePronunciations', () => {
   it('does not pay the wait again while a lookup is unresponsive, until the provider changes', async () => {
     vi.useFakeTimers()
     let release!: () => void
-    fake.gate = new Promise<void>((resolve) => { release = resolve })
+    fake.gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
     const { resolvePronunciations } = await import('./pronounce')
 
     const first = resolvePronunciations('localhost')
@@ -209,7 +217,9 @@ describe('resolvePronunciations', () => {
 
   it('starts a fresh request when the key rotates during a stalled lookup', async () => {
     let releaseFirst!: () => void
-    fake.gate = new Promise<void>((resolve) => { releaseFirst = resolve })
+    fake.gate = new Promise<void>((resolve) => {
+      releaseFirst = resolve
+    })
     const { resolvePronunciations } = await import('./pronounce')
 
     const first = resolvePronunciations('localhost')
@@ -229,7 +239,9 @@ describe('resolvePronunciations', () => {
   it('asks for a word that arrived during another lookup once that lookup settles', async () => {
     const target = '/tmp/deskhand-pronounce-test/tts-pronunciation.json'
     let release!: () => void
-    fake.gate = new Promise<void>((resolve) => { release = resolve })
+    fake.gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
     fake.reply = JSON.stringify({ foo: 'ф+у', bar: 'б+ар' })
     const { resolvePronunciations } = await import('./pronounce')
 
@@ -261,7 +273,9 @@ describe('resolvePronunciations', () => {
     const target = '/tmp/deskhand-pronounce-test/tts-pronunciation.json'
     fake.files.set(target, JSON.stringify({ version: 1, words: { bar: 'б+ар' } }))
     let release!: () => void
-    fake.gate = new Promise<void>((resolve) => { release = resolve })
+    fake.gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
     fake.reply = JSON.stringify({ foo: 'ф+у', baz: 'б+аз' })
     const { resolvePronunciations } = await import('./pronounce')
 
@@ -281,7 +295,9 @@ describe('resolvePronunciations', () => {
   it('keeps queued words unasked while the lookup is backing off', async () => {
     vi.useFakeTimers()
     let release!: () => void
-    fake.gate = new Promise<void>((resolve) => { release = resolve })
+    fake.gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
     fake.reply = '{}'
     const { resolvePronunciations } = await import('./pronounce')
 
@@ -304,7 +320,9 @@ describe('resolvePronunciations', () => {
 
   it('survives a background lookup that fails', async () => {
     let release!: () => void
-    fake.gate = new Promise<void>((resolve) => { release = resolve })
+    fake.gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
     fake.reply = JSON.stringify({ foo: 'ф+у', bar: 'б+ар' })
     const { resolvePronunciations } = await import('./pronounce')
 
@@ -328,7 +346,9 @@ describe('prefetchHints', () => {
 
   it('starts the lookup without waiting for its answer', async () => {
     let release!: () => void
-    fake.gate = new Promise<void>((resolve) => { release = resolve })
+    fake.gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
     fake.reply = JSON.stringify({ localhost: 'локалх+ост' })
 
     await prefetch('localhost')
@@ -365,7 +385,9 @@ describe('prefetchHints', () => {
 
   it('queues a word behind the running lookup instead of starting a second one', async () => {
     let release!: () => void
-    fake.gate = new Promise<void>((resolve) => { release = resolve })
+    fake.gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
     fake.reply = JSON.stringify({ foo: 'ф+у', bar: 'б+ар' })
 
     await prefetch('foo')

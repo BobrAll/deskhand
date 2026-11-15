@@ -1,4 +1,5 @@
 import XCTest
+
 @testable import DeskhandCore
 
 /// The fingerprint is what "разрешить всегда" remembers, so it has to name the

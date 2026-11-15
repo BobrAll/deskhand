@@ -38,13 +38,7 @@ import { accessibilityTrusted } from '../permissions'
 import { getSettings, patchSettings } from '../settings/store'
 import { AGENT_MIN_OUTPUT_TOKENS } from '@shared/defaults'
 import { classifyCall, describeCall, rememberKey } from './approval'
-import {
-  agentBinary,
-  AgentSidecar,
-  type AgentProvider,
-  type AgentSidecarEvent,
-  type AgentToolTiming
-} from './sidecar'
+import { agentBinary, AgentSidecar, type AgentProvider, type AgentSidecarEvent, type AgentToolTiming } from './sidecar'
 import { trace, traceWithin } from './trace'
 import { createRunTrace } from './run-trace'
 
@@ -261,23 +255,29 @@ const UNKNOWN_STOP = 'incomplete'
  */
 function stopMessage(reason: string, total: number): string {
   if (reason.includes(STOP_BUDGET)) {
-    return `Не успел за ${total} ${plural(total, 'шаг', 'шага', 'шагов')} — задача осталась ` +
+    return (
+      `Не успел за ${total} ${plural(total, 'шаг', 'шага', 'шагов')} — задача осталась ` +
       'невыполненной. Увеличь лимит шагов в настройках или уточни запрос.'
+    )
   }
   if (reason.includes(STOP_TOKEN_LIMIT)) {
     // Not the same problem as running out of steps: the run had budget left, but
     // every answer was cut in half, so the model never got to say what it wanted
     // to do. Raising the step limit would not help — the fix is the output
     // length.
-    return 'Остановился: ответ модели обрывался по лимиту длины. Увеличь максимум ' +
+    return (
+      'Остановился: ответ модели обрывался по лимиту длины. Увеличь максимум ' +
       'токенов в настройках — задача осталась невыполненной.'
+    )
   }
   if (reason.includes(STOP_RETURNING_TO_SCREEN)) {
     // Not the same as a repeated call: the run tried different things and kept
     // arriving at the same screen. Raising the step limit would only buy more of
     // the same, so the honest answer names the loop instead.
-    return 'Остановился: несколько шагов подряд экран не менялся — задача пошла по кругу. ' +
+    return (
+      'Остановился: несколько шагов подряд экран не менялся — задача пошла по кругу. ' +
       'Задача осталась невыполненной.'
+    )
   }
   return 'Задача осталась невыполненной.'
 }
@@ -597,8 +597,7 @@ export function createAgentController(host: AgentHost) {
       // The same for a start that failed after the stop: the card already says
       // what happened, and a second verdict would replace the user's message.
       if (token === generation) {
-        const message =
-          error instanceof Error ? error.message : 'Не удалось запустить агента.'
+        const message = error instanceof Error ? error.message : 'Не удалось запустить агента.'
         // A start that failed has no further event to come: leaving the card on
         // `arming` would show «Подготовка» for a run that is already over.
         publish({ phase: 'error', step: 0, total: 0, label: '', message, code: 'blocked' })
@@ -636,8 +635,7 @@ export function createAgentController(host: AgentHost) {
       // Reaching for the answer is not taking control back. A question makes the
       // card clickable, and the hand on the mouse is on its way to «Разрешить»;
       // stopping the run there was the bug.
-      if (reason === 'mousemove' &&
-          (current?.pending || Date.now() < ignoreMouseUntil)) return
+      if (reason === 'mousemove' && (current?.pending || Date.now() < ignoreMouseUntil)) return
       // An open question owns Escape. The focused card answers it itself; only
       // when the user clicked away does the native watcher answer, so Escape
       // cannot be swallowed by the app behind the question.
@@ -766,9 +764,8 @@ export function createAgentController(host: AgentHost) {
         const pendingLabel = active.callLabels.findIndex(
           (entry) => entry.step === event.step && entry.name === event.name
         )
-        const label = pendingLabel >= 0
-          ? active.callLabels.splice(pendingLabel, 1)[0].label
-          : (lastPublished.label || event.name)
+        const label =
+          pendingLabel >= 0 ? active.callLabels.splice(pendingLabel, 1)[0].label : lastPublished.label || event.name
         active.actions.push({
           tool: event.name,
           label,

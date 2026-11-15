@@ -13,7 +13,9 @@ interface AudioBlock {
 
 class FakeTrack {
   readyState: MediaStreamTrackState = 'live'
-  stop = vi.fn(() => { this.readyState = 'ended' })
+  stop = vi.fn(() => {
+    this.readyState = 'ended'
+  })
 }
 
 class FakeStream {
@@ -200,7 +202,12 @@ describe('microphone check lifecycle', () => {
     const { startRecording } = await import('./recorder')
     const track = new FakeTrack()
     let grant!: (stream: FakeStream) => void
-    getUserMedia.mockImplementationOnce(() => new Promise((resolve) => { grant = resolve }))
+    getUserMedia.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          grant = resolve
+        })
+    )
     const controller = new AbortController()
     const result = startRecording(0, controller.signal)
     controller.abort()

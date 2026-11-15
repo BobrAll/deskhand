@@ -17,14 +17,7 @@
 import { describe, expect, it } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import {
-  CARET_SLACK,
-  CHROME_WIDTH,
-  FIELD_FONT,
-  MAX_FIELD_HEIGHT,
-  STOP_CHROME,
-  clamp
-} from './cardMetrics'
+import { CARET_SLACK, CHROME_WIDTH, FIELD_FONT, MAX_FIELD_HEIGHT, STOP_CHROME, clamp } from './cardMetrics'
 
 const overlayCss = readFileSync(join(__dirname, 'overlay.css'), 'utf8')
 

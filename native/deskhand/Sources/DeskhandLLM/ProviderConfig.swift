@@ -1,5 +1,5 @@
-import Foundation
 import DeskhandCore
+import Foundation
 
 /// What every request from both wires has in common.
 enum ProviderHTTP {
@@ -259,9 +259,13 @@ public enum MiniTOML {
         var index = line.startIndex
         while index < line.endIndex {
             let c = line[index]
-            if c == "'" && !inDouble { inSingle.toggle() }
-            else if c == "\"" && !inSingle { inDouble.toggle() }
-            else if c == character && !inSingle && !inDouble { return index }
+            if c == "'" && !inDouble {
+                inSingle.toggle()
+            } else if c == "\"" && !inSingle {
+                inDouble.toggle()
+            } else if c == character && !inSingle && !inDouble {
+                return index
+            }
             index = line.index(after: index)
         }
         return nil

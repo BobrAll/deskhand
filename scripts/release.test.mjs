@@ -2,20 +2,13 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import {
-  ARTIFACTS,
-  PIN_PLACEHOLDER,
-  certificateLeaf,
-  isPinned,
-  pinInstaller,
-  readSigningPin
-} from './lib/release.mjs'
+import { ARTIFACTS, PIN_PLACEHOLDER, certificateLeaf, isPinned, pinInstaller, readSigningPin } from './lib/release.mjs'
 
 describe('release helpers', () => {
   it('reads the certificate leaf from a designated requirement', () => {
-    expect(
-      certificateLeaf('designated => identifier "com.bobr.deskhand" and certificate leaf = H"ABC123"')
-    ).toBe('abc123')
+    expect(certificateLeaf('designated => identifier "com.bobr.deskhand" and certificate leaf = H"ABC123"')).toBe(
+      'abc123'
+    )
   })
 
   it('does not treat an ad-hoc cdhash as a certificate', () => {
@@ -30,9 +23,7 @@ describe('release helpers', () => {
   })
 
   it('replaces the installer placeholder with the pin', () => {
-    expect(pinInstaller(`before ${PIN_PLACEHOLDER} after`, 'a'.repeat(40))).toBe(
-      `before ${'a'.repeat(40)} after`
-    )
+    expect(pinInstaller(`before ${PIN_PLACEHOLDER} after`, 'a'.repeat(40))).toBe(`before ${'a'.repeat(40)} after`)
   })
 
   it('rejects an installer without the placeholder', () => {

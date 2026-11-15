@@ -16,11 +16,11 @@ let store: Store<HistoryFile> | undefined
 let command: LastCommand | null | undefined
 
 function historyStore(): Store<HistoryFile> {
-  return store ??= new Store<HistoryFile>({
+  return (store ??= new Store<HistoryFile>({
     name: 'conversation',
     configFileMode: 0o600,
     clearInvalidConfig: true
-  })
+  }))
 }
 
 function parseCommand(value: unknown): LastCommand | null {
@@ -46,7 +46,12 @@ function writeCommand(next: LastCommand | null): void {
  */
 function migrateLegacyExchanges(saved: HistoryFile): LastCommand | null {
   const legacy = Array.isArray(saved.exchanges) ? saved.exchanges : []
-  return legacy.map(parseCommand).filter((entry) => entry !== null).at(-1) ?? null
+  return (
+    legacy
+      .map(parseCommand)
+      .filter((entry) => entry !== null)
+      .at(-1) ?? null
+  )
 }
 
 function readCommand(): LastCommand | null {

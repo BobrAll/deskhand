@@ -26,8 +26,8 @@ body,
 @media (prefers-color-scheme: light) {
   :root {
     --panel: rgba(252, 253, 255, 0.66);
-    --panel-edge: rgba(0, 0, 0, 0.10);
-    --panel-drawing: rgba(200, 202, 206, 0.40);
+    --panel-edge: rgba(0, 0, 0, 0.1);
+    --panel-drawing: rgba(200, 202, 206, 0.4);
   }
 }
 
@@ -48,19 +48,7 @@ body,
   cursor: grab;
 }
 
-.card :is(
-  textarea,
-  button,
-  input,
-  a,
-  .answer,
-  .meta,
-  .drawer,
-  .foot,
-  .agent,
-  .agent-done,
-  .grip
-) {
+.card :is(textarea, button, input, a, .answer, .meta, .drawer, .foot, .agent, .agent-done, .grip) {
   -webkit-app-region: no-drag;
 }
 
@@ -106,7 +94,9 @@ textarea.prompt {
     transparent 26px
   );
   box-shadow: inset 0 0 2px rgb(0 0 0 / 0.16);
-  transition: background-color 180ms ease-out, border-color 180ms ease-out;
+  transition:
+    background-color 180ms ease-out,
+    border-color 180ms ease-out;
 }
 
 /**
@@ -223,7 +213,9 @@ button.toggle {
   background: transparent;
   border-color: transparent;
   color: var(--text-faint);
-  transition: color 90ms ease-out, background 90ms ease-out;
+  transition:
+    color 90ms ease-out,
+    background 90ms ease-out;
 }
 
 button.toggle svg {
@@ -269,7 +261,9 @@ button.close {
   background: transparent;
   border-color: transparent;
   color: var(--text-faint);
-  transition: color 90ms ease-out, background 90ms ease-out;
+  transition:
+    color 90ms ease-out,
+    background 90ms ease-out;
 }
 
 button.close svg {
@@ -592,8 +586,12 @@ button.tag.clear {
 }
 
 @keyframes agent-step-in {
-  from { opacity: 0.55; }
-  to { opacity: 1; }
+  from {
+    opacity: 0.55;
+  }
+  to {
+    opacity: 1;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -1039,5 +1037,11 @@ button.link[data-copied]:hover:not(:disabled) {
   line-height: 1.5;
   overflow-wrap: anywhere;
 }
-.waiting-label { font-weight: 500; }
-.waiting-caption { display: block; font-weight: 600; margin-bottom: 3px; }
+.waiting-label {
+  font-weight: 500;
+}
+.waiting-caption {
+  display: block;
+  font-weight: 600;
+  margin-bottom: 3px;
+}

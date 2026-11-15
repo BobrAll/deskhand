@@ -65,9 +65,7 @@ function declaredMethods(): string[] {
   const start = source.indexOf('export interface DeskhandApi')
   const body = source.slice(source.indexOf('{', start))
   // Drop comments first: a `//` line mentioning `foo()` must not become a method.
-  const withoutComments = body
-    .replace(/\/\*[\s\S]*?\*\//g, '')
-    .replace(/\/\/[^\n]*/g, '')
+  const withoutComments = body.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '')
 
   const out: string[] = []
   const stack: string[] = []

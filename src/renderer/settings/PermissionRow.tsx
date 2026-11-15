@@ -10,11 +10,7 @@ export interface PermissionRowProps {
 
 export function PermissionRow(props: PermissionRowProps) {
   return (
-    <Row
-      title={props.title}
-      hint={props.hint}
-      stacked={!props.granted}
-    >
+    <Row title={props.title} hint={props.hint} stacked={!props.granted}>
       <div className="row-actions">
         <span className={props.granted ? 'permission-state ok' : 'permission-state warn'}>
           {props.granted ? '● Разрешено' : '● Не разрешено'}

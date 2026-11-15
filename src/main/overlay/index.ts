@@ -153,8 +153,7 @@ const INITIAL_HEIGHT = CARD_FOLDED_HEIGHT
  * arrives, and the only thing that changed is that the model could not see the
  * screen and therefore did not draw on it.
  */
-const MODEL_REFUSED_IMAGE =
-  'Модель не принимает изображения — ответ получен без скриншота и рисунка.'
+const MODEL_REFUSED_IMAGE = 'Модель не принимает изображения — ответ получен без скриншота и рисунка.'
 
 /**
  * Shown when the card's app is on the exclusion list.
@@ -216,15 +215,26 @@ const OPENROUTER_ATTRIBUTION = {
  */
 function describeRunOutcome(run: AgentRunResult, acknowledged: boolean): { outcome: string; reason: string } {
   const spoke = run.answer.trim().length > 0
-  const outcome = run.blocked ? 'blocked'
-    : run.aborted ? 'cancelled'
-      : run.incomplete ? 'incomplete'
-        : spoke && !acknowledged ? 'agent-report' : 'agent-silent'
-  const reason = run.blocked ? 'agent-unavailable'
-    : run.aborted ? 'agent-stop'
-      : run.incomplete ? 'agent-incomplete'
-        : acknowledged ? 'agent-acknowledged'
-          : spoke ? 'agent-answer' : 'no-answer'
+  const outcome = run.blocked
+    ? 'blocked'
+    : run.aborted
+      ? 'cancelled'
+      : run.incomplete
+        ? 'incomplete'
+        : spoke && !acknowledged
+          ? 'agent-report'
+          : 'agent-silent'
+  const reason = run.blocked
+    ? 'agent-unavailable'
+    : run.aborted
+      ? 'agent-stop'
+      : run.incomplete
+        ? 'agent-incomplete'
+        : acknowledged
+          ? 'agent-acknowledged'
+          : spoke
+            ? 'agent-answer'
+            : 'no-answer'
   return { outcome, reason }
 }
 
@@ -332,18 +342,19 @@ export function createOverlayController(host: OverlayHost) {
       // The card itself was in front: the app it belongs to is the one the user
       // came from. Without a visible card (settings is frontmost) there is no
       // field behind us worth typing into.
-      dictationTarget = cardVisible ? session?.target ?? null : null
+      dictationTarget = cardVisible ? (session?.target ?? null) : null
     } else {
-      dictationTarget = front && front.pid > 0
-        ? {
-            bundleId: front.bundleId,
-            name: front.name,
-            pid: front.pid,
-            windowTitle: front.windowTitle,
-            windowId: front.windowId,
-            bounds: front.bounds
-          }
-        : null
+      dictationTarget =
+        front && front.pid > 0
+          ? {
+              bundleId: front.bundleId,
+              name: front.name,
+              pid: front.pid,
+              windowTitle: front.windowTitle,
+              windowId: front.windowId,
+              bounds: front.bounds
+            }
+          : null
     }
     if (!dictationTarget) {
       host.showField(null)
@@ -415,7 +426,13 @@ export function createOverlayController(host: OverlayHost) {
 
   /** Keeps the card and the display layer in sync with the agent's state. */
   function publishAgent(event: AgentEvent): void {
-    trace('agent.phase', { phase: event.phase, step: event.step, total: event.total, completed: event.completed === true, calls: event.actions?.length ?? 0 })
+    trace('agent.phase', {
+      phase: event.phase,
+      step: event.step,
+      total: event.total,
+      completed: event.completed === true,
+      calls: event.actions?.length ?? 0
+    })
     sendToWindow(CH.agent.event, event)
     updateAgentCursor(event)
     // The ghost pointer follows the run, not the step: it is present from
@@ -622,7 +639,7 @@ export function createOverlayController(host: OverlayHost) {
         trace('screen.captureJoined')
         return captureInFlight.promise
       }
-      const next = (): Promise<ScreenshotInfo | null> | null => session === target ? captureFor(target) : null
+      const next = (): Promise<ScreenshotInfo | null> | null => (session === target ? captureFor(target) : null)
       return captureInFlight.promise.then(next, next)
     }
 
@@ -652,17 +669,13 @@ export function createOverlayController(host: OverlayHost) {
       // the whole display is always safe, so that call would be pure cost.
       const excludedApps = settings.excludedApps
       const [front, visibleBundleIds] = await Promise.all([
-        settings.agent.enabled || excludedApps.length > 0
-          ? helperFrontWindow()
-          : Promise.resolve(null),
+        settings.agent.enabled || excludedApps.length > 0 ? helperFrontWindow() : Promise.resolve(null),
         excludedApps.length > 0 ? helperVisibleBundleIds() : Promise.resolve(null)
       ])
       const underOverlay = front?.pid === process.pid
       // Under our own card the frontmost window is not the one being acted on:
       // read the remembered target's window instead.
-      const observed = underOverlay
-        ? (target.target ? await helperWindow(target.target.pid) : null)
-        : front
+      const observed = underOverlay ? (target.target ? await helperWindow(target.target.pid) : null) : front
       const capture = captureTargetFor({
         observed,
         remembered: target.target,
@@ -681,10 +694,9 @@ export function createOverlayController(host: OverlayHost) {
         publishContext(target)
         return null
       }
-      const shot = await timed('screen.capture', () => captureScreenshot(
-        capture,
-        { maxSide: settings.screenshotMaxSide, quality: settings.screenshotQuality }
-      ))
+      const shot = await timed('screen.capture', () =>
+        captureScreenshot(capture, { maxSide: settings.screenshotMaxSide, quality: settings.screenshotQuality })
+      )
       if (shot && observed) {
         if (await windowStillMatches(observed)) {
           observedApps.set(shot, observed)
@@ -718,8 +730,11 @@ export function createOverlayController(host: OverlayHost) {
    */
   async function ensureFreshScreenshot(target: Session, requireObserved = false): Promise<ScreenshotInfo | null> {
     const current = target.snapshot.screenshot
-    if (current && Date.now() - current.capturedAt < MAX_SHOT_AGE_MS &&
-        (!requireObserved || observedApps.has(current))) {
+    if (
+      current &&
+      Date.now() - current.capturedAt < MAX_SHOT_AGE_MS &&
+      (!requireObserved || observedApps.has(current))
+    ) {
       trace('screen.cacheHit', { ageMs: Date.now() - current.capturedAt })
       return current
     }
@@ -1158,13 +1173,15 @@ export function createOverlayController(host: OverlayHost) {
       const next = [...session.annotations, ...shapes]
       session.annotations = next
       emitAnnotations()
-      painting = painting.then(() => {
-        if (dismissed) return
-        return showAnnotations(area, next, () => {
-          dismissed = true
-          clearAnnotations()
+      painting = painting
+        .then(() => {
+          if (dismissed) return
+          return showAnnotations(area, next, () => {
+            dismissed = true
+            clearAnnotations()
+          })
         })
-      }).catch(() => undefined)
+        .catch(() => undefined)
     }
 
     const append = (delta: string): void => {
@@ -1180,24 +1197,36 @@ export function createOverlayController(host: OverlayHost) {
 
     // Everything that is not about this window — parsing, filtering, the tail —
     // lives in `consumeTurnStream`, so it can be driven by a fake provider.
-    const result = await timed('model.round', () => consumeTurnStream({
-      provider: getProvider(settings.provider),
-      messages,
-      apiKey,
-      streamOptions: {
+    const result = await timed(
+      'model.round',
+      () =>
+        consumeTurnStream({
+          provider: getProvider(settings.provider),
+          messages,
+          apiKey,
+          streamOptions: {
+            model: resolveChatModel(settings) ?? '',
+            temperature: settings.temperature,
+            maxTokens,
+            baseUrl: resolveBaseUrl(settings.provider, settings.baseUrls[settings.provider]),
+            extraBody: parseExtraBody(settings.extraBody[settings.provider]) ?? undefined,
+            signal
+          },
+          isAlive: () => !signal.aborted && Boolean(session),
+          onAnnotations: paint,
+          onText: append
+        }),
+      {
+        provider: settings.provider,
         model: resolveChatModel(settings) ?? '',
-        temperature: settings.temperature,
-        maxTokens,
-        baseUrl: resolveBaseUrl(settings.provider, settings.baseUrls[settings.provider]),
-        extraBody: parseExtraBody(settings.extraBody[settings.provider]) ?? undefined,
-        signal
-      },
-      isAlive: () => !signal.aborted && Boolean(session),
-      onAnnotations: paint,
-      onText: append
-    }), { provider: settings.provider, model: resolveChatModel(settings) ?? '', withImage: Boolean(area),
-      imageBase64Bytes: messages.reduce((size, message) => size + message.parts.reduce(
-        (total, part) => total + (part.type === 'image' ? part.base64.length : 0), 0), 0) })
+        withImage: Boolean(area),
+        imageBase64Bytes: messages.reduce(
+          (size, message) =>
+            size + message.parts.reduce((total, part) => total + (part.type === 'image' ? part.base64.length : 0), 0),
+          0
+        )
+      }
+    )
     return result
   }
 
@@ -1207,12 +1236,23 @@ export function createOverlayController(host: OverlayHost) {
     // A short digest of everything that changes what a run does, so the trace can
     // group runs by configuration without recording any of the values — a model
     // name and a temperature are the user's business, not the log's.
-    const config = createHash('sha256').update(JSON.stringify([
-      settings.provider, resolveChatModel(settings), settings.temperature, settings.maxTokens,
-      settings.agent.enabled, settings.agent.maxSteps, settings.agent.verifyResult,
-      settings.agent.abortOnMouseMove,
-      settings.screenshotMaxSide, settings.screenshotQuality
-    ])).digest('hex').slice(0, 12)
+    const config = createHash('sha256')
+      .update(
+        JSON.stringify([
+          settings.provider,
+          resolveChatModel(settings),
+          settings.temperature,
+          settings.maxTokens,
+          settings.agent.enabled,
+          settings.agent.maxSteps,
+          settings.agent.verifyResult,
+          settings.agent.abortOnMouseMove,
+          settings.screenshotMaxSide,
+          settings.screenshotQuality
+        ])
+      )
+      .digest('hex')
+      .slice(0, 12)
     return traceTurn({ voice: request.voice === true, provider: settings.provider, config }, () => sendTurn(request))
   }
 
@@ -1297,9 +1337,7 @@ export function createOverlayController(host: OverlayHost) {
      * the model round trip starts now.
      */
     let previewHide: ReturnType<typeof setTimeout> | undefined
-    const previewUntil = request.voice && host.window()?.isVisible()
-      ? Date.now() + VOICE_PREVIEW_MS
-      : 0
+    const previewUntil = request.voice && host.window()?.isVisible() ? Date.now() + VOICE_PREVIEW_MS : 0
     try {
       // A spoken request is routed immediately. The transcript stays in the
       // composer while the turn is busy (the renderer keeps it until the first
@@ -1314,9 +1352,10 @@ export function createOverlayController(host: OverlayHost) {
       const history = turnSession.history.filter(
         (entry) => !entry.bundleId || !settings.excludedApps.includes(entry.bundleId)
       )
-      const previousCommand = useHistory && !refine && turnSession.history.length === 0
-        ? readPreviousCommand(settings.excludedApps)
-        : undefined
+      const previousCommand =
+        useHistory && !refine && turnSession.history.length === 0
+          ? readPreviousCommand(settings.excludedApps)
+          : undefined
 
       if (request.voice && !isActionRequest) {
         // The request is already under way. Give the reader the transcript for
@@ -1409,10 +1448,20 @@ export function createOverlayController(host: OverlayHost) {
         if (session === turnSession && turnSession.abort === abort) {
           if (outcome === 'timeout') fail('Время выполнения истекло. Результат не подтверждён.', true, 'timeout')
           else if (abort.signal.reason === STOP_AGENT) {
-            if (agent.last().phase !== 'aborted') publishAgent({
-              phase: 'aborted', step: 0, total: 0, label: '', message: 'Остановлено.'
-            })
-            sendToWindow(CH.overlay.stream, { type: 'done', requestId: request.requestId, text: '', annotations: 0 } satisfies StreamEvent)
+            if (agent.last().phase !== 'aborted')
+              publishAgent({
+                phase: 'aborted',
+                step: 0,
+                total: 0,
+                label: '',
+                message: 'Остановлено.'
+              })
+            sendToWindow(CH.overlay.stream, {
+              type: 'done',
+              requestId: request.requestId,
+              text: '',
+              annotations: 0
+            } satisfies StreamEvent)
           }
         }
       }
@@ -1462,9 +1511,7 @@ export function createOverlayController(host: OverlayHost) {
     // The agent is given the same conversation the writer would get. «Сделай»
     // is not a task on its own: it means "the thing that was just discussed",
     // and that sentence lives in the turns above it.
-    const agentHistory = useHistory
-      ? history.map(({ question, answer }) => ({ question, answer }))
-      : []
+    const agentHistory = useHistory ? history.map(({ question, answer }) => ({ question, answer })) : []
     if (agentHistory.length === 0 && previousCommand) {
       agentHistory.push({ question: previousCommand, answer: '' })
     }
@@ -1472,14 +1519,16 @@ export function createOverlayController(host: OverlayHost) {
     const stopOnAbort = stopAgentOnAbort(abort)
     let run: AgentRunResult
     try {
-      run = await timed('agent.run', () => agent.run({
-        prompt: request.prompt,
-        appName: turnSession.target?.name ?? null,
-        windowTitle: turnSession.target?.windowTitle ?? null,
-        history: agentHistory,
-        provider: agentProvider(settings, apiKey),
-        excludedApps: settings.excludedApps
-      }))
+      run = await timed('agent.run', () =>
+        agent.run({
+          prompt: request.prompt,
+          appName: turnSession.target?.name ?? null,
+          windowTitle: turnSession.target?.windowTitle ?? null,
+          history: agentHistory,
+          provider: agentProvider(settings, apiKey),
+          excludedApps: settings.excludedApps
+        })
+      )
     } finally {
       stopOnAbort()
     }
@@ -1495,11 +1544,8 @@ export function createOverlayController(host: OverlayHost) {
     }
 
     const report = run.answer.trim()
-    const acknowledged = report === AGENT_DONE_MARKER && !run.message &&
-      !run.blocked && !run.aborted && !run.incomplete
-    const answer = acknowledged ? '' : run.incomplete
-      ? (run.message ?? '')
-      : report || (run.message ?? '')
+    const acknowledged = report === AGENT_DONE_MARKER && !run.message && !run.blocked && !run.aborted && !run.incomplete
+    const answer = acknowledged ? '' : run.incomplete ? (run.message ?? '') : report || (run.message ?? '')
     const { outcome, reason } = describeRunOutcome(run, acknowledged)
     const nothingToShow = !acknowledged && run.actions.length === 0 && !run.blocked && !run.incomplete
     return {
@@ -1519,8 +1565,15 @@ export function createOverlayController(host: OverlayHost) {
    */
   async function runWriterTurn(turn: TurnContext): Promise<TurnResult | null> {
     const {
-      request, session: turnSession, settings, apiKey, refine, history, previousCommand,
-      availability, abort
+      request,
+      session: turnSession,
+      settings,
+      apiKey,
+      refine,
+      history,
+      previousCommand,
+      availability,
+      abort
     } = turn
     let observedApp: RawFrontApp | undefined
     let drawingTargets: AxElementInfo[] = []
@@ -1548,17 +1601,18 @@ export function createOverlayController(host: OverlayHost) {
     const streamBuilt = (
       turnRequest: TurnRequest,
       frame: { canDraw: boolean; area: ScreenRect | null; drawingTargets: AxElementInfo[] }
-    ): Promise<{ text: string; webLookup?: boolean }> => streamRound({
-      messages: turnRequest.messages,
-      requestId: request.requestId,
-      maxTokens: turnRequest.maxTokens,
-      signal: abort.signal,
-      canDraw: frame.canDraw,
-      area: frame.area,
-      apiKey,
-      drawingTargets: frame.drawingTargets,
-      revealText: request.voice
-    })
+    ): Promise<{ text: string; webLookup?: boolean }> =>
+      streamRound({
+        messages: turnRequest.messages,
+        requestId: request.requestId,
+        maxTokens: turnRequest.maxTokens,
+        signal: abort.signal,
+        canDraw: frame.canDraw,
+        area: frame.area,
+        apiKey,
+        drawingTargets: frame.drawingTargets,
+        revealText: request.voice
+      })
 
     const built = await buildTurnRequest({
       request,
@@ -1574,9 +1628,14 @@ export function createOverlayController(host: OverlayHost) {
       },
       describeScreen: async (pid, bounds, area) => {
         if (!(await observationHolds())) return null
-        const outline = await readScreenOutline(observedApp?.pid ?? pid, observedApp?.bounds ?? bounds, area, (targets) => {
-          drawingTargets = targets
-        })
+        const outline = await readScreenOutline(
+          observedApp?.pid ?? pid,
+          observedApp?.bounds ?? bounds,
+          area,
+          (targets) => {
+            drawingTargets = targets
+          }
+        )
         if (!(await observationHolds())) {
           drawingTargets = []
           return null
@@ -1626,8 +1685,10 @@ export function createOverlayController(host: OverlayHost) {
     if (abort.signal.aborted || session !== turnSession) return null
 
     const webLookup = !refine && round.webLookup && allowsWebLookup(request.prompt)
-    trace('tool.route', { backend: webLookup ? 'web-search' : 'text',
-      reason: webLookup ? 'search-marker' : 'plain-response' })
+    trace('tool.route', {
+      backend: webLookup ? 'web-search' : 'text',
+      reason: webLookup ? 'search-marker' : 'plain-response'
+    })
     const webAnswer = webLookup
       ? await timed('web.search', () => searchWeb(request.prompt, settings, apiKey, abort.signal))
       : ''
@@ -1681,20 +1742,20 @@ export function createOverlayController(host: OverlayHost) {
    * is the same answer in other words, and remembering both would have the model
    * follow up on a text that is no longer on screen.
    */
-  function remember(turnSession: Session, request: SendRequest, answer: string, bundleId: string | null): CardExchange | null {
+  function remember(
+    turnSession: Session,
+    request: SendRequest,
+    answer: string,
+    bundleId: string | null
+  ): CardExchange | null {
     const question = request.prompt.trim()
     const reply = answer.trim()
     if (!question || !reply) return null
 
     const entry: CardExchange = {
       bundleId,
-      question: question.length > MAX_HISTORY_CHARS
-        ? `${question.slice(0, MAX_HISTORY_CHARS)}…`
-        : question,
-      answer:
-        reply.length > MAX_HISTORY_CHARS
-          ? `${reply.slice(0, MAX_HISTORY_CHARS)}…`
-          : reply
+      question: question.length > MAX_HISTORY_CHARS ? `${question.slice(0, MAX_HISTORY_CHARS)}…` : question,
+      answer: reply.length > MAX_HISTORY_CHARS ? `${reply.slice(0, MAX_HISTORY_CHARS)}…` : reply
     }
     const last = turnSession.history[turnSession.history.length - 1]
     if (request.refine && last?.question === entry.question) {
@@ -1778,8 +1839,7 @@ export function createOverlayController(host: OverlayHost) {
     // While a dictation is reading the front app, the old card target is not a
     // fallback: a partial window that arrives in that gap must wait rather than
     // paste into the app a previous card happened to belong to.
-    target: (): ActiveAppInfo | null =>
-      dictating ? dictationTarget : session?.target ?? null,
+    target: (): ActiveAppInfo | null => (dictating ? dictationTarget : (session?.target ?? null)),
     isOpen: (): boolean => cardOnScreen()
   }
 }

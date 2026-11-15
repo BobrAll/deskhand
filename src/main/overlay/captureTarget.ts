@@ -37,8 +37,8 @@ export function captureTargetFor(choice: CaptureChoice): CaptureTarget | null {
   }
   if (excludedApps.length === 0) return { ...target, fullDisplay: true }
 
-  const excludedVisible = visibleBundleIds === null ||
-    visibleBundleIds.some((bundleId) => excludedApps.includes(bundleId))
+  const excludedVisible =
+    visibleBundleIds === null || visibleBundleIds.some((bundleId) => excludedApps.includes(bundleId))
   if (excludedVisible) return { ...target, fullDisplay: false, allowFullScreenFallback: false }
   return { ...target, fullDisplay: true }
 }
