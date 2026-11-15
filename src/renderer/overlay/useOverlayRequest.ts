@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState, type MutableRefObject } from 'react'
+import { useCallback, useEffect, useRef, useState, type MutableRefObject } from 'react'
 import type { AgentEvent, OverlayState, RefineDirection, ResponseMode, StreamEvent } from '@shared/types'
 import { looksLikeAction } from '@shared/intent'
 import { finishTurnSpeech, type TurnKind } from './useAgentSpeech'
@@ -177,6 +177,10 @@ export function useOverlayRequest({
     },
     [agentRef, setPrompt, speechRef]
   )
+
+  // The request owns its stream: the answer is built here, and the listener
+  // lives exactly as long as the overlay controller that mounts this hook.
+  useEffect(() => window.deskhand.overlay.onStream(onStream), [onStream])
 
   const send = useCallback(
     (text: string, sendMode?: ResponseMode, spoken = false) => {
@@ -372,7 +376,6 @@ export function useOverlayRequest({
     currentRequestId,
     turnKind,
     markStoppedByUser,
-    onStream,
     send,
     refine,
     retryLast,

@@ -101,7 +101,6 @@ export function useOverlayController() {
     currentRequestId,
     turnKind,
     markStoppedByUser,
-    onStream,
     send,
     refine,
     retryLast,
@@ -244,7 +243,7 @@ export function useOverlayController() {
     },
     [onAgentSpeech]
   )
-  useOverlayEvents({ applyState, onPreparing, onContext, onStream, onDrawn: setDrawn, onAgent, clearProgress })
+  useOverlayEvents({ applyState, onPreparing, onContext, onDrawn: setDrawn, onAgent, clearProgress })
 
   // Restore blur while typing, even if annotations are still visible.
   useEffect(() => {
