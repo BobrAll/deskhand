@@ -26,7 +26,7 @@ body,
 @media (prefers-color-scheme: light) {
   :root {
     --panel: rgba(252, 253, 255, 0.66);
-    --panel-edge: rgba(0, 0, 0, 0.1);
+    --panel-edge: rgba(0, 0, 0, 0.14);
     --panel-drawing: rgba(200, 202, 206, 0.4);
   }
 }
@@ -96,15 +96,11 @@ textarea.prompt {
     light-dark(rgb(255 255 255 / 0.16), rgb(255 255 255 / 0.08)),
     transparent 26px
   );
-  /* The window is `hasShadow: false` — a native shadow would be clipped to the
-     square the vibrancy view occupies — and the inset line alone leaves the card
-     floating on a white document with no edge at all. A soft external shadow,
-     faint enough to disappear over dark content, gives it a shelf to sit on
-     without the hard border the glass does not have. */
-  box-shadow:
-    inset 0 0 2px rgb(0 0 0 / 0.16),
-    0 1px 3px rgb(0 0 0 / 0.12),
-    0 8px 24px rgb(0 0 0 / 0.18);
+  /* The window is `hasShadow: false` and is resized to exactly the card, so a
+     native or CSS outer shadow would be clipped away at the window edge. What
+     keeps the glass legible on a white document is the edge itself: the light
+     scheme draws it darker than before, and the inset line gives it depth. */
+  box-shadow: inset 0 0 2px rgb(0 0 0 / 0.16);
   transition:
     background-color 180ms ease-out,
     border-color 180ms ease-out;
@@ -341,15 +337,17 @@ button.toggle::before,
 button.close::before {
   content: '';
   position: absolute;
-  inset: -6px;
+  /* 24 × 28: four points sideways leave the 6 pt bar gap intact between two
+     neighbours, six vertically stay inside the card's own padding. */
+  inset: -6px -4px;
   border-radius: var(--radius-sm);
 }
 
-/* 18 pt drawn, 28 pt to hit. */
+/* 18 pt drawn, 24 pt to hit. */
 button.stop::before {
   content: '';
   position: absolute;
-  inset: -5px;
+  inset: -3px;
   border-radius: var(--radius-sm);
 }
 
@@ -897,21 +895,13 @@ button.tag.clear {
 
 /**
  * The grab edge is 7 pt wide because wider would turn scrolling into resizing.
- * The invisible target widens it to 11 pt inward, over the card's own padding.
  *
- * The tradeoff: the answer's 5 pt scrollbar starts 8 pt in, so the outer 3 pt of
- * the thumb now belongs to the grip. The inner 2 pt and the whole track still
- * scroll, and a vertical drag that starts on the padding was never a scroll in
- * the first place — the alternative, a full 24 pt strip, would swallow the
- * scrollbar entirely on a card this narrow. The edge does not grow outward past
- * the window, where there is nothing left to hit.
+ * It is the one control that does not grow an invisible target: the answer's
+ * scrollbar starts 8 pt in, and an 11 pt strip would take the outer 3 pt of the
+ * thumb — a vertical drag on the scrollbar would resize the card instead. The
+ * keyboard reaches the same edge with Tab, and «Шире» is the pointer path that
+ * does not depend on hitting 7 pt.
  */
-.grip::before {
-  content: '';
-  position: absolute;
-  inset: 0 0 0 -4px;
-}
-
 .grip::after {
   content: '';
   position: absolute;

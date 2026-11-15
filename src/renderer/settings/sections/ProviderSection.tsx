@@ -4,11 +4,13 @@ import {
   DEFAULT_SYSTEM_PROMPT,
   PROVIDERS,
   SETTINGS_BOUNDS,
+  ignoredExtraBodyFields,
   normalizeBaseUrl,
   parseExtraBody,
   providerInfo,
   searchModelFallback
 } from '@shared/defaults'
+import { invalidExtraBodyProviders } from '../applyGate'
 import { Disclosure, Group, Row, Toggle } from '../Row'
 
 interface ProviderSectionProps {
@@ -54,6 +56,9 @@ export function ProviderSection({
   const modelListRef = useRef<HTMLSelectElement>(null)
   const modelIdRef = useRef<HTMLInputElement>(null)
   const extraBodyRef = useRef<HTMLTextAreaElement>(null)
+  /** The target already applied, so a manual toggle does not re-run its focus. */
+  const appliedNavigate = useRef<SettingsTarget | null>(null)
+  const focusAfterOpen = useRef(false)
   useEffect(() => {
     if (view === 'models' && catalog) {
       ;(catalog.ok ? modelListRef.current : modelIdRef.current)?.focus()
@@ -76,6 +81,12 @@ export function ProviderSection({
     parseExtraBody(draft.extraBody[draft.provider]) === null
       ? 'Нужен JSON-объект, например {"reasoning_effort": "none"}. Пока он не исправлен, параметры не отправляются.'
       : null
+  // The write is held for every provider, not only the selected one, so the pane
+  // has to say which provider is the reason instead of silently holding.
+  const invalidExtraBody = invalidExtraBodyProviders(draft)
+  const invalidExtraBodyElsewhere = invalidExtraBody
+    .filter((id) => id !== draft.provider)
+    .map((id) => providerInfo(id)?.label ?? id)
 
   const query = modelSearch.trim().toLowerCase()
   const filteredModels = useMemo(() => {
@@ -95,19 +106,26 @@ export function ProviderSection({
    * lands on the field the card's error was about, not merely the tab.
    */
   useEffect(() => {
-    if (!navigate) return
+    if (!navigate || appliedNavigate.current === navigate) return
+    appliedNavigate.current = navigate
     const target = MODEL_VIEWS.find((item) => item.id === navigate.view)
     if (target) setView(target.id)
     if (navigate.focus === 'extraBody') {
       setView('models')
-      setExtraOpen(true)
+      if (extraOpen) extraBodyRef.current?.focus()
+      else {
+        setExtraOpen(true)
+        focusAfterOpen.current = true
+      }
     }
-  }, [navigate])
+  }, [navigate, extraOpen])
 
   // The disclosure has to be open before a textarea inside it can take focus.
   useEffect(() => {
-    if (extraOpen && navigate?.focus === 'extraBody') extraBodyRef.current?.focus()
-  }, [extraOpen, navigate])
+    if (!extraOpen || !focusAfterOpen.current) return
+    focusAfterOpen.current = false
+    extraBodyRef.current?.focus()
+  }, [extraOpen])
 
   // A body that does not parse is reachable only behind the disclosure, so the
   // card opens itself instead of hiding the error behind a closed summary.
@@ -115,7 +133,10 @@ export function ProviderSection({
     if (extraBodyError) setExtraOpen(true)
   }, [extraBodyError, provider])
 
-  const chooseModel = (value: string) => patch({ models: { ...draft.models, [provider]: value } })
+  const chooseModel = (value: string) => {
+    setModelCheck(null)
+    patch({ models: { ...draft.models, [provider]: value } })
+  }
 
   /**
    * Says whether the manual ID appears in the loaded list.
@@ -147,11 +168,20 @@ export function ProviderSection({
 
   /** Validates the body on demand, so a typo is not reported only by a held write. */
   function checkExtraBody(): void {
-    const parsed = parseExtraBody(draft.extraBody[draft.provider])
+    const text = draft.extraBody[draft.provider]
+    const parsed = parseExtraBody(text)
+    if (!parsed) {
+      setExtraCheck({ ok: false, text: 'JSON не разобрался — проверь скобки и кавычки.' })
+      return
+    }
+    const ignored = ignoredExtraBodyFields(text)
     setExtraCheck(
-      parsed
-        ? { ok: true, text: 'JSON корректен — параметры уйдут в запрос.' }
-        : { ok: false, text: 'JSON не разобрался — проверь скобки и кавычки.' }
+      ignored.length > 0
+        ? {
+            ok: false,
+            text: `JSON корректен, но ${ignored.join(', ')} не отправляются — эти поля задаёт Deskhand.`
+          }
+        : { ok: true, text: 'JSON корректен — параметры уйдут в запрос.' }
     )
   }
 
@@ -212,11 +242,16 @@ export function ProviderSection({
             className={view === id ? 'active' : ''}
             aria-pressed={view === id}
             aria-controls={`${navId}-${id}`}
+            aria-label={
+              id === 'models' && invalidExtraBody.length > 0
+                ? `${label}: доп. параметры запроса не сохранены`
+                : undefined
+            }
             onClick={() => setView(id)}
           >
             {label}
-            {id === 'models' && extraBodyError && (
-              <span className="badge warn" aria-label="Доп. параметры запроса не сохранены">
+            {id === 'models' && invalidExtraBody.length > 0 && (
+              <span className="badge warn" aria-hidden="true">
                 !
               </span>
             )}
@@ -419,13 +454,19 @@ export function ProviderSection({
           </Row>
         </Group>
 
+        {invalidExtraBodyElsewhere.length > 0 && (
+          <div className="row-hint err" role="status">
+            Не сохранены доп. параметры запроса: {invalidExtraBodyElsewhere.join(', ')}. Исправь JSON у этого сервиса.
+          </div>
+        )}
+
         <Disclosure
           title="Дополнительно"
           open={extraOpen}
           onToggle={setExtraOpen}
           badge={
-            extraBodyError ? (
-              <span className="badge warn" aria-label="Доп. параметры запроса не сохранены">
+            invalidExtraBody.length > 0 ? (
+              <span className="badge warn" aria-hidden="true">
                 !
               </span>
             ) : undefined

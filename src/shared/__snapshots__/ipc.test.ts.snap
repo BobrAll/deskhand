@@ -7,7 +7,7 @@ exports[`CH: the channel set is a wire protocol > keeps the size of every namesp
   "onboarding": 3,
   "overlay": 14,
   "permissions": 4,
-  "settings": 14,
+  "settings": 15,
   "tts": 9,
   "voice": 15,
 }
@@ -118,6 +118,10 @@ exports[`CH: the channel set is a wire protocol > matches the snapshot 1`] = `
   [
     "settings.navigate",
     "settings:navigate",
+  ],
+  [
+    "settings.ready",
+    "settings:ready",
   ],
   [
     "settings.close",

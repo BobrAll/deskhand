@@ -150,7 +150,15 @@ export interface DeskhandApi {
   }
   settings: {
     load(): Promise<SettingsBundle>
-    save(settings: AppSettings): Promise<SettingsBundle>
+    /**
+     * Writes settings as a patch: keys that are present are stored, absent ones
+     * are left as they are.
+     *
+     * The window sends a whole draft on autosave; the onboarding wizard sends
+     * only the provider fields it owns, so a model chosen there cannot roll back
+     * a hotkey or a voice setting changed meanwhile in the settings window.
+     */
+    save(settings: Partial<AppSettings>): Promise<SettingsBundle>
     setKey(provider: ProviderId, key: string): Promise<SettingsBundle>
     deleteKey(provider: ProviderId): Promise<SettingsBundle>
     /** `baseUrl` lets the form verify an override before it is saved. */
@@ -166,6 +174,11 @@ export interface DeskhandApi {
      * The first load carries the target in `SettingsBundle.navigate`.
      */
     onNavigate(handler: (target: SettingsTarget) => void): Unsubscribe
+    /**
+     * The window has mounted and subscribed to `onNavigate`. A target sent
+     * before that moment is waiting in the main process; this flushes it.
+     */
+    ready(): void
     close(): void
     /**
      * Tells the main process whether edits are still being written.

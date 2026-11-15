@@ -55,6 +55,8 @@ export const CH = {
     open: 'settings:open',
     /** main -> renderer: an already open settings window should switch sections. */
     navigate: 'settings:navigate',
+    /** renderer -> main: the window mounted and can now receive `navigate`. */
+    ready: 'settings:ready',
     close: 'settings:close',
     /**
      * "Edits are still in flight — keep the window alive."

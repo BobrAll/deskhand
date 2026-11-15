@@ -23,7 +23,8 @@ export {
   closeSettingsWindow,
   setSettingsHeld,
   setSettingsWindowClosedHandler,
-  takeSettingsOpenTarget
+  takeSettingsOpenTarget,
+  markSettingsReady
 } from './settings'
 
 /**

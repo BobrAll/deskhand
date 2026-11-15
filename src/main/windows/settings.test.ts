@@ -113,15 +113,29 @@ describe('settings window lifecycle', () => {
     expect(api.takeSettingsOpenTarget()).toBeNull()
   })
 
-  it('sends a target straight to a window that is already open', async () => {
+  it('sends a target straight to a window that is already listening', async () => {
     const api = await load()
     api.openSettingsWindow()
+    // The renderer subscribes a moment after the page loads, and says so.
+    api.markSettingsReady()
     expect(api.takeSettingsOpenTarget()).toBeNull()
     api.openSettingsWindow({ tab: 'provider', view: 'models', focus: 'extraBody' })
     expect(state.windows[0].webContents.send).toHaveBeenCalledWith('settings:navigate', {
       tab: 'provider',
       view: 'models',
       focus: 'extraBody'
+    })
+  })
+
+  it('holds a target until the renderer says it is listening', async () => {
+    const api = await load()
+    api.openSettingsWindow()
+    api.openSettingsWindow({ tab: 'provider', view: 'models' })
+    expect(state.windows[0].webContents.send).not.toHaveBeenCalled()
+    api.markSettingsReady()
+    expect(state.windows[0].webContents.send).toHaveBeenCalledWith('settings:navigate', {
+      tab: 'provider',
+      view: 'models'
     })
   })
 

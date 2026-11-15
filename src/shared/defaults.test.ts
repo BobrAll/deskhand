@@ -3,9 +3,11 @@ import { describe, expect, it } from 'vitest'
 import {
   DEFAULT_AGENT,
   DEFAULT_EXCLUDED_APPS,
+  DEFAULT_EXCLUDED_APP_NAMES,
   DEFAULT_SETTINGS,
   DEFAULT_SYSTEM_PROMPT,
   DEFAULT_VOICE,
+  ignoredExtraBodyFields,
   normalizeSettings,
   parseExtraBody,
   resolveSearchModel
@@ -30,6 +32,25 @@ describe('parseExtraBody', () => {
 
   it('drops fields that would replace the conversation or the stream', () => {
     expect(parseExtraBody('{"stream": false, "messages": [], "model": "x", "top_p": 0.5}')).toEqual({ top_p: 0.5 })
+  })
+})
+
+describe('ignoredExtraBodyFields', () => {
+  it('names only the keys the app refuses to send', () => {
+    expect(ignoredExtraBodyFields('{"stream": false, "model": "x", "top_p": 0.5}')).toEqual(['stream', 'model'])
+  })
+
+  it('has nothing to report for empty text or broken JSON', () => {
+    expect(ignoredExtraBodyFields('')).toEqual([])
+    expect(ignoredExtraBodyFields('{oops')).toEqual([])
+  })
+})
+
+describe('DEFAULT_EXCLUDED_APP_NAMES', () => {
+  it('names every app excluded by default', () => {
+    for (const bundleId of DEFAULT_EXCLUDED_APPS) {
+      expect(DEFAULT_EXCLUDED_APP_NAMES[bundleId], bundleId).toBeTruthy()
+    }
   })
 })
 

@@ -7,7 +7,7 @@
  */
 
 import { execFile } from 'node:child_process'
-import { dialog, ipcMain } from 'electron'
+import { app, dialog, ipcMain } from 'electron'
 import { CH } from '@shared/ipc'
 import { BUNDLED_VOICE_MODEL, PROVIDERS } from '@shared/defaults'
 import { PREVIEW_LINE } from '@shared/tts'
@@ -24,7 +24,7 @@ import type { OverlayController } from './overlay'
 import { applyHistorySettings } from './overlay/history'
 import type { VoiceController } from './voice'
 import { listProviderModels, testApiKey } from './llm/testKey'
-import { helperRunningApps, type RunningApp } from './native/helper'
+import { helperRunningApps, helperFrontApplication, type RunningApp } from './native/helper'
 import {
   openPermissionPane,
   readPermissions,
@@ -49,7 +49,8 @@ import {
   closeSettingsWindow,
   setSettingsHeld,
   openSettingsWindow,
-  takeSettingsOpenTarget
+  takeSettingsOpenTarget,
+  markSettingsReady
 } from './windows'
 import { deleteModel, downloadModel, importModel, voiceStatus } from './voice/recognizer'
 
@@ -58,8 +59,49 @@ const PROVIDER_IDS: ProviderId[] = PROVIDERS.map((provider) => provider.id)
 /** `defaults read` is a local call; a slow one means the app has no readable plist. */
 const BUNDLE_ID_TIMEOUT_MS = 4000
 
+/**
+ * How long «Попробовать сейчас» waits for macOS to hand activation back.
+ *
+ * Closing the wizard leaves Deskhand as the frontmost *application* even with no
+ * window, and the card reads the front app the moment it opens. Hiding the app
+ * returns activation to the previous one; this is the ceiling on waiting for
+ * that hand-off before opening anyway.
+ */
+const ONBOARDING_FRONT_WAIT_MS = 900
+const ONBOARDING_FRONT_POLL_MS = 40
+
+/** Resolves once another application owns the front, or the wait runs out. */
+async function waitForOtherFrontApp(): Promise<void> {
+  const deadline = Date.now() + ONBOARDING_FRONT_WAIT_MS
+  while (Date.now() < deadline) {
+    const front = await helperFrontApplication().catch(() => null)
+    if (!front || front.pid !== process.pid) return
+    await new Promise((resolve) => setTimeout(resolve, ONBOARDING_FRONT_POLL_MS))
+  }
+}
+
 function isProvider(value: unknown): value is ProviderId {
   return typeof value === 'string' && (PROVIDER_IDS as string[]).includes(value)
+}
+
+const SETTINGS_TABS = ['provider', 'voice', 'agent', 'privacy'] as const
+const SETTINGS_VIEWS = ['connection', 'models', 'screenshot', 'permissions', 'data', 'exceptions'] as const
+
+/**
+ * Narrows a renderer-supplied navigation target to the values the window knows.
+ *
+ * The settings page indexes its headings with the tab name, so an unrecognised
+ * string would not merely be ignored: it would blank the window. Every other
+ * channel in this file coerces its input for the same reason.
+ */
+function asSettingsTarget(raw: unknown): SettingsTarget | undefined {
+  if (typeof raw !== 'object' || raw === null) return undefined
+  const value = raw as Record<string, unknown>
+  const target: SettingsTarget = {}
+  if ((SETTINGS_TABS as readonly unknown[]).includes(value.tab)) target.tab = value.tab as SettingsTarget['tab']
+  if ((SETTINGS_VIEWS as readonly unknown[]).includes(value.view)) target.view = value.view as SettingsTarget['view']
+  if (value.focus === 'extraBody') target.focus = 'extraBody'
+  return Object.keys(target).length > 0 ? target : undefined
 }
 
 /**
@@ -276,7 +318,8 @@ function registerSettingsHandlers(
   ipcMain.handle(CH.settings.runningApps, async (): Promise<RunningApp[]> => helperRunningApps())
   ipcMain.handle(CH.settings.pickApp, () => pickApplication())
 
-  ipcMain.on(CH.settings.open, (_event, target: SettingsTarget | undefined) => openSettingsWindow(target))
+  ipcMain.on(CH.settings.open, (_event, target: unknown) => openSettingsWindow(asSettingsTarget(target)))
+  ipcMain.on(CH.settings.ready, () => markSettingsReady())
   ipcMain.on(CH.settings.close, () => closeSettingsWindow())
   // The renderer says "edits are still being written" before it asks to close and
   // clears the flag once the last write has landed. Without it, ⌘W during the
@@ -311,11 +354,15 @@ function registerOnboardingHandlers(overlay: OverlayController): void {
     openSettingsWindow({ tab: 'provider' })
   })
   // The last screen's «Попробовать сейчас»: the wizard is done, and the very
-  // first thing the user sees is the card they were just told about.
+  // first thing the user sees is the card they were just told about. The app is
+  // hidden first so it does not become the card's own context: a windowless app
+  // can still be the frontmost one, and then the first answer would describe
+  // Deskhand itself and paste into our own process.
   ipcMain.on(CH.onboarding.tryIt, () => {
     patchSettings({ onboardingCompleted: true })
     closeOnboardingWindow()
-    void overlay.open()
+    app.hide()
+    void waitForOtherFrontApp().then(() => overlay.open())
   })
 }
 

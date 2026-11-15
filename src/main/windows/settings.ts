@@ -31,6 +31,13 @@ let onboardingWindow: BrowserWindow | null = null
  */
 let pendingSettingsTarget: SettingsTarget | null = null
 /**
+ * Whether the renderer has mounted and subscribed to `settings:navigate`.
+ *
+ * A target that arrives before that point would be sent to a page with no
+ * listener; it waits in `pendingSettingsTarget` until `settings.ready`.
+ */
+let settingsRendererReady = false
+/**
  * Cancels a close that is waiting for the renderer to finish a write.
  *
  * The window is hidden while it waits. Without this hook, opening settings again
@@ -147,10 +154,8 @@ export function openSettingsWindow(target?: SettingsTarget): BrowserWindow {
     settingsWindow.show()
     settingsWindow.focus()
     if (target) {
-      // A window that is still loading has not mounted its listener yet; the
-      // target waits for the first `settings.load` exactly like a fresh one.
-      if (settingsWindow.webContents.isLoadingMainFrame()) pendingSettingsTarget = target
-      else settingsWindow.webContents.send(CH.settings.navigate, target)
+      pendingSettingsTarget = target
+      if (settingsRendererReady) flushSettingsTarget()
     }
     return settingsWindow
   }
@@ -170,9 +175,30 @@ export function openSettingsWindow(target?: SettingsTarget): BrowserWindow {
     settingsWindow = null
     settingsHeld = false
     pendingSettingsTarget = null
+    settingsRendererReady = false
     settingsClosedHandler?.()
   })
   return win
+}
+
+/** Sends the waiting target to the window that is now listening for it. */
+function flushSettingsTarget(): void {
+  const target = pendingSettingsTarget
+  if (!target || !settingsWindow || settingsWindow.isDestroyed()) return
+  pendingSettingsTarget = null
+  settingsWindow.webContents.send(CH.settings.navigate, target)
+}
+
+/**
+ * The renderer mounted and subscribed; flush anything that was waiting.
+ *
+ * A fresh window usually takes its target through `settings.load` instead, so
+ * this is the path for a window that was already on screen when another one
+ * asked it to switch sections.
+ */
+export function markSettingsReady(): void {
+  settingsRendererReady = true
+  flushSettingsTarget()
 }
 
 /**

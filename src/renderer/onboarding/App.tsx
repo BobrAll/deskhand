@@ -3,14 +3,15 @@
  * Everything is skippable — the overlay explains what is missing when needed.
  */
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
-import type { PermissionState, ProviderId, SystemPermissionRequest } from '@shared/types'
+import type { AppSettings, PermissionState, ProviderId, SystemPermissionRequest } from '@shared/types'
 import { PROVIDERS, normalizeBaseUrl, providerInfo } from '@shared/defaults'
 import type { SettingsBundle } from '@shared/api'
 import { prettyAccelerator } from '@shared/accelerator'
 import { WindowBrand } from '../styles/WindowBrand'
 import { saveConnection } from './connection'
+import { finishState } from './finish'
 
 type Step = 0 | 1 | 2
 
@@ -53,41 +54,8 @@ function PermissionItem({
   )
 }
 
-/**
- * What the last screen may claim.
- *
- * The wizard is skippable, so "Готово" is only true when the key, the model and
- * the one permission the assistant cannot work without are all in place.
- */
-function finishState(bundle: SettingsBundle | null, permissions: PermissionState) {
-  if (!bundle) {
-    return { heading: 'Готово', hint: 'Проверь настройки, если что-то не работает.' }
-  }
-  const provider = bundle.settings.provider
-  const label = providerInfo(provider)?.label ?? provider
-  const configured = bundle.keys.some((key) => key.provider === provider && key.configured)
-  const model = (bundle.settings.models?.[provider] ?? '').trim()
-
-  if (!configured) {
-    return {
-      heading: 'Осталось добавить ключ',
-      hint: `Вернись на шаг «Подключение» и сохрани ключ для ${label}. Без ключа ассистент не ответит.`
-    }
-  }
-  if (!model) {
-    return {
-      heading: 'Осталось выбрать модель',
-      hint: `Ключ для ${label} сохранён. Открой шаг «Подключение» и выбери модель.`
-    }
-  }
-  if (!permissions.accessibility) {
-    return {
-      heading: 'Разреши доступ и перезапусти',
-      hint: 'Без «Универсального доступа» ассистент не прочитает выделение. Выдай разрешение и перезапусти Deskhand.'
-    }
-  }
-  return { heading: 'Готово', hint: 'Разрешения выданы, ключ и модель на месте. Можно пробовать.' }
-}
+// The last screen's claim is computed in `finish.ts`, where it can be tested
+// without mounting the wizard.
 
 export function App() {
   const [step, setStep] = useState<Step>(0)
@@ -107,6 +75,22 @@ export function App() {
   const [loadingModels, setLoadingModels] = useState(false)
   const [notice, setNotice] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null)
   const [busy, setBusy] = useState(false)
+  /**
+   * Writes run one after another.
+   *
+   * A model blur and a key save can overlap, and both answer with the whole
+   * settings bundle: whichever lands last wins. Chaining them keeps the answer
+   * the wizard stores equal to the last thing it asked for.
+   */
+  const saveQueue = useRef<Promise<unknown>>(Promise.resolve())
+  const enqueue = useCallback(<T,>(task: () => Promise<T>): Promise<T> => {
+    const next = saveQueue.current.then(task, task)
+    saveQueue.current = next.then(
+      () => undefined,
+      () => undefined
+    )
+    return next
+  }, [])
 
   useEffect(() => {
     void window.deskhand.permissions.status().then(setPermissions)
@@ -140,27 +124,31 @@ export function App() {
   }, [])
 
   /**
-   * Writes the current draft without touching the key.
+   * Writes only the fields the wizard edits.
    *
-   * The model is chosen after the key is saved, so this path must not call
-   * `setKey` again — and it must not be lost when the window closes.
+   * Sending the whole bundle would roll back anything changed in the settings
+   * window while the wizard was open — the exact reason `connection.ts` builds
+   * each save from the store's answer instead of the mount-time snapshot. A
+   * field that was not part of this edit is not sent at all, so an untouched
+   * half-typed Base URL cannot be replaced with an empty one either.
    */
   const persist = useCallback(
-    async (patch: { model?: string; baseUrl?: string }) => {
+    async (changes: { model?: string; baseUrl?: string }) => {
       if (!bundle) return
-      const settings = {
-        ...bundle.settings,
-        provider,
-        models: { ...(bundle.settings.models ?? {}), [provider]: (patch.model ?? model).trim() },
-        baseUrls: { ...(bundle.settings.baseUrls ?? {}), [provider]: patch.baseUrl ?? normalizeBaseUrl(baseUrl) }
+      const patch: Partial<AppSettings> = { provider }
+      if (changes.model !== undefined) {
+        patch.models = { ...bundle.settings.models, [provider]: changes.model.trim() }
+      }
+      if (changes.baseUrl !== undefined) {
+        patch.baseUrls = { ...bundle.settings.baseUrls, [provider]: changes.baseUrl }
       }
       try {
-        setBundle(await window.deskhand.settings.save(settings))
+        setBundle(await enqueue(() => window.deskhand.settings.save(patch)))
       } catch {
         setNotice({ kind: 'err', text: 'Не удалось сохранить настройки.' })
       }
     },
-    [baseUrl, bundle, model, provider]
+    [bundle, enqueue, provider]
   )
 
   const loadModels = useCallback(
@@ -206,13 +194,16 @@ export function App() {
         return
       }
       // The store answers with the bundle it now holds: that is what the panel
-      // shows, and what the next provider's save builds on.
-      const saved = await saveConnection(window.deskhand.settings, {
-        provider,
-        key,
-        model,
-        baseUrl: root
-      })
+      // shows, and what the next provider's save builds on. Queued so a model
+      // blur that landed mid-probe cannot overwrite this answer with an older one.
+      const saved = await enqueue(() =>
+        saveConnection(window.deskhand.settings, {
+          provider,
+          key,
+          model,
+          baseUrl: root
+        })
+      )
       setBundle(saved)
       setKeyInput('')
       setNotice({ kind: 'ok', text: test.message })
@@ -222,7 +213,7 @@ export function App() {
     } finally {
       setBusy(false)
     }
-  }, [baseUrl, keyInput, loadModels, model, provider])
+  }, [baseUrl, enqueue, keyInput, loadModels, model, provider])
 
   const completeOnboarding = useCallback(async () => {
     await window.deskhand.onboarding.complete()
@@ -235,7 +226,7 @@ export function App() {
   const baseUrlInvalid = baseUrl.trim() !== '' && normalizeBaseUrl(baseUrl) === ''
   const defaultBaseUrl = providerInfo(provider)?.defaultBaseUrl
   const providerLabel = providerInfo(provider)?.label ?? provider
-  const finish = finishState(bundle, permissions)
+  const finish = finishState(bundle, permissions, provider)
 
   const query = modelQuery.trim().toLowerCase()
   const visibleModels = models ? models.filter((item) => item.toLowerCase().includes(query)) : []
@@ -322,6 +313,7 @@ export function App() {
                 key={item.id}
                 className="provider"
                 aria-pressed={provider === item.id}
+                disabled={busy || loadingModels}
                 onClick={() => {
                   setProvider(item.id)
                   setBaseUrl(bundle?.settings.baseUrls?.[item.id] ?? '')
@@ -346,6 +338,7 @@ export function App() {
                 type="password"
                 placeholder="Вставь ключ"
                 value={keyInput}
+                disabled={busy}
                 onChange={(event) => setKeyInput(event.target.value)}
                 onKeyDown={(event) => {
                   if (event.key === 'Enter') void checkKey()
@@ -369,7 +362,7 @@ export function App() {
               {models === null && configured && (
                 <button
                   className="link"
-                  disabled={loadingModels || baseUrlInvalid}
+                  disabled={loadingModels || busy || baseUrlInvalid}
                   onClick={() => void loadModels(normalizeBaseUrl(baseUrl))}
                 >
                   {loadingModels ? 'Загружаю…' : 'Загрузить модели'}
@@ -381,6 +374,7 @@ export function App() {
               <>
                 <input
                   value={model}
+                  disabled={busy}
                   onChange={(event) => setModel(event.target.value)}
                   onBlur={() => void persist({ model })}
                   onKeyDown={(event) => {
@@ -407,6 +401,7 @@ export function App() {
                 <select
                   value={model}
                   aria-label="Выбор модели"
+                  disabled={busy}
                   onChange={(event) => {
                     setModel(event.target.value)
                     void persist({ model: event.target.value })
@@ -421,6 +416,7 @@ export function App() {
                 </select>
                 <input
                   value={model}
+                  disabled={busy}
                   onChange={(event) => setModel(event.target.value)}
                   onBlur={() => void persist({ model })}
                   onKeyDown={(event) => {
@@ -448,11 +444,12 @@ export function App() {
             </div>
           )}
 
-          <details className="disclosure">
+          <details className="disclosure" open={baseUrlInvalid || undefined}>
             <summary>Base URL</summary>
             <div className="field">
               <input
                 value={baseUrl}
+                disabled={busy}
                 onChange={(event) => setBaseUrl(event.target.value)}
                 onBlur={() => {
                   if (!baseUrlInvalid) void persist({ baseUrl: normalizeBaseUrl(baseUrl) })
@@ -474,7 +471,7 @@ export function App() {
               Назад
             </button>
             <div className="spacer" />
-            <button className="primary" onClick={() => setStep(2)}>
+            <button className="primary" disabled={busy || loadingModels} onClick={() => setStep(2)}>
               {configured ? 'Продолжить' : 'Продолжить без ключа'}
             </button>
           </div>
@@ -502,6 +499,10 @@ export function App() {
           <div className="hint">«Попробовать сейчас» закроет окно и покажет карточку рядом с курсором.</div>
 
           <div className="actions">
+            <button className="ghost" onClick={() => setStep(1)}>
+              Назад
+            </button>
+            <div className="spacer" />
             <button
               className="ghost"
               onClick={() => {

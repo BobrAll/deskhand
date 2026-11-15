@@ -70,6 +70,19 @@ describe('setupNotice', () => {
     })
   })
 
+  it('points at the broken extra request body', () => {
+    vi.mocked(getSettings).mockReturnValue({
+      ...structuredClone(DEFAULT_SETTINGS),
+      extraBody: { ...DEFAULT_SETTINGS.extraBody, openai: '{oops' }
+    })
+
+    expect(setupNotice()).toEqual({
+      kind: 'warning',
+      message: 'Доп. параметры запроса для OpenAI не разбираются — они не отправляются.',
+      target: { tab: 'provider', view: 'models', focus: 'extraBody' }
+    })
+  })
+
   it('has nothing to warn about when the model and the key are ready', () => {
     expect(setupNotice()).toBeNull()
   })

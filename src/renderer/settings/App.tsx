@@ -170,6 +170,8 @@ export function App() {
   )
 
   const [keyInput, setKeyInput] = useState('')
+  /** A key save or probe is in flight; closing now would drop it. */
+  const [keyBusy, setKeyBusy] = useState(false)
   const [apps, setApps] = useState<RunningAppInfo[]>([])
   const [hotkeyMessage, setHotkeyMessage] = useState<string | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
@@ -218,10 +220,14 @@ export function App() {
    * the window already sitting on that tab.
    */
   useEffect(() => {
-    return window.deskhand.settings.onNavigate((target) => {
+    const unsubscribe = window.deskhand.settings.onNavigate((target) => {
       if (target.tab) setTab(target.tab)
       setNavigate({ ...target })
     })
+    // A target may have been sent while this page was still mounting; tell the
+    // main process the listener exists and let it flush what it held.
+    window.deskhand.settings.ready()
+    return unsubscribe
   }, [])
 
   const providerKeys = useMemo<Record<ProviderId, KeyStatus | undefined>>(() => {
@@ -426,8 +432,8 @@ export function App() {
    * button was supposed to make impossible, just moved into a smaller window.
    */
   useEffect(() => {
-    window.deskhand.settings.hold(applyState === 'pending' || applyState === 'saving')
-  }, [applyState])
+    window.deskhand.settings.hold(applyState === 'pending' || applyState === 'saving' || keyBusy)
+  }, [applyState, keyBusy])
 
   /** Whether the draft holds anything that is not on disk yet. */
   const unsaved = useCallback((value: AppSettings): boolean => hasUnsaved(value, bundle, writtenRef.current), [bundle])
@@ -477,12 +483,12 @@ export function App() {
   }, [draft, unsaved, writable, flush])
 
   /**
-   * Verifies the key before storing it.
+   * Stores the key, then verifies it.
    *
-   * A key that the window happily stored but the service rejects reads as a bug
-   * in the app, and the only place that can tell them apart is the service. So
-   * the write happens after a real request succeeds; a rejection leaves the field
-   * as it is and names the reason.
+   * The order is deliberate. Testing first made an offline machine, or a gateway
+   * whose `/models` is not chat-compatible, unable to store a perfectly good key
+   * at all. A stored key that failed the probe is still reported, and the
+   * «Проверить» button next to it makes the test repeatable later.
    *
    * The override goes through the same normalisation the settings store applies,
    * so the tested host is the host requests will actually use.
@@ -495,20 +501,26 @@ export function App() {
       showNotice({ kind: 'err', text: 'Проверь адрес API — ключ не проверен.' }, BANNER_KEY_NOTICE_MS)
       return false
     }
+    setKeyBusy(true)
     try {
-      const tested = await window.deskhand.settings.testKey(provider, keyInput, override || undefined)
-      if (!tested.ok) {
-        showNotice({ kind: 'err', text: `Ключ отклонён: ${tested.message}` }, BANNER_KEY_NOTICE_MS)
-        return false
-      }
       const next = await window.deskhand.settings.setKey(provider, keyInput)
       setBundle(next)
       setKeyInput('')
+      const tested = await window.deskhand.settings.testKey(provider, keyInput, override || undefined)
+      if (!tested.ok) {
+        showNotice(
+          { kind: 'err', text: `Ключ сохранён, но проверка не прошла: ${tested.message}` },
+          BANNER_KEY_NOTICE_MS
+        )
+        return false
+      }
       showNotice({ kind: 'ok', text: 'Ключ работает и сохранён.' }, BANNER_KEY_NOTICE_MS)
       return true
     } catch {
-      showNotice({ kind: 'err', text: 'Не удалось проверить ключ.' }, BANNER_KEY_NOTICE_MS)
+      showNotice({ kind: 'err', text: 'Не удалось сохранить ключ.' }, BANNER_KEY_NOTICE_MS)
       return false
+    } finally {
+      setKeyBusy(false)
     }
   }, [draft, keyInput, showNotice])
 

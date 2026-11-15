@@ -1,4 +1,4 @@
-import { providerInfo } from '@shared/defaults'
+import { providerInfo, parseExtraBody } from '@shared/defaults'
 import type { AgentAvailability, OverlayState } from '@shared/types'
 import { resolveChatModel } from '../llm'
 import { getApiKey } from '../settings/secrets'
@@ -25,6 +25,13 @@ export function setupNotice(): OverlayState['setupNotice'] {
       kind: 'warning',
       message: `Добавь ключ ${label} в настройках, чтобы получать ответы.`,
       target: { tab: 'provider', view: 'connection' }
+    }
+  }
+  if (parseExtraBody(settings.extraBody?.[settings.provider]) === null) {
+    return {
+      kind: 'warning',
+      message: `Доп. параметры запроса для ${label} не разбираются — они не отправляются.`,
+      target: { tab: 'provider', view: 'models', focus: 'extraBody' }
     }
   }
   return null

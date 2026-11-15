@@ -1,6 +1,7 @@
-import { useEffect, useId, useState, type Dispatch, type SetStateAction } from 'react'
+import { useEffect, useId, useRef, useState, type Dispatch, type SetStateAction } from 'react'
 import type { AppSettings, PermissionState, SystemPermissionRequest } from '@shared/types'
 import type { AppPickResult, RunningAppInfo, SettingsBundle } from '@shared/api'
+import { DEFAULT_EXCLUDED_APP_NAMES } from '@shared/defaults'
 import { PermissionRow } from '../PermissionRow'
 import { Group, Row, ToggleRow } from '../Row'
 
@@ -21,36 +22,18 @@ const PRIVACY_VIEWS = [
 ] as const
 
 /**
- * The names of the apps excluded by default.
- *
- * Those are password managers, and most of them are not running when the window
- * opens, so there is nobody to ask for a name. Their bundle ids are stable and
- * known; anything else falls back to the last segment.
- */
-const KNOWN_APP_NAMES: Record<string, string> = {
-  'com.1password.1password': '1Password',
-  'com.agilebits.onepassword7': '1Password 7',
-  'com.bitwarden.desktop': 'Bitwarden',
-  'com.dashlane.dashlane': 'Dashlane',
-  'me.proton.pass.electron': 'Proton Pass',
-  'in.sinew.Enpass-Desktop': 'Enpass',
-  'com.apple.keychainaccess': 'Связка ключей',
-  'com.apple.Passwords': 'Пароли'
-}
-
-/**
  * A human name for a bundle id.
  *
  * A bundle id is the one thing the exclusion list actually stores, and it is
  * unreadable: `me.proton.pass.electron` is not what the app is called anywhere
  * the user has seen it. Running apps know their own name; the rest is looked up
- * in the small map above, then read off the last segment.
+ * in the shared default map, then read off the last segment.
  */
 function appName(bundleId: string, apps: RunningAppInfo[]): string {
-  const known = KNOWN_APP_NAMES[bundleId]
-  if (known) return known
   const running = apps.find((app) => app.bundleId === bundleId)
   if (running) return running.name
+  const known = DEFAULT_EXCLUDED_APP_NAMES[bundleId]
+  if (known) return known
   const last = bundleId.split('.').pop() ?? ''
   return last || bundleId
 }
@@ -72,6 +55,7 @@ export function PrivacySection({
   const navId = useId()
   const [view, setView] = useState<(typeof PRIVACY_VIEWS)[number]['id']>('permissions')
   const [appQuery, setAppQuery] = useState('')
+  const searchRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     let latest = 0
@@ -106,6 +90,9 @@ export function PrivacySection({
   function addExcludedApp(bundleId: string): void {
     if (draft.excludedApps.includes(bundleId)) return
     patch({ excludedApps: [...draft.excludedApps, bundleId] })
+    // The «Добавить» button disappears with the row it belonged to, so focus has
+    // to go somewhere predictable instead of falling back to the window body.
+    searchRef.current?.focus()
   }
 
   const addableApps = apps.filter((app) => !draft.excludedApps.includes(app.bundleId))
@@ -215,7 +202,7 @@ export function PrivacySection({
                     <span className="app-tile" aria-hidden="true">
                       {monogram(name)}
                     </span>
-                    <span className="excluded-name" aria-label={`${name} (${bundleId})`}>
+                    <span className="excluded-name" title={bundleId}>
                       {name}
                     </span>
                     <button
@@ -239,6 +226,7 @@ export function PrivacySection({
             </div>
             <div className="app-picker">
               <input
+                ref={searchRef}
                 aria-label="Поиск запущенного приложения"
                 placeholder="Поиск запущенного приложения"
                 value={appQuery}
