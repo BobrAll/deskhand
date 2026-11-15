@@ -309,7 +309,10 @@ export async function transcribe(options: TranscribeOptions): Promise<Transcribe
       spawned
     }
   } finally {
-    void rm(dir, { recursive: true, force: true })
+    // The transcript is already decided at this point; a temp directory that
+    // cannot be removed (the disk is gone, it was cleaned by hand) must not turn
+    // into an unhandled rejection in the main process.
+    void rm(dir, { recursive: true, force: true }).catch(() => undefined)
   }
 }
 

@@ -26,7 +26,9 @@ const state = vi.hoisted(() => ({
   watchKilled: 0,
   watchClosed: 0,
   watchSpawnError: false,
-  watchLineHandler: null as null | ((line: string) => void)
+  watchLineHandler: null as null | ((line: string) => void),
+  watchExitHandler: null as null | ((code: number | null, signal: NodeJS.Signals | null) => void),
+  watchErrorHandler: null as null | ((error: Error) => void)
 }))
 
 /** `process.resourcesPath` does not exist outside Electron; the module reads it. */
@@ -63,7 +65,16 @@ vi.mock('node:child_process', () => ({
       stdout: {},
       on(event: string, handler: (value: unknown) => void) {
         listeners.set(event, handler)
-        if (event === 'error' && state.watchSpawnError) queueMicrotask(() => handler(new Error('ENOENT')))
+        if (event === 'exit') {
+          state.watchExitHandler = handler as (
+            code: number | null,
+            signal: NodeJS.Signals | null
+          ) => void
+        }
+        if (event === 'error') {
+          state.watchErrorHandler = handler as (error: Error) => void
+          if (state.watchSpawnError) queueMicrotask(() => handler(new Error('ENOENT')))
+        }
         return child
       },
       kill() {
@@ -122,6 +133,8 @@ beforeEach(async () => {
   state.watchKilled = 0
   state.watchClosed = 0
   state.watchSpawnError = false
+  state.watchExitHandler = null
+  state.watchErrorHandler = null
   vi.spyOn(console, 'warn').mockImplementation(() => undefined)
   helper = await load()
 })
@@ -336,6 +349,26 @@ describe('helperFrontWindow: the frontmost app', () => {
     expect(front?.pid).toBe(0)
     expect(front?.name).toBe('com.apple.Notes')
   })
+
+  it('strips a backslash from the bundle id before reusing it in AppleScript', async () => {
+    state.handler = (file, args) => {
+      if (file === 'osascript') {
+        const script = args.join(' ')
+        if (script.includes('unix id')) return { stdout: '900' }
+        if (script.includes('get name')) return { stdout: 'Notes' }
+        if (script.includes('bundle identifier')) return { stdout: 'com.a\\"b' }
+      }
+      return { error: new Error('helper failed') }
+    }
+
+    await helper.helperFrontWindow()
+
+    const scripts = state.calls
+      .filter((call) => call.file === 'osascript')
+      .map((call) => call.args.join(' '))
+    expect(scripts.some((script) => script.includes('"com.ab"'))).toBe(true)
+    expect(scripts.every((script) => !script.includes('com.a\\"b'))).toBe(true)
+  })
 })
 
 describe('helperVisibleBundleIds: what the helper can prove', () => {
@@ -417,6 +450,21 @@ describe('helperSendKey and helperActivate', () => {
 
     expect(await helper.helperActivate({ bundleId: 'a"b', pid: 0 })).toBe(true)
     expect(state.calls.some((call) => call.file === 'osascript')).toBe(true)
+  })
+
+  it('strips backslashes as well as quotes from the AppleScript literal', async () => {
+    // A backslash inside an AppleScript literal reinterprets the next character,
+    // so `\"` would put the quote back and end the literal early.
+    state.handler = (file) => (file === 'osascript' ? { stdout: '' } : { error: new Error('no') })
+
+    await helper.helperActivate({ bundleId: 'a\\"b\\\\c', pid: 0 })
+
+    const script = state.calls
+      .filter((call) => call.file === 'osascript')
+      .map((call) => call.args.join(' '))
+      .join('\n')
+    expect(script).toContain('tell application id "abc" to activate')
+    expect(script).not.toContain('\\')
   })
 
   it('returns false when there is nothing to activate by', async () => {
@@ -588,6 +636,72 @@ describe('watchForAbort: the long-lived watcher', () => {
 
     expect(() => helper.watchForAbort('mouse', () => undefined)).not.toThrow()
     await Promise.resolve()
+  })
+
+  it('reports a refusal payload instead of looking alive', async () => {
+    // `commandWatch` prints this and exits when Accessibility is missing: the
+    // caller used to keep a handle for a dead process and nothing was logged.
+    const failures: string[] = []
+    helper.watchForAbort('interaction', () => undefined, (message) => failures.push(message))
+    await Promise.resolve()
+
+    state.watchLineHandler?.('{"ok":false,"error":"accessibility-denied"}')
+
+    expect(failures).toEqual(['accessibility-denied'])
+    expect(console.warn).toHaveBeenCalledWith(
+      expect.stringContaining('abort watcher (interaction) stopped: accessibility-denied')
+    )
+  })
+
+  it('reports a refusal that carries only a false ok', async () => {
+    const failures: string[] = []
+    helper.watchForAbort('key', () => undefined, (message) => failures.push(message))
+    await Promise.resolve()
+
+    state.watchLineHandler?.('{"ok":false}')
+
+    expect(failures).toEqual(['the helper refused to watch'])
+  })
+
+  it('reports the helper exit when no event ever arrived', async () => {
+    const failures: string[] = []
+    helper.watchForAbort('key', () => undefined, (message) => failures.push(message))
+    await Promise.resolve()
+
+    state.watchExitHandler?.(1, null)
+
+    expect(failures).toEqual(['helper exited with code 1'])
+  })
+
+  it('reports the exit only once, even when an error follows it', async () => {
+    const failures: string[] = []
+    helper.watchForAbort('key', () => undefined, (message) => failures.push(message))
+    await Promise.resolve()
+
+    state.watchLineHandler?.('{"error":"accessibility-denied"}')
+    state.watchExitHandler?.(0, null)
+
+    expect(failures).toEqual(['accessibility-denied'])
+  })
+
+  it('does not report the exit that follows stop()', async () => {
+    const failures: string[] = []
+    const watcher = helper.watchForAbort('mouse', () => undefined, (message) => failures.push(message))
+
+    watcher?.stop()
+    state.watchExitHandler?.(0, null)
+
+    expect(failures).toEqual([])
+  })
+
+  it('reports a spawn error', async () => {
+    state.watchSpawnError = true
+    const failures: string[] = []
+
+    helper.watchForAbort('mouse', () => undefined, (message) => failures.push(message))
+    await Promise.resolve()
+
+    expect(failures).toEqual(['ENOENT'])
   })
 })
 

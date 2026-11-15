@@ -38,7 +38,7 @@ import { pipeline } from 'node:stream/promises'
 import { app } from 'electron'
 import type { TtsSetupProgress } from '@shared/types'
 import type { TtsResult } from '@shared/tts'
-import { findPython, firstLine, run } from './python'
+import { findPython, lastLine, run } from './python'
 import { resolvePronunciations } from './pronounce'
 import { SileroWorker, WORKER_SCRIPT, WORKER_SCRIPT_NAME } from './sileroWorker'
 import { transliterate } from './transliterate'
@@ -70,7 +70,7 @@ const MODEL_BYTES = MODEL_FILES.reduce((sum, [, bytes]) => sum + bytes, 0)
 export const SILERO_CACHE_ID = `silero-v5_6_ru-${RUNTIME_VERSION}`
 
 /** Bump when the transliteration dictionary or rules change the spoken text. */
-export const TRANSLITERATION_VERSION = 4
+export const TRANSLITERATION_VERSION = 5
 
 const PIP_TIMEOUT_MS = 5 * 60_000
 const MODEL_TIMEOUT_MS = 10 * 60_000
@@ -171,11 +171,18 @@ async function downloadFile(
   })
 
   await mkdir(dirname(target), { recursive: true })
-  await pipeline(
-    Readable.fromWeb(response.body as import('node:stream/web').ReadableStream),
-    meter,
-    createWriteStream(temporary)
-  )
+  try {
+    await pipeline(
+      Readable.fromWeb(response.body as import('node:stream/web').ReadableStream),
+      meter,
+      createWriteStream(temporary)
+    )
+  } catch (error) {
+    // A transfer that dies halfway would otherwise leave up to 150 MB behind
+    // until the next attempt or an uninstall.
+    await rm(temporary, { force: true }).catch(() => undefined)
+    throw error
+  }
   if (hash.digest('hex') !== sha256) {
     await rm(temporary, { force: true })
     throw new Error(`Файл ${fileName} скачался повреждённым. Попробуй ещё раз.`)
@@ -291,28 +298,22 @@ export async function removeSilero(): Promise<void> {
   await rm(sileroDir(), { recursive: true, force: true })
 }
 
-async function ensureBatchScript(): Promise<string> {
-  const script = batchScript()
-  if (!existsSync(script)) {
-    await mkdir(sileroDir(), { recursive: true })
-    await writeFile(script, BATCH_SCRIPT)
-  }
-  return script
-}
-
-async function ensureWorkerScript(): Promise<string> {
-  const script = workerScript()
-  // An app update may ship a different protocol or a fix in the worker itself.
-  // Rewrite only when the content differs so a warm process is not disturbed on
-  // every phrase.
+/**
+ * Writes a generated Python script when it is missing or its content changed.
+ *
+ * An app update may ship a different protocol or a fix in the script itself, so
+ * a changed one must reach an existing install; an unchanged one must not be
+ * rewritten on every phrase, because that disturbs a warm process.
+ */
+async function ensureScript(path: string, content: string): Promise<string> {
   try {
-    if (await readFile(script, 'utf8') === WORKER_SCRIPT) return script
+    if (await readFile(path, 'utf8') === content) return path
   } catch {
     /* the script appears on first use */
   }
   await mkdir(sileroDir(), { recursive: true })
-  await writeFile(script, WORKER_SCRIPT)
-  return script
+  await writeFile(path, content)
+  return path
 }
 
 /** One warm process per runtime and speaker, plus the fallback processes in flight. */
@@ -390,6 +391,13 @@ function workerFor(speaker: string, script: string): SileroWorker {
   return worker
 }
 
+/** Why a Python child ended, when it wrote nothing useful to stderr. */
+function exitReason(code: number | null, signal: NodeJS.Signals | null): string {
+  if (signal) return `Процесс завершился сигналом ${signal}.`
+  if (code !== null) return `Процесс завершился с кодом ${code}.`
+  return 'Процесс завершился без кода.'
+}
+
 function spawnCaptured(
   command: string,
   args: string[],
@@ -420,9 +428,9 @@ function spawnCaptured(
       stderr = (stderr + chunk).slice(-STDERR_TAIL_CHARS)
     })
     child.on('error', (error) => settle(error))
-    child.on('close', (code) => {
+    child.on('close', (code, signal) => {
       if (code === 0) settle()
-      else settle(new Error(firstLine(stderr) || `Процесс завершился с кодом ${code}.`))
+      else settle(new Error(lastLine(stderr) || exitReason(code, signal)))
     })
   })
 }
@@ -434,7 +442,7 @@ async function renderSilero(
   directory: string
 ): Promise<void> {
   if (jobs.length === 0) return
-  const script = await ensureBatchScript()
+  const script = await ensureScript(batchScript(), BATCH_SCRIPT)
   const jobsPath = join(directory, 'jobs.json')
   await writeFile(jobsPath, JSON.stringify(jobs))
   await spawnCaptured(
@@ -460,7 +468,7 @@ async function renderThroughWorker(
 
   let script: string
   try {
-    script = await ensureWorkerScript()
+    script = await ensureScript(workerScript(), WORKER_SCRIPT)
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     console.warn('[tts] unable to write the silero worker script (%s); using the one-shot renderer', message)

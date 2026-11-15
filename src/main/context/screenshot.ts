@@ -70,13 +70,7 @@ const READ_ATTEMPTS = 12
 const READ_RETRY_MS = 40
 const SCREENCAPTURE_TIMEOUT_MS = 8000
 
-/**
- * Where the image sits on the real screen, in *points*.
- *
- * A window capture covers the window rectangle; a display capture covers the
- * whole display the cursor is on. `null` only when Electron cannot answer, in
- * which case nothing is drawn rather than drawing something wrong.
- */
+/** The window rectangle, in points, rounded to what `screencapture` accepts. */
 function areaFromBounds(bounds: NonNullable<CaptureTarget['bounds']>): ScreenRect {
   return {
     x: Math.round(bounds.x),
@@ -86,16 +80,15 @@ function areaFromBounds(bounds: NonNullable<CaptureTarget['bounds']>): ScreenRec
   }
 }
 
-function resolveArea(target: CaptureTarget): Placement {
-  try {
-    if (target.fullDisplay) return { area: displayUnderCursor(), fullScreen: true }
-    if (target.bounds) {
-      return { area: areaFromBounds(target.bounds), fullScreen: false }
-    }
-    return { area: displayUnderCursor(), fullScreen: true }
-  } catch {
-    return { area: null, fullScreen: target.bounds == null }
-  }
+/**
+ * Which rectangle a window capture covers.
+ *
+ * `null` when the window bounds are unknown: the display under the cursor is a
+ * different rectangle, and claiming it would measure every coordinate the model
+ * returns against a picture of something else.
+ */
+function windowPlacement(bounds: CaptureTarget['bounds']): Placement {
+  return { area: bounds ? areaFromBounds(bounds) : null, fullScreen: false }
 }
 
 /** Bounds of the display the mouse is on, in global points. */
@@ -244,7 +237,7 @@ export async function captureScreenshot(
       }
     }
     if (!placement && target.windowId !== null) {
-      if (await captureWindow(target.windowId, file)) placement = resolveArea(target)
+      if (await captureWindow(target.windowId, file)) placement = windowPlacement(target.bounds)
     }
     // The window may have been closed since it was remembered: fall back to its
     // last known bounds before giving up and grabbing the whole screen.

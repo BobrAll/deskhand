@@ -1,4 +1,5 @@
 import XCTest
+import ApplicationServices
 @testable import DeskhandCore
 
 /// The diff is what lets the agent confirm an action without re-reading a whole
@@ -236,6 +237,88 @@ final class AXSnapshotDiffTests: XCTestCase {
         XCTAssertEqual(diff.removed.count, 0)
         XCTAssertEqual(diff.changed.count, 1)
         XCTAssertTrue(diff.text().contains("тест"))
+    }
+
+    func testRowsDifferingOnlyInValueKeepTheirIdentitiesWhenOneIsInserted() {
+        // A chat, table or log row is named by its text and nothing else. With
+        // only role and title in the identity, two such rows were told apart by
+        // an occurrence counter, which is positional: inserting a row above
+        // shifted every number below it, and a remembered click landed on a
+        // different row without any error.
+        let first = AXNode(index: 0, depth: 1, role: "AXStaticText", value: "первое")
+        let second = AXNode(index: 1, depth: 1, role: "AXStaticText", value: "второе")
+        let inserted = AXNode(index: 0, depth: 1, role: "AXStaticText", value: "новое")
+
+        let book = IndexBook()
+        let beforeNumbers = AXSnapshot.identityKeys(of: [first, second]).map {
+            book.number(for: $0)
+        }
+        let afterNumbers = AXSnapshot.identityKeys(of: [inserted, first, second]).map {
+            book.number(for: $0)
+        }
+
+        XCTAssertEqual(afterNumbers[1], beforeNumbers[0], "the first row kept its number")
+        XCTAssertEqual(afterNumbers[2], beforeNumbers[1], "the second row kept its number")
+        XCTAssertFalse(
+            beforeNumbers.contains(afterNumbers[0]),
+            "the inserted row got a number of its own")
+
+        let diff = snapshot([inserted, first, second]).diff(from: snapshot([first, second]))
+        XCTAssertEqual(diff.added.count, 1, "the inserted row is the only new node")
+        XCTAssertTrue(diff.removed.isEmpty, "the rows below it were not replaced")
+    }
+
+    func testTextFieldKeepsItsIdentityAcrossAValueEdit() {
+        // The editable exception to value-based identity: changing what a field
+        // holds must not turn it into a different control.
+        let before = AXSnapshot.identityKeys(of: [
+            AXNode(index: 0, depth: 1, role: "AXTextField", value: ""),
+        ])
+        let after = AXSnapshot.identityKeys(of: [
+            AXNode(index: 0, depth: 1, role: "AXTextField", value: "тест"),
+        ])
+        XCTAssertEqual(before, after)
+    }
+
+    func testCheckboxToggleKeepsItsNumberAndIsReportedAsAChange() {
+        // A checkbox's value is state, not its name. Treating it as identity
+        // would make the toggle look like a different control: a fresh number
+        // for the same box, the old number dead, and a remove+add in the diff
+        // instead of the one change the model needs to see.
+        let before = [
+            AXNode(index: 0, depth: 0, role: "AXWindow", title: "Settings"),
+            AXNode(index: 1, depth: 1, role: kAXCheckBoxRole, title: "Notify", value: "0"),
+        ]
+        let after = [
+            AXNode(index: 0, depth: 0, role: "AXWindow", title: "Settings"),
+            AXNode(index: 1, depth: 1, role: kAXCheckBoxRole, title: "Notify", value: "1"),
+        ]
+
+        let book = IndexBook()
+        let beforeNumbers = AXSnapshot.identityKeys(of: before).map { book.number(for: $0) }
+        let afterNumbers = AXSnapshot.identityKeys(of: after).map { book.number(for: $0) }
+        XCTAssertEqual(afterNumbers, beforeNumbers, "a toggle is the same control in a new state")
+
+        let diff = snapshot(after).diff(from: snapshot(before))
+        XCTAssertTrue(diff.added.isEmpty, "the box did not appear")
+        XCTAssertTrue(diff.removed.isEmpty, "the box did not disappear")
+        XCTAssertEqual(diff.changed.count, 1)
+        XCTAssertTrue(diff.text().contains("value: 0 → 1"), diff.text())
+    }
+
+    func testSliderDragKeepsItsNumberAndIsReportedAsAChange() {
+        let before = [AXNode(index: 3, depth: 1, role: kAXSliderRole, value: "10")]
+        let after = [AXNode(index: 3, depth: 1, role: kAXSliderRole, value: "70")]
+
+        let book = IndexBook()
+        let beforeNumber = book.number(for: AXSnapshot.identityKeys(of: before)[0])
+        let afterNumber = book.number(for: AXSnapshot.identityKeys(of: after)[0])
+        XCTAssertEqual(beforeNumber, afterNumber, "the slider is the same control at a new position")
+
+        let diff = snapshot(after).diff(from: snapshot(before))
+        XCTAssertTrue(diff.added.isEmpty)
+        XCTAssertTrue(diff.removed.isEmpty)
+        XCTAssertEqual(diff.changed.count, 1)
     }
 
     func testNewNodeIsReportedAsAdded() {

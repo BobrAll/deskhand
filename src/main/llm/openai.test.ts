@@ -15,6 +15,22 @@ function sse(...chunks: string[]): ReadableStream<Uint8Array> {
   })
 }
 
+/** A body that delivers one chunk and then dies the way a dropped socket does. */
+function brokenStream(chunk: string, error: Error): ReadableStream<Uint8Array> {
+  const encoder = new TextEncoder()
+  let sent = false
+  return new ReadableStream<Uint8Array>({
+    pull(controller) {
+      if (sent) {
+        controller.error(error)
+        return
+      }
+      sent = true
+      controller.enqueue(encoder.encode(chunk))
+    }
+  })
+}
+
 function dataEvent(payload: unknown): string {
   return `data: ${JSON.stringify(payload)}\n\n`
 }
@@ -141,11 +157,71 @@ describe('[OI]Provider: the request', () => {
       temperature: 0.7,
       max_tokens: 2048,
       stream: true,
+      stream_options: { include_usage: true },
       messages: [
         { role: 'system', content: 'Ты помощник.' },
         { role: 'user', content: 'Что тут?' }
       ]
     })
+  })
+
+  it.each(['o3', 'o3-mini', 'gpt-5', 'gpt-5.1', 'openai/gpt-5-mini'])(
+    'sends the token limit of a reasoning model %s as max_completion_tokens and no temperature',
+    async (model) => {
+      vi.stubGlobal('fetch', fetchMock)
+      respond(sse(dataEvent({ choices: [] })))
+
+      await drain(provider().stream(messages, '', options({ model })))
+
+      const body = JSON.parse((fetchMock.mock.calls[0] as [string, RequestInit])[1].body as string)
+      expect(body).toMatchObject({ model, max_completion_tokens: 2048, stream: true })
+      expect(body).not.toHaveProperty('max_tokens')
+      expect(body).not.toHaveProperty('temperature')
+    }
+  )
+
+  it.each(['gpt-4o-mini', 'gpt-4.1', 'claude-3-5-sonnet', 'local-model'])(
+    'keeps max_tokens and temperature for %s',
+    async (model) => {
+      vi.stubGlobal('fetch', fetchMock)
+      respond(sse(dataEvent({ choices: [] })))
+
+      await drain(provider().stream(messages, '', options({ model })))
+
+      const body = JSON.parse((fetchMock.mock.calls[0] as [string, RequestInit])[1].body as string)
+      expect(body).toMatchObject({ model, max_tokens: 2048, temperature: 0.7 })
+      expect(body).not.toHaveProperty('max_completion_tokens')
+    }
+  )
+
+  it('asks the stream to include usage', async () => {
+    vi.stubGlobal('fetch', fetchMock)
+    respond(sse(dataEvent({ choices: [] })))
+
+    await drain(provider().stream(messages, '', options()))
+
+    const body = JSON.parse((fetchMock.mock.calls[0] as [string, RequestInit])[1].body as string)
+    expect(body.stream_options).toEqual({ include_usage: true })
+  })
+
+  it("lets the caller's own stream_options win, including the opt-out", async () => {
+    vi.stubGlobal('fetch', fetchMock)
+    fetchMock
+      .mockResolvedValueOnce(new Response(sse(dataEvent({ choices: [] }))))
+      .mockResolvedValueOnce(new Response(sse(dataEvent({ choices: [] }))))
+
+    await drain(
+      provider().stream(messages, '', options({ extraBody: { stream_options: { include_usage: false } } }))
+    )
+    await drain(
+      provider().stream(messages, '', options({ extraBody: { stream_options: undefined } }))
+    )
+
+    const body = (index: number): Record<string, unknown> =>
+      JSON.parse((fetchMock.mock.calls[index] as [string, RequestInit])[1].body as string)
+    expect(body(0).stream_options).toEqual({ include_usage: false })
+    // `undefined` drops the field from the JSON body entirely.
+    expect(body(1)).not.toHaveProperty('stream_options')
   })
 
   it('joins several text parts with a blank line and trims', async () => {
@@ -245,6 +321,23 @@ describe('[OI]Provider: reading the stream', () => {
     expect(await drain(provider().stream(messages, '', options()))).toEqual(['ok'])
   })
 
+  it('does not let a skipped event downgrade a turn that finished', async () => {
+    vi.stubGlobal('fetch', fetchMock)
+    respond(
+      sse(
+        'data:\n\n',
+        'data: not json\n\n',
+        delta('ок'),
+        dataEvent({ choices: [{ finish_reason: 'stop' }] }),
+        'data: [DONE]\n\n'
+      )
+    )
+
+    const stream = provider().stream(messages, '', options())
+    expect(await stream.next()).toEqual({ value: { delta: 'ок' }, done: false })
+    expect(await stream.next()).toEqual({ value: 'complete', done: true })
+  })
+
   it('skips an event with no content, an empty delta and a null delta', async () => {
     vi.stubGlobal('fetch', fetchMock)
     respond(
@@ -274,6 +367,42 @@ describe('[OI]Provider: reading the stream', () => {
     await expect(drain(provider().stream(messages, '', options()))).rejects.toThrow(
       'Ошибка модели: rate limited'
     )
+  })
+
+  it.each([
+    [{ type: 'overloaded_error' }, 'overloaded_error'],
+    [{ code: 'insufficient_quota' }, 'insufficient_quota'],
+    [{}, 'причина не указана']
+  ])('treats an error event %j as fatal', async (error, detail) => {
+    vi.stubGlobal('fetch', fetchMock)
+    respond(sse(delta('partial'), dataEvent({ error })))
+
+    await expect(drain(provider().stream(messages, '', options()))).rejects.toThrow(
+      `Ошибка модели: ${detail}`
+    )
+  })
+
+  it('ignores a chunk that is not an object', async () => {
+    vi.stubGlobal('fetch', fetchMock)
+    respond(sse('data: null\n\n', 'data: 7\n\n', delta('ok'), 'data: [DONE]\n\n'))
+
+    expect(await drain(provider().stream(messages, '', options()))).toEqual(['ok'])
+  })
+
+  it('accepts the usage-only chunk that stream_options adds', async () => {
+    vi.stubGlobal('fetch', fetchMock)
+    respond(
+      sse(
+        delta('a'),
+        dataEvent({ choices: [{ finish_reason: 'stop' }] }),
+        dataEvent({ choices: [], usage: { prompt_tokens: 5, completion_tokens: 2 } }),
+        'data: [DONE]\n\n'
+      )
+    )
+
+    const stream = provider().stream(messages, '', options())
+    expect(await stream.next()).toEqual({ value: { delta: 'a' }, done: false })
+    expect(await stream.next()).toEqual({ value: 'complete', done: true })
   })
 
   it('returns nothing for an empty stream', async () => {
@@ -310,6 +439,26 @@ describe('[OI]Provider: failures', () => {
     await expect(drain(provider().stream(messages, '', options()))).rejects.toThrow(
       'Нет соединения с интернетом или сервис недоступен.'
     )
+  })
+
+  it('maps a connection that dies mid-stream instead of leaking the raw failure', async () => {
+    vi.stubGlobal('fetch', fetchMock)
+    fetchMock.mockResolvedValue(new Response(brokenStream(delta('При'), new TypeError('terminated'))))
+
+    await expect(drain(provider().stream(messages, '', options()))).rejects.toThrow(
+      'Нет соединения с интернетом или сервис недоступен.'
+    )
+  })
+
+  it('reports a stream read cut by the abort signal as cancelled', async () => {
+    vi.stubGlobal('fetch', fetchMock)
+    const controller = new AbortController()
+    fetchMock.mockResolvedValue(new Response(brokenStream(delta('a'), new TypeError('terminated'))))
+
+    const stream = provider().stream(messages, '', options({ signal: controller.signal }))
+    expect(await stream.next()).toEqual({ value: { delta: 'a' }, done: false })
+    controller.abort()
+    await expect(stream.next()).rejects.toThrow('Запрос отменён.')
   })
 
   it('reports a cancelled request as cancelled', async () => {
@@ -366,6 +515,7 @@ describe('OpenRouterProvider: the same dialect plus attribution', () => {
       'messages',
       'model',
       'stream',
+      'stream_options',
       'temperature'
     ])
   })

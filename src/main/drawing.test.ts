@@ -41,6 +41,9 @@ vi.mock('electron', () => {
     setWindowOpenHandler(): void {
       env.calls.push('setWindowOpenHandler')
     }
+    on(event: string): void {
+      env.calls.push(`on:${event}`)
+    }
   }
 
   class FakeBrowserWindow {

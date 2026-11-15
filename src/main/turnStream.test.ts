@@ -95,6 +95,22 @@ describe('consumeTurnStream: prose', () => {
     expect(out.text).toEqual([])
   })
 
+  it('reads a marker line that carries the request, and prints none of it', async () => {
+    const out = recorder()
+    const result = await consumeTurnStream({
+      provider: fakeProvider(['@web Найди игру: симулятор с заданиями посетителей']),
+      messages: MESSAGES,
+      apiKey: '',
+      streamOptions: STREAM_OPTIONS,
+      isAlive: () => true,
+      onAnnotations: out.onAnnotations,
+      onText: out.onText
+    })
+
+    expect(result).toEqual({ text: '', webLookup: true })
+    expect(out.text).toEqual([])
+  })
+
   it('reports every piece of prose as it arrives and returns it joined', async () => {
     const out = recorder()
     const result = await consumeTurnStream({
@@ -328,8 +344,8 @@ describe('consumeTurnStream: a round that is no longer wanted', () => {
       onText: out.onText
     })
 
-    expect(out.text.join('')).toBe('Готово\n@po\n')
-    expect(result.text).toBe('Готово\n@po\n')
+    expect(out.text.join('')).toBe('Готово\n@po')
+    expect(result.text).toBe('Готово\n@po')
   })
 
   it('lets a provider failure propagate, because the caller owns the retry', async () => {
@@ -359,6 +375,17 @@ describe('consumeTurnStream: execution integrity', () => {
       onAnnotations: () => undefined, onText: () => undefined
     })).rejects.toThrow('Ответ модели оборвался')
   })
+
+  it.each(['incomplete', 'limit'] as const)(
+    'rejects a truncated lookup that carried its request on the marker line on %s',
+    async (end) => {
+      await expect(consumeTurnStream({
+        provider: fakeProvider(['@web Найди игру: симулятор'], undefined, end),
+        messages: MESSAGES, apiKey: '', streamOptions: STREAM_OPTIONS, isAlive: () => true,
+        onAnnotations: () => undefined, onText: () => undefined
+      })).rejects.toThrow('Ответ модели оборвался')
+    }
+  )
 
   it('keeps a truncated plain answer: it is still readable prose', async () => {
     const result = await consumeTurnStream({

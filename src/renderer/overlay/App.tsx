@@ -19,6 +19,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type {
   CSSProperties,
+  KeyboardEvent as ReactKeyboardEvent,
   PointerEvent as ReactPointerEvent,
   UIEvent as ReactUIEvent
 } from 'react'
@@ -31,7 +32,7 @@ import type {
   ResponseMode,
   StreamEvent
 } from '@shared/types'
-import { CARD_WIDTH } from '@shared/metrics'
+import { CARD_MIN_WIDTH, CARD_WIDTH } from '@shared/metrics'
 import { looksLikeAction } from '@shared/intent'
 import { FIELD_FONT } from './cardMetrics'
 import { layoutCard, structuredAnswer } from './cardLayout'
@@ -41,11 +42,11 @@ import { useWaiting } from './useWaiting'
 import { useVoice } from './useVoice'
 import { deriveView } from './viewFlags'
 import { agentLabel, agentMark } from './agentRow'
-import { keyPolicy, type KeyAction } from './keyPolicy'
-import { routeStream } from './streamRouting'
+import { hasTextSelection, keyPolicy, type KeyAction } from './keyPolicy'
+import { rewriteStartsOver, routeStream } from './streamRouting'
 import { Markdown } from './markdownText'
 import { LiveThumb } from './LiveThumb'
-import { draggedWidth, expandedWidth } from './cardWidth'
+import { draggedWidth, expandedWidth, userWidthCeiling } from './cardWidth'
 
 interface Failure {
   message: string
@@ -800,8 +801,11 @@ export function App() {
       const requestId = newRequestId()
       requestIdRef.current = requestId
       speechRef.current.stop()
-      replaceOnChunkRef.current = !base
+      replaceOnChunkRef.current = rewriteStartsOver(answer)
       setBusy(true)
+      // The answer is what the user reads while the rewrite runs, so the card
+      // steps out of the way of the drawing exactly as it does on `send`.
+      setTyping(false)
       setFailure(null)
       setNotice(null)
       resetCopied()
@@ -1045,6 +1049,34 @@ export function App() {
     node.style.width = `${width}px`
   }, [rootNode, wantsWide])
 
+  /**
+   * The same edge, without a pointer.
+   *
+   * The drag has a keyboard twin rather than being reported as cosmetic: the edge
+   * is the only way to widen a table past the card, and a window splitter that
+   * cannot be reached from the keyboard is a control half the users do not have.
+   * The step is small enough to read as nudging and repeats while held; Shift
+   * makes it a coarse jump.
+   */
+  const gripKey = useCallback(
+    (event: ReactKeyboardEvent<HTMLDivElement>) => {
+      if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
+      event.preventDefault()
+      const step = event.shiftKey ? 64 : 16
+      const floor = wantsWide ? CARD_WIDTH : undefined
+      const from = userWidth ?? cardWidth
+      setUserWidth(
+        draggedWidth(
+          from,
+          event.key === 'ArrowRight' ? step : -step,
+          window.screen.availWidth,
+          floor
+        )
+      )
+    },
+    [wantsWide, userWidth, cardWidth]
+  )
+
   const gripUp = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
     const drag = dragRef.current
     if (!drag) return
@@ -1143,7 +1175,10 @@ export function App() {
         agentPhase: agentRef.current?.phase ?? null,
         busy: busyRef.current,
         runActive: Boolean(agentRef.current) && busyRef.current,
-        hasSelection: Boolean(window.getSelection()?.toString()),
+        hasSelection: hasTextSelection(
+          window.getSelection()?.toString() ?? '',
+          document.activeElement === inputRef.current ? inputRef.current : null
+        ),
         hasAnswer: Boolean(answerTextRef.current.trim())
       })
       if (!action) return
@@ -1342,6 +1377,7 @@ export function App() {
             <button
               className="stop"
               title="Остановить ответ"
+              aria-label="Остановить ответ"
               onClick={cancelRequest}
             >
               <span aria-hidden />
@@ -1690,11 +1726,16 @@ export function App() {
           role="separator"
           aria-orientation="vertical"
           aria-label="Изменить ширину"
+          aria-valuenow={Math.round(cardWidth)}
+          aria-valuemin={wantsWide ? CARD_WIDTH : CARD_MIN_WIDTH}
+          aria-valuemax={userWidthCeiling(window.screen.availWidth)}
+          tabIndex={0}
           data-dragging={dragging || undefined}
           onPointerDown={gripDown}
           onPointerMove={gripMove}
           onPointerUp={gripUp}
           onPointerCancel={gripUp}
+          onKeyDown={gripKey}
         />
       )}
     </div>

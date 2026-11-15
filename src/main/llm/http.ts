@@ -46,7 +46,31 @@ export async function* readSse(body: ReadableStream<Uint8Array>, allowTail = tru
     const tail = allowTail ? parseBlock(buffer) : null
     if (tail) yield tail
   } finally {
+    // An early stop abandons the rest of the body, so the socket waits for the
+    // garbage collector unless it is cancelled here. A body that already failed
+    // has nothing to cancel, and that failure is not this one.
+    await reader.cancel().catch(() => {})
     reader.releaseLock()
+  }
+}
+
+/**
+ * `readSse` for a provider response: a failure while reading the body is a
+ * transport failure, not a bug in the decoder.
+ *
+ * The status line already succeeded by the time the body arrives, so a
+ * connection that dies halfway must not reach the card as a raw
+ * `TypeError: terminated`. Provider errors are already ours and pass through.
+ */
+export async function* readProviderSse(
+  body: ReadableStream<Uint8Array>,
+  signal: AbortSignal
+): AsyncGenerator<SseEvent> {
+  try {
+    yield* readSse(body, false)
+  } catch (error) {
+    if (error instanceof ProviderError) throw error
+    throw toTransportError(error, signal)
   }
 }
 
@@ -64,9 +88,49 @@ function parseBlock(raw: string): SseEvent | null {
   return event ? { event, data: payload } : { data: payload }
 }
 
+/**
+ * The JSON object an event carries, or `null` when it carries none.
+ *
+ * A stream sometimes holds non-JSON noise or a bare array between payloads;
+ * neither is an event this decoder can read, and skipping one must not decide
+ * that the turn is broken. The caller names the shape it expects — nothing here
+ * validates it.
+ */
+export function parseSseJson<T extends object>(event: SseEvent): T | null {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(event.data)
+  } catch {
+    return null
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null
+  return parsed as T
+}
+
 export interface HttpErrorBody {
   message?: string
   error?: { message?: string; type?: string; code?: string }
+}
+
+const UNSPECIFIED_REASON = 'причина не указана'
+
+function nonEmptyText(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim() ? value.trim() : undefined
+}
+
+/**
+ * The provider's own words for a streamed error, in the order it uses them.
+ *
+ * Some providers send only a type (`overloaded_error`), and treating such an
+ * event as if it carried nothing would end the turn with an empty answer and no
+ * error at all. A body with no usable text still counts as fatal; it just says
+ * so.
+ */
+export function providerErrorMessage(error: unknown): string {
+  if (typeof error === 'string') return nonEmptyText(error) ?? UNSPECIFIED_REASON
+  if (!error || typeof error !== 'object') return UNSPECIFIED_REASON
+  const { message, type, code } = error as { message?: unknown; type?: unknown; code?: unknown }
+  return nonEmptyText(message) ?? nonEmptyText(type) ?? nonEmptyText(code) ?? UNSPECIFIED_REASON
 }
 
 /**
@@ -127,7 +191,7 @@ export function toTransportError(error: unknown, signal: AbortSignal): ProviderE
   }
   const message = error instanceof Error ? error.message : String(error)
   if (/abort/i.test(message)) return new ProviderError('Запрос отменён.', false)
-  if (/ENOTFOUND|EAI_AGAIN|ENETUNREACH|fetch failed|network/i.test(message)) {
+  if (/ENOTFOUND|EAI_AGAIN|ENETUNREACH|ECONNRESET|EPIPE|fetch failed|network|terminated|socket hang up|other side closed/i.test(message)) {
     return new ProviderError('Нет соединения с интернетом или сервис недоступен.', true)
   }
   if (/timeout|timed out/i.test(message)) {

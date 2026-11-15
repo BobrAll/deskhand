@@ -96,3 +96,33 @@ describe('captureScreenshot: the whole-screen fallback', () => {
     expect(fullScreenCalls()).toHaveLength(1)
   })
 })
+
+describe('captureScreenshot: the rectangle the picture covers', () => {
+  it('claims no area for a window whose bounds are unknown', async () => {
+    // Returning the display here would measure every coordinate the model gives
+    // against a rectangle the window image does not show.
+    const shot = await captureScreenshot({ windowId: 7, bounds: null }, options)
+
+    expect(shot).not.toBeNull()
+    expect(shot?.area).toBeNull()
+    expect(shot?.fullScreen).toBe(false)
+  })
+
+  it('uses the window bounds when they are known', async () => {
+    // The fake image is 1440×900, so these bounds survive the aspect check.
+    const shot = await captureScreenshot(
+      { windowId: 7, bounds: { x: 10, y: 20, width: 1440, height: 900 } },
+      options
+    )
+
+    expect(shot?.area).toEqual({ x: 10, y: 20, width: 1440, height: 900 })
+    expect(shot?.fullScreen).toBe(false)
+  })
+
+  it('still reports the display for a full-display capture', async () => {
+    const shot = await captureScreenshot({ windowId: null, fullDisplay: true }, options)
+
+    expect(shot?.area).toEqual({ x: 0, y: 0, width: 1440, height: 900 })
+    expect(shot?.fullScreen).toBe(true)
+  })
+})

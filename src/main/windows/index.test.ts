@@ -24,6 +24,7 @@ vi.mock('electron', async () => {
     options: Record<string, unknown> = {}
     webContents = {
       setWindowOpenHandler: vi.fn(),
+      on: vi.fn(),
       session: { setPermissionRequestHandler: vi.fn(), setPermissionCheckHandler: vi.fn() }
     }
     show = vi.fn(() => { this.visible = true })

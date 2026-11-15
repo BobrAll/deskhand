@@ -294,22 +294,32 @@ export class AgentSidecar {
     })
     this.child = child
 
+    /**
+     * Settles the handshake once, whichever of the four things happens first:
+     * `ready`, a spawn error, the exit, or the timeout.
+     *
+     * The exit is one of them: a binary that dies before `ready` — a missing
+     * dylib, a broken signature, a crash — would otherwise leave the caller
+     * waiting out the whole timeout for a process that no longer exists.
+     */
+    let settleHandshake: (error?: Error) => void = () => {}
     const ready = new Promise<void>((resolve, reject) => {
       const timer = setTimeout(
-        () => reject(new Error(`Агент не ответил за ${START_TIMEOUT_MS / 1000} секунд.`)),
+        () => settleHandshake(new Error(`Агент не ответил за ${START_TIMEOUT_MS / 1000} секунд.`)),
         START_TIMEOUT_MS
       )
       const off = this.onEvent((event) => {
-        if (event.kind !== 'ready') return
+        if (event.kind === 'ready') settleHandshake()
+      })
+      settleHandshake = (error?: Error) => {
+        // The first of the four wins; the rest find this no-op.
+        settleHandshake = () => {}
         clearTimeout(timer)
         off()
-        resolve()
-      })
-      child.once('error', (error) => {
-        clearTimeout(timer)
-        off()
-        reject(error)
-      })
+        if (error) reject(error)
+        else resolve()
+      }
+      child.once('error', (error) => settleHandshake(error))
     })
 
     child.stdout.setEncoding('utf8')
@@ -325,6 +335,9 @@ export class AgentSidecar {
     child.once('exit', (code, signal) => {
       this.child = null
       const message = code === 0 ? 'Агент завершил работу.' : `Агент остановился (${signal ?? code}).`
+      // A process that exited before the handshake leaves no pipe to write to:
+      // the start fails now rather than after the timeout.
+      settleHandshake(new Error(message))
       for (const [, entry] of this.pending) entry.reject(new Error(message))
       this.pending.clear()
       // A run that was in flight when the process died has to end in the card,

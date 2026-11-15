@@ -68,6 +68,8 @@ const STDERR_TAIL_CHARS = 2000
 const LOG_LINE_CHARS = 300
 const DEFAULT_REQUEST_TIMEOUT_MS = 60_000
 const DEFAULT_IDLE_TIMEOUT_MS = 3 * 60_000
+/** A worker that ignores SIGTERM keeps 300 MB alive; it is not asked twice. */
+const DEFAULT_KILL_GRACE_MS = 2_000
 
 /** The part of `ChildProcess` this module uses, so a test can stand in for it. */
 export interface SileroWorkerChild {
@@ -86,6 +88,8 @@ export interface SileroWorkerOptions {
   spawnWorker: () => SileroWorkerChild
   requestTimeoutMs?: number
   idleTimeoutMs?: number
+  /** How long the idle shutdown waits after SIGTERM before SIGKILL. */
+  killGraceMs?: number
   log?: (message: string) => void
   /** Called when a request timed out; the caller can stop using this worker for a while. */
   onTimeout?: () => void
@@ -138,6 +142,7 @@ export class SileroWorker {
   private readonly spawnWorker: () => SileroWorkerChild
   private readonly requestTimeoutMs: number
   private readonly idleTimeoutMs: number
+  private readonly killGraceMs: number
   private readonly log: (message: string) => void
   private readonly onTimeout: (() => void) | undefined
 
@@ -147,6 +152,8 @@ export class SileroWorker {
   private queue: Job[] = []
   private pending: PendingRequest | null = null
   private idleTimer: NodeJS.Timeout | null = null
+  /** Children that were asked to exit and are waiting for SIGKILL. */
+  private readonly escalations = new Map<SileroWorkerChild, NodeJS.Timeout>()
   private nextId = 1
   private busy = false
   private stopped = false
@@ -155,6 +162,7 @@ export class SileroWorker {
     this.spawnWorker = options.spawnWorker
     this.requestTimeoutMs = options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS
     this.idleTimeoutMs = options.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS
+    this.killGraceMs = options.killGraceMs ?? DEFAULT_KILL_GRACE_MS
     this.log = options.log ?? ((message) => console.warn(message))
     this.onTimeout = options.onTimeout
   }
@@ -183,6 +191,7 @@ export class SileroWorker {
     for (const job of queued) job.reject(error)
     this.failPending(error)
     this.resetChild('SIGKILL')
+    this.finishEscalations()
   }
 
   private pump(): void {
@@ -276,6 +285,7 @@ export class SileroWorker {
       if (this.child === child) this.loseChild(error)
     })
     child.on('exit', (code, signal) => {
+      this.cancelEscalation(child)
       if (this.child !== child) return
       const detail = firstLine(this.stderr)
       this.loseChild(new Error(detail || `Silero worker завершился (${signal ?? code ?? 'без кода'}).`))
@@ -355,17 +365,66 @@ export class SileroWorker {
     this.failPending(error)
   }
 
-  private resetChild(signal: NodeJS.Signals): void {
+  /**
+   * Drops the child and signals it.
+   *
+   * Returns the child when the signal was delivered, so a caller can wait out a
+   * grace period on a process that may ignore it.
+   */
+  private resetChild(signal: NodeJS.Signals): SileroWorkerChild | null {
     this.clearIdle()
     this.buffer = ''
     const child = this.child
     this.child = null
-    if (!child) return
+    if (!child) return null
     try {
       child.kill(signal)
     } catch {
       // Already gone; the pending request, if any, is rejected by the caller.
+      return null
     }
+    return child
+  }
+
+  /** SIGKILL, ignoring a child that exited on its own. */
+  private killNow(child: SileroWorkerChild): void {
+    try {
+      child.kill('SIGKILL')
+    } catch {
+      // It exited during the grace period.
+    }
+  }
+
+  /**
+   * Sends SIGKILL after the grace period.
+   *
+   * `resetChild` drops the reference so a new worker can start; without this a
+   * Python process that ignores SIGTERM would keep its 300 MB with nothing left
+   * to stop it.
+   */
+  private escalateToKill(child: SileroWorkerChild): void {
+    const timer = setTimeout(() => {
+      this.escalations.delete(child)
+      this.killNow(child)
+    }, this.killGraceMs)
+    timer.unref()
+    this.escalations.set(child, timer)
+  }
+
+  private cancelEscalation(child: SileroWorkerChild): void {
+    const timer = this.escalations.get(child)
+    if (!timer) return
+    clearTimeout(timer)
+    this.escalations.delete(child)
+  }
+
+  /** On quit, a child still waiting out its grace period is killed now. */
+  private finishEscalations(): void {
+    for (const [child, timer] of this.escalations) {
+      clearTimeout(timer)
+      this.killNow(child)
+    }
+    this.escalations.clear()
   }
 
   private scheduleIdle(): void {
@@ -374,7 +433,10 @@ export class SileroWorker {
     this.idleTimer = setTimeout(() => {
       this.idleTimer = null
       if (this.busy || this.queue.length > 0) return
-      this.resetChild('SIGTERM')
+      // SIGTERM lets Python free the model; a child that ignores it must not
+      // become an untracked process once the reference is dropped.
+      const child = this.resetChild('SIGTERM')
+      if (child) this.escalateToKill(child)
     }, this.idleTimeoutMs)
     this.idleTimer.unref()
   }

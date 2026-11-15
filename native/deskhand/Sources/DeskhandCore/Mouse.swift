@@ -74,6 +74,16 @@ public enum Mouse {
         event.post(tap: .cghidEventTap)
     }
 
+    /// The number of clicks a mouse event can carry.
+    ///
+    /// macOS encodes a multiple click as a count of 1...3, and a value outside
+    /// that range is not a gesture it can express. Callers clamp once through
+    /// this and report the same number they sent, so a model's `click_count: 5`
+    /// is honestly described as a triple click rather than as five clicks.
+    static func clampedClickCount(_ count: Int) -> Int {
+        max(1, min(count, 3))
+    }
+
     public static func click(
         at point: CGPoint,
         button: Button = .left,
@@ -81,7 +91,7 @@ public enum Mouse {
         modifiers: CGEventFlags = []
     ) {
         WindowServer.prepare()
-        let clicks = max(1, min(count, 3))
+        let clicks = clampedClickCount(count)
         move(to: point)
         // A short settle lets hover/focus handlers run before the press.
         Thread.sleep(forTimeInterval: Pace.hoverSettle)
@@ -169,6 +179,31 @@ public enum Mouse {
         up.post(tap: .cghidEventTap)
     }
 
+    /// The most pages one scroll gesture may move.
+    ///
+    /// A page is 12 wheel lines emitted in chunks 20 ms apart, so a page count
+    /// is a duration as much as a distance: 10 000 pages is roughly 13 minutes
+    /// of events. The bound is applied here as well as at the tool surface, so
+    /// even a direct caller cannot turn one call into an unbounded gesture.
+    static let maxScrollPages = 20.0
+
+    /// The page count a scroll may actually move.
+    ///
+    /// A non-positive or non-finite request is malformed rather than a small
+    /// scroll, so it has no answer; anything above `maxScrollPages` is the
+    /// gesture the tool reports back to the model. `maxScrollPages` explains why
+    /// the cap is a duration as much as a distance.
+    static func effectiveScrollPages(_ requested: Double) -> Double? {
+        guard requested.isFinite, requested > 0 else { return nil }
+        return min(requested, maxScrollPages)
+    }
+
+    /// A signed page count, clamped so no direct caller can emit an unbounded
+    /// gesture.
+    private static func boundedScrollPages(_ pages: Double) -> Double {
+        min(max(pages, -maxScrollPages), maxScrollPages)
+    }
+
     /// Scrolls at a point. `pages` is a scroll wheel unit count where 1 page
     /// equals a full viewport; we approximate that with a line count that feels
     /// right for AppKit and web content alike.
@@ -181,7 +216,7 @@ public enum Mouse {
         Thread.sleep(forTimeInterval: Pace.scrollSettle)
 
         let linesPerPage = 12.0
-        let total = pages * linesPerPage
+        let total = Self.boundedScrollPages(pages) * linesPerPage
         let chunk = 3.0
         var remaining = abs(total)
         let sign: Double = total >= 0 ? 1 : -1

@@ -170,7 +170,7 @@ public struct AnthropicProvider: StreamingChatProvider {
         var stopReason: String?
         var inputTokens: Int?
         var outputTokens: Int?
-        var sawStop = false
+        var sawTerminalEvent = false
 
         var lines: [JSONValue] = []
         defer { exchange?.stream(lines, status: status) }
@@ -179,7 +179,10 @@ public struct AnthropicProvider: StreamingChatProvider {
             let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
             guard trimmed.hasPrefix("data:") else { continue }
             let raw = trimmed.dropFirst(5).trimmingCharacters(in: .whitespaces)
-            if raw == "[DONE]" { break }
+            if raw == streamDoneMarker {
+                sawTerminalEvent = true
+                break
+            }
             guard let value = try? JSONValue.parse(raw) else { continue }
 
             switch value["type"]?.stringValue {
@@ -229,24 +232,21 @@ public struct AnthropicProvider: StreamingChatProvider {
                 }
 
             case "message_stop":
-                sawStop = true
+                sawTerminalEvent = true
 
             default:
                 continue
             }
         }
 
-        if !sawStop && stopReason == nil && text.isEmpty && builders.isEmpty {
-            throw LLMError.transport("the response stream ended before the model answered")
-        }
+        try requireStreamFinished(stopReason: stopReason, sawTerminalEvent: sawTerminalEvent)
 
         let calls = builders.keys.sorted().map { index -> ToolCall in
             let builder = builders[index]!
-            let arguments = (try? JSONValue.parse(builder.arguments)) ?? .object([:])
-            return ToolCall(
+            return makeToolCall(
                 id: builder.id.isEmpty ? UUID().uuidString : builder.id,
                 name: builder.name,
-                arguments: arguments
+                argumentsJSON: builder.arguments
             )
         }
         if stopReason == "tool_use" && calls.isEmpty {

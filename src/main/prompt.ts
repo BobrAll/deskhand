@@ -294,12 +294,18 @@ function contextBlock(input: RequestInput): string[] {
   const lines = contextLines(snapshot.activeApp)
 
   if (input.includeSelection && snapshot.selection) {
-    const text = snapshot.selection.text.slice(0, MAX_SELECTION_CHARS)
+    const selection = snapshot.selection
+    const text = selection.text.slice(0, MAX_SELECTION_CHARS)
     lines.push('Выделенный текст:')
     lines.push('"""')
     lines.push(text)
     lines.push('"""')
-    if (snapshot.selection.truncated) lines.push('(выделение обрезано из-за размера)')
+    // The collector's own limit is higher than this one, so a selection between
+    // the two is cut here with `truncated` still false. Either way the model has
+    // to know it is not reading the whole selection.
+    if (selection.truncated || selection.text.length > text.length) {
+      lines.push('(выделение обрезано из-за размера)')
+    }
   }
 
   if (input.imageAttached) {
@@ -354,7 +360,16 @@ export function buildRequest(input: RequestInput): BuiltRequest {
  * one — which is exactly what "сделай саммари короче" should mean.
  */
 export function buildRefine(input: RefineInput): BuiltRequest {
-  const lines: string[] = ['[Предыдущий ответ]', '"""', input.baseAnswer.slice(0, MAX_ANSWER_CHARS), '"""']
+  const answer = input.baseAnswer
+  const lines: string[] = ['[Предыдущий ответ]', '"""', answer.slice(0, MAX_ANSWER_CHARS), '"""']
+  // The rewrite replaces the whole answer, so a model that is not told about the
+  // cut shortens a text it never saw the end of and drops the rest silently.
+  if (answer.length > MAX_ANSWER_CHARS) {
+    lines.push(
+      `(ответ обрезан из-за размера: показаны первые ${MAX_ANSWER_CHARS} символов из ${answer.length}; ` +
+        'конец ответа не показан)'
+    )
+  }
 
   const original = input.originalPrompt.trim()
   if (original) lines.push('', '[Исходный запрос]', original)

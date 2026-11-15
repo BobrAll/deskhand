@@ -10,6 +10,7 @@ import { PROVIDERS, normalizeBaseUrl, providerInfo } from '@shared/defaults'
 import type { SettingsBundle } from '@shared/api'
 import { prettyAccelerator } from '@shared/accelerator'
 import { WindowBrand } from '../styles/WindowBrand'
+import { saveConnection } from './connection'
 
 type Step = 0 | 1 | 2
 
@@ -109,18 +110,15 @@ export function App() {
         setNotice({ kind: 'err', text: test.message })
         return
       }
-      await window.deskhand.settings.setKey(provider, key)
-      // The bundle may still be loading: onboarding step 1 is reachable before
-      // the first `load()` resolves. Writing a partial `AppSettings` in that
-      // window would let the store fill the gaps from defaults and overwrite
-      // what is already on disk, so the current values are read first.
-      const settings = bundle?.settings ?? (await window.deskhand.settings.load()).settings
-      await window.deskhand.settings.save({
-        ...settings,
+      // The store answers with the bundle it now holds: that is what the panel
+      // shows, and what the next provider's save builds on.
+      const saved = await saveConnection(window.deskhand.settings, {
         provider,
-        models: { ...settings.models, [provider]: model.trim() },
-        baseUrls: { ...settings.baseUrls, [provider]: root }
+        key,
+        model,
+        baseUrl: root
       })
+      setBundle(saved)
       setKeyInput('')
       setNotice({ kind: 'ok', text: test.message })
     } catch {
@@ -128,7 +126,7 @@ export function App() {
     } finally {
       setBusy(false)
     }
-  }, [bundle, baseUrl, keyInput, model, provider])
+  }, [baseUrl, keyInput, model, provider])
 
   const completeOnboarding = useCallback(async () => {
     await window.deskhand.onboarding.complete()

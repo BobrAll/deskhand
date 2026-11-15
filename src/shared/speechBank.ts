@@ -10,7 +10,9 @@
  * Rules a new line has to pass:
  * - no app names, buttons, amounts, recipients or typed text;
  * - no promise about the outcome ("сделал", "получилось");
- * - one short sentence, spoken address is "ты", no slang.
+ * - one short sentence, spoken address is "ты", no slang, no «пожалуйста».
+ *   Rewording a line means re-recording `src/renderer/overlay/speech/<id>.mp3`
+ *   and `manifest.json`, or the old file no longer matches the new text.
  */
 export type SpeechCue =
   | 'acknowledge'
@@ -144,9 +146,7 @@ export const SPEECH_BANK: Record<SpeechCue, readonly SpeechLine[]> = {
   ],
   notHeard: [
     { id: 'heard-1', text: 'Ничего не расслышал — попробуй ещё раз.' },
-    { id: 'heard-2', text: 'Не разобрал. Повтори, пожалуйста.' },
-    { id: 'heard-3', text: 'Не расслышал. Скажи ещё раз.' },
-    { id: 'heard-4', text: 'Не уловил. Повтори, пожалуйста.' }
+    { id: 'heard-3', text: 'Не расслышал. Скажи ещё раз.' }
   ],
   recordFailed: [
     { id: 'record-1', text: 'Запись не удалась. Попробуй ещё раз.' },
@@ -155,8 +155,7 @@ export const SPEECH_BANK: Record<SpeechCue, readonly SpeechLine[]> = {
   ],
   transcribeFailed: [
     { id: 'stt-1', text: 'Распознавание не ответило — попробуй ещё раз.' },
-    { id: 'stt-2', text: 'Не дождался распознавания. Попробуй ещё раз.' },
-    { id: 'stt-3', text: 'Речь не распозналась — повтори, пожалуйста.' }
+    { id: 'stt-2', text: 'Не дождался распознавания. Попробуй ещё раз.' }
   ],
   noMic: [
     { id: 'mic-1', text: 'Нет доступа к микрофону — разреши его в настройках macOS.' },

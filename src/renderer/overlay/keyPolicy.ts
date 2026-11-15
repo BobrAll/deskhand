@@ -52,6 +52,28 @@ export interface KeyInput {
   hasAnswer: boolean
 }
 
+/** The part of a text field the user may have selected. */
+export interface FieldSelection {
+  selectionStart: number
+  selectionEnd: number
+}
+
+/**
+ * Whether the user has text selected anywhere they can see it.
+ *
+ * A selection inside the prompt field is invisible to `window.getSelection()`:
+ * the textarea keeps it in its own state, so the caller passes that range as
+ * `focusedField` — and `null` once the field no longer has focus, because a
+ * range it merely remembers is not something the user is looking at.
+ */
+export function hasTextSelection(
+  pageSelection: string,
+  focusedField: FieldSelection | null
+): boolean {
+  if (pageSelection !== '') return true
+  return focusedField !== null && focusedField.selectionStart !== focusedField.selectionEnd
+}
+
 /**
  * Reads the key.
  *

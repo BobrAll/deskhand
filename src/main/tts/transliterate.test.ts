@@ -103,6 +103,23 @@ describe('transliterate', () => {
     expect(transliterate('table')).toBe('табл')
   })
 
+  it('keeps a soft g and c when the silent final e only drops the vowel', () => {
+    // Silero would read a hard «г» or «к» here; the Russian reading is soft.
+    expect(transliterate('edge')).toBe('еддж')
+    expect(transliterate('large')).toBe('лардж')
+    expect(transliterate('dance')).toBe('данс')
+  })
+
+  it('folds accented Latin letters to their base letter', () => {
+    // Silero has no accented letter in its vocabulary, so `é` must not survive.
+    expect(transliterate('café')).toBe('кейф')
+    expect(transliterate('café')).toBe(transliterate('cafe'))
+    expect(transliterate('naïve')).toBe(transliterate('naive'))
+    expect(transliterate('Zürich')).toMatch(/^[а-яё+ ]+$/i)
+    expect(transliterate('Straße')).toBe(transliterate('strasse'))
+    expect(unknownWords('café')).toEqual(['cafe'])
+  })
+
   it('leaves a Russian line untouched', () => {
     expect(transliterate('Проверь файл.')).toBe('Проверь файл.')
   })

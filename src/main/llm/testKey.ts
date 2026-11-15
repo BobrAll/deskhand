@@ -15,17 +15,6 @@ const TIMEOUT_MS = 12_000
 /** Enough of an unexpected body to identify it, never the whole response. */
 const BODY_PREVIEW_CHARS = 160
 
-/** `fetch` with an abort timer, so a silent gateway still ends the probe. */
-async function fetchWithTimeout(url: string, init: RequestInit): Promise<Response> {
-  const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS)
-  try {
-    return await fetch(url, { ...init, signal: controller.signal })
-  } finally {
-    clearTimeout(timer)
-  }
-}
-
 function apiHeaders(provider: ProviderId, key: string): Record<string, string> {
   return provider === 'anthropic'
     ? { 'x-api-key': key, 'anthropic-version': '2023-06-01' }
@@ -63,14 +52,23 @@ export async function testApiKey(
 
   try {
     const path = provider === 'openrouter' ? 'key' : 'models'
-    const response = await fetchWithTimeout(apiEndpoint(root, path).href, {
-      headers: apiHeaders(provider, apiKey)
+    // One deadline for the whole probe: headers and body alike. A gateway that
+    // answers headers and then stalls must not leave the button spinning.
+    const signal = AbortSignal.timeout(TIMEOUT_MS)
+    const response = await fetch(apiEndpoint(root, path).href, {
+      headers: apiHeaders(provider, apiKey),
+      signal
     })
 
     if (response.ok) {
       return { ok: true, message: `Ключ ${providerLabel(provider)} работает.` }
     }
-    const body = await response.text().catch(() => '')
+    // A body that cannot be read is not an error of its own; a read cut off by
+    // the deadline is, because then the status was never reported.
+    const body = await response.text().catch((error: unknown) => {
+      if (signal.aborted) throw error
+      return ''
+    })
     return { ok: false, message: probeMessage(response.status, provider, body) }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)

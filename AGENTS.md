@@ -5,6 +5,7 @@
 - [Clean Code](.agents/skills/clean-code/SKILL.md) is always active: read and follow it before every code change.
 - Read and follow [Refactoring](.agents/skills/refactoring/SKILL.md) only when the user asks for a refactor or invokes it by name.
 - Read and follow [Bug and Issue Detection](.agents/skills/bug-and-issue-detection/SKILL.md) only when the user asks to find bugs, audit code, or invokes it by name.
+- Read and follow [UX Research](.agents/skills/ux-research/SKILL.md) only when the user asks to run UX research or a UX review, or invokes it by name.
 
 ## Git Worktree Isolation
 

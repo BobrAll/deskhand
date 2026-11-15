@@ -1,7 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { listProviderModels } from './testKey'
+import { listProviderModels, testApiKey } from './testKey'
 
-afterEach(() => vi.unstubAllGlobals())
+afterEach(() => {
+  vi.unstubAllGlobals()
+  vi.restoreAllMocks()
+})
 
 describe('listProviderModels', () => {
   it('uses the provider default with an empty Base URL and deduplicates model IDs', async () => {
@@ -43,5 +46,61 @@ describe('listProviderModels', () => {
     expect(fetch).not.toHaveBeenCalled()
     await expect(listProviderModels('openrouter', 'example', 'https://gateway.example/v1')).resolves.toMatchObject({ ok: false })
     expect(fetch).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('testApiKey', () => {
+  it('refuses an empty key without a request', async () => {
+    const fetch = vi.fn()
+    vi.stubGlobal('fetch', fetch)
+
+    await expect(testApiKey('openai', '   ')).resolves.toEqual({ ok: false, message: 'Введи ключ.' })
+    expect(fetch).not.toHaveBeenCalled()
+  })
+
+  it('reports a working key', async () => {
+    const fetch = vi.fn(async () => Response.json({ data: [] }))
+    vi.stubGlobal('fetch', fetch)
+
+    await expect(testApiKey('openai', 'sk-test', '')).resolves.toEqual({
+      ok: true,
+      message: 'Ключ OpenAI работает.'
+    })
+  })
+
+  it('gives the error body the same deadline as the headers', async () => {
+    const controller = new AbortController()
+    const timeout = vi.spyOn(AbortSignal, 'timeout').mockReturnValue(controller.signal)
+    let startedReading!: () => void
+    const reading = new Promise<void>((resolve) => {
+      startedReading = resolve
+    })
+    let requestSignal: AbortSignal | undefined
+    const fetch = vi.fn(async (_url: string, init: RequestInit) => {
+      requestSignal = init.signal ?? undefined
+      return {
+        ok: false,
+        status: 500,
+        text: () =>
+          new Promise<string>((_resolve, reject) => {
+            startedReading()
+            requestSignal?.addEventListener('abort', () =>
+              reject(new DOMException('The operation was aborted due to timeout', 'TimeoutError'))
+            )
+          })
+      } as unknown as Response
+    })
+    vi.stubGlobal('fetch', fetch)
+
+    const result = testApiKey('openai', 'sk-test', '')
+    await reading
+    expect(timeout).toHaveBeenCalledWith(12_000)
+    expect(requestSignal).toBe(controller.signal)
+
+    controller.abort()
+    await expect(result).resolves.toEqual({
+      ok: false,
+      message: 'Превышено время ожидания ответа.'
+    })
   })
 })

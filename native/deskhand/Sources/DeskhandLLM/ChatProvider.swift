@@ -39,11 +39,53 @@ public struct ToolCall: Sendable, Equatable {
     public var id: String
     public var name: String
     public var arguments: JSONValue
+    /// The raw argument text when it was not valid JSON.
+    ///
+    /// Kept instead of being swallowed into `{}`: an empty object turns a
+    /// malformed call into a different, no-argument one, which then runs against
+    /// whatever the tool does by default. The loop answers such a call with a
+    /// failed result that carries the text, so the model can correct itself.
+    public var argumentsError: String?
 
-    public init(id: String, name: String, arguments: JSONValue) {
+    public init(id: String, name: String, arguments: JSONValue, argumentsError: String? = nil) {
         self.id = id
         self.name = name
         self.arguments = arguments
+        self.argumentsError = argumentsError
+    }
+}
+
+/// Turns one wire tool call into a `ToolCall`, parsing its argument text.
+///
+/// Empty arguments mean "no arguments" and become `{}`. Anything else that does
+/// not parse keeps the raw text in `argumentsError`; substituting `{}` would
+/// execute a call the model never asked for.
+func makeToolCall(id: String, name: String, argumentsJSON: String) -> ToolCall {
+    let trimmed = argumentsJSON.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else {
+        return ToolCall(id: id, name: name, arguments: .object([:]))
+    }
+    do {
+        return ToolCall(id: id, name: name, arguments: try JSONValue.parse(trimmed))
+    } catch {
+        return ToolCall(id: id, name: name, arguments: .object([:]), argumentsError: trimmed)
+    }
+}
+
+/// The OpenAI-style marker that ends a stream.
+///
+/// Anthropic-compatible proxies send it too, in place of their own terminal
+/// event, so both decoders recognise the same string.
+let streamDoneMarker = "[DONE]"
+
+/// Throws when a stream stopped without a terminal event.
+///
+/// A stop reason or the provider's own end event finishes an answer. Without
+/// one the connection was cut, and the text that arrived is half a reply that
+/// must not be shown as final.
+func requireStreamFinished(stopReason: String?, sawTerminalEvent: Bool) throws {
+    guard sawTerminalEvent || stopReason != nil else {
+        throw LLMError.transport("the response stream ended before the model finished")
     }
 }
 

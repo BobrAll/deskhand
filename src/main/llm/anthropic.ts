@@ -13,7 +13,7 @@ import {
   type StreamChunk, type StreamEnd,
   type StreamOptions
 } from './provider'
-import { apiEndpoint, apiRoot, readSse, toProviderError, toTransportError } from './http'
+import { apiEndpoint, apiRoot, parseSseJson, providerErrorMessage, readProviderSse, toProviderError, toTransportError } from './http'
 
 type AnthropicBlock =
   | { type: 'text'; text: string }
@@ -31,7 +31,7 @@ interface AnthropicMessage {
 interface AnthropicEvent {
   type?: string
   delta?: { type?: string; text?: string; stop_reason?: string }
-  error?: { message?: string }
+  error?: { message?: string; type?: string; code?: string }
   message?: { usage?: { input_tokens?: number; output_tokens?: number } }
   usage?: { output_tokens?: number }
 }
@@ -69,20 +69,15 @@ export class AnthropicProvider implements LlmProvider {
   ): AsyncGenerator<StreamChunk, StreamEnd> {
     const body = await this.openStream(messages, apiKey, options)
     let end: StreamEnd = 'incomplete'
-    let malformed = false
     let inputTokens: number | undefined
     let outputTokens: number | undefined
-    for await (const event of readSse(body, false)) {
-      let parsed: unknown
-      try {
-        parsed = JSON.parse(event.data)
-      } catch {
-        malformed = true
-        continue
-      }
-      const payload = parsed as AnthropicEvent
-      if (payload.type === 'error' && payload.error?.message) {
-        throw new ProviderError(`Ошибка Anthropic: ${payload.error.message}`, true)
+    for await (const event of readProviderSse(body, options.signal)) {
+      const payload = parseSseJson<AnthropicEvent>(event)
+      if (!payload) continue
+      // Any error event is fatal, even one that names only its type: an empty
+      // answer with no error is worse than a vague one.
+      if (payload.error || payload.type === 'error') {
+        throw new ProviderError(`Ошибка Anthropic: ${providerErrorMessage(payload.error)}`, true)
       }
       if (payload.type === 'content_block_delta' && payload.delta?.type === 'text_delta') {
         if (payload.delta.text) yield { delta: payload.delta.text }
@@ -97,7 +92,9 @@ export class AnthropicProvider implements LlmProvider {
       }
       if (payload.type === 'message_stop') {
         traceModelUsage(inputTokens, outputTokens)
-        return malformed ? 'incomplete' : end
+        // Termination comes from `message_stop` and `stop_reason` only: an event
+        // this decoder skips must not decide that a finished turn is broken.
+        return end
       }
     }
     return 'incomplete'

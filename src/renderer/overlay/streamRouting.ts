@@ -50,6 +50,19 @@ export interface StreamState {
 }
 
 /**
+ * Whether a rewrite starts the answer over on its first chunk.
+ *
+ * A rewrite keeps the answer it is rewriting on screen until the model produces
+ * something — a card that blanked while «Короче» worked would lose the text the
+ * user is still reading. So the rule follows the screen, not the request: a
+ * retry starts from the very same text, and its first chunk has to replace that
+ * text as well, or the new attempt would be glued onto the old answer.
+ */
+export function rewriteStartsOver(answerOnScreen: string): boolean {
+  return answerOnScreen.trim().length > 0
+}
+
+/**
  * Decides what an event means.
  *
  * `clearSpoken` is reported on every event that gets through, not only on chunks:

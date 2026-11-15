@@ -140,6 +140,11 @@ public struct OpenAICompatibleProvider: StreamingChatProvider {
         if let temperature = config.temperature {
             payload["temperature"] = .number(temperature)
         }
+        // Without this, OpenAI answers a stream with no usage block at all, so
+        // `step-timing` loses the token counts on the most common provider.
+        if stream {
+            payload["stream_options"] = .object(["include_usage": .bool(true)])
+        }
         if !tools.isEmpty {
             payload["tools"] = .array(tools.map(\.openAIJSON))
             payload["tool_choice"] = .string("auto")
@@ -178,7 +183,7 @@ public struct OpenAICompatibleProvider: StreamingChatProvider {
         var builders: [Int: ToolCallBuilder] = [:]
         var stopReason: String?
         var usage: TokenUsage?
-        var sawDone = false
+        var sawTerminalEvent = false
 
         var lines: [JSONValue] = []
         defer { exchange?.stream(lines, status: status) }
@@ -187,8 +192,8 @@ public struct OpenAICompatibleProvider: StreamingChatProvider {
             let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
             guard trimmed.hasPrefix("data:") else { continue }
             let raw = trimmed.dropFirst(5).trimmingCharacters(in: .whitespaces)
-            if raw == "[DONE]" {
-                sawDone = true
+            if raw == streamDoneMarker {
+                sawTerminalEvent = true
                 break
             }
             guard let value = try? JSONValue.parse(raw) else { continue }
@@ -228,17 +233,14 @@ public struct OpenAICompatibleProvider: StreamingChatProvider {
             }
         }
 
-        if stopReason == nil && !sawDone && text.isEmpty && builders.isEmpty {
-            throw LLMError.transport("the response stream ended before the model answered")
-        }
+        try requireStreamFinished(stopReason: stopReason, sawTerminalEvent: sawTerminalEvent)
 
         let calls = builders.keys.sorted().map { index -> ToolCall in
             let builder = builders[index]!
-            let arguments = (try? JSONValue.parse(builder.arguments)) ?? .object([:])
-            return ToolCall(
+            return makeToolCall(
                 id: builder.id.isEmpty ? UUID().uuidString : builder.id,
                 name: builder.name,
-                arguments: arguments
+                argumentsJSON: builder.arguments
             )
         }
         if stopReason == "tool_calls" && calls.isEmpty {
@@ -348,8 +350,7 @@ public struct OpenAICompatibleProvider: StreamingChatProvider {
                 let id = raw["id"]?.stringValue ?? UUID().uuidString
                 let name = raw["function"]?["name"]?.stringValue ?? ""
                 let argumentText = raw["function"]?["arguments"]?.stringValue ?? "{}"
-                let arguments = (try? JSONValue.parse(argumentText)) ?? .object([:])
-                calls.append(ToolCall(id: id, name: name, arguments: arguments))
+                calls.append(makeToolCall(id: id, name: name, argumentsJSON: argumentText))
             }
         }
 

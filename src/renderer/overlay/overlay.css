@@ -852,8 +852,17 @@ button.tag.clear {
 }
 
 .grip:hover::after,
+.grip:focus-visible::after,
 .grip[data-dragging]::after {
   opacity: 0.55;
+}
+
+/* The edge is reachable with Tab, so the focus has to be visible on a 7px strip
+   that is otherwise only a hover hint. */
+.grip:focus-visible {
+  outline: 2px solid var(--text-dim);
+  outline-offset: -2px;
+  border-radius: 3px;
 }
 
 @media (prefers-reduced-motion: reduce) {
