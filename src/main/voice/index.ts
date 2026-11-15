@@ -15,11 +15,12 @@
  */
 
 import { CH } from '@shared/ipc'
-import type { TranscribeResult, VoiceAction, VoiceErrorCode, VoiceEvent, VoicePhase } from '@shared/types'
+import type { TranscribeResult, VoiceAction, VoiceErrorCode, VoicePhase } from '@shared/types'
 import { pasteAnswer } from '../paste'
 import { getSettings } from '../settings/store'
 import type { TapEvent } from './listen'
 import { createVoiceHotkeys, type VoiceBinding } from './hotkeys'
+import { createVoiceTiming } from './timing'
 import { createRecognizerWarmup } from './warmup'
 import { transcribe, voiceStatus } from './recognizer'
 
@@ -84,68 +85,13 @@ export interface RecordingResult {
   durationMs: number
 }
 
-const POLL_MS = 100
-/**
- * How often a running turn checks whether it has outstayed its welcome.
- *
- * The ceiling itself is a setting (`voice.maxDurationMs`), read at check time and
- * not at press time, so a turn is still closed on time if the value changed while
- * the key was down. A quarter second is far below anything a person perceives as
- * "stuck" and costs one comparison per tick.
- */
-const WATCHDOG_MS = 250
-/**
- * How long the card waits for the renderer to hand over a finished recording.
- *
- * Between the key-up and `voice:recorded` there is only local work — stopping the
- * recorder, encoding a WAV of at most two minutes — so this is measured in
- * seconds, with room for a page that is still opening the microphone after a press
- * that landed during a previous turn's hand-over. Without it a recorder that never
- * answers leaves the card flashing "recognising" forever and, because a press is
- * refused while a turn runs, swallows every later press too. Five seconds is well
- * past any honest encode and short enough that the card does not look frozen.
- */
-const RECORDING_TIMEOUT_MS = 5_000
-/**
- * Floor for one recognition. The WAV is local and whisper runs on this machine,
- * so this only fires when the child process hangs or never reports back.
- *
- * It is a floor, not the whole budget: a flat ceiling aborted a long dictation
- * mid-recognition and threw the audio away, so the budget grows with the
- * recording (see `transcribeBudget`).
- */
-const TRANSCRIBE_TIMEOUT_MS = 30_000
-
-/**
- * How long one recognition may take, given how much audio it was handed.
- *
- * Twice the recording is generous for a local model that runs faster than real
- * time, and it still bounds a recognizer that never answers. Anything that is
- * not a plausible duration falls back to the floor.
- */
-function transcribeBudget(durationMs: number): number {
-  if (!Number.isFinite(durationMs) || durationMs <= 0) return TRANSCRIBE_TIMEOUT_MS
-  return Math.max(TRANSCRIBE_TIMEOUT_MS, Math.round(durationMs * 2))
-}
-
 /** A short tap ends without a recognition; try warming again after it. */
 const WARMUP_RETRY_MS = 1_500
 
 export function createVoiceController(host: VoiceHost) {
-  let phase: VoicePhase = 'idle'
-  let startedAt = 0
-  let level = 0
-  let poller: NodeJS.Timeout | null = null
   let abort: AbortController | null = null
   /** Set while a transcript is in flight. */
   let busy = false
-  /**
-   * How long the recognition in flight may take.
-   *
-   * Scaled from the recording that started it: a ten-second command and a
-   * four-minute dictation must not share one ceiling.
-   */
-  let transcribeBudgetMs = TRANSCRIBE_TIMEOUT_MS
   /**
    * What the turn in flight does with its transcript.
    *
@@ -171,17 +117,21 @@ export function createVoiceController(host: VoiceHost) {
    * into) the new one.
    */
   let turn = 0
-  /** Closes a turn that overstays `maxDurationMs` while the microphone is open. */
-  let listeningWatchdog: NodeJS.Timeout | null = null
-  /** Closes a turn whose recording never came back, or whose whisper hung. */
-  let recordingTimer: NodeJS.Timeout | null = null
-  const warmup = createRecognizerWarmup(() => phase === 'idle' && !busy)
+  const timing = createVoiceTiming({
+    currentTurn: () => turn,
+    recognizing: () => busy,
+    expire: abortTurnWithError,
+    emit: (event) => host.emit(CH.voice.event, event),
+    fieldLevel: (value) => host.fieldLevel(value)
+  })
+  const { setPhase, longEnough } = timing
+  const warmup = createRecognizerWarmup(() => timing.phase() === 'idle' && !busy)
   const { scheduleWarmup, stopWarmup } = warmup
   const hotkeys = createVoiceHotkeys({
     handleTapEvent,
     onModel: warmup.updateModel,
     onDisabled: () => {
-      if (phase !== 'idle' || turnAction !== null) void onCancel()
+      if (timing.phase() !== 'idle' || turnAction !== null) void onCancel()
     },
     onStopped: scheduleWarmup,
     onUnavailable: stopWarmup,
@@ -190,84 +140,6 @@ export function createVoiceController(host: VoiceHost) {
       scheduleWarmup()
     }
   })
-
-  function publish(event: Partial<VoiceEvent> & { phase: VoicePhase }): void {
-    const payload: VoiceEvent = {
-      phase: event.phase,
-      level: event.level ?? level,
-      text: event.text,
-      error: event.error,
-      code: event.code
-    }
-    host.emit(CH.voice.event, payload)
-  }
-
-  function setPhase(next: VoicePhase, extra?: { text?: string; error?: string; code?: VoiceErrorCode }): void {
-    phase = next
-    startedAt = Date.now()
-    level = 0
-    armWatchdog()
-    if (next === 'idle') {
-      if (poller) clearInterval(poller)
-      poller = null
-    } else if (!poller) {
-      // The level meter on the chip and the bars in the card; 10 Hz is enough for
-      // both and costs nothing next to the audio pipeline.
-      poller = setInterval(() => publish({ phase }), POLL_MS)
-    }
-    publish({ phase: next, ...extra })
-  }
-
-  /**
-   * Keeps a turn from running forever.
-   *
-   * Two things can leave the card animating with nothing behind it: the key-up
-   * event is lost (the tap was disabled by macOS mid-press, the helper died, the
-   * key was released while the app was blocked), or the renderer never reports
-   * the finished recording. Both used to be permanent — `phase` stayed non-idle,
-   * and since a press is refused while a turn runs, every later press was
-   * swallowed too. The only cure was restarting the app, so the card looked
-   * broken rather than busy.
-   *
-   * The listening ceiling is read on every tick instead of being frozen at the
-   * press: `maxDurationMs` is a setting, and a turn must honour the value in force
-   * now, not the one that happened to be stored when the key went down.
-   */
-  function armWatchdog(): void {
-    if (listeningWatchdog) clearInterval(listeningWatchdog)
-    if (recordingTimer) clearTimeout(recordingTimer)
-    listeningWatchdog = null
-    recordingTimer = null
-    if (phase === 'idle') return
-
-    if (phase === 'listening') {
-      const mine = turn
-      listeningWatchdog = setInterval(() => {
-        if (mine !== turn || phase !== 'listening') {
-          if (listeningWatchdog) clearInterval(listeningWatchdog)
-          listeningWatchdog = null
-          return
-        }
-        if (Date.now() - startedAt < getSettings().voice.maxDurationMs) return
-        abortTurnWithError('Запись остановлена: слишком долго.', 'recordTooLong')
-      }, WATCHDOG_MS)
-      return
-    }
-
-    // `transcribing` has two halves with very different budgets: the hand-over
-    // from the renderer (local work, milliseconds) and whisper itself (seconds on
-    // a long phrase). `busy` says which half this is — it is set the moment the
-    // recording arrives, and this function runs again at that point.
-    const mine = turn
-    const limit = busy ? transcribeBudgetMs : RECORDING_TIMEOUT_MS
-    recordingTimer = setTimeout(() => {
-      if (mine !== turn) return
-      abortTurnWithError(
-        busy ? 'Распознавание не ответило — попробуй ещё раз.' : 'Запись не дошла до распознавания — попробуй ещё раз.',
-        busy ? 'transcribeFailed' : 'recordFailed'
-      )
-    }, limit)
-  }
 
   /**
    * Abandons the turn in flight and puts its reason on the card.
@@ -290,7 +162,7 @@ export function createVoiceController(host: VoiceHost) {
    */
   function discardTurn(): void {
     turn += 1
-    if (phase === 'listening') host.emit(CH.voice.stop, { transcribe: false })
+    if (timing.phase() === 'listening') host.emit(CH.voice.stop, { transcribe: false })
     abortRecognition()
   }
 
@@ -328,12 +200,6 @@ export function createVoiceController(host: VoiceHost) {
     scheduleWarmup(WARMUP_RETRY_MS)
   }
 
-  /** False when the user tapped the key instead of holding it. */
-  function longEnough(): boolean {
-    return Date.now() - startedAt >= getSettings().voice.minDurationMs
-  }
-
-  /** Dispatches one tap edge; `ready`/`reenabled` need nothing from the controller. */
   function handleTapEvent(event: TapEvent, binding: VoiceBinding): void {
     if (event === 'ready' || event === 'reenabled') return
     if (event === 'press') {
@@ -356,8 +222,8 @@ export function createVoiceController(host: VoiceHost) {
     stopWarmup()
     // Already recording: the same physical press arriving twice (a tap that
     // was re-armed, an autorepeat) is not a new phrase.
-    if (phase === 'listening') return
-    if (phase === 'transcribing') {
+    if (timing.phase() === 'listening') return
+    if (timing.phase() === 'transcribing') {
       // The user is speaking again while the previous phrase is still in the
       // recogniser. This is the normal case for a person — say one thing,
       // correct it, say another — and refusing it meant the second phrase got
@@ -411,7 +277,7 @@ export function createVoiceController(host: VoiceHost) {
       // card that will never exist would leave the microphone open with nowhere
       // to put the words, so both endings stop the recorder and close the turn.
       const stopWithoutCard = (): void => {
-        if (host.isOpen() || phase !== 'listening' || mine !== turn) return
+        if (host.isOpen() || timing.phase() !== 'listening' || mine !== turn) return
         host.emit(CH.voice.stop, { transcribe: false })
         finishIdle({})
       }
@@ -434,7 +300,7 @@ export function createVoiceController(host: VoiceHost) {
     await host.beginDictation().catch(() => undefined)
     // The hold can end while the app is being read: a turn that is already idle
     // must not put its bars on screen after the key is up.
-    if (mine !== turn || phase === 'idle') return
+    if (mine !== turn || timing.phase() === 'idle') return
     host.showIndicator()
   }
 
@@ -445,7 +311,7 @@ export function createVoiceController(host: VoiceHost) {
    * programmatic `release()` helper means. The tap always names its hold.
    */
   async function onRelease(binding?: VoiceBinding): Promise<void> {
-    if (phase !== 'listening') return
+    if (timing.phase() !== 'listening') return
     if (binding && binding !== turnBinding) return
     if (!longEnough()) {
       // A tap on a hold-to-talk key is almost always a mistake; transcribing a
@@ -465,7 +331,7 @@ export function createVoiceController(host: VoiceHost) {
     // Escape while talking, or the tap was disabled by macOS. An edge with no
     // turn behind it must not touch the card: finishing an idle turn again would
     // erase the error the last one left there.
-    if (phase === 'idle' && turnAction === null) return
+    if (timing.phase() === 'idle' && turnAction === null) return
     // The cancel must come from the hold that owns the card, or a stray edge of
     // the other one would abort a turn it never started.
     if (binding && binding !== turnBinding) return
@@ -495,7 +361,7 @@ export function createVoiceController(host: VoiceHost) {
     // `transcribing` is how a 40 ms tap used to report "ничего не расслышал" after
     // it had already been dismissed, and how the tail of an overtaken phrase could
     // end the phrase that replaced it.
-    if (phase !== 'transcribing') {
+    if (timing.phase() !== 'transcribing') {
       return { ok: false, text: '', ms: 0, message: 'Пропущено.' }
     }
     const mine = turn
@@ -512,7 +378,7 @@ export function createVoiceController(host: VoiceHost) {
 
     busy = true
     // The watchdog reads this when `setPhase` arms it below.
-    transcribeBudgetMs = transcribeBudget(result.durationMs)
+    timing.setRecordingDuration(result.durationMs)
     // This turn is about to load the model itself; a warm-up would be a second
     // copy of the same work. Cancel first: stopping drops the mark of the load it
     // interrupts, and this turn takes over from there.
@@ -586,13 +452,6 @@ export function createVoiceController(host: VoiceHost) {
     finishIdle({ error: message, code: 'noMic' })
   }
 
-  /** Loudness tick from the renderer, forwarded as-is into the overlay event. */
-  function setLevel(value: number): void {
-    if (phase !== 'listening') return
-    level = Math.max(0, Math.min(1, value))
-    host.fieldLevel(level)
-  }
-
   function stop(): void {
     // App shutdown or a full voice stop can land mid-hold; the surface must not
     // outlive the controller's state.
@@ -602,14 +461,8 @@ export function createVoiceController(host: VoiceHost) {
     hotkeys.stop()
     abort?.abort()
     abort = null
-    if (poller) clearInterval(poller)
-    poller = null
-    if (listeningWatchdog) clearInterval(listeningWatchdog)
-    if (recordingTimer) clearTimeout(recordingTimer)
-    listeningWatchdog = null
-    recordingTimer = null
+    timing.reset()
     warmup.reset()
-    phase = 'idle'
     busy = false
     turnAction = null
     turnBinding = null
@@ -632,7 +485,7 @@ export function createVoiceController(host: VoiceHost) {
 
   /** Exists for tests: nothing outside them needs "is a turn running" as a single flag. */
   function isBusy(): boolean {
-    return busy || phase !== 'idle'
+    return busy || timing.phase() !== 'idle'
   }
 
   /**
@@ -643,7 +496,7 @@ export function createVoiceController(host: VoiceHost) {
    * of every session would silently not record.
    */
   function attach(): { phase: VoicePhase; maxDurationMs: number } {
-    return { phase, maxDurationMs: getSettings().voice.maxDurationMs }
+    return { phase: timing.phase(), maxDurationMs: getSettings().voice.maxDurationMs }
   }
 
   /**
@@ -673,7 +526,7 @@ export function createVoiceController(host: VoiceHost) {
     status,
     handleRecording,
     failed,
-    setLevel,
+    setLevel: timing.setLevel,
     mode,
     isBusy,
     attach,
@@ -681,7 +534,7 @@ export function createVoiceController(host: VoiceHost) {
     release,
     cancel,
     /** Exists for tests: the renderer learns the phase from `attach()` and the events. */
-    phase: (): VoicePhase => phase
+    phase: timing.phase
   }
 }
 
