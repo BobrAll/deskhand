@@ -62,6 +62,22 @@ export interface KeyStatus {
 
 export type ModelListResult = { ok: true; models: string[] } | { ok: false; message: string }
 
+/**
+ * Where the settings window should land when another window asked for it.
+ *
+ * The card can tell the user "выбери модель в настройках", and the next thing it
+ * does is open the window — at the top of whatever section it was left on. This
+ * says which tab, which sub-view and which row the request was about, so the
+ * settings window opens on the thing that needs attention.
+ */
+export interface SettingsTarget {
+  tab?: 'provider' | 'voice' | 'agent' | 'privacy'
+  /** A sub-view inside the tab, e.g. `models` in «Модель». */
+  view?: 'connection' | 'models' | 'screenshot' | 'permissions' | 'data' | 'exceptions'
+  /** A row to reveal and focus. */
+  focus?: 'extraBody'
+}
+
 export interface TestKeyResult {
   ok: boolean
   message: string

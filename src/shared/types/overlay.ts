@@ -1,4 +1,5 @@
 import type { ContextSnapshot } from './context'
+import type { SettingsTarget } from './settings'
 import type { AgentAvailability } from './agent'
 
 /**
@@ -52,6 +53,8 @@ export interface OverlayNotice {
   /** A setup problem the card cannot fix itself: `error` is the red tone, `warning` the amber one. */
   kind: 'warning' | 'error'
   message: string
+  /** Where the «Настройки» button should land, so the user does not have to hunt for the row. */
+  target?: SettingsTarget
 }
 
 export interface OverlayState {

@@ -13,7 +13,7 @@
  */
 
 import type { AppSettings, ProviderId } from '@shared/types'
-import { PROVIDERS, SETTINGS_BOUNDS, normalizeBaseUrl } from '@shared/defaults'
+import { PROVIDERS, SETTINGS_BOUNDS, normalizeBaseUrl, parseExtraBody } from '@shared/defaults'
 
 /**
  * Values the settings window cannot store as they are, and what it says instead.
@@ -28,7 +28,8 @@ export const HOLD_REASON = {
   maxTokens: `Максимум токенов: от ${SETTINGS_BOUNDS.maxTokens.min} до ${SETTINGS_BOUNDS.maxTokens.max}.`,
   prompt: 'Пустой системный промпт оставлен прежним.',
   hotkey: 'Горячая клавиша не задана.',
-  ttsBaseUrl: 'Проверь адрес сервиса синтеза — изменения не применены.'
+  ttsBaseUrl: 'Проверь адрес сервиса синтеза — изменения не применены.',
+  extraBody: 'Проверь доп. параметры запроса — JSON не сохранён.'
 } as const
 
 /** The providers whose base URL override is not an address, and so cannot be stored. */
@@ -38,6 +39,20 @@ export function invalidBaseUrlProviders(draft: AppSettings): ProviderId[] {
     // Empty is not invalid: it means "use the official host".
     return value.trim() !== '' && normalizeBaseUrl(value) === ''
   }).map((provider) => provider.id)
+}
+
+/**
+ * The providers whose extra request body is not a JSON object.
+ *
+ * The textarea keeps half-typed JSON while the user edits it, but the store
+ * cannot keep it: the request builder would either throw mid-answer or silently
+ * drop the field. So an invalid value holds the write and is reverted to what is
+ * on disk, exactly like a base URL that is not an address.
+ */
+export function invalidExtraBodyProviders(draft: AppSettings): ProviderId[] {
+  return PROVIDERS.filter((provider) => parseExtraBody(draft.extraBody?.[provider.id]) === null).map(
+    (provider) => provider.id
+  )
 }
 
 /**
@@ -70,6 +85,9 @@ export function tokensInRange(value: number): boolean {
 export function holdReasonFor(draft: AppSettings, invalidBaseUrls: ProviderId[]): string | null {
   if (invalidBaseUrls.length > 0) return HOLD_REASON.baseUrl
   if (ttsBaseUrlInvalid(draft)) return HOLD_REASON.ttsBaseUrl
+  // Checked across every provider, not only the selected one: the tab badge
+  // names the selected provider, but a broken body anywhere is still unwritable.
+  if (invalidExtraBodyProviders(draft).length > 0) return HOLD_REASON.extraBody
   // Out of range, not merely odd: a cleared number field reads as 0 while the
   // user is retyping it, and clamping that would rewrite the field under them.
   if (!tokensInRange(draft.maxTokens)) return HOLD_REASON.maxTokens
@@ -118,6 +136,14 @@ export function writableSettings(
   const onDisk = bundle.settings
   if (invalidBaseUrls.length > 0) next.baseUrls = onDisk.baseUrls
   if (ttsBaseUrlInvalid(next)) next.tts = { ...next.tts, baseUrl: onDisk.tts?.baseUrl ?? '' }
+  // Revert only the broken body, not the whole map: the other providers may hold
+  // edits that are perfectly writable.
+  const invalidExtraBody = invalidExtraBodyProviders(next)
+  if (invalidExtraBody.length > 0) {
+    const reverted = { ...next.extraBody }
+    for (const provider of invalidExtraBody) reverted[provider] = onDisk.extraBody?.[provider] ?? ''
+    next.extraBody = reverted
+  }
   if (!tokensInRange(next.maxTokens)) next.maxTokens = onDisk.maxTokens
   if (!next.systemPrompt.trim()) next.systemPrompt = onDisk.systemPrompt
   if (!next.hotkey.trim()) next.hotkey = onDisk.hotkey

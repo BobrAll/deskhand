@@ -5,7 +5,7 @@
 
 import { contextBridge, ipcRenderer } from 'electron'
 import { CH } from '../shared/ipc'
-import type { DeskhandApi, Unsubscribe } from '../shared/api'
+import type { DeskhandApi, SettingsTarget, Unsubscribe } from '../shared/api'
 import type {
   AgentAvailability,
   AgentCursorFrame,
@@ -87,18 +87,21 @@ const api: DeskhandApi = {
     deleteKey: (provider: ProviderId) => ipcRenderer.invoke(CH.settings.deleteKey, provider),
     testKey: (provider: ProviderId, key: string, baseUrl?: string) =>
       ipcRenderer.invoke(CH.settings.testKey, provider, key, baseUrl),
+    testSavedKey: (provider: ProviderId) => ipcRenderer.invoke(CH.settings.testSavedKey, provider),
     listModels: (provider: ProviderId, baseUrl?: string) =>
       ipcRenderer.invoke(CH.settings.listModels, provider, baseUrl),
     runningApps: () => ipcRenderer.invoke(CH.settings.runningApps),
     pickApp: () => ipcRenderer.invoke(CH.settings.pickApp),
-    open: () => ipcRenderer.send(CH.settings.open),
+    open: (target) => ipcRenderer.send(CH.settings.open, target),
+    onNavigate: (handler) => subscribe<SettingsTarget>(CH.settings.navigate, handler),
     close: () => ipcRenderer.send(CH.settings.close),
     hold: (held: boolean) => ipcRenderer.send(CH.settings.hold, held),
     recording: (active: boolean) => ipcRenderer.send(CH.settings.recording, active)
   },
   onboarding: {
     complete: () => ipcRenderer.invoke(CH.onboarding.complete),
-    openSettings: () => ipcRenderer.send(CH.onboarding.openSettings)
+    openSettings: () => ipcRenderer.send(CH.onboarding.openSettings),
+    tryIt: () => ipcRenderer.send(CH.onboarding.tryIt)
   },
   permissions: {
     status: () => ipcRenderer.invoke(CH.permissions.status),

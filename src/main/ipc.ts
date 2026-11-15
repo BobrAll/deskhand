@@ -11,7 +11,14 @@ import { dialog, ipcMain } from 'electron'
 import { CH } from '@shared/ipc'
 import { BUNDLED_VOICE_MODEL, PROVIDERS } from '@shared/defaults'
 import { PREVIEW_LINE } from '@shared/tts'
-import type { AppSettings, ContextFlags, DownloadProgress, ProviderId, SendRequest } from '@shared/types'
+import type {
+  AppSettings,
+  ContextFlags,
+  DownloadProgress,
+  ProviderId,
+  SendRequest,
+  SettingsTarget
+} from '@shared/types'
 import type { ActionResult, AppPickResult, SettingsBundle } from '@shared/api'
 import type { OverlayController } from './overlay'
 import { applyHistorySettings } from './overlay/history'
@@ -37,7 +44,13 @@ import {
 import { getSettings, patchSettings } from './settings/store'
 import { ttsStatus, synthesize, prefetchPronunciations } from './tts'
 import { installSilero, removeSilero } from './tts/silero'
-import { closeOnboardingWindow, closeSettingsWindow, setSettingsHeld, openSettingsWindow } from './windows'
+import {
+  closeOnboardingWindow,
+  closeSettingsWindow,
+  setSettingsHeld,
+  openSettingsWindow,
+  takeSettingsOpenTarget
+} from './windows'
 import { deleteModel, downloadModel, importModel, voiceStatus } from './voice/recognizer'
 
 const PROVIDER_IDS: ProviderId[] = PROVIDERS.map((provider) => provider.id)
@@ -179,7 +192,7 @@ export function registerIpc(deps: IpcDeps): void {
   registerOverlayHandlers(deps.overlay)
   registerSettingsHandlers(deps)
   registerPermissionHandlers()
-  registerOnboardingHandlers()
+  registerOnboardingHandlers(deps.overlay)
   registerVoiceHandlers(deps.voice)
   registerTtsHandlers()
   registerAgentHandlers(deps.overlay)
@@ -215,7 +228,11 @@ function registerOverlayHandlers(overlay: OverlayController): void {
 function registerSettingsHandlers(
   deps: Pick<IpcDeps, 'applyHotkey' | 'applyLaunchAtLogin' | 'voice' | 'setRecording'>
 ): void {
-  ipcMain.handle(CH.settings.load, () => loadSettingsBundle())
+  ipcMain.handle(CH.settings.load, async () => {
+    const bundle = await loadSettingsBundle()
+    const navigate = takeSettingsOpenTarget()
+    return navigate ? { ...bundle, navigate } : bundle
+  })
 
   ipcMain.handle(CH.settings.save, async (_event, incoming: unknown) => {
     const previous = getSettings()
@@ -243,6 +260,13 @@ function registerSettingsHandlers(
     return testApiKey(provider, String(key ?? ''), typeof baseUrl === 'string' ? baseUrl : undefined)
   })
 
+  ipcMain.handle(CH.settings.testSavedKey, (_event, provider: unknown) => {
+    if (!isProvider(provider)) return { ok: false, message: 'Неизвестный провайдер.' }
+    const key = getApiKey(provider)
+    if (!key) return { ok: false, message: 'Ключ не сохранён.' }
+    return testApiKey(provider, key, getSettings().baseUrls[provider] || undefined)
+  })
+
   ipcMain.handle(CH.settings.listModels, (_event, provider: unknown, baseUrl?: unknown) => {
     if (!isProvider(provider)) return { ok: false, message: 'Неизвестный провайдер.' }
     const override = typeof baseUrl === 'string' ? baseUrl : getSettings().baseUrls[provider]
@@ -252,7 +276,7 @@ function registerSettingsHandlers(
   ipcMain.handle(CH.settings.runningApps, async (): Promise<RunningApp[]> => helperRunningApps())
   ipcMain.handle(CH.settings.pickApp, () => pickApplication())
 
-  ipcMain.on(CH.settings.open, () => openSettingsWindow())
+  ipcMain.on(CH.settings.open, (_event, target: SettingsTarget | undefined) => openSettingsWindow(target))
   ipcMain.on(CH.settings.close, () => closeSettingsWindow())
   // The renderer says "edits are still being written" before it asks to close and
   // clears the flag once the last write has landed. Without it, ⌘W during the
@@ -277,14 +301,21 @@ function registerPermissionHandlers(): void {
 }
 
 // ---- onboarding ----------------------------------------------------------
-function registerOnboardingHandlers(): void {
+function registerOnboardingHandlers(overlay: OverlayController): void {
   ipcMain.handle(CH.onboarding.complete, () => {
     patchSettings({ onboardingCompleted: true })
     closeOnboardingWindow()
   })
   ipcMain.on(CH.onboarding.openSettings, () => {
     closeOnboardingWindow()
-    openSettingsWindow()
+    openSettingsWindow({ tab: 'provider' })
+  })
+  // The last screen's «Попробовать сейчас»: the wizard is done, and the very
+  // first thing the user sees is the card they were just told about.
+  ipcMain.on(CH.onboarding.tryIt, () => {
+    patchSettings({ onboardingCompleted: true })
+    closeOnboardingWindow()
+    void overlay.open()
   })
 }
 

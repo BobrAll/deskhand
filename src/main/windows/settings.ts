@@ -1,4 +1,6 @@
 import { app, BrowserWindow } from 'electron'
+import { CH } from '@shared/ipc'
+import type { SettingsTarget } from '@shared/types'
 import { denyExternalLinks } from '../denyExternalLinks'
 import { loadPage } from '../pageLoad'
 import { appWindowOptions } from './base'
@@ -20,6 +22,14 @@ interface AppWindowOptions {
 
 let settingsWindow: BrowserWindow | null = null
 let onboardingWindow: BrowserWindow | null = null
+/**
+ * Where the settings window should land once it has loaded.
+ *
+ * The window is created and the renderer mounts a moment later; a navigation
+ * message sent to it now would be heard by nobody. The first `settings.load`
+ * takes this target instead, and an already open window is told directly.
+ */
+let pendingSettingsTarget: SettingsTarget | null = null
 /**
  * Cancels a close that is waiting for the renderer to finish a write.
  *
@@ -130,15 +140,22 @@ function holdCloseUntilWritesLand(win: BrowserWindow): void {
   win.on('closed', cancelClose)
 }
 
-export function openSettingsWindow(): BrowserWindow {
+export function openSettingsWindow(target?: SettingsTarget): BrowserWindow {
   if (settingsWindow && !settingsWindow.isDestroyed()) {
     // Reopening during the deferred close is a request to stay.
     cancelPendingClose?.()
     settingsWindow.show()
     settingsWindow.focus()
+    if (target) {
+      // A window that is still loading has not mounted its listener yet; the
+      // target waits for the first `settings.load` exactly like a fresh one.
+      if (settingsWindow.webContents.isLoadingMainFrame()) pendingSettingsTarget = target
+      else settingsWindow.webContents.send(CH.settings.navigate, target)
+    }
     return settingsWindow
   }
 
+  pendingSettingsTarget = target ?? null
   const win = openAppWindow({
     title: 'Deskhand — настройки',
     width: 980,
@@ -152,9 +169,23 @@ export function openSettingsWindow(): BrowserWindow {
   win.on('closed', () => {
     settingsWindow = null
     settingsHeld = false
+    pendingSettingsTarget = null
     settingsClosedHandler?.()
   })
   return win
+}
+
+/**
+ * The target of the open request that created this window, taken once.
+ *
+ * `settings.load` runs on mount, which is the first moment the renderer can
+ * receive it; taking rather than reading keeps a later reload from replaying a
+ * navigation the user already followed.
+ */
+export function takeSettingsOpenTarget(): SettingsTarget | null {
+  const target = pendingSettingsTarget
+  pendingSettingsTarget = null
+  return target
 }
 
 export function openOnboardingWindow(): BrowserWindow {

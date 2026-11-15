@@ -339,7 +339,7 @@ export function App() {
       {expanded && setupNotice && (
         <div className="line" data-tone={setupNotice.kind === 'error' ? 'err' : 'warn'}>
           <span>{setupNotice.message}</span>
-          <button className="tag" onClick={() => window.deskhand.settings.open()}>
+          <button className="tag" onClick={() => window.deskhand.settings.open(setupNotice.target)}>
             Настройки
           </button>
         </div>

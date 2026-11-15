@@ -16,13 +16,15 @@ export function setupNotice(): OverlayState['setupNotice'] {
   if (!resolveChatModel(settings)) {
     return {
       kind: 'warning',
-      message: `Выбери модель ${label} в настройках.`
+      message: `Выбери модель ${label} в настройках.`,
+      target: { tab: 'provider', view: 'models' }
     }
   }
   if (!getApiKey(settings.provider)) {
     return {
       kind: 'warning',
-      message: `Добавь ключ ${label} в настройках, чтобы получать ответы.`
+      message: `Добавь ключ ${label} в настройках, чтобы получать ответы.`,
+      target: { tab: 'provider', view: 'connection' }
     }
   }
   return null

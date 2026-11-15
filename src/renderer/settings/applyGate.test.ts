@@ -15,6 +15,7 @@ import {
   hasUnsaved,
   holdReasonFor,
   invalidBaseUrlProviders,
+  invalidExtraBodyProviders,
   tokensInRange,
   writeCoversDraft,
   writableSettings
@@ -74,6 +75,50 @@ describe('applyGate: an address that is not an address', () => {
     })
 
     expect(invalidBaseUrlProviders(draft).length).toBeGreaterThan(1)
+  })
+})
+
+describe('applyGate: an extra body that is not JSON', () => {
+  it('is not invalid when the field is empty', () => {
+    expect(invalidExtraBodyProviders(settings())).toEqual([])
+  })
+
+  it('is not invalid for a JSON object', () => {
+    const draft = settings({ extraBody: { ...settings().extraBody, openai: '{"reasoning_effort": "none"}' } })
+
+    expect(invalidExtraBodyProviders(draft)).toEqual([])
+  })
+
+  it('is invalid for broken JSON and for a JSON array', () => {
+    const broken = settings({ extraBody: { ...settings().extraBody, openai: '{"reasoning_effort":' } })
+    expect(invalidExtraBodyProviders(broken)).toEqual(['openai'])
+
+    const array = settings({ extraBody: { ...settings().extraBody, anthropic: '["thinking"]' } })
+    expect(invalidExtraBodyProviders(array)).toEqual(['anthropic'])
+  })
+
+  it('holds the write instead of letting the store drop the field', () => {
+    const draft = settings({ extraBody: { ...settings().extraBody, openai: '{' } })
+
+    expect(holdReasonFor(draft, [])).toBe(HOLD_REASON.extraBody)
+  })
+
+  it('reverts only the broken provider to what is on disk', () => {
+    const onDisk = settings({
+      extraBody: { ...settings().extraBody, openai: '{"stream": false}' }
+    })
+    const draft = settings({
+      extraBody: {
+        ...settings().extraBody,
+        openai: 'не json',
+        anthropic: '{"thinking": {"type": "disabled"}}'
+      }
+    })
+
+    const written = writableSettings(draft, { settings: onDisk }, [])
+
+    expect(written.extraBody.openai).toBe('{"stream": false}')
+    expect(written.extraBody.anthropic).toBe('{"thinking": {"type": "disabled"}}')
   })
 })
 

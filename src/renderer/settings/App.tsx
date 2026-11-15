@@ -19,10 +19,11 @@ import type {
   KeyStatus,
   PermissionState,
   ProviderId,
+  SettingsTarget,
   TtsSettings,
   VoiceSettings
 } from '@shared/types'
-import { PROVIDERS } from '@shared/defaults'
+import { PROVIDERS, normalizeBaseUrl } from '@shared/defaults'
 import type { AppPickResult, RunningAppInfo, SettingsBundle } from '@shared/api'
 import { WindowBrand } from '../styles/WindowBrand'
 import { HotkeyField } from './HotkeyField'
@@ -130,6 +131,14 @@ export function App() {
   const [bundle, setBundle] = useState<SettingsBundle | null>(null)
   const [draft, setDraft] = useState<AppSettings | null>(null)
   const [tab, setTab] = useState<Tab>('provider')
+  /**
+   * Where another window asked this one to land.
+   *
+   * The first load carries the target, and a window that is already open gets it
+   * through `onNavigate`. Kept in state rather than applied once so the provider
+   * pane can react to a second request for the same row.
+   */
+  const [navigate, setNavigate] = useState<SettingsTarget | null>(null)
   const [notice, setNotice] = useState<Notice | null>(null)
   const [applyState, setApplyState] = useState<ApplyState>('idle')
   /**
@@ -186,6 +195,10 @@ export function App() {
       .then((loaded) => {
         setBundle(loaded)
         setDraft(loaded.settings)
+        if (loaded.navigate) {
+          setTab(loaded.navigate.tab ?? 'provider')
+          setNavigate(loaded.navigate)
+        }
       })
       .catch((error: unknown) => {
         console.error('[settings] load failed:', error)
@@ -195,6 +208,20 @@ export function App() {
       .runningApps()
       .then(setApps)
       .catch(() => setApps([]))
+  }, [])
+
+  /**
+   * A window that is already open is told where to go instead of being reloaded.
+   *
+   * The target is stored as a fresh object every time, so asking for the same
+   * row twice still reaches the pane — the second request is the one that finds
+   * the window already sitting on that tab.
+   */
+  useEffect(() => {
+    return window.deskhand.settings.onNavigate((target) => {
+      if (target.tab) setTab(target.tab)
+      setNavigate({ ...target })
+    })
   }, [])
 
   const providerKeys = useMemo<Record<ProviderId, KeyStatus | undefined>>(() => {
@@ -449,16 +476,38 @@ export function App() {
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [draft, unsaved, writable, flush])
 
+  /**
+   * Verifies the key before storing it.
+   *
+   * A key that the window happily stored but the service rejects reads as a bug
+   * in the app, and the only place that can tell them apart is the service. So
+   * the write happens after a real request succeeds; a rejection leaves the field
+   * as it is and names the reason.
+   *
+   * The override goes through the same normalisation the settings store applies,
+   * so the tested host is the host requests will actually use.
+   */
   const saveKey = useCallback(async () => {
     if (!draft || !keyInput.trim()) return false
+    const provider = draft.provider
+    const override = draft.baseUrls[provider]?.trim() ? normalizeBaseUrl(draft.baseUrls[provider]) : ''
+    if (draft.baseUrls[provider]?.trim() && !override) {
+      showNotice({ kind: 'err', text: 'Проверь адрес API — ключ не проверен.' }, BANNER_KEY_NOTICE_MS)
+      return false
+    }
     try {
-      const next = await window.deskhand.settings.setKey(draft.provider, keyInput)
+      const tested = await window.deskhand.settings.testKey(provider, keyInput, override || undefined)
+      if (!tested.ok) {
+        showNotice({ kind: 'err', text: `Ключ отклонён: ${tested.message}` }, BANNER_KEY_NOTICE_MS)
+        return false
+      }
+      const next = await window.deskhand.settings.setKey(provider, keyInput)
       setBundle(next)
       setKeyInput('')
-      showNotice({ kind: 'ok', text: 'Ключ сохранён.' }, BANNER_KEY_NOTICE_MS)
+      showNotice({ kind: 'ok', text: 'Ключ работает и сохранён.' }, BANNER_KEY_NOTICE_MS)
       return true
     } catch {
-      showNotice({ kind: 'err', text: 'Не удалось сохранить ключ.' }, BANNER_KEY_NOTICE_MS)
+      showNotice({ kind: 'err', text: 'Не удалось проверить ключ.' }, BANNER_KEY_NOTICE_MS)
       return false
     }
   }, [draft, keyInput, showNotice])
@@ -566,6 +615,7 @@ export function App() {
               onKeyInput={setKeyInput}
               onSaveKey={saveKey}
               onRemoveKey={removeKey}
+              navigate={navigate && (!navigate.tab || navigate.tab === 'provider') ? navigate : undefined}
             />
           </div>
 

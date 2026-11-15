@@ -41,7 +41,10 @@ body,
   display: flex;
   flex-direction: column;
   gap: 3px;
-  animation: appear 100ms ease-out;
+  /* 160 ms is the middle of the documented 120–200 ms window: long enough to
+     read as a fade rather than a pop, short enough not to lag behind the key
+     press that summons the card. The unfold matches it — one motion, one speed. */
+  animation: appear 160ms ease-out;
   /* The whole glass is a handle. Text, controls and the answer opt out below:
      a window that can only be grabbed by its top six points is a puzzle. */
   -webkit-app-region: drag;
@@ -93,7 +96,15 @@ textarea.prompt {
     light-dark(rgb(255 255 255 / 0.16), rgb(255 255 255 / 0.08)),
     transparent 26px
   );
-  box-shadow: inset 0 0 2px rgb(0 0 0 / 0.16);
+  /* The window is `hasShadow: false` — a native shadow would be clipped to the
+     square the vibrancy view occupies — and the inset line alone leaves the card
+     floating on a white document with no edge at all. A soft external shadow,
+     faint enough to disappear over dark content, gives it a shelf to sit on
+     without the hard border the glass does not have. */
+  box-shadow:
+    inset 0 0 2px rgb(0 0 0 / 0.16),
+    0 1px 3px rgb(0 0 0 / 0.12),
+    0 8px 24px rgb(0 0 0 / 0.18);
   transition:
     background-color 180ms ease-out,
     border-color 180ms ease-out;
@@ -311,6 +322,44 @@ button.stop:hover:not(:disabled) > span {
   background: var(--danger);
 }
 
+/*
+ * Hit areas.
+ *
+ * The controls are drawn at 16–18 pt so the card keeps its compact register, but
+ * a 16 pt square is below the 24 pt pointer target macOS expects. Each one grows
+ * an invisible `::before` instead of padding: the pseudo-element is taken out of
+ * flow, so the bar keeps its 6 pt gaps and the chrome width the main process
+ * clamps the window to stays exactly what `cardMetrics.test.ts` sums.
+ */
+button.toggle,
+button.close,
+button.stop {
+  position: relative;
+}
+
+button.toggle::before,
+button.close::before {
+  content: '';
+  position: absolute;
+  inset: -6px;
+  border-radius: var(--radius-sm);
+}
+
+/* 18 pt drawn, 28 pt to hit. */
+button.stop::before {
+  content: '';
+  position: absolute;
+  inset: -5px;
+  border-radius: var(--radius-sm);
+}
+
+/* The close button is the last thing in the bar, so its target reaches into the
+   card's own padding — and there it meets the resize edge. It wins that sliver
+   on purpose: a click aimed at the door must not resize the room. */
+button.close {
+  z-index: 1;
+}
+
 /* Everything under the field is indented to the text column, so the answer
    lands exactly under the question. */
 .meta,
@@ -325,7 +374,7 @@ button.stop:hover:not(:disabled) > span {
   display: flex;
   flex-direction: column;
   gap: 7px;
-  animation: unfold 140ms ease-out;
+  animation: unfold 160ms ease-out;
 }
 
 @keyframes unfold {
@@ -343,8 +392,12 @@ button.stop:hover:not(:disabled) > span {
 
 .meta {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 4px;
+  /* Tags sit on 15 pt lines; a wrapped row needs a hair of breathing room or the
+     pill borders of two rows touch. */
+  row-gap: 3px;
   min-height: 18px;
   font-size: 11px;
   /* Small type over a light card needs more than `--text-faint`: the strip is
@@ -352,7 +405,13 @@ button.stop:hover:not(:disabled) > span {
   color: color-mix(in srgb, var(--text) 62%, transparent);
 }
 
+/* The app name is the one item that may give way: at 342 pt with Текст, Экран, a
+   preview and Рисунок on the same row it shrinks to an ellipsis instead of
+   pushing the tags past the card's right edge. `min-width: 0` is what allows a
+   flex item to go below its text width. */
 .meta .app {
+  flex: 0 1 auto;
+  min-width: 0;
   max-width: 110px;
   margin-right: 4px;
   overflow: hidden;
@@ -360,15 +419,15 @@ button.stop:hover:not(:disabled) > span {
   white-space: nowrap;
 }
 
-/* Tags are 11px on purpose: this row answers "what does it see?", it is not a
-   toolbar. Hover is the only thing that reveals they are clickable. */
+/* Tags stay at 11.5 px on purpose: this row answers "what does it see?", it is
+   not a toolbar. Hover is the only thing that reveals they are clickable. */
 button.tag {
   padding: 1px 5px;
   border: 1px solid transparent;
   border-radius: 999px;
   background: transparent;
-  font-size: 10.5px;
-  line-height: 14px;
+  font-size: 11.5px;
+  line-height: 15px;
   color: color-mix(in srgb, var(--text) 62%, transparent);
 }
 
@@ -392,6 +451,7 @@ button.tag.clear {
 }
 
 .thumb {
+  flex: none;
   height: 17px;
   width: auto;
   max-width: 74px;
@@ -629,8 +689,8 @@ button.tag.clear {
 }
 
 .answer {
-  font-size: 13px;
-  line-height: 1.58;
+  font-size: 14px;
+  line-height: 1.55;
   white-space: pre-wrap;
   word-break: break-word;
   padding: 8px 2px 2px 0;
@@ -669,11 +729,11 @@ button.tag.clear {
 .answer .md-heading {
   font-weight: 600;
   color: var(--text);
-  font-size: 13px;
+  font-size: 14px;
 }
 
 .answer .md-heading[data-level='1'] {
-  font-size: 13.5px;
+  font-size: 14.5px;
 }
 
 .answer code {
@@ -681,7 +741,7 @@ button.tag.clear {
   border-radius: 3px;
   background: var(--surface);
   font-family: var(--mono);
-  font-size: 11.5px;
+  font-size: 12px;
 }
 
 .answer pre {
@@ -733,7 +793,7 @@ button.tag.clear {
      columns than the width can honestly hold. */
   width: 100%;
   border-collapse: collapse;
-  font-size: 11.5px;
+  font-size: 12px;
   line-height: 1.35;
 }
 
@@ -776,7 +836,7 @@ button.tag.clear {
 .caret {
   display: inline-block;
   width: 5px;
-  height: 12px;
+  height: 13px;
   margin-left: 2px;
   vertical-align: text-bottom;
   background: var(--accent);
@@ -835,6 +895,23 @@ button.tag.clear {
   touch-action: none;
 }
 
+/**
+ * The grab edge is 7 pt wide because wider would turn scrolling into resizing.
+ * The invisible target widens it to 11 pt inward, over the card's own padding.
+ *
+ * The tradeoff: the answer's 5 pt scrollbar starts 8 pt in, so the outer 3 pt of
+ * the thumb now belongs to the grip. The inner 2 pt and the whole track still
+ * scroll, and a vertical drag that starts on the padding was never a scroll in
+ * the first place — the alternative, a full 24 pt strip, would swallow the
+ * scrollbar entirely on a card this narrow. The edge does not grow outward past
+ * the window, where there is nothing left to hit.
+ */
+.grip::before {
+  content: '';
+  position: absolute;
+  inset: 0 0 0 -4px;
+}
+
 .grip::after {
   content: '';
   position: absolute;
@@ -881,8 +958,8 @@ button.link {
   border: none;
   border-radius: 6px;
   background: transparent;
-  font-size: 11px;
-  line-height: 15px;
+  font-size: 11.5px;
+  line-height: 16px;
   color: var(--text-dim);
 }
 
@@ -910,6 +987,22 @@ button.link[data-copied]:hover:not(:disabled) {
   color: var(--success);
   background: color-mix(in srgb, var(--success) 14%, transparent);
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--success) 30%, transparent);
+}
+
+/* ---------------------------------------------------------- keyboard focus */
+
+/*
+ * The card used to have no visible focus at all: Tab moved from the field to the
+ * chevron to the close button and nothing followed. The settings window already
+ * rings its controls, so this is the same ring — accent, 2 px, 2 px of air —
+ * applied to the card's own buttons. `:focus-visible` only, so a pointer click
+ * stays quiet, and the outline sits outside the 16 pt box instead of changing
+ * it. The grip is excluded on purpose: at 7 pt wide an offset ring would spill
+ * out of the window, so it keeps its inset outline above.
+ */
+.card :is(button.toggle, button.close, button.stop, button.tag, button.link, .new-text):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 /* ------------------------------------------------------- the listening card */
@@ -994,6 +1087,12 @@ button.link[data-copied]:hover:not(:disabled) {
   .card,
   .drawer {
     animation: none;
+  }
+  /* The caret is the one indicator that a reply is still arriving; without the
+     blink it stays a solid mark instead of disappearing. */
+  .caret {
+    animation: none;
+    opacity: 1;
   }
   .voice {
     transform: none;

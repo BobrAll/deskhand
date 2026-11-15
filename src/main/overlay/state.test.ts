@@ -55,7 +55,8 @@ describe('setupNotice', () => {
 
     expect(setupNotice()).toEqual({
       kind: 'warning',
-      message: 'Выбери модель OpenAI в настройках.'
+      message: 'Выбери модель OpenAI в настройках.',
+      target: { tab: 'provider', view: 'models' }
     })
   })
 
@@ -64,7 +65,8 @@ describe('setupNotice', () => {
 
     expect(setupNotice()).toEqual({
       kind: 'warning',
-      message: 'Добавь ключ OpenAI в настройках, чтобы получать ответы.'
+      message: 'Добавь ключ OpenAI в настройках, чтобы получать ответы.',
+      target: { tab: 'provider', view: 'connection' }
     })
   })
 

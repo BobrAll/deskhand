@@ -1,5 +1,5 @@
-import { useEffect, useId, useRef, useState } from 'react'
-import type { AppSettings, KeyStatus, ModelListResult, ProviderId } from '@shared/types'
+import { useEffect, useId, useMemo, useRef, useState } from 'react'
+import type { AppSettings, KeyStatus, ModelListResult, ProviderId, SettingsTarget } from '@shared/types'
 import {
   DEFAULT_SYSTEM_PROMPT,
   PROVIDERS,
@@ -21,6 +21,8 @@ interface ProviderSectionProps {
   onKeyInput(value: string): void
   onSaveKey(): Promise<boolean>
   onRemoveKey(): Promise<void>
+  /** Where another window asked this pane to land, if anywhere. */
+  navigate?: SettingsTarget
 }
 
 const MODEL_VIEWS = [
@@ -37,14 +39,21 @@ export function ProviderSection({
   keyInput,
   onKeyInput,
   onSaveKey,
-  onRemoveKey
+  onRemoveKey,
+  navigate
 }: ProviderSectionProps) {
   const navId = useId()
   const [view, setView] = useState<(typeof MODEL_VIEWS)[number]['id']>('connection')
   const [busy, setBusy] = useState(false)
   const [catalog, setCatalog] = useState<ModelListResult | null>(null)
+  const [modelSearch, setModelSearch] = useState('')
+  const [modelCheck, setModelCheck] = useState<{ ok: boolean; text: string } | null>(null)
+  const [extraCheck, setExtraCheck] = useState<{ ok: boolean; text: string } | null>(null)
+  const [keyCheck, setKeyCheck] = useState<{ ok: boolean; text: string } | null>(null)
+  const [extraOpen, setExtraOpen] = useState(false)
   const modelListRef = useRef<HTMLSelectElement>(null)
   const modelIdRef = useRef<HTMLInputElement>(null)
+  const extraBodyRef = useRef<HTMLTextAreaElement>(null)
   useEffect(() => {
     if (view === 'models' && catalog) {
       ;(catalog.ok ? modelListRef.current : modelIdRef.current)?.focus()
@@ -68,13 +77,109 @@ export function ProviderSection({
       ? 'Нужен JSON-объект, например {"reasoning_effort": "none"}. Пока он не исправлен, параметры не отправляются.'
       : null
 
+  const query = modelSearch.trim().toLowerCase()
+  const filteredModels = useMemo(() => {
+    if (!catalog?.ok) return []
+    if (!query) return catalog.models
+    return catalog.models.filter((id) => id.toLowerCase().includes(query))
+  }, [catalog, query])
+  // The current choice stays in the list even while the query filters it out:
+  // a select whose value is missing from its options silently shows the first one.
+  const modelOptions = model && !filteredModels.includes(model) ? [model, ...filteredModels] : filteredModels
+
+  /**
+   * Reveals the row another window asked for.
+   *
+   * The target can arrive while this pane is already mounted, so it is applied on
+   * every change rather than only on the first render. `focus === 'extraBody'`
+   * lands on the field the card's error was about, not merely the tab.
+   */
+  useEffect(() => {
+    if (!navigate) return
+    const target = MODEL_VIEWS.find((item) => item.id === navigate.view)
+    if (target) setView(target.id)
+    if (navigate.focus === 'extraBody') {
+      setView('models')
+      setExtraOpen(true)
+    }
+  }, [navigate])
+
+  // The disclosure has to be open before a textarea inside it can take focus.
+  useEffect(() => {
+    if (extraOpen && navigate?.focus === 'extraBody') extraBodyRef.current?.focus()
+  }, [extraOpen, navigate])
+
+  // A body that does not parse is reachable only behind the disclosure, so the
+  // card opens itself instead of hiding the error behind a closed summary.
+  useEffect(() => {
+    if (extraBodyError) setExtraOpen(true)
+  }, [extraBodyError, provider])
+
   const chooseModel = (value: string) => patch({ models: { ...draft.models, [provider]: value } })
+
+  /**
+   * Says whether the manual ID appears in the loaded list.
+   *
+   * Whether a model actually answers is only known after a real request, so this
+   * check is honest about being a lookup: it never claims the model works, and it
+   * does not block saving the ID.
+   */
+  function checkModel(): void {
+    const id = model.trim()
+    if (!id) {
+      setModelCheck({ ok: false, text: 'Впиши ID модели.' })
+      return
+    }
+    if (!catalog) {
+      setModelCheck({ ok: false, text: 'Список не загружен — загрузи его в «Подключении».' })
+      return
+    }
+    if (!catalog.ok) {
+      setModelCheck({ ok: false, text: 'Список не загрузился — проверь ID вручную.' })
+      return
+    }
+    setModelCheck(
+      catalog.models.includes(id)
+        ? { ok: true, text: 'Модель есть в списке сервиса.' }
+        : { ok: false, text: 'Такой модели нет в загруженном списке — проверь ID.' }
+    )
+  }
+
+  /** Validates the body on demand, so a typo is not reported only by a held write. */
+  function checkExtraBody(): void {
+    const parsed = parseExtraBody(draft.extraBody[draft.provider])
+    setExtraCheck(
+      parsed
+        ? { ok: true, text: 'JSON корректен — параметры уйдут в запрос.' }
+        : { ok: false, text: 'JSON не разобрался — проверь скобки и кавычки.' }
+    )
+  }
 
   async function removeKey(): Promise<void> {
     setBusy(true)
     setCatalog(null)
+    setKeyCheck(null)
     try {
       await onRemoveKey()
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  /**
+   * Asks the main process to probe the key that is already in the Keychain.
+   *
+   * The renderer never sees the key, so the only place that can check it is the
+   * process that owns it — the same probe the unsaved field goes through.
+   */
+  async function checkSavedKey(): Promise<void> {
+    setBusy(true)
+    setKeyCheck(null)
+    try {
+      const result = await window.deskhand.settings.testSavedKey(provider)
+      setKeyCheck({ ok: result.ok, text: result.message })
+    } catch {
+      setKeyCheck({ ok: false, text: 'Не удалось проверить ключ.' })
     } finally {
       setBusy(false)
     }
@@ -110,6 +215,11 @@ export function ProviderSection({
             onClick={() => setView(id)}
           >
             {label}
+            {id === 'models' && extraBodyError && (
+              <span className="badge warn" aria-label="Доп. параметры запроса не сохранены">
+                !
+              </span>
+            )}
           </button>
         ))}
       </nav>
@@ -126,6 +236,9 @@ export function ProviderSection({
                   onClick={() => {
                     if (provider.id === draft.provider) return
                     setCatalog(null)
+                    setModelCheck(null)
+                    setExtraCheck(null)
+                    setKeyCheck(null)
                     onKeyInput('')
                     patch({ provider: provider.id })
                   }}
@@ -145,6 +258,14 @@ export function ProviderSection({
             {keyStatus?.configured ? (
               <div className="row-actions">
                 <span className="permission-state ok">● Ключ сохранён</span>
+                {keyCheck && (
+                  <span className={keyCheck.ok ? 'row-hint ok' : 'row-hint err'} role="status">
+                    {keyCheck.text}
+                  </span>
+                )}
+                <button disabled={busy} onClick={() => void checkSavedKey()}>
+                  Проверить
+                </button>
                 <button className="ghost" disabled={busy} onClick={() => void removeKey()}>
                   Удалить
                 </button>
@@ -163,7 +284,7 @@ export function ProviderSection({
                   }}
                 />
                 <button disabled={busy || !keyInput.trim()} onClick={() => void saveOrLoad(false)}>
-                  Сохранить ключ
+                  Проверить и сохранить
                 </button>
               </div>
             )}
@@ -214,7 +335,7 @@ export function ProviderSection({
               disabled={busy || Boolean(baseUrlError) || (!keyStatus?.configured && !keyInput.trim())}
               onClick={() => void saveOrLoad(true)}
             >
-              {busy ? 'Подожди…' : keyStatus?.configured ? 'Загрузить модели' : 'Сохранить ключ и загрузить модели'}
+              {busy ? 'Подожди…' : keyStatus?.configured ? 'Загрузить модели' : 'Проверить ключ и загрузить модели'}
             </button>
           </Row>
         </Group>
@@ -223,25 +344,39 @@ export function ProviderSection({
       <div className="model-view" id={`${navId}-models`} hidden={view !== 'models'}>
         <Group title="Выбор модели">
           {catalog?.ok ? (
-            <Row stacked title="Модели сервиса">
-              <select
-                ref={modelListRef}
-                aria-label="Модели сервиса"
-                value={catalog.models.includes(model) ? model : ''}
-                onChange={(event) => {
-                  if (event.target.value) chooseModel(event.target.value)
-                }}
-              >
-                <option value="" disabled>
-                  Выбери из списка
-                </option>
-                {catalog.models.map((id) => (
-                  <option key={id} value={id}>
-                    {id}
+            <>
+              <Row stacked title="Поиск модели">
+                <input
+                  aria-label="Поиск модели"
+                  value={modelSearch}
+                  onChange={(event) => setModelSearch(event.target.value)}
+                  placeholder="gpt, claude, gemini…"
+                  spellCheck={false}
+                />
+                <div className="row-hint">
+                  {filteredModels.length} из {catalog.models.length}
+                </div>
+              </Row>
+              <Row stacked title="Модели сервиса">
+                <select
+                  ref={modelListRef}
+                  aria-label="Модели сервиса"
+                  value={modelOptions.includes(model) ? model : ''}
+                  onChange={(event) => {
+                    if (event.target.value) chooseModel(event.target.value)
+                  }}
+                >
+                  <option value="" disabled>
+                    Выбери из списка
                   </option>
-                ))}
-              </select>
-            </Row>
+                  {modelOptions.map((id) => (
+                    <option key={id} value={id}>
+                      {id}
+                    </option>
+                  ))}
+                </select>
+              </Row>
+            </>
           ) : (
             <Row
               stacked
@@ -256,18 +391,46 @@ export function ProviderSection({
               <button onClick={() => setView('connection')}>Открыть подключение</button>
             </Row>
           )}
-          <Row stacked title="ID модели вручную">
-            <input
-              ref={modelIdRef}
-              aria-label="ID модели вручную"
-              value={model}
-              onChange={(event) => chooseModel(event.target.value)}
-              spellCheck={false}
-            />
+          <Row
+            stacked
+            title="ID модели вручную"
+            hint="Проверка только сверяет ID с загруженным списком — запрос к модели не уходит."
+          >
+            <div className="row-actions">
+              <input
+                ref={modelIdRef}
+                aria-label="ID модели вручную"
+                value={model}
+                onChange={(event) => {
+                  setModelCheck(null)
+                  chooseModel(event.target.value)
+                }}
+                spellCheck={false}
+              />
+              <button className="ghost" disabled={!model.trim()} onClick={checkModel}>
+                Проверить модель
+              </button>
+            </div>
+            {modelCheck && (
+              <div className={modelCheck.ok ? 'row-hint ok' : 'row-hint err'} role="status">
+                {modelCheck.text}
+              </div>
+            )}
           </Row>
         </Group>
 
-        <Disclosure title="Дополнительно">
+        <Disclosure
+          title="Дополнительно"
+          open={extraOpen}
+          onToggle={setExtraOpen}
+          badge={
+            extraBodyError ? (
+              <span className="badge warn" aria-label="Доп. параметры запроса не сохранены">
+                !
+              </span>
+            ) : undefined
+          }
+        >
           <Group title="Поиск в интернете">
             <Row stacked title="Модель веб-поиска" hint={`Пустое поле — ${fallbackSearchModel}.`}>
               <div className="row-actions">
@@ -302,15 +465,29 @@ export function ProviderSection({
               }
             >
               <textarea
+                ref={extraBodyRef}
                 className="extra-body"
                 rows={1}
                 value={draft.extraBody[draft.provider]}
                 aria-label="Дополнительные параметры запроса"
                 placeholder='{"reasoning_effort": "none"}'
                 spellCheck={false}
-                onChange={(event) => patch({ extraBody: { ...draft.extraBody, [draft.provider]: event.target.value } })}
+                onChange={(event) => {
+                  setExtraCheck(null)
+                  patch({ extraBody: { ...draft.extraBody, [draft.provider]: event.target.value } })
+                }}
               />
               {extraBodyError && <div className="row-hint err">{extraBodyError}</div>}
+              <div className="row-actions">
+                <button className="ghost" onClick={checkExtraBody}>
+                  Проверить
+                </button>
+                {extraCheck && (
+                  <span className={extraCheck.ok ? 'row-hint ok' : 'row-hint err'} role="status">
+                    {extraCheck.text}
+                  </span>
+                )}
+              </div>
             </Row>
           </Group>
           <div className="row-grid">

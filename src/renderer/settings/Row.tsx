@@ -78,20 +78,25 @@ interface ToggleRowProps {
  */
 export function ToggleRow({ title, hint, checked, disabled, onChange }: ToggleRowProps) {
   return (
-    <div className="row">
-      <div className="row-main">
-        <div className="row-title">{title}</div>
-        {hint && <div className="row-hint">{hint}</div>}
-      </div>
-      <div className="row-control">
-        <Toggle
-          checked={checked}
-          disabled={disabled}
-          label={typeof title === 'string' ? title : undefined}
-          onChange={onChange}
-        />
-      </div>
-    </div>
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      aria-label={typeof title === 'string' ? title : undefined}
+      disabled={disabled}
+      className="row row-toggle"
+      onClick={() => onChange(!checked)}
+    >
+      <span className="row-main">
+        <span className="row-title">{title}</span>
+        {hint && <span className="row-hint">{hint}</span>}
+      </span>
+      {/* The switch is a picture, not a second control: a button inside a button
+          is invalid, and a click anywhere on the row already means the same. */}
+      <span className="switch" aria-hidden="true">
+        <span className="switch-knob" />
+      </span>
+    </button>
   )
 }
 
@@ -122,14 +127,31 @@ export function Toggle({ checked, label, disabled, onChange }: ToggleProps) {
 
 interface DisclosureProps {
   title: string
+  /** A marker on the summary, e.g. a warning while a field inside is invalid. */
+  badge?: ReactNode
+  /**
+   * Controlled open state. Omit both this and `onToggle` to keep the native
+   * behaviour; pass both when the window must reveal the card on its own.
+   */
+  open?: boolean
+  onToggle?(open: boolean): void
   children: ReactNode
 }
 
 /** A card whose rows are hidden until asked for: the settings almost nobody changes. */
-export function Disclosure({ title, children }: DisclosureProps) {
+export function Disclosure({ title, badge, open, onToggle, children }: DisclosureProps) {
   return (
-    <details className="disclosure">
-      <summary>{title}</summary>
+    <details className="disclosure" open={open} onToggle={(event) => onToggle?.(event.currentTarget.open)}>
+      <summary>
+        {badge ? (
+          <>
+            <span className="disclosure-title">{title}</span>
+            {badge}
+          </>
+        ) : (
+          title
+        )}
+      </summary>
       <div className="disclosure-body">{children}</div>
     </details>
   )
