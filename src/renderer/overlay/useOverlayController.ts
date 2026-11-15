@@ -14,6 +14,8 @@ import { useSpeech } from './useSpeech'
 import { useWaiting } from './useWaiting'
 import { useVoice } from './useVoice'
 import { useOverlayKeys } from './useOverlayKeys'
+import { useOverlayEvents } from './useOverlayEvents'
+import { useAgentSpeech } from './useAgentSpeech'
 import { useAnswerCopy } from './useAnswerCopy'
 import { rewriteStartsOver, routeStream } from './streamRouting'
 
@@ -21,14 +23,6 @@ interface Failure {
   message: string
   retryable: boolean
 }
-
-/**
- * How long an agent run works before the voice says it is still going.
- *
- * Long enough that a normal run never reaches it, short enough that a person
- * waiting on a stuck step hears something before they conclude it died.
- */
-const AGENT_PROGRESS_MS = 45_000
 
 /** The one notice that has a retry attached to it. */
 export const AGENT_ENABLED_NOTICE = 'Управление включено. Повтори просьбу — теперь я её выполню.'
@@ -127,10 +121,6 @@ export function useOverlayController() {
   const turnKindRef = useRef({ spoken: false, action: false })
   /** True when the user ended the run themselves, so its stop is not news. */
   const stoppedByUserRef = useRef(false)
-  /** The approval question already announced, so a repaint does not repeat it. */
-  const approvalSaidRef = useRef<string | null>(null)
-  /** Pending "still working" line for a long agent run; one per acting phase. */
-  const progressTimerRef = useRef<number | null>(null)
   const busyRef = useRef(false)
   const requestIdRef = useRef<string | null>(null)
   /**
@@ -261,40 +251,7 @@ export function useOverlayController() {
     [reset, resumePendingSend]
   )
 
-  /**
-   * What the voice says when a run ends.
-   *
-   * Two shapes, and they are not the same sentence. An answer with text in it is
-   * read (and a failed run is read as a failure). A run that ended without a
-   * textual answer says how it ended from the recorded bank instead — a stop the
-   * user asked for is not news, they pressed Escape and are looking at the card,
-   * so that one is silent.
-   */
-  const finishTurnSpeech = useCallback((requestId: string, text: string, result: AgentEvent | null) => {
-    const speech = speechRef.current
-    if (!result) {
-      void speech.finish(requestId, text, false)
-      return
-    }
-    if (text.trim()) {
-      void speech.finish(requestId, text, result.phase === 'error' || result.completed === false)
-      return
-    }
-    void speech.finish(requestId, '')
-    if (result.phase === 'aborted' && stoppedByUserRef.current) return
-    // The line comes from the bank rather than from a literal, so it rotates and
-    // so a run that ended without an answer is not read as «Готово» by a
-    // different voice.
-    const cue =
-      result.phase === 'aborted'
-        ? 'stopped'
-        : result.phase === 'error'
-          ? 'failed'
-          : result.completed
-            ? 'done'
-            : 'incomplete'
-    speech.say(cue, turnKindRef.current)
-  }, [])
+  const { onAgentSpeech, clearProgress, finishTurnSpeech } = useAgentSpeech(speechRef, turnKindRef, stoppedByUserRef)
 
   /**
    * Reacts to stream events. `done` is the authoritative final text; a rewrite in
@@ -356,26 +313,6 @@ export function useOverlayController() {
     [finishTurnSpeech]
   )
 
-  /**
-   * Permissions and availability are changed in another window.
-   *
-   * The card can be open the whole time — the user goes to System Settings,
-   * grants Accessibility, and comes back to the same card. Without a pull on
-   * focus it keeps saying «нужен доступ» until it is closed and reopened.
-   */
-  useEffect(() => {
-    const refresh = (): void => {
-      void window.deskhand.overlay
-        .getState()
-        .then((next) => {
-          if (next) applyState(next)
-        })
-        .catch(() => undefined)
-    }
-    window.addEventListener('focus', refresh)
-    return () => window.removeEventListener('focus', refresh)
-  }, [applyState])
-
   useEffect(() => {
     const setOption = (event: KeyboardEvent): void => {
       if (event.key === 'Alt') setDragAnywhere(event.type === 'keydown')
@@ -391,79 +328,33 @@ export function useOverlayController() {
     }
   }, [])
 
-  useEffect(() => {
-    // No session yet means the card is the empty one drawn while the context is
-    // being collected — and it must *not* take the keyboard here. Focusing the
-    // field would make this window the frontmost app, and `collectContext` reads
-    // the frontmost app: the target would come back as the assistant itself. The
-    // focus is taken in `reset`, once the session it belongs to exists.
-    void window.deskhand.overlay
-      .getState()
-      .then((next) => {
-        if (next) applyState(next)
-      })
-      .catch(() => undefined)
-
-    const offState = window.deskhand.overlay.onState(applyState)
-    const offPreparing = window.deskhand.overlay.onPreparing(() => {
-      // The card is on screen, but the session it will show does not exist yet.
-      // Dropping the previous turn here is what keeps the early window an empty
-      // card instead of a stale answer that looks like an instant reply.
-      //
-      // The field is *not* cleared when it was already empty of a session: the
-      // user can reach the card before the context does, and those first letters
-      // are the question — the same ones `reset` then has to keep.
-      const joinedCollecting = stateRef.current === null
-      sessionIdRef.current = null
-      stateRef.current = null
-      setState(null)
-      if (!joinedCollecting) setPrompt('')
-      clearTurn(false)
-    })
-    const offContext = window.deskhand.overlay.onContextUpdate((snapshot: ContextSnapshot) => {
-      setState((prev) => (prev ? { ...prev, context: snapshot } : prev))
-    })
-    const offStream = window.deskhand.overlay.onStream(onStream)
-    const offAnnotations = window.deskhand.overlay.onAnnotations((event) => {
-      setDrawn(event.count)
-    })
-    const offAgent = window.deskhand.agent.onEvent((event) => {
+  const onPreparing = useCallback(() => {
+    // The card is on screen, but the session it will show does not exist yet.
+    // Dropping the previous turn here is what keeps the early window an empty
+    // card instead of a stale answer that looks like an instant reply.
+    //
+    // The field is *not* cleared when it was already empty of a session: the
+    // user can reach the card before the context does, and those first letters
+    // are the question — the same ones `reset` then has to keep.
+    const joinedCollecting = stateRef.current === null
+    sessionIdRef.current = null
+    stateRef.current = null
+    setState(null)
+    if (!joinedCollecting) setPrompt('')
+    clearTurn(false)
+  }, [clearTurn])
+  const onContext = useCallback((snapshot: ContextSnapshot) => {
+    setState((prev) => (prev ? { ...prev, context: snapshot } : prev))
+  }, [])
+  const onAgent = useCallback(
+    (event: AgentEvent) => {
       agentRef.current = event.phase === 'idle' ? null : event
       setAgent(agentRef.current)
-      // The voice follows the states the card does not announce by itself. What
-      // may actually be said is decided by `speaksCue`, from the settings.
-      const kind = turnKindRef.current
-      if (event.code === 'secret') speechRef.current.say('secret', kind)
-      else if (event.code === 'blocked') speechRef.current.say('agentBlocked', kind)
-      if (event.phase === 'asking' && event.approval) {
-        // Once per question: a repaint of the same approval is not a new one.
-        if (approvalSaidRef.current !== event.approval.id) {
-          approvalSaidRef.current = event.approval.id
-          speechRef.current.say('approval', kind)
-        }
-      }
-      if (event.phase === 'acting') {
-        progressTimerRef.current ??= window.setTimeout(() => {
-          progressTimerRef.current = null
-          speechRef.current.say('agentProgress', turnKindRef.current)
-        }, AGENT_PROGRESS_MS)
-      } else if (progressTimerRef.current !== null) {
-        window.clearTimeout(progressTimerRef.current)
-        progressTimerRef.current = null
-      }
-    })
-
-    return () => {
-      offState()
-      offPreparing()
-      offContext()
-      offStream()
-      offAnnotations()
-      offAgent()
-      if (progressTimerRef.current !== null) window.clearTimeout(progressTimerRef.current)
-      progressTimerRef.current = null
-    }
-  }, [applyState, onStream, clearTurn])
+      onAgentSpeech(event)
+    },
+    [onAgentSpeech]
+  )
+  useOverlayEvents({ applyState, onPreparing, onContext, onStream, onDrawn: setDrawn, onAgent, clearProgress })
 
   // Restore blur while typing, even if annotations are still visible.
   useEffect(() => {
