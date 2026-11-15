@@ -59,6 +59,7 @@ describe('CH: the channel set is a wire protocol', () => {
       'permissions',
       'settings',
       'tts',
+      'update',
       'voice'
     ])
   })

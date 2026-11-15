@@ -27,6 +27,7 @@ import type {
   TestKeyResult,
   TranscribeResult,
   TtsStatus,
+  UpdateState,
   VoiceEvent,
   VoicePhase,
   VoiceStatus
@@ -278,6 +279,20 @@ export interface DeskhandApi {
     deleteModel(id: string): Promise<VoiceStatus>
     /** Records a short clip and transcribes it, so the user can hear the quality. */
     test(): Promise<TranscribeResult>
+  }
+  /**
+   * Self-update. The window renders `UpdateState` as it arrives and only ever
+   * asks; the download, its checksum and the bundle swap all live in main.
+   */
+  update: {
+    getState(): Promise<UpdateState>
+    onState(handler: (state: UpdateState) => void): Unsubscribe
+    /** Checks for a new release now; the result arrives through `onState`. */
+    check(): Promise<void>
+    /** Downloads the release the last check found. */
+    download(): Promise<void>
+    /** Quits the app and swaps in the downloaded bundle. */
+    install(): Promise<void>
   }
   /**
    * The assistant's own voice.

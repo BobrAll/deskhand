@@ -20,6 +20,14 @@ export interface TrayActions {
 let tray: Tray | null = null
 /** What the tray menu clicks reach while the tray exists. */
 let trayActions: TrayActions | null = null
+/**
+ * The update item, read at menu-build time.
+ *
+ * Injected by the app entry point instead of imported from `update/`: the
+ * update controller refreshes the tray when its state moves, and a direct
+ * import either way would close that loop.
+ */
+let trayUpdateLine: (() => { label: string; onClick: () => void } | null) | null = null
 
 function trayImage(): Electron.NativeImage {
   const image = nativeImage.createFromPath(resourcePath('trayTemplate.png'))
@@ -30,7 +38,9 @@ function trayImage(): Electron.NativeImage {
 
 function buildMenu(): Menu {
   const hotkey = prettyAccelerator(getSettings().hotkey)
+  const update = trayUpdateLine?.()
   return Menu.buildFromTemplate([
+    ...(update ? [{ label: `${update.label}…`, click: () => update.onClick() }, { type: 'separator' as const }] : []),
     { label: openAssistantLabel(hotkey), click: () => trayActions?.openAssistant() },
     { type: 'separator' },
     { label: SETTINGS_LABEL, accelerator: SETTINGS_ACCELERATOR, click: () => trayActions?.openSettings() },
@@ -62,8 +72,15 @@ export function refreshTray(): void {
   if (tray) tray.setContextMenu(buildMenu())
 }
 
+/** Points the menu at the update controller's current line (or removes it). */
+export function setTrayUpdateLine(get: (() => { label: string; onClick: () => void } | null) | null): void {
+  trayUpdateLine = get
+  refreshTray()
+}
+
 export function destroyTray(): void {
   tray?.destroy()
   tray = null
   trayActions = null
+  trayUpdateLine = null
 }

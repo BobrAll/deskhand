@@ -32,6 +32,7 @@ import { ApplyStatus, type ApplyState } from './ApplyStatus'
 import { AgentTab } from './AgentTab'
 import { VoiceTab } from './VoiceTab'
 import { Toggle } from './Row'
+import { UpdatePanel } from './UpdatePanel'
 import { ProviderSection } from './sections/ProviderSection'
 import { PrivacySection } from './sections/PrivacySection'
 
@@ -600,6 +601,8 @@ export function App() {
               onChange={(launchAtLogin) => patch({ launchAtLogin })}
             />
           </div>
+
+          <UpdatePanel />
         </div>
       </aside>
 

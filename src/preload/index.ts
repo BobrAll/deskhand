@@ -24,6 +24,7 @@ import type {
   TtsSetupProgress,
   StreamEvent,
   TtsStatus,
+  UpdateState,
   VoiceEvent
 } from '../shared/types'
 import type { TtsResult } from '../shared/tts'
@@ -126,6 +127,13 @@ const api: DeskhandApi = {
     importModel: () => ipcRenderer.invoke(CH.voice.importModel),
     deleteModel: (id) => ipcRenderer.invoke(CH.voice.deleteModel, id),
     test: () => ipcRenderer.invoke(CH.voice.test)
+  },
+  update: {
+    getState: () => ipcRenderer.invoke(CH.update.getState) as Promise<UpdateState>,
+    onState: (handler) => subscribe<UpdateState>(CH.update.state, handler),
+    check: () => ipcRenderer.invoke(CH.update.check),
+    download: () => ipcRenderer.invoke(CH.update.download),
+    install: () => ipcRenderer.invoke(CH.update.install)
   },
   tts: {
     speak: (text: string, localOnly?: boolean) =>

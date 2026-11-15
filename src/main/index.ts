@@ -6,13 +6,17 @@
  * hotkey must be registered only after `app.whenReady()`.
  */
 
-import { app, nativeTheme } from 'electron'
+import { app, BrowserWindow, nativeTheme, Notification, powerMonitor } from 'electron'
+import { join, resolve } from 'node:path'
+import { CH } from '@shared/ipc'
+import type { UpdateState } from '@shared/types'
 import { createOverlayController } from './overlay'
 import { createVoiceController } from './voice'
 import { createRecordingMode } from './recording'
 import { registerHotkey, unregisterHotkey } from './hotkey'
 import { registerIpc } from './ipc'
-import { createTray, destroyTray, refreshTray } from './tray'
+import { createTray, destroyTray, refreshTray, setTrayUpdateLine } from './tray'
+import { createUpdateController } from './update'
 import { destroyDrawing } from './drawing'
 import { setFieldLevel } from './fieldHighlight'
 import { destroyAgentCursor } from './agent/cursor'
@@ -64,6 +68,32 @@ const voice = createVoiceController({
   // by the bars while a turn runs, so nothing is drawn at the cursor any more.
   setVoice: (active) => overlay.setVoice(active),
   target: () => overlay.target()
+})
+
+/**
+ * Self-update. Broadcasts go to every window (only the settings page listens),
+ * and the whole flow degrades to a simulation when the app is not packaged —
+ * same buttons, no network, no swap — so the UI is testable with `npm run dev`.
+ */
+const update = createUpdateController({
+  appVersion: () => app.getVersion(),
+  installedAppPath: () => (app.isPackaged ? resolve(app.getPath('exe'), '../../..') : null),
+  cacheDir: () => join(app.getPath('userData'), 'updates'),
+  mockEnabled: () => process.env.DESKHAND_UPDATE_MOCK === '1',
+  notify: (title, body, onClick) => {
+    const notification = new Notification({ title, body })
+    notification.on('click', onClick)
+    notification.show()
+  },
+  broadcast: (state: UpdateState) => {
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (!win.isDestroyed()) win.webContents.send(CH.update.state, state)
+    }
+  },
+  refreshTray,
+  openSettings: () => openSettingsWindow(),
+  onWake: (listener) => powerMonitor.on('resume', listener),
+  quit
 })
 
 function applyLaunchAtLogin(enabled: boolean): void {
@@ -206,6 +236,12 @@ function startDeferredServices(settings: AppSettings): void {
   )
   attempt(() => applyLaunchAtLogin(settings.launchAtLogin))
   attempt(reportStartupPermissions)
+  attempt(() => {
+    // The tray line is read at menu-build time; `refreshTray` on every state
+    // change is what makes an announced update appear in the menu bar.
+    setTrayUpdateLine(() => update.trayLine())
+    update.schedule()
+  })
 }
 
 function bootstrap(): void {
@@ -221,6 +257,7 @@ function bootstrap(): void {
   registerIpc({
     overlay,
     voice,
+    update,
     applyHotkey,
     applyLaunchAtLogin,
     setRecording,
