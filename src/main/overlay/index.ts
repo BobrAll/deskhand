@@ -20,7 +20,6 @@ import type {
   ContextFlags,
   ContextSnapshot,
   OverlayState,
-  ScreenshotInfo,
   ScreenRect,
   SendRequest,
   StreamEvent,
@@ -33,35 +32,22 @@ import type { AgentProvider } from '../agent/sidecar'
 import { describeScreen as readScreenOutline } from '../agent/outline'
 import { collectContext } from '../context/collect'
 import { isExcluded } from '../context/activeApp'
-import { captureScreenshot } from '../context/screenshot'
 import { getProvider, resolveChatModel } from '../llm'
 import { ProviderError, type ChatMessage } from '../llm/provider'
 import { searchWeb } from '../llm/webSearch'
 import { CARD_FOLDED_HEIGHT } from '../card'
 import { copyText } from '../paste'
-import { hideAnnotations, showAnnotations } from '../drawing'
+import { createAnnotations } from './annotations'
+import { createLiveCapture } from './liveCapture'
 import { buildTurnRequest, type Exchange, type TurnRequest } from './request'
-import { captureTargetFor } from './captureTarget'
 import { readPreviousCommand, saveCommand } from './history'
 import { timed, trace, traceTurn } from '../agent/trace'
 import { emptyAnswerFallback } from './emptyAnswer'
-import { groundAnnotation } from '../annotationGrounding'
 import type { OverlayHost } from './host'
 import { consumeTurnStream } from '../turnStream'
-import { sameObservedWindow } from '../agent/observation'
-import {
-  helperActivate,
-  helperFocused,
-  helperFrontApplication,
-  helperFrontWindow,
-  helperVisibleBundleIds,
-  helperWindow,
-  type RawFrontApp
-} from '../native/helper'
+import { helperActivate, helperFocused, helperFrontApplication, type RawFrontApp } from '../native/helper'
 import { getApiKey } from '../settings/secrets'
 import { getSettings, patchSettings } from '../settings/store'
-import { sameScreenRect } from '../layerWindow'
-import { delay } from '../util'
 
 interface CardExchange extends Exchange {
   bundleId: string | null
@@ -121,12 +107,6 @@ interface Session {
    */
   history: CardExchange[]
   /**
-   * Live preview while the overlay is open: the picture is re-taken on a timer
-   * so both the thumbnail and the image sent with a request show the window as
-   * it is now, not as it was at the moment the overlay opened.
-   */
-  live: { timer: NodeJS.Timeout | null; inFlight: boolean }
-  /**
    * What went wrong during this turn but did not stop it.
    *
    * Its own list rather than a field on the snapshot: a context warning describes
@@ -170,16 +150,6 @@ const EXCLUDED_APP = 'Приложение входит в список искл
  */
 const VOICE_PREVIEW_MS = 2_000
 
-/** How often the open overlay re-captures the screen behind it. */
-const LIVE_REFRESH_MS = 2000
-
-/**
- * A shot younger than this still represents "this screen right now". A question
- * asked in the same instant as a live tick reuses it instead of paying for a
- * second capture.
- */
-const MAX_SHOT_AGE_MS = 600
-
 /**
  * The history of the current card.
  */
@@ -194,9 +164,6 @@ const MAX_HISTORY_CHARS = 1_500
 
 const STOP_AGENT = Symbol('stop-agent')
 const TURN_DEADLINE_MS = 120_000
-
-/** Time the compositor needs to start excluding the card from screen captures. */
-const CONTENT_PROTECTION_SETTLE_MS = 45
 
 /** The agent's exact reply for success without caveats. */
 const AGENT_DONE_MARKER = '[[ACTION_DONE]]'
@@ -240,8 +207,20 @@ function describeRunOutcome(run: AgentRunResult, acknowledged: boolean): { outco
 
 export function createOverlayController(host: OverlayHost) {
   let session: Session | null = null
-  /** Whether the user is writing in the card right now (see `syncDrawing`). */
-  let typing = false
+  const { setTyping, resetDrawing, clearAnnotations, discardAnnotations, createPainter } = createAnnotations({
+    current: () => session,
+    setDrawing: (drawing) => host.setDrawing(drawing),
+    publishCount: (count) => sendToWindow(CH.overlay.annotations, { count })
+  })
+  const { ensureFreshScreenshot, startLive, stopLive, windowStillMatches, observedAppFor } = createLiveCapture<Session>(
+    {
+      window: () => host.window(),
+      isCurrent: (target) => session === target,
+      publishContext,
+      hasAnnotations: (target) => target.annotations.length > 0,
+      onCaptureUnavailable: discardAnnotations
+    }
+  )
   /**
    * Which card owns the screen, as a counter.
    *
@@ -440,24 +419,6 @@ export function createOverlayController(host: OverlayHost) {
     updateAgentPresentation(event)
   }
 
-  /**
-   * Decides whether the card should stand aside for a drawing.
-   *
-   * Two things bring it back to full density: the shapes going away, and the user
-   * starting to write. Typing is the interesting one — at that moment the card is
-   * what they are reading, so a 40% panel would be the wrong thing to type into
-   * even though the arrow is still on screen.
-   */
-  function syncDrawing(): void {
-    host.setDrawing((session?.annotations.length ?? 0) > 0 && !typing)
-  }
-
-  function setTyping(value: boolean): void {
-    if (typing === value) return
-    typing = value
-    syncDrawing()
-  }
-
   function setupNotice(): OverlayState['setupNotice'] {
     const settings = getSettings()
     const label = providerInfo(settings.provider)?.label ?? settings.provider
@@ -556,242 +517,6 @@ export function createOverlayController(host: OverlayHost) {
   function publishContext(target: Session): void {
     if (session !== target) return
     sendToWindow(CH.overlay.contextUpdate, target.snapshot)
-  }
-
-  /** The capture a live tick and a question may be sharing right now. */
-  let captureInFlight: { sessionId: string; promise: Promise<ScreenshotInfo | null> } | null = null
-
-  const observedApps = new WeakMap<ScreenshotInfo, RawFrontApp>()
-
-  /**
-   * Is the window that was observed still the same window?
-   *
-   * The question is asked about the *observed* application, and it has to be
-   * asked that way round. Whether this app's own card happened to be frontmost
-   * when the shutter opened is irrelevant: the card is shown by the app that is
-   * taking the picture, it is never the window being acted on, and it takes
-   * focus somewhere between the capture and this check. Comparing the observed
-   * app against "whatever is frontmost now" therefore compared Chrome against
-   * the overlay and reported a window change on every single run — which is
-   * exactly the bug that made «открой телеграм» fail five times in a row.
-   *
-   * So: if the front is this app, read the background window of the observed
-   * process and compare that. If the front is the observed app, compare the
-   * front. Anything else is a genuine change and is rejected.
-   */
-  async function windowStillMatches(observed: RawFrontApp): Promise<boolean> {
-    // Only the identity of the frontmost app is needed to choose a branch; its
-    // window is read below only when that branch needs one. Reading the full
-    // `front` here cost a cold Accessibility round trip on every comparison, and
-    // a comparison happens several times per capture.
-    const front = await helperFrontApplication()
-    const background = front?.pid === process.pid ? await helperWindow(observed.pid) : front
-    const same = sameObservedWindow(observed, background)
-    // Which field disagreed, without recording what was on screen: a window
-    // title is the name of the user's own document, so the trace keeps the
-    // verdict and the pids and leaves the text out.
-    const backgroundBounds = background?.bounds
-    const observedBounds = observed.bounds
-    trace('screen.compare', {
-      same,
-      frontPid: front?.pid ?? null,
-      observedPid: observed.pid,
-      backgroundPid: background?.pid ?? null,
-      observedHasWindowId: observed.windowId !== null,
-      backgroundHasWindowId: (background?.windowId ?? null) !== null,
-      titleMatches: (observed.windowTitle ?? null) === (background?.windowTitle ?? null),
-      // A missing rectangle on either side never matches; `sameScreenRect`
-      // compares the two as they are, without rounding.
-      boundsMatch: backgroundBounds ? sameScreenRect(observedBounds, backgroundBounds) : false,
-      selfPid: process.pid
-    })
-    if (!same) return false
-    // Nothing may steal focus while the tree is read: a window that came forward
-    // between the two reads is a screen that no longer matches the picture.
-    const after = await helperFrontApplication()
-    return after?.pid === process.pid || after?.pid === observed.pid
-  }
-
-  /**
-   * Takes a new picture of the screen *right now*.
-   *
-   * Normally the whole display, not the active window: the drawing tool has to
-   * be able to point at the menu bar, the Dock or a second app, and a
-   * window-sized capture would make those targets impossible to show. The
-   * painting layer is pinned over exactly the rectangle recorded in
-   * `ScreenshotInfo.area`, so display-wide coordinates stay honest.
-   *
-   * With excluded apps configured the display is safe only while none of them
-   * has a window on screen; once one does, or when that cannot be checked, the
-   * capture is limited to the observed window and never falls back to the whole
-   * screen (`captureTargetFor`).
-   *
-   * The overlay's own window is temporarily excluded from the capture: without
-   * that, the `-R` / full-screen fallbacks would photograph our own card, and a
-   * live refresh would end up feeding the model a picture of the assistant.
-   * The flag is restored immediately, so the window stays screen-shareable.
-   * Concurrent callers (live tick + a question asked at the same moment) share
-   * one capture instead of queueing two.
-   */
-  function captureFor(target: Session): Promise<ScreenshotInfo | null> {
-    if (captureInFlight) {
-      if (captureInFlight.sessionId === target.id) {
-        trace('screen.captureJoined')
-        return captureInFlight.promise
-      }
-      const next = (): Promise<ScreenshotInfo | null> | null => (session === target ? captureFor(target) : null)
-      return captureInFlight.promise.then(next, next)
-    }
-
-    const entry = { sessionId: target.id, promise: captureNow(target) }
-    captureInFlight = entry
-    const clear = (): void => {
-      if (captureInFlight === entry) captureInFlight = null
-    }
-    void entry.promise.then(clear, clear)
-    return entry.promise
-  }
-
-  /** One capture: shutter, observation check, and the session's new picture. */
-  async function captureNow(target: Session): Promise<ScreenshotInfo | null> {
-    const win = host.window()
-    const visible = Boolean(win && !win.isDestroyed() && win.isVisible())
-    const settings = getSettings()
-    try {
-      if (visible && win) {
-        win.setContentProtection(true)
-        await delay(CONTENT_PROTECTION_SETTLE_MS)
-      }
-      // The front window is read even when the agent is off if exclusions are
-      // configured: otherwise a window the user switched to could never be
-      // checked against the list before the shutter opens. The visible apps are
-      // read in parallel and only when exclusions exist: with none configured
-      // the whole display is always safe, so that call would be pure cost.
-      const excludedApps = settings.excludedApps
-      const [front, visibleBundleIds] = await Promise.all([
-        settings.agent.enabled || excludedApps.length > 0 ? helperFrontWindow() : Promise.resolve(null),
-        excludedApps.length > 0 ? helperVisibleBundleIds() : Promise.resolve(null)
-      ])
-      const underOverlay = front?.pid === process.pid
-      // Under our own card the frontmost window is not the one being acted on:
-      // read the remembered target's window instead.
-      const observed = underOverlay ? (target.target ? await helperWindow(target.target.pid) : null) : front
-      const capture = captureTargetFor({
-        observed,
-        remembered: target.target,
-        excludedApps,
-        visibleBundleIds
-      })
-      if (!capture) {
-        // Nothing may be photographed, so the session has no picture any more.
-        // The card is still showing the last one and has to be told, or its
-        // thumbnail keeps promising a frame the model will never receive.
-        target.snapshot.screenshot = null
-        target.snapshot.screenshotPending = false
-        // The shapes were measured against that frame: keeping them would leave
-        // an arrow pointing at a screen that is no longer shown.
-        if (session === target) discardAnnotations()
-        publishContext(target)
-        return null
-      }
-      const shot = await timed('screen.capture', () =>
-        captureScreenshot(capture, { maxSide: settings.screenshotMaxSide, quality: settings.screenshotQuality })
-      )
-      if (shot && observed) {
-        if (await windowStillMatches(observed)) {
-          observedApps.set(shot, observed)
-        }
-        // The comparison above already recorded which field disagreed; this
-        // line records only that the shot was dropped, without the window text.
-        else trace('screen.observationRejected', { reason: 'window-changed-during-capture' })
-      }
-      if (session === target) {
-        if (shot) target.snapshot.screenshot = shot
-        target.snapshot.screenshotPending = false
-        publishContext(target)
-      }
-      return shot
-    } finally {
-      if (visible && win && !win.isDestroyed()) win.setContentProtection(false)
-    }
-  }
-
-  /**
-   * Returns an image recent enough to represent "this screen right now". A shot
-   * younger than `MAX_SHOT_AGE_MS` is reused so a question asked in the same
-   * instant as a live tick does not pay for a second capture; anything older is
-   * re-taken, because the whole point is that the model sees the screen as it is
-   * now and not as it was when the overlay opened.
-   *
-   * A refresh that fails yields `null`, never the previous frame: after a Screen
-   * Recording refusal the old picture would be presented as the current screen
-   * and the prompt would describe it as such, so the model would confidently
-   * answer about a minutes-old one. The turn knows how to go on without an image.
-   */
-  async function ensureFreshScreenshot(target: Session, requireObserved = false): Promise<ScreenshotInfo | null> {
-    const current = target.snapshot.screenshot
-    if (
-      current &&
-      Date.now() - current.capturedAt < MAX_SHOT_AGE_MS &&
-      (!requireObserved || observedApps.has(current))
-    ) {
-      trace('screen.cacheHit', { ageMs: Date.now() - current.capturedAt })
-      return current
-    }
-    // Only advertise "capturing…" when there is nothing to show yet: a refresh of
-    // an existing preview must not flicker the chip on every question.
-    const showPending = !current
-    if (showPending) {
-      target.snapshot.screenshotPending = true
-      publishContext(target)
-    }
-    // `captureFor` publishes the settled context itself, including the cleared
-    // state when nothing may be photographed. Sending it again here would make
-    // the card redraw the same frame twice.
-    return captureFor(target)
-  }
-
-  /** Re-captures on a timer while the card is on screen. */
-  function startLive(target: Session): void {
-    if (target.live.timer) return
-    target.live.timer = setInterval(() => {
-      if (session !== target) {
-        stopLive(target)
-        return
-      }
-      // The card is hidden: nothing to preview and
-      // nothing that could be asked about, so idle instead of capturing the screen
-      // every couple of seconds in the background.
-      const win = host.window()
-      if (!win || win.isDestroyed() || !win.isVisible()) {
-        stopLive(target)
-        return
-      }
-      // A capture during streaming would only compete with the answer for the
-      // main thread; the send path already refreshed the image.
-      if (target.live.inFlight || target.abort) return
-      if (captureInFlight && captureInFlight.sessionId === target.id) return
-      // Nothing to preview when the screenshot chip is off: a capture nobody asked
-      // for would just spend battery. The drawing tool needs that image, so the
-      // chip is the only switch that decides.
-      if (!target.flags.includeScreenshot) return
-      // While shapes are on screen a re-capture would swap the image the drawings
-      // were measured against; their coordinates are already fixed to it.
-      if (target.annotations.length > 0) return
-      // Only re-capture when the previous frame is ageing out. A tick that lands
-      // right after a request-time refresh would otherwise take a redundant shot.
-      const current = target.snapshot.screenshot
-      if (current && Date.now() - current.capturedAt < LIVE_REFRESH_MS / 2) return
-      target.live.inFlight = true
-      void captureFor(target).finally(() => {
-        target.live.inFlight = false
-      })
-    }, LIVE_REFRESH_MS)
-  }
-
-  function stopLive(target: Session): void {
-    if (target.live.timer) clearInterval(target.live.timer)
-    target.live.timer = null
   }
 
   /**
@@ -946,11 +671,7 @@ export function createOverlayController(host: OverlayHost) {
 
     // A new session starts with a clean screen even if the previous one left a
     // drawing visible for a moment before it was closed.
-    hideAnnotations()
-    // …and with a solid card: a dimmed window would otherwise carry over from
-    // the previous session and the new answer would open see-through.
-    typing = false
-    host.setDrawing(false)
+    resetDrawing()
 
     const id = randomUUID()
     session = {
@@ -963,7 +684,6 @@ export function createOverlayController(host: OverlayHost) {
       answer: '',
       annotations: [],
       history: [],
-      live: { timer: null, inFlight: false },
       notices: []
     }
 
@@ -1009,11 +729,7 @@ export function createOverlayController(host: OverlayHost) {
     }
     // The drawings belong to the answer: closing the card must not leave an
     // unexplained arrow floating on the user's screen.
-    hideAnnotations()
-    // Without this the window would stay unblurred for the rest of the session:
-    // the next answer would open as a see-through sheet of glass.
-    typing = false
-    host.setDrawing(false)
+    resetDrawing()
     host.hide()
     if (!wasOpen) return
     // The card took the keyboard when it opened (that is how the field is typed
@@ -1078,33 +794,6 @@ export function createOverlayController(host: OverlayHost) {
     app.hide()
   }
 
-  /** Reports the current drawing state so the card can offer a "убрать" action. */
-  function emitAnnotations(): void {
-    const count = session?.annotations.length ?? 0
-    // The card's own density and the window's blur both follow this number;
-    // routing them through here keeps the two from ever disagreeing.
-    syncDrawing()
-    sendToWindow(CH.overlay.annotations, { count })
-  }
-
-  /**
-   * Takes the shapes off the screen and out of the session.
-   *
-   * The two always move together: a shape the display still paints after the
-   * session forgot it would outlive the answer it was drawn for.
-   */
-  function discardAnnotations(): void {
-    if (session) session.annotations = []
-    hideAnnotations()
-    emitAnnotations()
-  }
-
-  /** Removes the drawings but keeps the card and the answer. */
-  function clearAnnotations(): void {
-    if (!session) return
-    discardAnnotations()
-  }
-
   function setFlags(flags: ContextFlags): void {
     if (!session) return
     const previous = session.flags
@@ -1157,33 +846,7 @@ export function createOverlayController(host: OverlayHost) {
     const { messages, requestId, maxTokens, signal, canDraw, area, apiKey } = options
     const settings = getSettings()
 
-    /**
-     * Paints newly parsed shapes. Called as the stream arrives so the explanation
-     * and the drawing grow together instead of the arrow appearing only after the
-     * last token.
-     *
-     * Serialised through `painting`: two overlapping window updates would race,
-     * and the loser could erase a shape the winner had already shown.
-     */
-    let dismissed = false
-    let painting: Promise<void> = Promise.resolve()
-    const paint = (shapes: Annotation[]): void => {
-      if (dismissed || shapes.length === 0 || !canDraw || !area || !session) return
-      shapes = shapes.map((shape) => groundAnnotation(shape, options.drawingTargets ?? [], area))
-      const next = [...session.annotations, ...shapes]
-      session.annotations = next
-      emitAnnotations()
-      painting = painting
-        .then(() => {
-          if (dismissed) return
-          return showAnnotations(area, next, () => {
-            dismissed = true
-            clearAnnotations()
-          })
-        })
-        .catch(() => undefined)
-    }
-
+    const paint = createPainter(canDraw, area, options.drawingTargets)
     const append = (delta: string): void => {
       if (!delta || !session) return
       const hadAnswer = session.answer.trim().length > 0
@@ -1623,7 +1286,7 @@ export function createOverlayController(host: OverlayHost) {
       availability,
       ensureFreshScreenshot: async () => {
         const shot = await ensureFreshScreenshot(turnSession, settings.agent.enabled)
-        observedApp = shot ? observedApps.get(shot) : undefined
+        observedApp = shot ? observedAppFor(shot) : undefined
         return shot
       },
       describeScreen: async (pid, bounds, area) => {
