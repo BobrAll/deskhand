@@ -1,6 +1,6 @@
 import type { AgentActionRow, AgentEvent, AgentPresentation, AgentRunResult, AgentToolRequest } from '@shared/types'
 import { describeCall } from './approval'
-import type { AgentSidecarEvent, AgentToolTiming } from './sidecar'
+import type { AgentSidecarEvent, AgentToolTiming } from './sidecarProtocol'
 import { trace } from './trace'
 
 export interface RunEventState {

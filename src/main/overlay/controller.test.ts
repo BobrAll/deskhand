@@ -67,12 +67,14 @@ const state = vi.hoisted(() => ({
   /** One gate per `collectContext` call, for tests that run two opens at once. */
   collectGates: [] as Promise<void>[],
   /** `app.hide()` from the mocked Electron module. */
-  hideApp: vi.fn()
+  hideApp: vi.fn(),
+  /** Windows the mocked `BrowserWindow.getAllWindows()` returns. */
+  allWindows: [] as BrowserWindow[]
 }))
 
 vi.mock('electron', () => ({
   app: { hide: state.hideApp },
-  BrowserWindow: { getAllWindows: () => [] },
+  BrowserWindow: { getAllWindows: () => state.allWindows },
   systemPreferences: { isTrustedAccessibilityClient: () => true }
 }))
 vi.mock('electron-store', () => ({
@@ -205,6 +207,7 @@ beforeEach(() => {
   state.collectGate = null
   state.collectGates = []
   state.hideApp.mockClear()
+  state.allWindows = []
   applyHistorySettings(false, [])
   vi.mocked(helperVisibleBundleIds).mockReset().mockResolvedValue(null)
   vi.mocked(helperFocused).mockReset().mockResolvedValue(null)
@@ -1401,6 +1404,76 @@ describe('a capture that no longer represents the screen', () => {
 describe('focus on the way back', () => {
   beforeEach(() => {
     vi.mocked(helperActivate).mockReset()
+  })
+
+  /** Another app window that could take the keyboard back. */
+  function otherWindow(focusable = true) {
+    return {
+      isDestroyed: () => false,
+      isVisible: () => true,
+      isFocusable: () => focusable,
+      show: vi.fn(),
+      focus: vi.fn()
+    }
+  }
+
+  it('asks the helper to activate the app the card was opened over', async () => {
+    state.activeApp = noteApp
+    vi.mocked(helperActivate).mockResolvedValue(true)
+    const h = await harness()
+
+    h.controller.close()
+
+    await vi.waitFor(() =>
+      expect(helperActivate).toHaveBeenCalledWith({ bundleId: noteApp.bundleId, pid: noteApp.pid })
+    )
+    expect(state.hideApp).not.toHaveBeenCalled()
+  })
+
+  it('focuses a visible, focusable window when there is no app to return to', async () => {
+    const h = await harness()
+    const fallback = otherWindow()
+    state.allWindows = [fallback as unknown as BrowserWindow]
+
+    h.controller.close()
+
+    await vi.waitFor(() => expect(fallback.focus).toHaveBeenCalledOnce())
+    expect(fallback.show).toHaveBeenCalledOnce()
+    expect(helperActivate).not.toHaveBeenCalled()
+    expect(state.hideApp).not.toHaveBeenCalled()
+  })
+
+  it('hides the app when the only other window cannot take the keyboard', async () => {
+    const h = await harness()
+    const layer = otherWindow(false)
+    state.allWindows = [layer as unknown as BrowserWindow]
+
+    h.controller.close()
+
+    await vi.waitFor(() => expect(state.hideApp).toHaveBeenCalledOnce())
+    expect(layer.focus).not.toHaveBeenCalled()
+  })
+
+  it('does not raise a fallback window after a newer card took the keyboard', async () => {
+    state.activeApp = noteApp
+    let release!: () => void
+    const activation = new Promise<boolean>((resolve) => {
+      release = () => resolve(false)
+    })
+    vi.mocked(helperActivate).mockReturnValueOnce(activation)
+    const h = await harness()
+    const fallback = otherWindow()
+    state.allWindows = [fallback as unknown as BrowserWindow]
+
+    h.controller.close()
+    await h.controller.open()
+    release()
+    // Let the hand-back resume after the helper answered.
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(fallback.show).not.toHaveBeenCalled()
+    expect(fallback.focus).not.toHaveBeenCalled()
+    expect(state.hideApp).not.toHaveBeenCalled()
   })
 
   it('does not hide a card that opened while focus was going back', async () => {

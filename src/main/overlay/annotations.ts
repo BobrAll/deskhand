@@ -57,7 +57,7 @@ export function createAnnotations({ current, setDrawing, publishCount }: Annotat
     discardAnnotations()
   }
 
-  function resetDrawing() {
+  function resetDrawing(): void {
     hideAnnotations()
     typing = false
     setDrawing(false)

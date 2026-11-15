@@ -1,5 +1,5 @@
 import { AGENT_MIN_OUTPUT_TOKENS } from '@shared/defaults'
-import type { AgentProvider } from './sidecar'
+import type { AgentProvider } from './sidecarProtocol'
 
 /** One earlier question and the answer it got, as the agent reads it. */
 export interface AgentExchange {
