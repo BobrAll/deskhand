@@ -49,9 +49,9 @@
 ## Formatting and lint
 
 - `npm run check` is the gate before a commit: types, ESLint, Prettier, both test suites and Swift style. CI runs the same checks except the Swift style comparison.
-- `npm run format` rewrites TypeScript, Markdown, JSON and Swift. `npm run format:check` only reports, and that is what the gate uses.
+- `npm run format` rewrites every file Prettier owns — TypeScript, scripts, JSON, CSS, HTML, Markdown, YAML — and Swift. `npm run format:check` only reports, and that is what the gate uses.
 - ESLint is where the bug-finding rules live: `react-hooks` catches a missed dependency and a conditional hook, `no-floating-promises` and `no-misused-promises` catch a promise nobody reads. Fix the call instead of silencing the rule; when dropping a promise is the intent, write `void`.
-- `npm run prepare` points `core.hooksPath` at `.githooks/`, so `npm install` enables a pre-commit hook that formats and lints staged files. The hook is a convenience; the gate is `npm run check`.
+- `npm run prepare` points `core.hooksPath` at `.githooks/`, so `npm install` enables a pre-commit hook that formats staged files and lints staged `src/**/*.{ts,tsx}`. A file that still has unstaged edits is skipped: staging it whole would pull those edits into the commit. The hook is a convenience; the gate is `npm run check`.
 - The one-time style migration is listed in `.git-blame-ignore-revs`. Make `git blame` skip it once per clone: `git config blame.ignoreRevsFile .git-blame-ignore-revs`.
 
 ## Build and test

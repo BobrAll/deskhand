@@ -57,9 +57,10 @@ Accessibility) are used under Apple's SDK agreement and are not redistributed.
 ## Build-only tooling
 
 These run on the developer machine and are not part of a shipped build:
-electron-vite, Vite, TypeScript (Apache-2.0), electron-builder, ESLint, Vitest,
-`@vitejs/plugin-react`. Their licenses are listed in `package-lock.json` and in
-each package's own `LICENSE` file under `node_modules/`.
+electron-vite, Vite, TypeScript (Apache-2.0), electron-builder, ESLint,
+typescript-eslint, Prettier, Vitest, `@vitejs/plugin-react`. Their licenses are
+listed in `package-lock.json` and in each package's own `LICENSE` file under
+`node_modules/`.
 
 ## Model providers
 

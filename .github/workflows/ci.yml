@@ -15,6 +15,9 @@ jobs:
   # nothing in this half needs macOS.
   typescript:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -30,6 +33,9 @@ jobs:
   # comparison there would report the toolchain, not the code.
   swift:
     runs-on: macos-15
+    timeout-minutes: 30
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
       - run: swift test --package-path native/deskhand

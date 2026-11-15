@@ -6,6 +6,9 @@
   "author": "Alexander Bobrus",
   "license": "PolyForm-Noncommercial-1.0.0",
   "private": true,
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "dev": "node scripts/prepare-speech.mjs && electron-vite dev",
     "dev:fresh": "node scripts/dev-fresh.mjs",
@@ -142,8 +145,8 @@
     "electron-builder": "25.1.8",
     "electron-vite": "2.3.0",
     "eslint": "9.39.5",
-    "eslint-plugin-react-hooks": "^7.0.1",
-    "prettier": "^3.9.8",
+    "eslint-plugin-react-hooks": "7.0.1",
+    "prettier": "3.9.8",
     "react": "18.3.1",
     "react-dom": "18.3.1",
     "typescript": "5.6.3",
