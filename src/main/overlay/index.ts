@@ -5,9 +5,8 @@
  * overlay next to the cursor -> stream the answer -> copy / retry / close.
  */
 
-import { createHash, randomUUID } from 'node:crypto'
+import { randomUUID } from 'node:crypto'
 import { app, BrowserWindow } from 'electron'
-import { looksLikeAction } from '@shared/intent'
 import { CH } from '@shared/ipc'
 import { providerInfo } from '@shared/defaults'
 import type {
@@ -16,27 +15,24 @@ import type {
   AgentEvent,
   ContextFlags,
   OverlayState,
-  SendRequest,
-  StreamEvent,
-  StreamEventCode
+  StreamEvent
 } from '@shared/types'
 import { createAgentController } from '../agent'
-import { beginAgentTurn, endAgentTurn, updateAgentCursor } from '../agent/cursor'
+import { updateAgentCursor } from '../agent/cursor'
 import { paintAgentPresentation, updateAgentPresentation } from '../agent/presentation'
 import { collectContext } from '../context/collect'
-import { isExcluded } from '../context/activeApp'
 import { resolveChatModel } from '../llm'
-import { ProviderError } from '../llm/provider'
 import { CARD_FOLDED_HEIGHT } from '../card'
 import { copyText } from '../paste'
-import { createTurnRunners, type TurnContext } from './turnRunners'
-import type { CardExchange, Session } from './session'
+import { createTurnRunners } from './turnRunners'
+import type { Session } from './session'
+import { createDictation } from './dictation'
+import { createTurnController } from './turnController'
 import { createAnnotations } from './annotations'
 import { createLiveCapture } from './liveCapture'
-import { readPreviousCommand, saveCommand } from './history'
-import { trace, traceTurn } from '../agent/trace'
+import { trace } from '../agent/trace'
 import type { OverlayHost } from './host'
-import { helperActivate, helperFocused, helperFrontApplication } from '../native/helper'
+import { helperActivate, helperFrontApplication } from '../native/helper'
 import { getApiKey } from '../settings/secrets'
 import { getSettings, patchSettings } from '../settings/store'
 
@@ -54,36 +50,6 @@ interface OpenRun {
  * sides afterwards.
  */
 const INITIAL_HEIGHT = CARD_FOLDED_HEIGHT
-
-/**
- * Shown when the card's app is on the exclusion list.
- *
- * The card normally never opens for such an app; this is the race where the
- * target changes while the card is already on screen.
- */
-const EXCLUDED_APP = 'Приложение входит в список исключений — запрос не отправлен.'
-
-/**
- * How long a spoken transcript stays on screen while its request is already
- * running. The old code waited this long before calling the model; now it is
- * only a floor for the card, not a pause in the work.
- */
-const VOICE_PREVIEW_MS = 2_000
-
-/**
- * The history of the current card.
- */
-const CARD_HISTORY_TURNS = 2
-
-/**
- * Ceiling for one side of a remembered exchange, question or answer. A long
- * answer is still referenced by its beginning — the part the follow-up is about —
- * and this keeps two turns of history from costing more than the question itself.
- */
-const MAX_HISTORY_CHARS = 1_500
-
-const STOP_AGENT = Symbol('stop-agent')
-const TURN_DEADLINE_MS = 120_000
 
 export function createOverlayController(host: OverlayHost) {
   let session: Session | null = null
@@ -129,143 +95,17 @@ export function createOverlayController(host: OverlayHost) {
    * check. See `currentOpen`.
    */
   let opening: OpenRun | null = null
-  /**
-   * The spoken turn still in flight.
-   *
-   * A new press supersedes it immediately: while a voice answer is streaming or
-   * an agent is clicking, the user pressing the key again means they are already
-   * saying the next thing, and the old turn must not keep acting underneath them.
-   */
-  let voiceTurn: AbortController | null = null
-  /**
-   * The app a dictation hold is typing into.
-   *
-   * Kept apart from `session.target`: a dictation never opens a card, and a card
-   * from an earlier question may remember a different app or none at all. Read
-   * at press time, before any of our windows is on screen, because the
-   * frontmost app after that may be us.
-   */
-  let dictationTarget: ActiveAppInfo | null = null
-  /**
-   * Which dictation hold is reading the screen right now.
-   *
-   * Reading the app is a helper round trip, and a short hold can end before it
-   * answers. The bump in `endDictation` is what keeps that late answer from
-   * becoming the target of the next hold.
-   */
-  let dictationRead = 0
-  /**
-   * Whether the assistant card owned the keyboard when the hold began.
-   *
-   * Such a hold ends by closing the card, which is also what hands focus back
-   * to its app. An indicator-only hold just hides the bars and leaves the app
-   * the user is typing in untouched.
-   */
-  let dictationOwnsCard = false
-  /**
-   * True while a dictation owns the screen.
-   *
-   * A card that was already collecting context when the hold began must not
-   * finish by focusing itself, and its own `generation` check cannot see that:
-   * the open is legitimate, it is only the moment that is wrong.
-   */
-  let dictating = false
-
-  function setVoice(active: boolean): void {
-    if (active) voiceTurn?.abort()
-    host.setVoice(active)
-  }
-
-  /**
-   * Remembers where a dictation hold has to paste, without opening the card.
-   *
-   * Opening the card means reading the selection with a synthetic ⌘C and then
-   * focusing the window — both take the user out of the field they are still
-   * typing in. Dictation therefore captures only the application that owns the
-   * keyboard right now, which is enough for the paste and costs no context work.
-   */
-  async function beginDictation(): Promise<void> {
-    dictating = true
-    // A card still collecting context would focus itself in the middle of the
-    // hold. Bumping the generation cancels that focus; `dictating` keeps its
-    // cleanup from hiding the bars once they are up.
-    if (opening) generation += 1
-    const mine = ++dictationRead
-    const front = await helperFrontApplication()
-    // A newer hold, or the end of this one, owns the answer by now.
-    if (mine !== dictationRead) return
-    const cardVisible = cardOnScreen()
-    const ours = front?.pid === process.pid
-    dictationOwnsCard = ours && cardVisible
-    if (ours) {
-      // The card itself was in front: the app it belongs to is the one the user
-      // came from. Without a visible card (settings is frontmost) there is no
-      // field behind us worth typing into.
-      dictationTarget = cardVisible ? (session?.target ?? null) : null
-    } else {
-      dictationTarget =
-        front && front.pid > 0
-          ? {
-              bundleId: front.bundleId,
-              name: front.name,
-              pid: front.pid,
-              windowTitle: front.windowTitle,
-              windowId: front.windowId,
-              bounds: front.bounds
-            }
-          : null
-    }
-    if (!dictationTarget) {
-      host.showField(null)
-      return
-    }
-    // The field itself, not just the app: the border has to sit on the control
-    // the keyboard is in. The read is deliberately not awaited — the bars must
-    // appear at once, and a slow Accessibility tree may only cost the border.
-    void markDictationField(dictationTarget, mine)
-  }
-
-  /**
-   * Finds the focused control and draws its border, if it can take text.
-   *
-   * A non-editable focused element (a button, a web view that does not expose
-   * its editor) gets no border rather than a misleading rectangle around the
-   * whole window. The token check drops a late answer from a hold that has
-   * already ended.
-   */
-  async function markDictationField(target: ActiveAppInfo, mine: number): Promise<void> {
-    const focused = await helperFocused(target.pid).catch(() => null)
-    if (mine !== dictationRead) return
-    // The system-wide answer can belong to the card itself when the card was in
-    // front at press time while the target is the app behind it. That is our
-    // own input, not the field the words will go into.
-    const ownElement = focused?.pid === process.pid
-    host.showField(!ownElement && focused?.editable && focused.frame ? focused.frame : null)
-  }
-
-  /**
-   * Puts the screen back after a dictation hold.
-   *
-   * The remembered app is dropped here: the next hold starts wherever the user
-   * is by then, and a stale target would paste one sentence into the window
-   * before.
-   */
-  function endDictation(closeCard = false): void {
-    const ownsCard = closeCard || dictationOwnsCard
-    dictating = false
-    dictationRead += 1
-    dictationTarget = null
-    dictationOwnsCard = false
-    host.hideField()
-    if (ownsCard) {
-      // `close()` bumps the generation, so an in-flight `openInternal` cannot
-      // focus an empty card after the key is already up. That is also what
-      // returns focus to the app behind a primary-hotkey dictation turn.
-      close()
-      return
-    }
-    host.hide()
-  }
+  const dictation = createDictation({
+    invalidatePendingOpen: () => {
+      if (opening) generation += 1
+    },
+    cardOnScreen,
+    cardTarget: () => session?.target ?? null,
+    showField: (frame) => host.showField(frame),
+    hideField: () => host.hideField(),
+    closeCard: close,
+    hideCard: () => host.hide()
+  })
 
   /**
    * The mouse-and-keyboard runner.
@@ -469,7 +309,7 @@ export function createOverlayController(host: OverlayHost) {
     } else if (session && session.snapshot.activeApp) {
       void ensureFreshScreenshot(session)
     }
-    if (!isCurrentGeneration(startedIn) || dictating || !session) return
+    if (!isCurrentGeneration(startedIn) || dictation.isActive() || !session) return
     win.focus()
     startLive(session)
   }
@@ -526,7 +366,7 @@ export function createOverlayController(host: OverlayHost) {
       excludedApps: settings.excludedApps,
       wantsScreenshot: settings.captureScreenshotByDefault,
       onCopySent: () => {
-        if (!dictating && isCurrentGeneration(startedIn)) host.show(INITIAL_HEIGHT)
+        if (!dictation.isActive() && isCurrentGeneration(startedIn)) host.show(INITIAL_HEIGHT)
       }
     })
 
@@ -535,11 +375,11 @@ export function createOverlayController(host: OverlayHost) {
     // no way to dismiss it, or take the keyboard from the user's own field. A
     // dictation is the one case that hides nothing — the same window is already
     // showing its bars.
-    if (!isCurrentGeneration(startedIn) || dictating) {
+    if (!isCurrentGeneration(startedIn) || dictation.isActive()) {
       // A newer open may already own the window (the press that followed the
       // close that doomed this one): hiding it here would take down the card
       // that press just put up. Only the newest open may hide what it showed.
-      if (!dictating && opening?.generation === startedIn) host.hide()
+      if (!dictation.isActive() && opening?.generation === startedIn) host.hide()
       return
     }
 
@@ -702,16 +542,7 @@ export function createOverlayController(host: OverlayHost) {
     host.resize(height, width, pin, writing)
   }
 
-  /**
-   * One request, streamed into the card.
-   *
-   * This is the writer's half of the app: a question goes to the model, the
-   * answer streams in, and any shapes it asked for are painted as they arrive.
-   * The agent does not go through here — it owns its own loop and its own
-   * captures — so there is exactly one caller shape to keep working, and the
-   * drawing tool is the only thing the parser has to survive.
-   */
-  const { runAgentTurn, runWriterTurn } = createTurnRunners({
+  const runners = createTurnRunners({
     agent,
     isCurrent: (target) => session === target,
     hasSession: () => Boolean(session),
@@ -733,287 +564,21 @@ export function createOverlayController(host: OverlayHost) {
     }
   })
 
-  function send(request: SendRequest): Promise<void> {
-    if (!session || request.refine) return sendTurn(request)
-    const settings = getSettings()
-    // A short digest of everything that changes what a run does, so the trace can
-    // group runs by configuration without recording any of the values — a model
-    // name and a temperature are the user's business, not the log's.
-    const config = createHash('sha256')
-      .update(
-        JSON.stringify([
-          settings.provider,
-          resolveChatModel(settings),
-          settings.temperature,
-          settings.maxTokens,
-          settings.agent.enabled,
-          settings.agent.maxSteps,
-          settings.agent.verifyResult,
-          settings.agent.abortOnMouseMove,
-          settings.screenshotMaxSide,
-          settings.screenshotQuality
-        ])
-      )
-      .digest('hex')
-      .slice(0, 12)
-    return traceTurn({ voice: request.voice === true, provider: settings.provider, config }, () => sendTurn(request))
-  }
+  const { send, cancel, stopAgent, abortSpokenTurn } = createTurnController({
+    currentSession: () => session,
+    agent,
+    runners,
+    cardVisible: () => host.window()?.isVisible(),
+    showCard: () => host.showInactive(INITIAL_HEIGHT),
+    hideCard: () => host.hide(),
+    discardAnnotations,
+    emitStream: (event) => sendToWindow(CH.overlay.stream, event),
+    publishAgent
+  })
 
-  async function sendTurn(request: SendRequest): Promise<void> {
-    if (!session) return
-    const settings = getSettings()
-
-    const fail = (message: string, retryable: boolean, code?: StreamEventCode): void => {
-      const event: StreamEvent = { type: 'error', requestId: request.requestId, message, retryable, code }
-      sendToWindow(CH.overlay.stream, event)
-      if (request.voice) host.showInactive(INITIAL_HEIGHT)
-    }
-
-    // The card normally closes before a turn can start in an excluded app, but
-    // the target can change while it is already on screen. The error is what
-    // clears the busy state; a bare return left the card waiting forever.
-    if (isExcluded(session.target, settings.excludedApps)) {
-      trace('turn.outcome', { outcome: 'blocked', reason: 'excluded-app' })
-      fail(EXCLUDED_APP, false)
-      return
-    }
-    const model = resolveChatModel(settings)
-    const apiKey = getApiKey(settings.provider)
-
-    if (!model) {
-      fail('Модель не выбрана. Открой настройки и укажи модель.', false)
-      return
-    }
-    if (!apiKey) {
-      trace('turn.outcome', { outcome: 'blocked', reason: 'missing-key' })
-      fail('Не задан ключ API. Открой настройки и добавь ключ.', false)
-      return
-    }
-
-    // "Короче / длиннее": the previous answer is the whole input, so no context,
-    // no screenshot and no selection are re-sent.
-    const refine = request.refine ?? null
-    const baseAnswer = refine ? refine.baseAnswer.trim() : ''
-    if (refine && !baseAnswer) {
-      fail('Пока нечего переписывать — сначала получи ответ.', false)
-      return
-    }
-
-    session.abort?.abort()
-    // A new question is a new turn: a plan from the previous answer must not be
-    // able to keep clicking into this one.
-    agent.stop()
-
-    const abort = new AbortController()
-    session.abort = abort
-    // A spoken turn belongs to the microphone from the moment it is sent: the
-    // next press must be able to stop it without waiting for the answer.
-    if (request.voice) voiceTurn = abort
-    session.requestId = request.requestId
-    session.answer = ''
-    const availability = agent.availability()
-    /**
-     * Whether this turn is for the agent rather than for the writer.
-     *
-     * This is the one routing decision in the turn, and it is made before any
-     * model is called: an action request must not pay for a text round first,
-     * because that round's only job would be to guess what the agent is about
-     * to do anyway.
-     *
-     * The rule is the verb, not the mode. `looksLikeAction` is the same gate that
-     * already decides whether the pointer glow promises an action, so the card and
-     * the routing cannot disagree: if the glow said "готовлю действия", the agent
-     * runs. When the agent cannot run — mode off, no Accessibility — the turn
-     * falls through to the writer with `actReason` set, which is what produces the
-     * honest "я не могу нажать, вот почему" answer instead of a silent arrow.
-     */
-    const isActionRequest = !refine && availability.ready && looksLikeAction(request.prompt)
-    // Claim before screenshot/AX/model work, including cancellation mid-turn.
-    const glowTurn = beginAgentTurn(isActionRequest)
-    const turnSession = session
-    let outcome = 'abandoned'
-    let reason = 'session-changed'
-    let deadline: ReturnType<typeof setTimeout> | undefined
-    /**
-     * Hides the card after a spoken transcript has had its reading time, if the
-     * answer has not arrived by then. It is a timer, not an `await`, precisely so
-     * the model round trip starts now.
-     */
-    let previewHide: ReturnType<typeof setTimeout> | undefined
-    const previewUntil = request.voice && host.window()?.isVisible() ? Date.now() + VOICE_PREVIEW_MS : 0
-    try {
-      // A spoken request is routed immediately. The transcript stays in the
-      // composer while the turn is busy (the renderer keeps it until the first
-      // answer chunk), so reading it and starting the work happen in parallel
-      // instead of the card sitting still for two seconds first.
-      deadline = setTimeout(() => abort.abort('deadline'), TURN_DEADLINE_MS)
-      const bundleId = turnSession.target?.bundleId || null
-      // The exclusion list was already checked before the turn was registered,
-      // and nothing has been awaited since: the same `settings` still describe
-      // this turn.
-      const useHistory = settings.rememberConversation
-      const history = turnSession.history.filter(
-        (entry) => !entry.bundleId || !settings.excludedApps.includes(entry.bundleId)
-      )
-      const previousCommand =
-        useHistory && !refine && turnSession.history.length === 0
-          ? readPreviousCommand(settings.excludedApps)
-          : undefined
-
-      if (request.voice && !isActionRequest) {
-        // The request is already under way. Give the reader the transcript for
-        // its two seconds and only then get the card out of the way; if the
-        // answer arrives sooner, the `finally` clears this timer and the answer
-        // takes the card instead of being hidden by it.
-        const wait = previewUntil - Date.now()
-        if (wait > 0) {
-          previewHide = setTimeout(() => {
-            previewHide = undefined
-            if (session === turnSession && !abort.signal.aborted) host.hide()
-          }, wait)
-        } else {
-          host.hide()
-        }
-      }
-
-      // The drawings belong to the answer currently on screen: a new question
-      // replaces that answer, so old arrows must not stay behind as if they
-      // explained the new one. A rewrite ("короче") keeps them — it is the same
-      // answer in other words.
-      if (!refine) discardAnnotations()
-
-      const turn: TurnContext = {
-        request,
-        session: turnSession,
-        settings,
-        apiKey,
-        refine,
-        history,
-        previousCommand,
-        useHistory,
-        availability,
-        abort
-      }
-      const result = isActionRequest ? await runAgentTurn(turn) : await runWriterTurn(turn)
-      if (!result) return
-
-      // The turn's own session, not the module-level one: the runner returned
-      // only because both still point at the same card.
-      turnSession.answer = result.answer
-      outcome = result.outcome
-      reason = result.reason
-
-      const entry = remember(turnSession, request, result.acknowledged ? 'Готово.' : result.answer, bundleId)
-      const latestSettings = getSettings()
-      if (entry && !refine && useHistory && latestSettings.rememberConversation) {
-        saveCommand(entry.question, bundleId, latestSettings.excludedApps)
-      }
-
-      const done: StreamEvent = {
-        type: 'done',
-        requestId: request.requestId,
-        text: result.answer,
-        annotations: turnSession.annotations.length
-      }
-      sendToWindow(CH.overlay.stream, done)
-      if (result.acknowledged || result.answer.trim()) {
-        // A voice turn, an agent turn and a card that was hidden while it waited
-        // all end with the answer arriving rather than streaming: the card has to
-        // be brought back to show it.
-        if (request.voice || isActionRequest || !host.window()?.isVisible()) {
-          host.showInactive(INITIAL_HEIGHT)
-        }
-      } else if (request.voice) {
-        // Nothing to show and nothing to read: keep the card only when the answer
-        // would have been spoken, because then the user needs the text of it.
-        if (getSettings().voice.answerVoice !== 'off') host.showInactive(INITIAL_HEIGHT)
-        else host.hide()
-      }
-    } catch (error) {
-      outcome = 'error'
-      reason = error instanceof ProviderError ? 'provider' : 'internal'
-      trace('turn.error', { providerError: error instanceof ProviderError, aborted: abort.signal.aborted })
-      if (abort.signal.aborted) return
-      if (error instanceof ProviderError) {
-        fail(error.message, error.retryable)
-        return
-      }
-      fail(error instanceof Error ? error.message : 'Неизвестная ошибка запроса.', true)
-    } finally {
-      clearTimeout(deadline)
-      if (previewHide) {
-        clearTimeout(previewHide)
-        previewHide = undefined
-      }
-      if (abort.signal.aborted) {
-        outcome = abort.signal.reason === 'deadline' ? 'timeout' : 'cancelled'
-        reason = outcome === 'timeout' ? 'deadline' : abort.signal.reason === STOP_AGENT ? 'agent-stop' : 'turn-abort'
-        if (session === turnSession && turnSession.abort === abort) {
-          if (outcome === 'timeout') fail('Время выполнения истекло. Результат не подтверждён.', true, 'timeout')
-          else if (abort.signal.reason === STOP_AGENT) {
-            if (agent.last().phase !== 'aborted')
-              publishAgent({
-                phase: 'aborted',
-                step: 0,
-                total: 0,
-                label: '',
-                message: 'Остановлено.'
-              })
-            sendToWindow(CH.overlay.stream, {
-              type: 'done',
-              requestId: request.requestId,
-              text: '',
-              annotations: 0
-            } satisfies StreamEvent)
-          }
-        }
-      }
-      trace('turn.outcome', { outcome, reason })
-      trace('turn.finished', { aborted: abort.signal.aborted })
-      if (turnSession.abort === abort) turnSession.abort = null
-      if (voiceTurn === abort) voiceTurn = null
-      endAgentTurn(glowTurn)
-    }
-  }
-
-  function cancel(requestId: string): void {
-    if (session?.requestId === requestId) session.abort?.abort()
-  }
-
-  /**
-   * Appends a finished turn to the conversation.
-   *
-   * A rewrite replaces the answer it reworked instead of adding a turn: "короче"
-   * is the same answer in other words, and remembering both would have the model
-   * follow up on a text that is no longer on screen.
-   */
-  function remember(
-    turnSession: Session,
-    request: SendRequest,
-    answer: string,
-    bundleId: string | null
-  ): CardExchange | null {
-    const question = request.prompt.trim()
-    const reply = answer.trim()
-    if (!question || !reply) return null
-
-    const entry: CardExchange = {
-      bundleId,
-      question: question.length > MAX_HISTORY_CHARS ? `${question.slice(0, MAX_HISTORY_CHARS)}…` : question,
-      answer: reply.length > MAX_HISTORY_CHARS ? `${reply.slice(0, MAX_HISTORY_CHARS)}…` : reply
-    }
-    const last = turnSession.history[turnSession.history.length - 1]
-    if (request.refine && last?.question === entry.question) {
-      turnSession.history[turnSession.history.length - 1] = entry
-    } else {
-      turnSession.history.push(entry)
-    }
-    // Oldest first out: the last `CARD_HISTORY_TURNS` exchanges are what a follow-up
-    // can refer to, and everything older only costs tokens.
-    if (turnSession.history.length > CARD_HISTORY_TURNS) {
-      turnSession.history.splice(0, turnSession.history.length - CARD_HISTORY_TURNS)
-    }
-    return entry
+  function setVoice(active: boolean): void {
+    if (active) abortSpokenTurn()
+    host.setVoice(active)
   }
 
   async function copy(text: string): Promise<{ ok: boolean }> {
@@ -1059,8 +624,8 @@ export function createOverlayController(host: OverlayHost) {
     clearDrawing: clearAnnotations,
     setTyping,
     setVoice,
-    beginDictation,
-    endDictation,
+    beginDictation: dictation.beginDictation,
+    endDictation: dictation.endDictation,
     showVoiceIndicator: () => host.showInactive(INITIAL_HEIGHT),
     resize,
     send,
@@ -1074,17 +639,8 @@ export function createOverlayController(host: OverlayHost) {
     answerAgent: (id: string, allow: boolean, remember: boolean) => agent.answer(id, allow, remember),
     /** Ends the agent process; called on quit so none outlives the window. */
     disposeAgent: () => agent.dispose(),
-    stopAgent: () => {
-      // Both halves are stopped, always: the writer's stream and the agent's run
-      // are exclusive per turn, so a stop that only reached one of them would
-      // look like a stop that did nothing.
-      agent.stop()
-      if (session?.abort) session.abort.abort(STOP_AGENT)
-    },
-    // While a dictation is reading the front app, the old card target is not a
-    // fallback: a partial window that arrives in that gap must wait rather than
-    // paste into the app a previous card happened to belong to.
-    target: (): ActiveAppInfo | null => (dictating ? dictationTarget : (session?.target ?? null)),
+    stopAgent,
+    target: dictation.target,
     isOpen: (): boolean => cardOnScreen()
   }
 }
