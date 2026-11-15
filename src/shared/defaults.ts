@@ -14,7 +14,7 @@ export const DEFAULT_SYSTEM_PROMPT =
   'Давай только результат, без вступлений и пояснений, на языке контекста, если пользователь ' +
   'не попросил иначе. Ответ на сообщение — готовый к отправке текст.'
 
-/** Password managers and banking apps must never be sent anywhere. */
+/** Password managers must never be sent anywhere. */
 export const DEFAULT_EXCLUDED_APPS = [
   'com.1password.1password',
   'com.agilebits.onepassword7',
@@ -25,6 +25,24 @@ export const DEFAULT_EXCLUDED_APPS = [
   'com.apple.keychainaccess',
   'com.apple.Passwords'
 ]
+
+/**
+ * Human names for the apps excluded by default.
+ *
+ * Most of them are not running when the settings window opens, so there is
+ * nobody to ask for a name. Keeping the map next to the ids means a new default
+ * app cannot ship without the name the user will read.
+ */
+export const DEFAULT_EXCLUDED_APP_NAMES: Record<string, string> = {
+  'com.1password.1password': '1Password',
+  'com.agilebits.onepassword7': '1Password 7',
+  'com.bitwarden.desktop': 'Bitwarden',
+  'com.dashlane.dashlane': 'Dashlane',
+  'me.proton.pass.electron': 'Proton Pass',
+  'in.sinew.Enpass-Desktop': 'Enpass',
+  'com.apple.keychainaccess': 'Связка ключей',
+  'com.apple.Passwords': 'Пароли'
+}
 
 export const PROVIDERS: ProviderInfo[] = [
   {
@@ -585,8 +603,34 @@ function normalizeExtraBody(input: unknown): Record<ProviderId, string> {
   }
 }
 
-/** Fields the app writes itself; an extra body may not replace them. */
-const RESERVED_BODY_FIELDS = new Set(['model', 'messages', 'stream', 'tools', 'system'])
+/**
+ * Fields the app writes itself; an extra body may not replace them.
+ *
+ * Exported as a list so the settings pane can say which pasted keys will be
+ * ignored instead of silently dropping them and calling the body "correct".
+ */
+export const RESERVED_BODY_FIELDS = ['model', 'messages', 'stream', 'tools', 'system'] as const
+
+const RESERVED_BODY_FIELD_SET = new Set<string>(RESERVED_BODY_FIELDS)
+
+/**
+ * The keys a valid extra body asks for but the app will not send.
+ *
+ * Empty for text that does not parse or is empty: the pane reports the syntax
+ * error first, and "ignored keys" would only confuse that message.
+ */
+export function ignoredExtraBodyFields(text: string | undefined): string[] {
+  const trimmed = (text ?? '').trim()
+  if (!trimmed) return []
+  let value: unknown
+  try {
+    value = JSON.parse(trimmed)
+  } catch {
+    return []
+  }
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return []
+  return Object.keys(value).filter((key) => RESERVED_BODY_FIELD_SET.has(key))
+}
 
 /**
  * The user's extra request fields as an object, or `null` when the text is not
@@ -604,6 +648,6 @@ export function parseExtraBody(text: string | undefined): Record<string, unknown
   }
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return null
   return Object.fromEntries(
-    Object.entries(value as Record<string, unknown>).filter(([key]) => !RESERVED_BODY_FIELDS.has(key))
+    Object.entries(value as Record<string, unknown>).filter(([key]) => !RESERVED_BODY_FIELD_SET.has(key))
   )
 }

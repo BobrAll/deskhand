@@ -200,7 +200,7 @@ exports[`palette: per-window colours > matches the resolved palette snapshot, pe
     "--mono": "ui-monospace, 'SF Mono', Menlo, monospace",
     "--panel": "rgba(252, 253, 255, 0.66)",
     "--panel-drawing": "rgba(200, 202, 206, 0.4)",
-    "--panel-edge": "rgba(0, 0, 0, 0.1)",
+    "--panel-edge": "rgba(0, 0, 0, 0.14)",
     "--radius": "14px",
     "--radius-sm": "9px",
     "--shadow": "0 24px 60px rgba(20, 24, 40, 0.2)",

@@ -17,7 +17,15 @@
 import { describe, expect, it } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { CARET_SLACK, CHROME_WIDTH, FIELD_FONT, MAX_FIELD_HEIGHT, STOP_CHROME, clamp } from './cardMetrics'
+import {
+  ACTIONS_FONT,
+  CARET_SLACK,
+  CHROME_WIDTH,
+  FIELD_FONT,
+  MAX_FIELD_HEIGHT,
+  STOP_CHROME,
+  clamp
+} from './cardMetrics'
 
 const overlayCss = readFileSync(join(__dirname, 'overlay.css'), 'utf8')
 
@@ -90,6 +98,14 @@ describe('metrics: the chrome the CSS spends', () => {
     // The same family, in the same order: the measurement has to shape the run
     // exactly as the textarea will, or the card widens by the wrong step.
     expect(FIELD_FONT).toBe(`${size?.[1]}px ${family?.[1]?.trim()}`)
+  })
+
+  it('measures the action strip in the size the links are rendered in', () => {
+    const css = readFileSync(join(__dirname, 'overlay.css'), 'utf8')
+    const size = /button\.link\s*{[^}]*font-size:\s*([\d.]+)px/.exec(css)
+
+    expect(size?.[1], 'button.link must still declare a font-size').toBeDefined()
+    expect(ACTIONS_FONT.startsWith(`${size?.[1]}px `)).toBe(true)
   })
 })
 

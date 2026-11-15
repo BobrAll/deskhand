@@ -48,10 +48,15 @@ export const CH = {
     setKey: 'settings:set-key',
     deleteKey: 'settings:delete-key',
     testKey: 'settings:test-key',
+    testSavedKey: 'settings:test-saved-key',
     listModels: 'settings:list-models',
     runningApps: 'settings:running-apps',
     pickApp: 'settings:pick-app',
     open: 'settings:open',
+    /** main -> renderer: an already open settings window should switch sections. */
+    navigate: 'settings:navigate',
+    /** renderer -> main: the window mounted and can now receive `navigate`. */
+    ready: 'settings:ready',
     close: 'settings:close',
     /**
      * "Edits are still in flight — keep the window alive."
@@ -80,7 +85,8 @@ export const CH = {
   },
   onboarding: {
     complete: 'onboarding:complete',
-    openSettings: 'onboarding:open-settings'
+    openSettings: 'onboarding:open-settings',
+    tryIt: 'onboarding:try-it'
   },
   /**
    * Agent mode: the mouse and the keyboard belong to the assistant for the

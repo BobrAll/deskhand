@@ -1,4 +1,6 @@
 import { app, BrowserWindow } from 'electron'
+import { CH } from '@shared/ipc'
+import type { SettingsTarget } from '@shared/types'
 import { denyExternalLinks } from '../denyExternalLinks'
 import { loadPage } from '../pageLoad'
 import { appWindowOptions } from './base'
@@ -20,6 +22,21 @@ interface AppWindowOptions {
 
 let settingsWindow: BrowserWindow | null = null
 let onboardingWindow: BrowserWindow | null = null
+/**
+ * Where the settings window should land once it has loaded.
+ *
+ * The window is created and the renderer mounts a moment later; a navigation
+ * message sent to it now would be heard by nobody. The first `settings.load`
+ * takes this target instead, and an already open window is told directly.
+ */
+let pendingSettingsTarget: SettingsTarget | null = null
+/**
+ * Whether the renderer has mounted and subscribed to `settings:navigate`.
+ *
+ * A target that arrives before that point would be sent to a page with no
+ * listener; it waits in `pendingSettingsTarget` until `settings.ready`.
+ */
+let settingsRendererReady = false
 /**
  * Cancels a close that is waiting for the renderer to finish a write.
  *
@@ -130,15 +147,20 @@ function holdCloseUntilWritesLand(win: BrowserWindow): void {
   win.on('closed', cancelClose)
 }
 
-export function openSettingsWindow(): BrowserWindow {
+export function openSettingsWindow(target?: SettingsTarget): BrowserWindow {
   if (settingsWindow && !settingsWindow.isDestroyed()) {
     // Reopening during the deferred close is a request to stay.
     cancelPendingClose?.()
     settingsWindow.show()
     settingsWindow.focus()
+    if (target) {
+      pendingSettingsTarget = target
+      if (settingsRendererReady) flushSettingsTarget()
+    }
     return settingsWindow
   }
 
+  pendingSettingsTarget = target ?? null
   const win = openAppWindow({
     title: 'Deskhand — настройки',
     width: 980,
@@ -152,9 +174,44 @@ export function openSettingsWindow(): BrowserWindow {
   win.on('closed', () => {
     settingsWindow = null
     settingsHeld = false
+    pendingSettingsTarget = null
+    settingsRendererReady = false
     settingsClosedHandler?.()
   })
   return win
+}
+
+/** Sends the waiting target to the window that is now listening for it. */
+function flushSettingsTarget(): void {
+  const target = pendingSettingsTarget
+  if (!target || !settingsWindow || settingsWindow.isDestroyed()) return
+  pendingSettingsTarget = null
+  settingsWindow.webContents.send(CH.settings.navigate, target)
+}
+
+/**
+ * The renderer mounted and subscribed; flush anything that was waiting.
+ *
+ * A fresh window usually takes its target through `settings.load` instead, so
+ * this is the path for a window that was already on screen when another one
+ * asked it to switch sections.
+ */
+export function markSettingsReady(): void {
+  settingsRendererReady = true
+  flushSettingsTarget()
+}
+
+/**
+ * The target of the open request that created this window, taken once.
+ *
+ * `settings.load` runs on mount, which is the first moment the renderer can
+ * receive it; taking rather than reading keeps a later reload from replaying a
+ * navigation the user already followed.
+ */
+export function takeSettingsOpenTarget(): SettingsTarget | null {
+  const target = pendingSettingsTarget
+  pendingSettingsTarget = null
+  return target
 }
 
 export function openOnboardingWindow(): BrowserWindow {

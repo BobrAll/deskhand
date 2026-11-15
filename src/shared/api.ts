@@ -23,6 +23,7 @@ import type {
   TtsSetupProgress,
   StreamEvent,
   ModelListResult,
+  SettingsTarget,
   TestKeyResult,
   TranscribeResult,
   TtsStatus,
@@ -47,11 +48,24 @@ export type RunningAppInfo = AppInfo
 /** The app the `.app` picker returned; it may name one that is not running. */
 export type AppPickResult = AppInfo
 
+/**
+ * Where the settings window should land when another window asked for it.
+ * Defined with the other settings types so both the card and the window can name
+ * it without importing the bridge.
+ */
+export type { SettingsTarget } from './types'
+
 export interface SettingsBundle {
   settings: AppSettings
   keys: KeyStatus[]
   permissions: PermissionState
   encryptionAvailable: boolean
+  /**
+   * Set only by the `load` that follows an external open request, so a window
+   * that is being created lands on the requested tab instead of the first one.
+   * Absent everywhere else.
+   */
+  navigate?: SettingsTarget
   /**
    * Set only by `settings.save` when the requested hotkey could not be
    * registered and the previous binding was put back. The window uses it to drag
@@ -136,15 +150,35 @@ export interface DeskhandApi {
   }
   settings: {
     load(): Promise<SettingsBundle>
-    save(settings: AppSettings): Promise<SettingsBundle>
+    /**
+     * Writes settings as a patch: keys that are present are stored, absent ones
+     * are left as they are.
+     *
+     * The window sends a whole draft on autosave; the onboarding wizard sends
+     * only the provider fields it owns, so a model chosen there cannot roll back
+     * a hotkey or a voice setting changed meanwhile in the settings window.
+     */
+    save(settings: Partial<AppSettings>): Promise<SettingsBundle>
     setKey(provider: ProviderId, key: string): Promise<SettingsBundle>
     deleteKey(provider: ProviderId): Promise<SettingsBundle>
     /** `baseUrl` lets the form verify an override before it is saved. */
     testKey(provider: ProviderId, key: string, baseUrl?: string): Promise<TestKeyResult>
+    /** Verifies the key already in the Keychain, without returning it to the renderer. */
+    testSavedKey(provider: ProviderId): Promise<TestKeyResult>
     listModels(provider: ProviderId, baseUrl?: string): Promise<ModelListResult>
     runningApps(): Promise<RunningAppInfo[]>
     pickApp(): Promise<AppPickResult | null>
-    open(): void
+    open(target?: SettingsTarget): void
+    /**
+     * An already open window is told where to go instead of being reloaded.
+     * The first load carries the target in `SettingsBundle.navigate`.
+     */
+    onNavigate(handler: (target: SettingsTarget) => void): Unsubscribe
+    /**
+     * The window has mounted and subscribed to `onNavigate`. A target sent
+     * before that moment is waiting in the main process; this flushes it.
+     */
+    ready(): void
     close(): void
     /**
      * Tells the main process whether edits are still being written.
@@ -166,6 +200,8 @@ export interface DeskhandApi {
   onboarding: {
     complete(): Promise<void>
     openSettings(): void
+    /** Finishes the wizard and puts the card on screen for a first try. */
+    tryIt(): void
   }
   permissions: {
     status(): Promise<PermissionState>

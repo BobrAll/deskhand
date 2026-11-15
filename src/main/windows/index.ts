@@ -22,7 +22,9 @@ export {
   closeOnboardingWindow,
   closeSettingsWindow,
   setSettingsHeld,
-  setSettingsWindowClosedHandler
+  setSettingsWindowClosedHandler,
+  takeSettingsOpenTarget,
+  markSettingsReady
 } from './settings'
 
 /**

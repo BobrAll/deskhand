@@ -51,9 +51,10 @@ function agent(): string {
 
 function voice(
   answerVoice: VoiceSettings['answerVoice'] = DEFAULT_SETTINGS.voice.answerVoice,
-  tts: TtsSettings = DEFAULT_SETTINGS.tts
+  tts: TtsSettings = DEFAULT_SETTINGS.tts,
+  voiceOverrides: Partial<VoiceSettings> = {}
 ): string {
-  const settings = { ...DEFAULT_SETTINGS.voice, answerVoice }
+  const settings = { ...DEFAULT_SETTINGS.voice, answerVoice, ...voiceOverrides }
   return renderToStaticMarkup(
     createElement(VoiceTab, {
       voice: settings,
@@ -107,7 +108,7 @@ describe('the settings panes', () => {
     expect(provider()).toContain('Подключение')
     expect(provider()).toContain('Скриншот')
     expect(agent()).toContain('Границы')
-    expect(voice()).toContain('Запись и команды')
+    expect(voice()).toContain('Голосовые клавиши')
     expect(voice()).toContain('Ответы вслух')
     expect(privacy()).toContain('Исключённые приложения')
   })
@@ -125,9 +126,27 @@ describe('the settings panes', () => {
 
   it('offers a microphone check before the recording settings', () => {
     const html = voice()
-    expect(html).toMatch(/Проверить микрофон.*Запись и команды/s)
+    expect(html).toMatch(/Проверить микрофон.*Голосовые клавиши/s)
     expect(html).toContain('Скажи пару слов, чтобы проверить сигнал.')
     expect(html).not.toContain('Микрофон работает')
+  })
+
+  it('names the two voice keys by what they do', () => {
+    const html = voice()
+    expect(html).toContain('Клавиша команды')
+    expect(html).toContain('Клавиша диктовки')
+    expect(html).toContain('Что делает клавиша команды')
+    // The default sends the recognised command at once.
+    expect(html).toContain('Карточка откроется и сразу отправит запрос модели.')
+    // Dictation has its own key, so it is not a mode of the command key.
+    expect(html).not.toContain('Вставить в поле')
+  })
+
+  it('offers a way back from the old "command key dictates" setting', () => {
+    const html = voice(undefined, undefined, { action: 'dictate' })
+    expect(html).toContain('Клавиша команды вставляет текст')
+    expect(html).toContain('Сделать командой')
+    expect(html).not.toContain('Что делает клавиша команды')
   })
 
   it('starts the agent on screen settings and keeps the step limit after the switches', () => {

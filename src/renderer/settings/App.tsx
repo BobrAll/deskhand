@@ -19,10 +19,11 @@ import type {
   KeyStatus,
   PermissionState,
   ProviderId,
+  SettingsTarget,
   TtsSettings,
   VoiceSettings
 } from '@shared/types'
-import { PROVIDERS } from '@shared/defaults'
+import { PROVIDERS, normalizeBaseUrl } from '@shared/defaults'
 import type { AppPickResult, RunningAppInfo, SettingsBundle } from '@shared/api'
 import { WindowBrand } from '../styles/WindowBrand'
 import { HotkeyField } from './HotkeyField'
@@ -130,6 +131,14 @@ export function App() {
   const [bundle, setBundle] = useState<SettingsBundle | null>(null)
   const [draft, setDraft] = useState<AppSettings | null>(null)
   const [tab, setTab] = useState<Tab>('provider')
+  /**
+   * Where another window asked this one to land.
+   *
+   * The first load carries the target, and a window that is already open gets it
+   * through `onNavigate`. Kept in state rather than applied once so the provider
+   * pane can react to a second request for the same row.
+   */
+  const [navigate, setNavigate] = useState<SettingsTarget | null>(null)
   const [notice, setNotice] = useState<Notice | null>(null)
   const [applyState, setApplyState] = useState<ApplyState>('idle')
   /**
@@ -161,6 +170,8 @@ export function App() {
   )
 
   const [keyInput, setKeyInput] = useState('')
+  /** A key save or probe is in flight; closing now would drop it. */
+  const [keyBusy, setKeyBusy] = useState(false)
   const [apps, setApps] = useState<RunningAppInfo[]>([])
   const [hotkeyMessage, setHotkeyMessage] = useState<string | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
@@ -186,6 +197,10 @@ export function App() {
       .then((loaded) => {
         setBundle(loaded)
         setDraft(loaded.settings)
+        if (loaded.navigate) {
+          setTab(loaded.navigate.tab ?? 'provider')
+          setNavigate(loaded.navigate)
+        }
       })
       .catch((error: unknown) => {
         console.error('[settings] load failed:', error)
@@ -195,6 +210,24 @@ export function App() {
       .runningApps()
       .then(setApps)
       .catch(() => setApps([]))
+  }, [])
+
+  /**
+   * A window that is already open is told where to go instead of being reloaded.
+   *
+   * The target is stored as a fresh object every time, so asking for the same
+   * row twice still reaches the pane — the second request is the one that finds
+   * the window already sitting on that tab.
+   */
+  useEffect(() => {
+    const unsubscribe = window.deskhand.settings.onNavigate((target) => {
+      if (target.tab) setTab(target.tab)
+      setNavigate({ ...target })
+    })
+    // A target may have been sent while this page was still mounting; tell the
+    // main process the listener exists and let it flush what it held.
+    window.deskhand.settings.ready()
+    return unsubscribe
   }, [])
 
   const providerKeys = useMemo<Record<ProviderId, KeyStatus | undefined>>(() => {
@@ -399,8 +432,8 @@ export function App() {
    * button was supposed to make impossible, just moved into a smaller window.
    */
   useEffect(() => {
-    window.deskhand.settings.hold(applyState === 'pending' || applyState === 'saving')
-  }, [applyState])
+    window.deskhand.settings.hold(applyState === 'pending' || applyState === 'saving' || keyBusy)
+  }, [applyState, keyBusy])
 
   /** Whether the draft holds anything that is not on disk yet. */
   const unsaved = useCallback((value: AppSettings): boolean => hasUnsaved(value, bundle, writtenRef.current), [bundle])
@@ -449,17 +482,45 @@ export function App() {
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [draft, unsaved, writable, flush])
 
+  /**
+   * Stores the key, then verifies it.
+   *
+   * The order is deliberate. Testing first made an offline machine, or a gateway
+   * whose `/models` is not chat-compatible, unable to store a perfectly good key
+   * at all. A stored key that failed the probe is still reported, and the
+   * «Проверить» button next to it makes the test repeatable later.
+   *
+   * The override goes through the same normalisation the settings store applies,
+   * so the tested host is the host requests will actually use.
+   */
   const saveKey = useCallback(async () => {
     if (!draft || !keyInput.trim()) return false
+    const provider = draft.provider
+    const override = draft.baseUrls[provider]?.trim() ? normalizeBaseUrl(draft.baseUrls[provider]) : ''
+    if (draft.baseUrls[provider]?.trim() && !override) {
+      showNotice({ kind: 'err', text: 'Проверь адрес API — ключ не проверен.' }, BANNER_KEY_NOTICE_MS)
+      return false
+    }
+    setKeyBusy(true)
     try {
-      const next = await window.deskhand.settings.setKey(draft.provider, keyInput)
+      const next = await window.deskhand.settings.setKey(provider, keyInput)
       setBundle(next)
       setKeyInput('')
-      showNotice({ kind: 'ok', text: 'Ключ сохранён.' }, BANNER_KEY_NOTICE_MS)
+      const tested = await window.deskhand.settings.testKey(provider, keyInput, override || undefined)
+      if (!tested.ok) {
+        showNotice(
+          { kind: 'err', text: `Ключ сохранён, но проверка не прошла: ${tested.message}` },
+          BANNER_KEY_NOTICE_MS
+        )
+        return false
+      }
+      showNotice({ kind: 'ok', text: 'Ключ работает и сохранён.' }, BANNER_KEY_NOTICE_MS)
       return true
     } catch {
       showNotice({ kind: 'err', text: 'Не удалось сохранить ключ.' }, BANNER_KEY_NOTICE_MS)
       return false
+    } finally {
+      setKeyBusy(false)
     }
   }, [draft, keyInput, showNotice])
 
@@ -566,6 +627,7 @@ export function App() {
               onKeyInput={setKeyInput}
               onSaveKey={saveKey}
               onRemoveKey={removeKey}
+              navigate={navigate && (!navigate.tab || navigate.tab === 'provider') ? navigate : undefined}
             />
           </div>
 

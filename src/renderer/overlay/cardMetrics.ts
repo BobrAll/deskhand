@@ -76,10 +76,10 @@ export const FIELD_FONT = "13px -apple-system, BlinkMacSystemFont, 'SF Pro Text'
 /**
  * The two places the card prints smaller than the field it measured.
  *
- * `button.link` in the answer's action strip is 11 px and the agent row is
- * 11.5 px, so a width measured in `FIELD_FONT` would over-report both.
+ * `button.link` in the answer's action strip and the agent row are both
+ * 11.5 px, so a width measured in `FIELD_FONT` would over-report them.
  */
-export const ACTIONS_FONT = FIELD_FONT.replace('13px', '11px')
+export const ACTIONS_FONT = FIELD_FONT.replace('13px', '11.5px')
 export const AGENT_FONT = FIELD_FONT.replace('13px', '11.5px')
 
 export function clamp(value: number, min: number, max: number): number {

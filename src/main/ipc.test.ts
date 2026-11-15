@@ -29,12 +29,18 @@ const electron = vi.hoisted(() => {
   }
 })
 
+const windowsMock = vi.hoisted(() => ({
+  open: vi.fn(),
+  target: null as unknown
+}))
+
 vi.mock('electron', () => ({
   app: {
     on: () => undefined,
     isReady: () => true,
     getPath: () => '/tmp',
-    getAppPath: () => '/app'
+    getAppPath: () => '/app',
+    hide: vi.fn()
   },
   ipcMain: {
     handle: (channel: string, handler: (...args: unknown[]) => unknown) => {
@@ -103,10 +109,14 @@ vi.mock('./settings/store', async () => {
 })
 
 vi.mock('./windows', () => ({
-  openSettingsWindow: () => undefined,
+  openSettingsWindow: (target?: unknown) => {
+    windowsMock.open(target)
+  },
   closeSettingsWindow: () => undefined,
   closeOnboardingWindow: () => undefined,
   setSettingsHeld: () => undefined,
+  takeSettingsOpenTarget: () => windowsMock.target,
+  markSettingsReady: () => undefined,
   showActiveWindow: () => undefined
 }))
 
@@ -196,7 +206,8 @@ const MAIN_TO_RENDERER = new Set<string>([
   CH.voice.stop,
   CH.voice.transcript,
   CH.voice.downloadProgress,
-  CH.tts.setupProgress
+  CH.tts.setupProgress,
+  CH.settings.navigate
 ])
 
 function wire(): void {
@@ -251,6 +262,7 @@ describe('registerIpc: every channel has exactly one handler', () => {
       CH.overlay.close,
       CH.overlay.resize,
       CH.settings.open,
+      CH.settings.ready,
       CH.settings.hold,
       CH.permissions.open,
       CH.onboarding.openSettings,
@@ -338,6 +350,41 @@ describe('registerIpc: the handlers reach their dependency', () => {
 
     const copy = electron.handles.get(CH.overlay.copy)!
     expect(await copy({}, 'текст')).toEqual({ ok: false, message: 'Не удалось скопировать ответ.' })
+  })
+
+  it('narrows a navigation target before handing it to the window', () => {
+    const deps = fakeDeps()
+    electron.reset()
+    registerIpc(deps)
+    windowsMock.open.mockClear()
+
+    electron.ons.get(CH.settings.open)!({}, { tab: 'nope', view: 'models', focus: 'extraBody', extra: 1 })
+    expect(windowsMock.open).toHaveBeenLastCalledWith({ view: 'models', focus: 'extraBody' })
+
+    // Nothing recognisable means "just open it", not an object the page can use
+    // to index a heading that does not exist.
+    electron.ons.get(CH.settings.open)!({}, { tab: 42 })
+    expect(windowsMock.open).toHaveBeenLastCalledWith(undefined)
+  })
+
+  it('hands the waiting target to the first settings load', async () => {
+    const deps = fakeDeps()
+    electron.reset()
+    registerIpc(deps)
+    windowsMock.target = { tab: 'provider', view: 'models' }
+
+    const bundle = (await electron.handles.get(CH.settings.load)!({})) as { navigate?: unknown }
+    expect(bundle.navigate).toEqual({ tab: 'provider', view: 'models' })
+  })
+
+  it('closes the wizard and opens the card on «Попробовать сейчас»', async () => {
+    const deps = fakeDeps()
+    electron.reset()
+    registerIpc(deps)
+
+    electron.ons.get(CH.onboarding.tryIt)!({})
+    await vi.waitFor(() => expect(deps.overlay.open).toHaveBeenCalled())
+    expect(patchSettings).toHaveBeenCalledWith({ onboardingCompleted: true })
   })
 })
 

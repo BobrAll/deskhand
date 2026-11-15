@@ -10,6 +10,8 @@ interface WindowDouble {
   webContents: {
     setWindowOpenHandler: ReturnType<typeof vi.fn>
     on: ReturnType<typeof vi.fn>
+    send: ReturnType<typeof vi.fn>
+    isLoadingMainFrame(): boolean
   }
   close(): void
   emit(event: string): boolean
@@ -27,7 +29,12 @@ vi.mock('electron', async () => {
     focus = vi.fn()
     hide = vi.fn()
     setFocusable = vi.fn()
-    webContents = { setWindowOpenHandler: vi.fn(), on: vi.fn() }
+    webContents = {
+      setWindowOpenHandler: vi.fn(),
+      on: vi.fn(),
+      send: vi.fn(),
+      isLoadingMainFrame: () => false
+    }
     constructor(readonly options: Record<string, unknown>) {
       super()
       state.windows.push(this)
@@ -96,6 +103,40 @@ describe('settings window lifecycle', () => {
     expect(api.openSettingsWindow()).toBe(first)
     expect(state.windows).toHaveLength(1)
     expect(state.windows[0].focus).toHaveBeenCalledOnce()
+  })
+
+  it('hands a fresh window its target through the next load', async () => {
+    const api = await load()
+    api.openSettingsWindow({ tab: 'provider', view: 'models' })
+    expect(api.takeSettingsOpenTarget()).toEqual({ tab: 'provider', view: 'models' })
+    // Taken once: a reload must not replay a navigation the user already made.
+    expect(api.takeSettingsOpenTarget()).toBeNull()
+  })
+
+  it('sends a target straight to a window that is already listening', async () => {
+    const api = await load()
+    api.openSettingsWindow()
+    // The renderer subscribes a moment after the page loads, and says so.
+    api.markSettingsReady()
+    expect(api.takeSettingsOpenTarget()).toBeNull()
+    api.openSettingsWindow({ tab: 'provider', view: 'models', focus: 'extraBody' })
+    expect(state.windows[0].webContents.send).toHaveBeenCalledWith('settings:navigate', {
+      tab: 'provider',
+      view: 'models',
+      focus: 'extraBody'
+    })
+  })
+
+  it('holds a target until the renderer says it is listening', async () => {
+    const api = await load()
+    api.openSettingsWindow()
+    api.openSettingsWindow({ tab: 'provider', view: 'models' })
+    expect(state.windows[0].webContents.send).not.toHaveBeenCalled()
+    api.markSettingsReady()
+    expect(state.windows[0].webContents.send).toHaveBeenCalledWith('settings:navigate', {
+      tab: 'provider',
+      view: 'models'
+    })
   })
 
   it('waits in 80 ms steps for an in-flight write', async () => {

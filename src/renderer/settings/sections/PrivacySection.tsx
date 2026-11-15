@@ -1,6 +1,7 @@
-import { useEffect, useId, useState, type Dispatch, type SetStateAction } from 'react'
+import { useEffect, useId, useRef, useState, type Dispatch, type SetStateAction } from 'react'
 import type { AppSettings, PermissionState, SystemPermissionRequest } from '@shared/types'
 import type { AppPickResult, RunningAppInfo, SettingsBundle } from '@shared/api'
+import { DEFAULT_EXCLUDED_APP_NAMES } from '@shared/defaults'
 import { PermissionRow } from '../PermissionRow'
 import { Group, Row, ToggleRow } from '../Row'
 
@@ -20,6 +21,28 @@ const PRIVACY_VIEWS = [
   { id: 'exceptions', label: 'Исключения' }
 ] as const
 
+/**
+ * A human name for a bundle id.
+ *
+ * A bundle id is the one thing the exclusion list actually stores, and it is
+ * unreadable: `me.proton.pass.electron` is not what the app is called anywhere
+ * the user has seen it. Running apps know their own name; the rest is looked up
+ * in the shared default map, then read off the last segment.
+ */
+function appName(bundleId: string, apps: RunningAppInfo[]): string {
+  const running = apps.find((app) => app.bundleId === bundleId)
+  if (running) return running.name
+  const known = DEFAULT_EXCLUDED_APP_NAMES[bundleId]
+  if (known) return known
+  const last = bundleId.split('.').pop() ?? ''
+  return last || bundleId
+}
+
+/** The first letter in a tile: enough to tell two rows apart without an icon set. */
+function monogram(name: string): string {
+  return name.trim().charAt(0).toUpperCase() || '?'
+}
+
 export function PrivacySection({
   draft,
   patch,
@@ -31,6 +54,8 @@ export function PrivacySection({
 }: PrivacySectionProps) {
   const navId = useId()
   const [view, setView] = useState<(typeof PRIVACY_VIEWS)[number]['id']>('permissions')
+  const [appQuery, setAppQuery] = useState('')
+  const searchRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     let latest = 0
@@ -61,6 +86,24 @@ export function PrivacySection({
   async function pickExcludedApp(): Promise<void> {
     onAddExcluded(await window.deskhand.settings.pickApp())
   }
+
+  function addExcludedApp(bundleId: string): void {
+    if (draft.excludedApps.includes(bundleId)) return
+    patch({ excludedApps: [...draft.excludedApps, bundleId] })
+    // The «Добавить» button disappears with the row it belonged to, so focus has
+    // to go somewhere predictable instead of falling back to the window body.
+    searchRef.current?.focus()
+  }
+
+  const addableApps = apps.filter((app) => !draft.excludedApps.includes(app.bundleId))
+  const appQueryTrimmed = appQuery.trim().toLowerCase()
+  const matchingApps = appQueryTrimmed
+    ? addableApps.filter(
+        (app) =>
+          app.name.toLowerCase().includes(appQueryTrimmed) || app.bundleId.toLowerCase().includes(appQueryTrimmed)
+      )
+    : // A running Mac has dozens of processes; eight is a list, forty is a wall.
+      addableApps.slice(0, 8)
 
   return (
     <div className="pane">
@@ -96,7 +139,7 @@ export function PrivacySection({
           />
           <PermissionRow
             title="Запись экрана"
-            hint="Скриншот активного окна."
+            hint="Снимок экрана, когда текст не выделен. По умолчанию снимается весь экран; окно — когда в кадре есть исключённое приложение."
             granted={permissions?.screenRecording ?? false}
             onRequest={() => requestSystemPermission('screenRecording')}
             onOpen={() => window.deskhand.permissions.open('screenRecording')}
@@ -152,46 +195,69 @@ export function PrivacySection({
         >
           <Row stacked>
             <div className="excluded-list">
-              {draft.excludedApps.map((bundleId) => (
-                <div key={bundleId} className="excluded-row">
-                  <span className="mono">{bundleId}</span>
-                  <button
-                    className="ghost"
-                    aria-label={`Убрать ${bundleId} из исключений`}
-                    onClick={() =>
-                      patch({
-                        excludedApps: draft.excludedApps.filter((item) => item !== bundleId)
-                      })
-                    }
-                  >
-                    ✕
-                  </button>
-                </div>
-              ))}
+              {draft.excludedApps.map((bundleId) => {
+                const name = appName(bundleId, apps)
+                return (
+                  <div key={bundleId} className="excluded-row" title={bundleId}>
+                    <span className="app-tile" aria-hidden="true">
+                      {monogram(name)}
+                    </span>
+                    <span className="excluded-name" title={bundleId}>
+                      {name}
+                    </span>
+                    <button
+                      className="ghost"
+                      aria-label={`Убрать ${name} из исключений`}
+                      title={bundleId}
+                      onClick={() =>
+                        patch({
+                          excludedApps: draft.excludedApps.filter((item) => item !== bundleId)
+                        })
+                      }
+                    >
+                      ✕
+                    </button>
+                  </div>
+                )
+              })}
               {draft.excludedApps.length === 0 && (
                 <div className="row-hint">Список пуст — ассистент видит все приложения.</div>
               )}
             </div>
-            <div className="row-actions">
-              <select
-                value=""
-                aria-label="Добавить запущенное приложение в исключения"
-                onChange={(event) => {
-                  const bundleId = event.target.value
-                  if (bundleId && !draft.excludedApps.includes(bundleId)) {
-                    patch({ excludedApps: [...draft.excludedApps, bundleId] })
-                  }
-                }}
-              >
-                <option value="">Выбрать из запущенных…</option>
-                {apps
-                  .filter((app) => !draft.excludedApps.includes(app.bundleId))
-                  .map((app) => (
-                    <option key={app.bundleId} value={app.bundleId}>
-                      {app.name}
-                    </option>
+            <div className="app-picker">
+              <input
+                ref={searchRef}
+                aria-label="Поиск запущенного приложения"
+                placeholder="Поиск запущенного приложения"
+                value={appQuery}
+                onChange={(event) => setAppQuery(event.target.value)}
+                spellCheck={false}
+              />
+              {addableApps.length === 0 ? (
+                <div className="row-hint">Все запущенные приложения уже в исключениях.</div>
+              ) : matchingApps.length === 0 ? (
+                <div className="row-hint">Ничего не нашлось — попробуй другое имя.</div>
+              ) : (
+                <div className="app-picker-list" role="list">
+                  {matchingApps.map((app) => (
+                    <div key={app.bundleId} className="app-picker-row" role="listitem" title={app.bundleId}>
+                      <span className="app-tile" aria-hidden="true">
+                        {monogram(app.name)}
+                      </span>
+                      <span className="app-picker-name">{app.name}</span>
+                      <button
+                        className="ghost"
+                        aria-label={`Добавить ${app.name} в исключения`}
+                        onClick={() => addExcludedApp(app.bundleId)}
+                      >
+                        Добавить
+                      </button>
+                    </div>
                   ))}
-              </select>
+                </div>
+              )}
+            </div>
+            <div className="row-actions">
               <button onClick={() => void pickExcludedApp()}>Выбрать .app…</button>
             </div>
           </Row>

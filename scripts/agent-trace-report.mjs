@@ -25,7 +25,7 @@ if (!givenPath && !existsSync(DEFAULT_TRACE)) {
   process.exit(2)
 }
 
-const cases = JSON.parse(await readFile(new URL('../docs/agent-acceptance-cases.json', import.meta.url), 'utf8'))
+const cases = JSON.parse(await readFile(new URL('./data/agent-acceptance-cases.json', import.meta.url), 'utf8'))
 const caseIds = new Set(cases.map(({ id }) => id))
 const turns = new Map()
 let malformedLines = 0
