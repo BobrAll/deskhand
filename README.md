@@ -36,6 +36,8 @@ curl -fsSL https://github.com/BobrAll/deskhand/releases/latest/download/install.
 
 Удалить всё, что Deskhand сохранил на Mac: закрой приложение и удали папку `~/Library/Application Support/Deskhand`.
 
+[Документация проекта](docs/README.md) описывает устройство приложения, проверки и выпуск релиза.
+
 ## Лицензия
 
 Код Deskhand распространяется по [PolyForm Noncommercial 1.0.0](LICENSE), © 2026 Alexander Bobrus. Использовать его можно в любых некоммерческих целях — в том числе для себя, в учёбе и хобби. Продавать Deskhand или использовать его в коммерческой деятельности нельзя.

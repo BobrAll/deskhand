@@ -33,9 +33,9 @@ Finder защищены отдельно. Tab и обычное редактир
   то же самое; Escape без вопроса останавливает запуск целиком.
 - Вопрос без ответа истекает через 5 минут и считается отказом: процесс агента
   не должен висеть вечно из-за закрытого окна. Срок задан в
-  `src/main/agent/index.ts` (`APPROVAL_TIMEOUT_MS`); у процесса агента есть свой
+  `src/main/agent/approvalPrompt.ts` (`APPROVAL_TIMEOUT_MS`). У процесса агента есть
   запасной потолок в `native/deskhand/Sources/DeskhandAgent/Bridge.swift`
-  (`approvalTimeout`).
+  (`approvalTimeout`), равный 10 минутам.
 - Конкурентный запуск отклоняется.
 
 ## Границы защиты
