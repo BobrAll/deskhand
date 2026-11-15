@@ -51,9 +51,10 @@ function agent(): string {
 
 function voice(
   answerVoice: VoiceSettings['answerVoice'] = DEFAULT_SETTINGS.voice.answerVoice,
-  tts: TtsSettings = DEFAULT_SETTINGS.tts
+  tts: TtsSettings = DEFAULT_SETTINGS.tts,
+  voiceOverrides: Partial<VoiceSettings> = {}
 ): string {
-  const settings = { ...DEFAULT_SETTINGS.voice, answerVoice }
+  const settings = { ...DEFAULT_SETTINGS.voice, answerVoice, ...voiceOverrides }
   return renderToStaticMarkup(
     createElement(VoiceTab, {
       voice: settings,
@@ -137,6 +138,15 @@ describe('the settings panes', () => {
     expect(html).toContain('Что делает клавиша команды')
     // The default sends the recognised command at once.
     expect(html).toContain('Карточка откроется и сразу отправит запрос модели.')
+    // Dictation has its own key, so it is not a mode of the command key.
+    expect(html).not.toContain('Вставить в поле')
+  })
+
+  it('offers a way back from the old "command key dictates" setting', () => {
+    const html = voice(undefined, undefined, { action: 'dictate' })
+    expect(html).toContain('Клавиша команды вставляет текст')
+    expect(html).toContain('Сделать командой')
+    expect(html).not.toContain('Что делает клавиша команды')
   })
 
   it('starts the agent on screen settings and keeps the step limit after the switches', () => {

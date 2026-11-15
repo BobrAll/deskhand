@@ -176,16 +176,17 @@ export function VoiceInput({
    * What the command key does after recognition.
    *
    * Named as a mode rather than as a select value: the option text is the
-   * consequence ("показать", "отправить", "вставить"), and the hint under the
-   * row explains what that means for the card and the cursor.
+   * consequence ("показать", "отправить"), and the hint under the row explains
+   * what that means for the card.
+   *
+   * «Вставить в поле» is not a mode any more: dictation has its own key, and
+   * offering it here made two different keys do the same thing.
    */
-  const commandMode = voice.action === 'dictate' ? 'dictate' : voice.autoSend ? 'send' : 'review'
+  const commandMode = voice.autoSend ? 'send' : 'review'
   const commandHint =
     commandMode === 'review'
       ? 'Откроется карточка с текстом. Проверишь и отправишь сам.'
-      : commandMode === 'send'
-        ? 'Карточка откроется и сразу отправит запрос модели.'
-        : 'Текст вставится в поле. Обе клавиши будут делать одно и то же.'
+      : 'Карточка откроется и сразу отправит запрос модели.'
 
   return (
     <>
@@ -207,22 +208,30 @@ export function VoiceInput({
             onChange={(dictationHotkey) => onVoiceChange({ dictationHotkey })}
           />
         </Row>
-        <Row title="Что делает клавиша команды" hint={commandHint}>
-          <select
-            aria-label="Что делает клавиша команды"
-            value={commandMode}
-            onChange={(event) => {
-              const action = event.target.value
-              onVoiceChange(
-                action === 'dictate' ? { action: 'dictate' } : { action: 'command', autoSend: action === 'send' }
-              )
-            }}
+        {voice.action === 'dictate' ? (
+          // Settings written before the separate dictation key existed. The
+          // behaviour is kept, but the way out is explicit: the command key goes
+          // back to opening the card, and dictation keeps its own key.
+          <Row
+            title="Клавиша команды вставляет текст"
+            hint="Так было настроено раньше. Теперь для этого есть клавиша диктовки — переключи команду на карточку."
           >
-            <option value="review">Показать в карточке</option>
-            <option value="send">Отправить сразу</option>
-            <option value="dictate">Вставить в поле</option>
-          </select>
-        </Row>
+            <button onClick={() => onVoiceChange({ action: 'command', autoSend: false })}>Сделать командой</button>
+          </Row>
+        ) : (
+          <Row title="Что делает клавиша команды" hint={commandHint}>
+            <select
+              aria-label="Что делает клавиша команды"
+              value={commandMode}
+              onChange={(event) => {
+                onVoiceChange({ action: 'command', autoSend: event.target.value === 'send' })
+              }}
+            >
+              <option value="review">Показать в карточке</option>
+              <option value="send">Отправить сразу</option>
+            </select>
+          </Row>
+        )}
         {voice.enabled && !microphoneGranted && (
           <Row title="Доступ к микрофону" hint="Разреши доступ, чтобы записывать голосовые команды.">
             <button onClick={onOpenMicrophoneSettings}>Открыть «Приватность»</button>
