@@ -54,6 +54,94 @@ function PermissionItem({
   )
 }
 
+/**
+ * The model input in either of its two states.
+ *
+ * Before the catalogue is loaded there is one text field; after it there is a
+ * search, a filtered list and the same manual field as the escape hatch. Keeping
+ * both states here means the disabled/busy rules and the "keep the chosen value
+ * visible" rule cannot drift between them.
+ */
+function ModelControl({
+  providerLabel,
+  model,
+  models,
+  modelsError,
+  query,
+  busy,
+  onQuery,
+  onModel,
+  onSave
+}: {
+  providerLabel: string
+  model: string
+  models: string[] | null
+  modelsError: string | null
+  query: string
+  busy: boolean
+  onQuery(value: string): void
+  onModel(value: string): void
+  onSave(value: string): void
+}) {
+  const visible = models ? models.filter((item) => item.toLowerCase().includes(query.trim().toLowerCase())) : []
+  // A select whose value is missing from its options silently shows the first
+  // one; the chosen model stays in the list even when the search hides it.
+  if (models && model && !visible.includes(model)) visible.unshift(model)
+
+  const manual = (
+    <input
+      value={model}
+      disabled={busy}
+      onChange={(event) => onModel(event.target.value)}
+      onBlur={() => onSave(model)}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter') onSave(model)
+      }}
+      aria-label={models === null ? 'Модель' : 'ID модели вручную'}
+      placeholder={models === null ? 'Например, gpt-4.1-mini' : 'Или впиши ID вручную'}
+      spellCheck={false}
+    />
+  )
+
+  if (models === null) {
+    return (
+      <>
+        {manual}
+        <div className={`hint${modelsError ? ' err' : ''}`}>
+          {modelsError ?? `ID модели ${providerLabel}. Его задаёшь ты — встроенного значения нет.`}
+        </div>
+      </>
+    )
+  }
+
+  return (
+    <>
+      <input
+        className="search"
+        value={query}
+        onChange={(event) => onQuery(event.target.value)}
+        placeholder={`Найти модель ${providerLabel}`}
+        aria-label="Поиск модели"
+        spellCheck={false}
+      />
+      <select value={model} aria-label="Выбор модели" disabled={busy} onChange={(event) => onSave(event.target.value)}>
+        <option value="">Выбери модель</option>
+        {visible.map((item) => (
+          <option key={item} value={item}>
+            {item}
+          </option>
+        ))}
+      </select>
+      {manual}
+      <div className="hint">
+        {visible.length === 0
+          ? 'Ничего не нашлось. Проверь запрос или впиши ID вручную.'
+          : 'Выбери модель из списка или впиши ID вручную.'}
+      </div>
+    </>
+  )
+}
+
 // The last screen's claim is computed in `finish.ts`, where it can be tested
 // without mounting the wizard.
 
@@ -228,11 +316,6 @@ export function App() {
   const providerLabel = providerInfo(provider)?.label ?? provider
   const finish = finishState(bundle, permissions, provider)
 
-  const query = modelQuery.trim().toLowerCase()
-  const visibleModels = models ? models.filter((item) => item.toLowerCase().includes(query)) : []
-  // The chosen value must stay selected even when the search hides it.
-  if (models && model && !visibleModels.includes(model)) visibleModels.unshift(model)
-
   return (
     <div className="wizard">
       <aside className="wizard-rail">
@@ -370,69 +453,20 @@ export function App() {
               )}
             </div>
 
-            {models === null ? (
-              <>
-                <input
-                  value={model}
-                  disabled={busy}
-                  onChange={(event) => setModel(event.target.value)}
-                  onBlur={() => void persist({ model })}
-                  onKeyDown={(event) => {
-                    if (event.key === 'Enter') void persist({ model })
-                  }}
-                  aria-label="Модель"
-                  placeholder="Например, gpt-4.1-mini"
-                  spellCheck={false}
-                />
-                <div className={`hint${modelsError ? ' err' : ''}`}>
-                  {modelsError ?? `ID модели ${providerLabel}. Его задаёшь ты — встроенного значения нет.`}
-                </div>
-              </>
-            ) : (
-              <>
-                <input
-                  className="search"
-                  value={modelQuery}
-                  onChange={(event) => setModelQuery(event.target.value)}
-                  placeholder={`Найти модель ${providerLabel}`}
-                  aria-label="Поиск модели"
-                  spellCheck={false}
-                />
-                <select
-                  value={model}
-                  aria-label="Выбор модели"
-                  disabled={busy}
-                  onChange={(event) => {
-                    setModel(event.target.value)
-                    void persist({ model: event.target.value })
-                  }}
-                >
-                  <option value="">Выбери модель</option>
-                  {visibleModels.map((item) => (
-                    <option key={item} value={item}>
-                      {item}
-                    </option>
-                  ))}
-                </select>
-                <input
-                  value={model}
-                  disabled={busy}
-                  onChange={(event) => setModel(event.target.value)}
-                  onBlur={() => void persist({ model })}
-                  onKeyDown={(event) => {
-                    if (event.key === 'Enter') void persist({ model })
-                  }}
-                  aria-label="ID модели вручную"
-                  placeholder="Или впиши ID вручную"
-                  spellCheck={false}
-                />
-                <div className="hint">
-                  {visibleModels.length === 0
-                    ? 'Ничего не нашлось. Проверь запрос или впиши ID вручную.'
-                    : 'Выбери модель из списка или впиши ID вручную.'}
-                </div>
-              </>
-            )}
+            <ModelControl
+              providerLabel={providerLabel}
+              model={model}
+              models={models}
+              modelsError={modelsError}
+              query={modelQuery}
+              busy={busy}
+              onQuery={setModelQuery}
+              onModel={setModel}
+              onSave={(value) => {
+                setModel(value)
+                void persist({ model: value })
+              }}
+            />
           </div>
 
           {providerInfo(provider) && (

@@ -33,6 +33,27 @@ const MODEL_VIEWS = [
   { id: 'screenshot', label: 'Скриншот' }
 ] as const
 
+/** The result of an on-demand check: a key, a model id or a JSON body. */
+interface CheckResult {
+  ok: boolean
+  text: string
+}
+
+/** One check result in the row that produced it; nothing when no check ran. */
+function CheckLine({ result, inline = false }: { result: CheckResult | null; inline?: boolean }) {
+  if (!result) return null
+  const className = result.ok ? 'row-hint ok' : 'row-hint err'
+  return inline ? (
+    <span className={className} role="status">
+      {result.text}
+    </span>
+  ) : (
+    <div className={className} role="status">
+      {result.text}
+    </div>
+  )
+}
+
 export function ProviderSection({
   draft,
   patch,
@@ -49,9 +70,9 @@ export function ProviderSection({
   const [busy, setBusy] = useState(false)
   const [catalog, setCatalog] = useState<ModelListResult | null>(null)
   const [modelSearch, setModelSearch] = useState('')
-  const [modelCheck, setModelCheck] = useState<{ ok: boolean; text: string } | null>(null)
-  const [extraCheck, setExtraCheck] = useState<{ ok: boolean; text: string } | null>(null)
-  const [keyCheck, setKeyCheck] = useState<{ ok: boolean; text: string } | null>(null)
+  const [modelCheck, setModelCheck] = useState<CheckResult | null>(null)
+  const [extraCheck, setExtraCheck] = useState<CheckResult | null>(null)
+  const [keyCheck, setKeyCheck] = useState<CheckResult | null>(null)
   const [extraOpen, setExtraOpen] = useState(false)
   const modelListRef = useRef<HTMLSelectElement>(null)
   const modelIdRef = useRef<HTMLInputElement>(null)
@@ -293,11 +314,7 @@ export function ProviderSection({
             {keyStatus?.configured ? (
               <div className="row-actions">
                 <span className="permission-state ok">● Ключ сохранён</span>
-                {keyCheck && (
-                  <span className={keyCheck.ok ? 'row-hint ok' : 'row-hint err'} role="status">
-                    {keyCheck.text}
-                  </span>
-                )}
+                <CheckLine result={keyCheck} inline />
                 <button disabled={busy} onClick={() => void checkSavedKey()}>
                   Проверить
                 </button>
@@ -446,11 +463,7 @@ export function ProviderSection({
                 Проверить модель
               </button>
             </div>
-            {modelCheck && (
-              <div className={modelCheck.ok ? 'row-hint ok' : 'row-hint err'} role="status">
-                {modelCheck.text}
-              </div>
-            )}
+            <CheckLine result={modelCheck} />
           </Row>
         </Group>
 
@@ -523,11 +536,7 @@ export function ProviderSection({
                 <button className="ghost" onClick={checkExtraBody}>
                   Проверить
                 </button>
-                {extraCheck && (
-                  <span className={extraCheck.ok ? 'row-hint ok' : 'row-hint err'} role="status">
-                    {extraCheck.text}
-                  </span>
-                )}
+                <CheckLine result={extraCheck} inline />
               </div>
             </Row>
           </Group>
