@@ -6,22 +6,13 @@
  */
 
 import { randomUUID } from 'node:crypto'
-import { app, BrowserWindow } from 'electron'
+import type { BrowserWindow } from 'electron'
 import { CH } from '@shared/ipc'
-import { providerInfo } from '@shared/defaults'
-import type {
-  ActiveAppInfo,
-  AgentAvailability,
-  AgentEvent,
-  ContextFlags,
-  OverlayState,
-  StreamEvent
-} from '@shared/types'
+import type { AgentAvailability, AgentEvent, ContextFlags, StreamEvent } from '@shared/types'
 import { createAgentController } from '../agent'
 import { updateAgentCursor } from '../agent/cursor'
 import { paintAgentPresentation, updateAgentPresentation } from '../agent/presentation'
 import { collectContext } from '../context/collect'
-import { resolveChatModel } from '../llm'
 import { CARD_FOLDED_HEIGHT } from '../card'
 import { copyText } from '../paste'
 import { createTurnRunners } from './turnRunners'
@@ -29,11 +20,12 @@ import type { Session } from './session'
 import { createDictation } from './dictation'
 import { createTurnController } from './turnController'
 import { createAnnotations } from './annotations'
+import { createFocusReturn } from './focus'
 import { createLiveCapture } from './liveCapture'
+import { createOverlayState } from './state'
 import { trace } from '../agent/trace'
 import type { OverlayHost } from './host'
-import { helperActivate, helperFrontApplication } from '../native/helper'
-import { getApiKey } from '../settings/secrets'
+import { helperFrontApplication } from '../native/helper'
 import { getSettings, patchSettings } from '../settings/store'
 
 /** One `open()` that is still collecting context, and the generation it started in. */
@@ -123,6 +115,11 @@ export function createOverlayController(host: OverlayHost) {
     present: (action) => paintAgentPresentation(action)
   })
 
+  const { overlayState } = createOverlayState({
+    current: () => session,
+    availability: () => agent.availability()
+  })
+
   /** Keeps the card and the display layer in sync with the agent's state. */
   function publishAgent(event: AgentEvent): void {
     trace('agent.phase', {
@@ -137,37 +134,6 @@ export function createOverlayController(host: OverlayHost) {
     // The ghost pointer follows the run, not the step: it is present from
     // `arming` to the terminal phase and waits between actions.
     updateAgentPresentation(event)
-  }
-
-  function setupNotice(): OverlayState['setupNotice'] {
-    const settings = getSettings()
-    const label = providerInfo(settings.provider)?.label ?? settings.provider
-    if (!resolveChatModel(settings)) {
-      return {
-        kind: 'warning',
-        message: `Выбери модель ${label} в настройках.`
-      }
-    }
-    if (!getApiKey(settings.provider)) {
-      return {
-        kind: 'warning',
-        message: `Добавь ключ ${label} в настройках, чтобы получать ответы.`
-      }
-    }
-    return null
-  }
-
-  function overlayState(): OverlayState | null {
-    if (!session) return null
-    const warnings = [...session.snapshot.warnings, ...session.notices]
-    return {
-      sessionId: session.id,
-      context: session.snapshot,
-      flags: session.flags,
-      setupNotice: setupNotice(),
-      warnings,
-      agent: agent.availability()
-    }
   }
 
   function sendToWindow(channel: string, payload: unknown): void {
@@ -191,6 +157,11 @@ export function createOverlayController(host: OverlayHost) {
   function isCurrentGeneration(owner: number): boolean {
     return owner === generation
   }
+
+  const { returnFocusTo } = createFocusReturn({
+    window: () => host.window(),
+    isCurrent: isCurrentGeneration
+  })
 
   /**
    * The open a press or a transcript may join, if there is one.
@@ -458,60 +429,6 @@ export function createOverlayController(host: OverlayHost) {
     // nothing. Escape means "done, back to my work", not "the assistant is in the
     // way" — so focus is handed back explicitly.
     void returnFocusTo(target, closedIn)
-  }
-
-  /**
-   * Gives the keyboard back to the app the user was working in.
-   *
-   * Two cases, and both used to leave the machine in a state where typing went
-   * nowhere:
-   *
-   * - the remembered target still exists — it is activated, which is exactly what
-   *   "return me where I was" means;
-   * - there is no target (the app was on the exclusion list, or the frontmost app
-   *   could not be read) — then the keyboard goes to one of our own windows when
-   *   one is visible, and to the next application otherwise. The hand-off took
-   *   those windows out of the candidate set, so it has to be explicit; a
-   *   settings window the user opened on purpose is not something to close on
-   *   their behalf.
-   *
-   * `closedIn` is the generation of the close that asked for this, because both
-   * moves outlive it: the helper activation is a process round trip, and the
-   * press that reopens the card can land inside that window. The new card took
-   * the keyboard on purpose, so raising the old app over it — or hiding the
-   * window it is in — would swallow the press.
-   */
-  async function returnFocusTo(target: ActiveAppInfo | null, closedIn: number): Promise<void> {
-    if (!isCurrentGeneration(closedIn)) return
-    if (target && (target.bundleId || target.pid > 0)) {
-      try {
-        if (await helperActivate({ bundleId: target.bundleId, pid: target.pid })) return
-      } catch {
-        /* fall through to hiding ourselves */
-      }
-    }
-    // A reopen moved the generation while the helper was loading the app.
-    if (!isCurrentGeneration(closedIn)) return
-    const overlay = host.window()
-    const fallback = BrowserWindow.getAllWindows().find(
-      (win) =>
-        win !== overlay &&
-        !win.isDestroyed() &&
-        win.isVisible() &&
-        // Painting layers (the ghost pointer, drawings, the field mark) are
-        // visible BrowserWindows that can never take the keyboard.
-        win.isFocusable()
-    )
-    if (fallback) {
-      // The hand-off took this window out of the keyboard candidate set, so the
-      // automatic return no longer reaches it. Hand it back explicitly: the user
-      // asked for this window, and with nothing to return to it is the honest
-      // place for focus.
-      fallback.show()
-      fallback.focus()
-      return
-    }
-    app.hide()
   }
 
   function setFlags(flags: ContextFlags): void {
