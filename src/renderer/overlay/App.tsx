@@ -17,12 +17,7 @@
  */
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
-import type {
-  CSSProperties,
-  KeyboardEvent as ReactKeyboardEvent,
-  PointerEvent as ReactPointerEvent,
-  UIEvent as ReactUIEvent
-} from 'react'
+import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent } from 'react'
 import type {
   AgentEvent,
   AgentToolRequest,
@@ -36,7 +31,7 @@ import { CARD_MIN_WIDTH, CARD_WIDTH } from '@shared/metrics'
 import { looksLikeAction } from '@shared/intent'
 import { FIELD_FONT } from './cardMetrics'
 import { layoutCard, structuredAnswer } from './cardLayout'
-import { REFINE_HINT, REFINE_LABEL } from './copy'
+import { useAnswerScroll } from './useAnswerScroll'
 import { useSpeech } from './useSpeech'
 import { useWaiting } from './useWaiting'
 import { useVoice } from './useVoice'
@@ -44,8 +39,9 @@ import { deriveView } from './viewFlags'
 import { agentLabel, agentMark } from './agentRow'
 import { hasTextSelection, keyPolicy, type KeyAction } from './keyPolicy'
 import { rewriteStartsOver, routeStream } from './streamRouting'
-import { Markdown } from './markdownText'
-import { LiveThumb } from './LiveThumb'
+import { AgentStatus } from './AgentStatus'
+import { AnswerPanel } from './AnswerPanel'
+import { ContextDrawer } from './ContextDrawer'
 import { draggedWidth, expandedWidth, userWidthCeiling } from './cardWidth'
 
 interface Failure {
@@ -81,6 +77,8 @@ export function App() {
   const [state, setState] = useState<OverlayState | null>(null)
   const [prompt, setPrompt] = useState('')
   const [answer, setAnswer] = useState('')
+  const { answerRef, newText, onAnswerScroll, jumpToNewText, stopFollowing, resetScroll, prepareRewriteScroll } =
+    useAnswerScroll(answer)
   const [busy, setBusy] = useState(false)
   const [failure, setFailure] = useState<Failure | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
@@ -94,12 +92,6 @@ export function App() {
       copiedTimerRef.current = null
     }
   }, [])
-  /** The answer has new text below the reader's position. */
-  const [newText, setNewText] = useState(false)
-  /** The reader asked to follow the bottom; a new answer starts at the top. */
-  const followAnswerRef = useRef(false)
-  /** A rewrite keeps the old answer mounted until its first chunk; jump then. */
-  const scrollToTopOnNextAnswerRef = useRef(false)
   /** How many shapes are painted on the screen right now. */
   const [drawn, setDrawn] = useState(0)
   /**
@@ -206,7 +198,7 @@ export function App() {
    */
   const pendingAutoSendRef = useRef<string | null>(null)
   const inputRef = useRef<HTMLTextAreaElement | null>(null)
-  const answerRef = useRef<HTMLDivElement | null>(null)
+
   /**
    * The font the field renders in, resolved from the live element.
    *
@@ -289,9 +281,7 @@ export function App() {
       setFailure(null)
       setNotice(null)
       resetCopied()
-      setNewText(false)
-      followAnswerRef.current = false
-      scrollToTopOnNextAnswerRef.current = false
+      resetScroll()
       setBusy(false)
       setDrawn(0)
       setTyping(typing)
@@ -304,7 +294,7 @@ export function App() {
       stoppedByUserRef.current = false
       setAgent(null)
     },
-    [resetCopied]
+    [resetCopied, resetScroll]
   )
 
   const reset = useCallback(
@@ -718,24 +708,6 @@ export function App() {
     resizeWindowToLayoutRef.current()
   }, [prompt, cardWidth, wrapped, rootNode])
 
-  useEffect(() => {
-    const node = answerRef.current
-    if (!node) return
-    if (scrollToTopOnNextAnswerRef.current) {
-      scrollToTopOnNextAnswerRef.current = false
-      node.scrollTop = 0
-      followAnswerRef.current = false
-    }
-    if (followAnswerRef.current) {
-      node.scrollTop = node.scrollHeight
-      setNewText(false)
-    } else {
-      // The answer starts at its beginning; the pill appears only when there is
-      // actually something below the fold — while streaming and after it ends.
-      setNewText(node.scrollHeight > node.clientHeight + 1)
-    }
-  }, [answer])
-
   // A setup problem or a failed request is not a detail: the card unfolds, so
   // the reason (and the way out of it) is never hidden behind a chevron.
   useEffect(() => {
@@ -768,8 +740,7 @@ export function App() {
       setFailure(null)
       setNotice(null)
       resetCopied()
-      followAnswerRef.current = false
-      setNewText(false)
+      stopFollowing()
       // A new question is a new card: a width chosen while reading the previous
       // answer must not decide how wide this one opens.
       setUserWidth(null)
@@ -807,7 +778,7 @@ export function App() {
         voice: spoken
       })
     },
-    [resetCopied]
+    [resetCopied, stopFollowing]
   )
 
   /**
@@ -838,11 +809,7 @@ export function App() {
       // A rewrite is a writer turn; an agent summary from the previous turn
       // must not sit over the reworked text.
       setAgent(null)
-      followAnswerRef.current = false
-      setNewText(false)
-      // A refinement reuses the mounted answer until its first chunk lands;
-      // jump to the top only when the new text is actually there.
-      scrollToTopOnNextAnswerRef.current = true
+      prepareRewriteScroll()
       setLast({
         prompt: last?.prompt ?? '',
         mode: last?.mode ?? 'insert',
@@ -859,7 +826,7 @@ export function App() {
         refine: { direction, baseAnswer }
       })
     },
-    [answer, last, resetCopied]
+    [answer, last, resetCopied, prepareRewriteScroll]
   )
 
   /** Repeats whatever the last turn was: a question, or a rewrite and its base. */
@@ -948,8 +915,7 @@ export function App() {
       setNotice(null)
       resetCopied()
       setAgent(null)
-      followAnswerRef.current = false
-      setNewText(false)
+      stopFollowing()
       setPrompt(text)
       // A dictated draft is text the user will read and edit in the card, so it
       // counts as engaging with it — same as a keystroke.
@@ -965,29 +931,7 @@ export function App() {
       }
     })
     return off
-  }, [resetCopied])
-
-  /**
-   * Follow the stream only while the reader is at its bottom.
-   *
-   * Scrolling up is a request to read the beginning; the next token must not
-   * undo it. The threshold leaves a few points for the last line's descenders.
-   */
-  const onAnswerScroll = useCallback((event: ReactUIEvent<HTMLDivElement>) => {
-    const node = event.currentTarget
-    const hidden = node.scrollHeight > node.clientHeight + 1
-    const atBottom = node.scrollHeight - node.scrollTop - node.clientHeight < 24
-    followAnswerRef.current = atBottom
-    setNewText(!atBottom && hidden)
-  }, [])
-
-  const jumpToNewText = useCallback(() => {
-    const node = answerRef.current
-    if (!node) return
-    followAnswerRef.current = true
-    node.scrollTop = node.scrollHeight
-    setNewText(false)
-  }, [])
+  }, [resetCopied, stopFollowing])
 
   const copy = useCallback(async () => {
     const text = answerTextRef.current
@@ -1352,10 +1296,6 @@ export function App() {
   }
 
   const { context, flags, setupNotice } = state
-  const selection = context.selection
-  const screenshot = context.screenshot
-  /** The call the run is waiting on an answer for, if any. */
-  const approval = agent?.approval ?? null
 
   return (
     // While the assistant is painting on the screen the card turns into a much
@@ -1433,45 +1373,13 @@ export function App() {
       )}
 
       {showMeta && !agentRunning && (
-        <div className="drawer">
-          <div className="meta">
-            <span className="app" title={context.activeApp?.bundleId ?? ''}>
-              {context.activeApp?.name ?? 'Без приложения'}
-            </span>
-            <button
-              className="tag"
-              data-on={flags.includeSelection && Boolean(selection)}
-              disabled={!selection}
-              onClick={() => toggleFlag('includeSelection')}
-              title={
-                selection
-                  ? `Использовать выделенный текст: ${selection.text.slice(0, 200)}`
-                  : 'Выделенный текст не найден'
-              }
-            >
-              {selection ? `Текст · ${selection.text.length}` : 'Текст'}
-            </button>
-            <button
-              className="tag"
-              data-on={flags.includeScreenshot && Boolean(screenshot)}
-              disabled={!screenshot}
-              onClick={() => toggleFlag('includeScreenshot')}
-              title={
-                screenshot
-                  ? 'Ассистент видит экран — и сам решит, когда обвести элемент или показать стрелкой'
-                  : 'Скриншот недоступен'
-              }
-            >
-              {context.screenshotPending ? 'Экран…' : 'Экран'}
-            </button>
-            {screenshot && flags.includeScreenshot && <LiveThumb src={screenshot.dataUrl} />}
-            {drawn > 0 && (
-              <button className="tag clear" onClick={clearDrawing} title="Убрать рисунок с экрана">
-                Рисунок {drawn} ×
-              </button>
-            )}
-          </div>
-        </div>
+        <ContextDrawer
+          context={context}
+          flags={flags}
+          drawn={drawn}
+          toggleFlag={toggleFlag}
+          clearDrawing={clearDrawing}
+        />
       )}
 
       {expanded && blocked && (
@@ -1524,61 +1432,15 @@ export function App() {
         </div>
       )}
 
-      {agentDone ? (
-        <div className="agent-head agent-done" role="status">
-          <svg className="agent-check" viewBox="0 0 20 20" aria-hidden="true">
-            <path d="m3 10 4.5 4.5 9-9" />
-          </svg>
-          <span className="agent-label">Готово</span>
-        </div>
-      ) : agent && (agentStatus || approval) && !(agent.code === 'blocked' && blockedAction) ? (
-        <div
-          className="agent"
-          data-phase={agent.phase}
-          data-mark={agentMark(agent)}
-          data-running={agentRunning || undefined}
-        >
-          {agentStatus && (
-            <div className="agent-head" role="status">
-              <span className="agent-dot" aria-hidden />
-              <span className="agent-label" key={`${agent.step}:${agent.phase}`}>
-                {agentStatus}
-              </span>
-              {agentHint && <span className="agent-hint">{agentHint}</span>}
-            </div>
-          )}
-
-          {/*
-            The confirmation, in the flow of the run rather than in a modal.
-            The question is about one named element — "нажать «Экспорт» в Safari" —
-            and a system dialog would cover the window it is asking about. Here it
-            appears where the step it belongs to appears, so the user reads the
-            run and the question as one thing.
-          */}
-          {agent.phase === 'asking' && approval && (
-            <div className="agent-ask" role="group" aria-label="Подтверждение действия">
-              <div className="agent-ask-title">Нужно разрешение</div>
-              {agent.message && <div className="agent-ask-detail">{agent.message}</div>}
-              <div className="agent-ask-buttons">
-                <button className="agent-allow" onClick={() => void answerAgent(approval, true, false)}>
-                  Разрешить
-                </button>
-                <button
-                  className="agent-always"
-                  title="Запомнить именно это действие и больше не спрашивать"
-                  onClick={() => void answerAgent(approval, true, true)}
-                >
-                  Больше не спрашивать
-                </button>
-                <button className="agent-deny" onClick={() => void answerAgent(approval, false, false)}>
-                  Отменить
-                </button>
-              </div>
-              <div className="agent-ask-hint">↩ разрешить · ⌘↩ больше не спрашивать · Esc отменить</div>
-            </div>
-          )}
-        </div>
-      ) : null}
+      <AgentStatus
+        agent={agent}
+        done={agentDone}
+        running={agentRunning}
+        status={agentStatus}
+        hint={agentHint}
+        blockedAction={blockedAction}
+        answerAgent={answerAgent}
+      />
 
       {showWaiting && (
         <div className="waiting" role="status" aria-live="polite">
@@ -1613,88 +1475,26 @@ export function App() {
         </>
       )}
 
-      {/*
-        Only real text earns an answer row. An empty "thinking" box under the
-        field is what made a voice action look like it had answered something.
-      */}
-      {hasAnswer && (
-        <div className="answer-wrap">
-          <div ref={answerRef} className="answer" onScroll={onAnswerScroll}>
-            <Markdown text={answer} streaming={busy} caret={busy} />
-          </div>
-          {newText && (
-            <button className="new-text" onClick={jumpToNewText}>
-              ↓ Новый текст
-            </button>
-          )}
-        </div>
-      )}
-
-      {/* The everyday actions, on one row; rewrites live in the drawer. */}
-      {hasAnswer && (!busy || speech.speaking) && (
-        <div className="foot answer-actions">
-          <button className="link" onClick={() => (speech.speaking ? speech.stop() : speech.speak(answer))}>
-            {speech.speaking ? 'Остановить озвучку' : 'Прослушать'}
-          </button>
-          {answerReady && (
-            <>
-              <span className="spacer" />
-              {/*
-                The one-click half of the drag. It is in the action row rather
-                than behind the chevron because the moment you notice a table is
-                cramped is the moment you are looking at it.
-
-                Only shown when the content is actually wider than the card: a
-                «Шире» that widens a two-word answer is a button that does
-                nothing, and a person who presses it once and sees no change
-                stops trusting the edge.
-              */}
-              {userWidth !== null && (
-                <button className="link" title="Вернуть ширину по содержимому" onClick={toggleWidth}>
-                  Вернуть
-                </button>
-              )}
-              {userWidth === null && wanted !== null && (
-                <button className="link" title="Развернуть по содержимому" onClick={toggleWidth}>
-                  Шире
-                </button>
-              )}
-              <button
-                className="link"
-                data-copied={copied || undefined}
-                title={copied ? 'Скопировано в буфер обмена' : 'Скопировать ответ'}
-                onClick={() => void copy()}
-              >
-                {copied ? '✓ Скопировано' : 'Скопировать'}
-              </button>
-            </>
-          )}
-        </div>
-      )}
-      {speech.error && (
-        <div className="line" role="status">
-          {speech.error}
-        </div>
-      )}
-
-      {hasAnswer && expanded && (
-        <div className="foot">
-          {!busy && (
-            <>
-              {(Object.keys(REFINE_LABEL) as RefineDirection[]).map((direction) => (
-                <button
-                  key={direction}
-                  className="link"
-                  title={REFINE_HINT[direction]}
-                  onClick={() => refine(direction)}
-                >
-                  {REFINE_LABEL[direction]}
-                </button>
-              ))}
-            </>
-          )}
-        </div>
-      )}
+      <AnswerPanel
+        answer={answer}
+        hasAnswer={hasAnswer}
+        busy={busy}
+        answerReady={answerReady}
+        expanded={expanded}
+        newText={newText}
+        answerRef={answerRef}
+        onAnswerScroll={onAnswerScroll}
+        jumpToNewText={jumpToNewText}
+        speaking={speech.speaking}
+        speechError={speech.error}
+        toggleSpeech={() => (speech.speaking ? speech.stop() : speech.speak(answer))}
+        userWidth={userWidth}
+        wanted={wanted}
+        toggleWidth={toggleWidth}
+        copied={copied}
+        copy={copy}
+        refine={refine}
+      />
 
       {notice && (
         <div className="line">
