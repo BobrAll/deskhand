@@ -177,7 +177,7 @@ describe('settings window lifecycle', () => {
     expect(api.openAppWindows()).toEqual([settings])
   })
 
-  it('parks every open app window while the card owns the keyboard', async () => {
+  it('parks every open app window during a keyboard hand-off', async () => {
     const api = await load()
     api.openSettingsWindow()
     api.openOnboardingWindow()
@@ -187,16 +187,5 @@ describe('settings window lifecycle', () => {
 
     api.setAppWindowsFocusable(true)
     expect(state.windows.map((win) => win.setFocusable.mock.lastCall?.[0])).toEqual([true, true])
-  })
-
-  it('lets a deliberately opened settings window take the keyboard back', async () => {
-    const api = await load()
-    const win = api.openSettingsWindow()
-    api.setAppWindowsFocusable(false)
-
-    api.openSettingsWindow()
-
-    expect(win.setFocusable).toHaveBeenLastCalledWith(true)
-    expect(win.focus).toHaveBeenCalled()
   })
 })

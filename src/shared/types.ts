@@ -273,9 +273,8 @@ export interface AgentEvent {
   /**
    * What the agent has done so far, newest last.
    *
-   * The plan is not known in advance any more — the agent decides its next call
-   * after seeing the result of the previous one — so the card shows the log it
-   * actually produced instead of a list it was handed at the start.
+   * The card shows only the current step and its label; the full log travels on
+   * the event for the run trace and for callers that need the sequence.
    */
   actions?: AgentActionRow[]
   /** Set on `error` / `aborted`: why the run stopped. */
@@ -312,7 +311,7 @@ export interface AgentActionRow {
 export interface AgentRunResult {
   /** The agent's final answer, in the user's language. */
   answer: string
-  /** What actually happened, one row per call, for the card and the history. */
+  /** What actually happened, one row per call, for the run trace and the summary. */
   actions: AgentActionRow[]
   /** Set when the run stopped early, or when it could not start. */
   message?: string

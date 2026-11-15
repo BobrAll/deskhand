@@ -138,9 +138,6 @@ function createOverlayWindow(): BrowserWindow {
     overlayWindow = null
     overlayReady = false
     overlayVisible = false
-    // The window that kept the app's other windows out of the keyboard is gone;
-    // leaving them non-focusable would make settings unreachable.
-    setAppWindowsFocusable(true)
     // The window is gone and nothing is painted or spoken through it any more.
     // Keeping `voiceActive`/`drawingActive` would make the *next* creation bare
     // before any turn asked for it; the next session starts from the resting
@@ -167,11 +164,6 @@ function createOverlayWindow(): BrowserWindow {
     pendingShow = null
     if (pending) performShow(pending.height, pending.width, pending.activate)
   })
-  // Whoever has the card has the keyboard; the app's other windows must not
-  // become the next key window when the card gives it up. Parking them here as
-  // well as in `performShow` covers a card that is focused again after settings
-  // was opened on purpose while it was still on screen.
-  win.on('focus', () => setAppWindowsFocusable(false))
   win.on('will-move', () => { resizeBounds = null })
   loadPage(win, 'overlay')
   return win
@@ -284,10 +276,6 @@ function performShow(height: number, width: number, activate: boolean): void {
   } catch {
     /* keeping the current focus is acceptable */
   }
-  // The card owns the keyboard now. While it does, the app's other windows must
-  // not be able to take it back: resigning key would bring settings out from
-  // behind the app the user was working in — see `setAppWindowsFocusable`.
-  setAppWindowsFocusable(false)
 }
 
 /**
@@ -448,11 +436,16 @@ export const overlayHost: OverlayHost = {
     win.setAlwaysOnTop(active, 'floating')
     if (active) {
       // Focus must leave the card too: a focused window still owns the keyboard,
-      // so `@type` would type into our own input field.
+      // so `@type` would type into our own input field. Parking the app's other
+      // windows for exactly this hand-off stops macOS from giving the key to the
+      // settings window behind the user's work; they come back right after.
+      setAppWindowsFocusable(false)
       try {
         win.blur()
       } catch {
         /* blurring is best effort */
+      } finally {
+        setAppWindowsFocusable(true)
       }
     }
   },
@@ -480,12 +473,18 @@ export const overlayHost: OverlayHost = {
     // moved since this card appeared.
     anchor = null
     resizeBounds = null
-    if (overlayWindow && !overlayWindow.isDestroyed()) overlayWindow.hide()
-    // The focus game is over. Anything that wants the keyboard again — settings
-    // opened later, the activation handler — is allowed to take it. Restoring
-    // this does not make a window key by itself, so it cannot bring settings
-    // forward on its own.
-    setAppWindowsFocusable(true)
+    const win = overlayWindow
+    if (win && !win.isDestroyed()) {
+      // Hiding the key window is the moment macOS looks for the next one. A
+      // settings window parked behind the user's app must not be that candidate;
+      // it is released right after, so the next deliberate click still reaches it.
+      setAppWindowsFocusable(false)
+      try {
+        win.hide()
+      } finally {
+        setAppWindowsFocusable(true)
+      }
+    }
   },
 
   window(): BrowserWindow | null {
@@ -504,9 +503,6 @@ export function showActiveWindow(): void {
   const candidates = [overlayWindow, ...openAppWindows()]
   for (const win of candidates) {
     if (!win || win.isDestroyed() || !win.isVisible()) continue
-    // A minimized settings window is not a window the user lost; restoring it
-    // whenever the card activates the app reads as a flash of the wrong window.
-    if (win !== overlayWindow && win.isMinimized()) continue
     win.show()
     win.focus()
     return

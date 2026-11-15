@@ -9,6 +9,7 @@ interface WindowDouble {
   showInactive: ReturnType<typeof vi.fn>
   show: ReturnType<typeof vi.fn>
   focus: ReturnType<typeof vi.fn>
+  blur: ReturnType<typeof vi.fn>
   setVibrancy: ReturnType<typeof vi.fn>
   setFocusable: ReturnType<typeof vi.fn>
 }
@@ -28,8 +29,10 @@ vi.mock('electron', async () => {
     show = vi.fn(() => { this.visible = true })
     showInactive = vi.fn(() => { this.visible = true })
     focus = vi.fn()
+    blur = vi.fn()
     setAlwaysOnTop = vi.fn()
     setFocusable = vi.fn()
+    setIgnoreMouseEvents = vi.fn()
     setVibrancy = state.vibrancy
     constructor(options: Record<string, unknown>) {
       super()
@@ -142,7 +145,7 @@ describe('voice indicator visibility', () => {
 })
 
 describe('card focus', () => {
-  it('keeps the app windows that are already open from taking the keyboard', async () => {
+  async function cardAndSettings() {
     const { overlayHost, openSettingsWindow } = await import('./index')
     overlayHost.prewarm()
     const card = state.windows[0]
@@ -151,17 +154,28 @@ describe('card focus', () => {
     openSettingsWindow()
     const settings = state.windows[1]
     settings.emit('ready-to-show')
+    return { overlayHost, card, settings }
+  }
+
+  it('parks the open app windows only while the card hands the keyboard over', async () => {
+    const { overlayHost, settings } = await cardAndSettings()
 
     overlayHost.show(31)
-    expect(settings.setFocusable).toHaveBeenLastCalledWith(false)
-
-    openSettingsWindow()
-    expect(settings.setFocusable).toHaveBeenLastCalledWith(true)
-    card.emit('focus')
-    expect(settings.setFocusable).toHaveBeenLastCalledWith(false)
+    expect(settings.setFocusable).not.toHaveBeenCalled()
 
     overlayHost.hide()
-    expect(settings.setFocusable).toHaveBeenLastCalledWith(true)
+    expect(settings.setFocusable.mock.calls).toEqual([[false], [true]])
+  })
+
+  it('parks them around the click-through blur and releases them at once', async () => {
+    const { overlayHost, card, settings } = await cardAndSettings()
+    overlayHost.show(31)
+    settings.setFocusable.mockClear()
+
+    overlayHost.setPassthrough(true)
+
+    expect(card.blur).toHaveBeenCalledOnce()
+    expect(settings.setFocusable.mock.calls).toEqual([[false], [true]])
   })
 })
 

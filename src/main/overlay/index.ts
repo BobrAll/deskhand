@@ -967,13 +967,19 @@ export function createOverlayController(host: OverlayHost) {
     }
     const overlay = host.window()
     const fallback = BrowserWindow.getAllWindows().find(
-      (win) => win !== overlay && !win.isDestroyed() && win.isVisible()
+      (win) =>
+        win !== overlay &&
+        !win.isDestroyed() &&
+        win.isVisible() &&
+        // Painting layers (the ghost pointer, drawings, the field mark) are
+        // visible BrowserWindows that can never take the keyboard.
+        win.isFocusable()
     )
     if (fallback) {
-      // The card kept this window out of the keyboard for the whole session
-      // (see `setAppWindowsFocusable`), so the automatic hand-off no longer
-      // reaches it. Hand it back explicitly: the user asked for this window, and
-      // with nothing to return to it is the honest place for focus.
+      // The hand-off took this window out of the keyboard candidate set, so the
+      // automatic return no longer reaches it. Hand it back explicitly: the user
+      // asked for this window, and with nothing to return to it is the honest
+      // place for focus.
       fallback.show()
       fallback.focus()
       return

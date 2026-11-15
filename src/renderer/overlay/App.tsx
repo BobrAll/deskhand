@@ -968,14 +968,19 @@ export function App() {
   const copy = useCallback(async () => {
     const text = answerTextRef.current
     if (!text.trim()) return
-    await window.deskhand.overlay.copy(text)
+    const result = await window.deskhand.overlay.copy(text)
+    if (!result.ok) {
+      resetCopied()
+      setNotice(result.message ?? 'Не удалось скопировать ответ.')
+      return
+    }
     if (copiedTimerRef.current !== null) window.clearTimeout(copiedTimerRef.current)
     setCopied(true)
     copiedTimerRef.current = window.setTimeout(() => {
       copiedTimerRef.current = null
       setCopied(false)
     }, 1500)
-  }, [])
+  }, [resetCopied])
 
   /**
    * The width the content itself wants, and the one «Шире» opens to.

@@ -127,6 +127,16 @@ const APPROVAL_TIMEOUT_MS = 5 * 60_000
 const APPROVAL_MOUSE_GRACE_MS = 1_200
 
 /**
+ * How long the native watcher ignores an Escape that belongs to a refusal.
+ *
+ * Denying a question and stopping the run are both "Escape". The renderer's
+ * keydown denies the question, and the same keystroke reaches the native watcher;
+ * this window is just long enough to let that second copy arrive and be ignored.
+ * It is not used for an approval: Escape after "Разрешить" is a new decision.
+ */
+const APPROVAL_ESCAPE_GRACE_MS = 200
+
+/**
  * Milliseconds, at one decimal.
  *
  * Not integers: most tool calls take a fraction of a millisecond, and rounding
@@ -860,10 +870,13 @@ export function createAgentController(host: AgentHost) {
       clearTimeout(pending.timer)
       active.pending = null
       // Leaving the button moves the mouse; neither answer should turn that into
-      // a stop before the run has had a chance to act on the decision. The
-      // renderer's Escape arrives around the same time as the native one.
+      // a stop before the run has had a chance to act on the decision. Only a
+      // refusal shares its keystroke with the native watcher: the same Escape
+      // denies the question here and must not also stop the run that refusal
+      // already ended. An approval comes from Enter or a click, so an Escape
+      // after it is a new decision and stops the run.
       ignoreMouseUntil = Date.now() + APPROVAL_MOUSE_GRACE_MS
-      ignoreEscapeUntil = Date.now() + APPROVAL_MOUSE_GRACE_MS
+      ignoreEscapeUntil = allow ? 0 : Date.now() + APPROVAL_ESCAPE_GRACE_MS
       if (allow && remember && request.fingerprint) {
         // Stored as a digest, not as the agent's readable fingerprint: the
         // settings file keeps a fixed-size, opaque list, and the readable form

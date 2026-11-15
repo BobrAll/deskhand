@@ -668,6 +668,23 @@ describe('the question in the card', () => {
     await running
   })
 
+  it('still lets Escape stop the run right after an approval', async () => {
+    const h = harness()
+    const running = h.run()
+    await vi.waitFor(() => expect(state.runs).toHaveLength(1))
+
+    state.emit({ kind: 'approval', request: call() })
+    h.controller.answer('call-1', true, false)
+    state.abort('escape')
+
+    expect(state.cancels).toBe(1)
+    expect(h.last()).toMatchObject({ phase: 'aborted', message: 'Остановлено по Escape.' })
+
+    state.emit({ kind: 'cancelled' })
+    const result = await running
+    expect(result.aborted).toBe(true)
+  })
+
   it('lets the hand leave the button before the mouse can stop the run', async () => {
     vi.useFakeTimers({ toFake: ['Date'] })
     try {
