@@ -1,4 +1,12 @@
 #!/bin/sh
 # Runs the staged-file checks described in scripts/pre-commit.mjs.
+#
+# Git clients started from a GUI often run hooks with a minimal PATH, where an
+# nvm or Homebrew `node` is missing. Skipping with a line is better than failing
+# every commit with `node: command not found`.
 set -e
+command -v node >/dev/null 2>&1 || {
+  echo "Хук пропущен: node не найден в PATH." >&2
+  exit 0
+}
 exec node "$(git rev-parse --show-toplevel)/scripts/pre-commit.mjs"
