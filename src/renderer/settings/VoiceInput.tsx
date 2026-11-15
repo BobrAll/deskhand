@@ -172,25 +172,45 @@ export function VoiceInput({
   const selected = voiceModel(selectedModel ?? '')
   const modelName = selected?.label ?? selectedModel
 
+  /**
+   * What the command key does after recognition.
+   *
+   * Named as a mode rather than as a select value: the option text is the
+   * consequence ("показать", "отправить", "вставить"), and the hint under the
+   * row explains what that means for the card and the cursor.
+   */
+  const commandMode = voice.action === 'dictate' ? 'dictate' : voice.autoSend ? 'send' : 'review'
+  const commandHint =
+    commandMode === 'review'
+      ? 'Откроется карточка с текстом. Проверишь и отправишь сам.'
+      : commandMode === 'send'
+        ? 'Карточка откроется и сразу отправит запрос модели.'
+        : 'Текст вставится в поле. Обе клавиши будут делать одно и то же.'
+
   return (
     <>
       <MicrophoneCheck visible={active} onOpenMicrophoneSettings={onOpenMicrophoneSettings} />
-      <Group title="Запись и команды">
-        <ToggleRow title="Голосовой ввод" checked={voice.enabled} onChange={(enabled) => onVoiceChange({ enabled })} />
-        <Row title="Клавиша записи" hint="Удерживай её, пока говоришь.">
+      <Group title="Голосовые клавиши" footnote="Команда — это вопрос ассистенту. Диктовка — это текст в текущее поле.">
+        <ToggleRow
+          title="Голосовой ввод"
+          hint="Выключение отключает обе клавиши."
+          checked={voice.enabled}
+          onChange={(enabled) => onVoiceChange({ enabled })}
+        />
+        <Row title="Клавиша команды" hint="Удерживай и говори — текст попадёт в карточку.">
           <HotkeyField value={voice.hotkey} allowModifiersOnly onChange={(hotkey) => onVoiceChange({ hotkey })} />
         </Row>
-        <Row title="Клавиша вставки" hint="Удерживай, чтобы вставить текст туда, где стоит курсор.">
+        <Row title="Клавиша диктовки" hint="Удерживай и говори — текст появится там, где стоит курсор.">
           <HotkeyField
             value={voice.dictationHotkey}
             allowModifiersOnly
             onChange={(dictationHotkey) => onVoiceChange({ dictationHotkey })}
           />
         </Row>
-        <Row title="После записи" hint="Для клавиши записи. Клавиша вставки всегда вставляет текст.">
+        <Row title="Что делает клавиша команды" hint={commandHint}>
           <select
-            aria-label="После записи"
-            value={voice.action === 'dictate' ? 'dictate' : voice.autoSend ? 'send' : 'review'}
+            aria-label="Что делает клавиша команды"
+            value={commandMode}
             onChange={(event) => {
               const action = event.target.value
               onVoiceChange(
@@ -198,9 +218,9 @@ export function VoiceInput({
               )
             }}
           >
-            <option value="review">Подготовить запрос</option>
-            <option value="send">Отправить запрос сразу</option>
-            <option value="dictate">Вставить текст</option>
+            <option value="review">Показать в карточке</option>
+            <option value="send">Отправить сразу</option>
+            <option value="dictate">Вставить в поле</option>
           </select>
         </Row>
         {voice.enabled && !microphoneGranted && (
