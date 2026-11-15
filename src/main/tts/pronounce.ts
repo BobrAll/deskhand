@@ -322,7 +322,7 @@ function startQueuedLookup(words: Hints): void {
   }
   const terms = [...pendingTerms].slice(0, MAX_TERMS)
   for (const term of terms) pendingTerms.delete(term)
-  startLookup(terms, settings, words)
+  void startLookup(terms, settings, words)
 }
 
 /**

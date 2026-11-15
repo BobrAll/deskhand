@@ -1,0 +1,4 @@
+#!/bin/sh
+# Runs the staged-file checks described in scripts/pre-commit.mjs.
+set -e
+exec node "$(git rev-parse --show-toplevel)/scripts/pre-commit.mjs"

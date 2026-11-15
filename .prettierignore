@@ -1,0 +1,15 @@
+# Not formatted by Prettier: generated, vendored, or owned by another formatter.
+
+# Dependencies and build output.
+node_modules/
+out/
+release/
+dist/
+build/
+
+# Vendored binaries, models and licenses; `native/` is Swift, checked by swift format.
+resources/
+native/
+
+# The lockfile is written by npm.
+package-lock.json

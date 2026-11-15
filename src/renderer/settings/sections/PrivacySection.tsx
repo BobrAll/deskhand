@@ -55,6 +55,10 @@ export function PrivacySection({
     setBundle((prev) => (prev ? { ...prev, permissions: next } : prev))
   }
 
+  async function pickExcludedApp(): Promise<void> {
+    onAddExcluded(await window.deskhand.settings.pickApp())
+  }
+
   return (
     <div className="pane">
       <nav className="segmented settings-subnav" aria-label="Настройки приватности">
@@ -181,14 +185,7 @@ export function PrivacySection({
                     </option>
                   ))}
               </select>
-              <button
-                onClick={async () => {
-                  const picked = await window.deskhand.settings.pickApp()
-                  onAddExcluded(picked)
-                }}
-              >
-                Выбрать .app…
-              </button>
+              <button onClick={() => void pickExcludedApp()}>Выбрать .app…</button>
             </div>
           </Row>
         </Group>

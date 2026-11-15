@@ -541,7 +541,7 @@ export function App() {
       if (progressTimerRef.current !== null) window.clearTimeout(progressTimerRef.current)
       progressTimerRef.current = null
     }
-  }, [applyState, onStream])
+  }, [applyState, onStream, clearTurn])
 
   // Restore blur while typing, even if annotations are still visible.
   useEffect(() => {

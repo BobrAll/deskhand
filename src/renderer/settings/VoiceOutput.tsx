@@ -199,6 +199,11 @@ export function VoiceOutput({
     setPreviewing(false)
     setPreviewError(null)
     return () => {
+      // Invalidate every preview in flight. This has to read the counter as it
+      // is at unmount, not as it was when the effect ran: a preview started
+      // later owns a higher generation, and a copied value would leave it
+      // current instead of stale.
+      // eslint-disable-next-line react-hooks/exhaustive-deps
       previewGeneration.current++
       window.speechSynthesis?.cancel()
       const element = previewAudio.current

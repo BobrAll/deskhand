@@ -61,6 +61,16 @@ export function ProviderSection({
 
   const chooseModel = (value: string) => patch({ models: { ...draft.models, [provider]: value } })
 
+  async function removeKey(): Promise<void> {
+    setBusy(true)
+    setCatalog(null)
+    try {
+      await onRemoveKey()
+    } finally {
+      setBusy(false)
+    }
+  }
+
   async function saveOrLoad(load: boolean) {
     setBusy(true)
     try {
@@ -130,19 +140,7 @@ export function ProviderSection({
             {keyStatus?.configured ? (
               <div className="row-actions">
                 <span className="permission-state ok">● Ключ сохранён</span>
-                <button
-                  className="ghost"
-                  disabled={busy}
-                  onClick={async () => {
-                    setBusy(true)
-                    setCatalog(null)
-                    try {
-                      await onRemoveKey()
-                    } finally {
-                      setBusy(false)
-                    }
-                  }}
-                >
+                <button className="ghost" disabled={busy} onClick={() => void removeKey()}>
                   Удалить
                 </button>
               </div>

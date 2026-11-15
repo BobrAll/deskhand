@@ -292,7 +292,7 @@ if (!app.requestSingleInstanceLock()) {
   // Regular activation policy is the default, so it is never set: the app keeps a
   // Dock icon and a Cmd+Tab entry instead of becoming a tray-only accessory that
   // macOS hides the moment focus moves elsewhere.
-  app.whenReady().then(() => {
+  void app.whenReady().then(() => {
     nativeTheme.themeSource = 'system'
     // A failure while wiring the UI must not leave the process half-initialised:
     // the app has no main window to report it, so an unhandled throw here just
