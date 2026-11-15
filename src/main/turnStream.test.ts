@@ -95,6 +95,22 @@ describe('consumeTurnStream: prose', () => {
     expect(out.text).toEqual([])
   })
 
+  it('reads a marker line that carries the request, and prints none of it', async () => {
+    const out = recorder()
+    const result = await consumeTurnStream({
+      provider: fakeProvider(['@web Найди игру: симулятор с заданиями посетителей']),
+      messages: MESSAGES,
+      apiKey: '',
+      streamOptions: STREAM_OPTIONS,
+      isAlive: () => true,
+      onAnnotations: out.onAnnotations,
+      onText: out.onText
+    })
+
+    expect(result).toEqual({ text: '', webLookup: true })
+    expect(out.text).toEqual([])
+  })
+
   it('reports every piece of prose as it arrives and returns it joined', async () => {
     const out = recorder()
     const result = await consumeTurnStream({

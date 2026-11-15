@@ -24,6 +24,18 @@ import { couldStartMarker, parseAnnotationLine } from './annotations'
 /** The lookup marker is a stream directive, not a drawing; it is decided here. */
 const WEB_MARKER = '@web'
 
+/**
+ * A line that opens with the lookup marker, whatever follows it.
+ *
+ * The prompt asks for the bare marker, and most answers give it, but a model
+ * that restates the request after it — `@web Найди игру…` — is still asking for
+ * a lookup. Reading only the exact line meant that asking for a game by
+ * description showed the user the raw `@web` plus their own words and never ran
+ * the search. What follows the marker is redundant: the search is built from the
+ * user's prompt, so the rest of the line is dropped with the marker.
+ */
+const WEB_LINE = /^@web\b/i
+
 export interface ParsedChunk {
   /** Answer text with every marker removed. */
   text: string
@@ -80,7 +92,7 @@ export class ResponseStream {
     // example is written with two leading spaces — is dropped whole instead of
     // leaking its indent into the answer.
     if (trimmed === '') return true
-    return couldStartMarker(trimmed) || WEB_MARKER.startsWith(trimmed.toLowerCase())
+    return couldStartMarker(trimmed) || WEB_LINE.test(trimmed) || WEB_MARKER.startsWith(trimmed.toLowerCase())
   }
 
   /**
@@ -96,7 +108,7 @@ export class ResponseStream {
 
   /** Applies a protocol line. Returns false when the line is ordinary prose. */
   private applyMarker(line: string, result: ParsedChunk): boolean {
-    if (line.trim() === WEB_MARKER) {
+    if (WEB_LINE.test(line.trim())) {
       this.webLookup = true
       return true
     }

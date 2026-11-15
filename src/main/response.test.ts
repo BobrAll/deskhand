@@ -23,6 +23,14 @@ function run(chunks: string[]): Result {
 
 const whole = (input: string): Result => run([input])
 
+/** Whether the stream read the input as a request for a web lookup. */
+function lookup(chunks: string[]): boolean {
+  const stream = new ResponseStream()
+  for (const chunk of chunks) stream.push(chunk)
+  stream.finish()
+  return stream.webLookup
+}
+
 const byChar = (input: string): string[] => [...input]
 const byTwo = (input: string): string[] => input.match(/[\s\S]{1,2}/g) ?? []
 const byLine = (input: string): string[] => input.match(/[^\n]*\n|[^\n]+$/g) ?? []
@@ -113,6 +121,44 @@ describe('ResponseStream: a line with @ that is not a command', () => {
 
   it('passes a lone @ through as text', () => {
     expect(whole('@')).toEqual({ text: '@', annotations: [] })
+  })
+})
+
+describe('ResponseStream: the web lookup marker', () => {
+  it('drops a bare marker instead of printing it', () => {
+    expect(whole('@web\n')).toEqual({ text: '', annotations: [] })
+    expect(lookup(['@web\n'])).toBe(true)
+  })
+
+  it('reads the marker with the request restated after it', () => {
+    const input = '@web Найди игру: симулятор с выполнением заданий посетителей\n'
+
+    expect(whole(input).text).toBe('')
+    expect(lookup([input])).toBe(true)
+  })
+
+  it('gives the same answer however the marker line is split', () => {
+    const input = '@web Найди игру: симулятор с заданиями посетителей\n'
+
+    for (const chunks of [byChar(input), byTwo(input), byLine(input), [input]]) {
+      expect(run(chunks).text, JSON.stringify(chunks)).toBe('')
+      expect(lookup(chunks), JSON.stringify(chunks)).toBe(true)
+    }
+  })
+
+  it('treats a marker without a newline as the marker, not as prose', () => {
+    expect(run(['@web Найди игру']).text).toBe('')
+    expect(lookup(['@web Найди игру'])).toBe(true)
+  })
+
+  it('keeps the marker when it sits inside a sentence', () => {
+    expect(whole('напиши @web и всё\n').text).toBe('напиши @web и всё\n')
+    expect(lookup(['напиши @web и всё\n'])).toBe(false)
+  })
+
+  it('keeps a word that only starts like the marker', () => {
+    expect(whole('@website это сайт\n').text).toBe('@website это сайт\n')
+    expect(lookup(['@website это сайт\n'])).toBe(false)
   })
 })
 
@@ -240,7 +286,9 @@ describe('ResponseStream: any chunking gives an identical result', () => {
     'Готово\n@po',
     '@usern',
     '  @hover 0.1 0.2\n',
-    '@web\nИщу\n'
+    '@web\nИщу\n',
+    '@web Найди игру: симулятор с заданиями посетителей\n',
+    '  @web Найди игру\n'
   ]
 
   it('matches the whole-string result for every fixed chunking', () => {
@@ -271,6 +319,7 @@ describe('ResponseStream: any chunking gives an identical result', () => {
     expect(whole(corpus[0]).text).toBe('Просто ответ')
     expect(whole(corpus[4]).annotations.map((shape) => shape.kind)).toEqual(['box', 'underline'])
     expect(whole(corpus[14]).annotations, 'indented marker').toHaveLength(1)
+    expect(lookup([corpus[21]]), 'marker with the request after it').toBe(true)
   })
 
   it('treats a marker that starts mid-line as prose however it is split', () => {
