@@ -105,7 +105,12 @@ if (swiftFiles.length > 0) {
 
 const rewritten = [...prettierFiles, ...swiftFiles]
 if (rewritten.length > 0) {
-  requireSucceeded('git', ['add', '--', ...rewritten], 'Коммит остановлен: не удалось обновить индекс.')
+  // `--force` is safe and needed: every path here was already staged by the
+  // user, and only the bypass of `.gitignore` changes. A tracked file that the
+  // ignore rules still match (a force-added release note, a generated stylesheet)
+  // makes a plain `git add` refuse, which would block a commit the formatter had
+  // nothing to say about.
+  requireSucceeded('git', ['add', '--force', '--', ...rewritten], 'Коммит остановлен: не удалось обновить индекс.')
 }
 
 if (lintFiles.length > 0) {
