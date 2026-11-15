@@ -1,0 +1,10 @@
+# Commits that only reformat code, skipped by `git blame`.
+#
+# Enable once per clone:
+#   git config blame.ignoreRevsFile .git-blame-ignore-revs
+#
+# Keep the list in history order. A commit belongs here only when its diff
+# changes whitespace and layout and nothing else.
+
+# Prettier and swift-format across the repository.
+39b615ee2f621ce4ef66f3ec99b9e19a32e310c5
