@@ -25,22 +25,16 @@
  * re-implemented here.
  */
 
-import type {
-  AgentActionRow,
-  AgentAvailability,
-  AgentEvent,
-  AgentPresentation,
-  AgentRunResult,
-  AgentToolRequest
-} from '@shared/types'
+import type { AgentActionRow, AgentAvailability, AgentEvent, AgentPresentation, AgentRunResult } from '@shared/types'
 import { helperBinary, watchForAbort, type AbortWatcher } from '../native/helper'
 import { accessibilityTrusted } from '../permissions'
-import { getSettings, patchSettings } from '../settings/store'
-import { AGENT_MIN_OUTPUT_TOKENS } from '@shared/defaults'
-import { classifyCall, describeCall, rememberKey } from './approval'
-import { agentBinary, AgentSidecar, type AgentProvider, type AgentSidecarEvent, type AgentToolTiming } from './sidecar'
+import { getSettings } from '../settings/store'
+import { createApprovalPrompt } from './approvalPrompt'
+import { agentBinary, AgentSidecar } from './sidecar'
 import { trace, traceWithin } from './trace'
+import { taskText, withAgentBudget, type AgentRunInput } from './runRequest'
 import { createRunTrace } from './run-trace'
+import { handleRunEvent, type RunEventState } from './runEvents'
 
 export interface AgentHost {
   /** Makes the card ignore the mouse while the agent works, and take it back while it asks. */
@@ -70,123 +64,9 @@ export interface AgentHost {
   present?(action: AgentPresentation): void
 }
 
-/** One earlier question and the answer it got, as the agent reads it. */
-export interface AgentExchange {
-  question: string
-  answer: string
-}
-
-/** What one run needs to know: the request, where it started, and the model. */
-export interface AgentRunInput {
-  /** What the user asked for, in their words. */
-  prompt: string
-  /** The app the card was opened in, as a hint about where to look first. */
-  appName: string | null
-  windowTitle: string | null
-  /**
-   * What was said before this request, oldest first.
-   *
-   * «Сделай» is a complete request only in the sentence it answers. The writer
-   * already gets these turns, so a follow-up there means something; without
-   * them here the same follow-up reaches the agent as a verb with no object,
-   * and the only honest answer it can give is to ask what to do. Passing them
-   * is what makes the agent part of the same conversation rather than a fresh
-   * one that happens to start mid-sentence.
-   */
-  history?: AgentExchange[]
-  /** The model the user configured, with the key only the main process holds. */
-  provider: AgentProvider
-  /** Bundle ids the agent must never read or act on. */
-  excludedApps?: string[]
-}
+export type { AgentExchange, AgentRunInput } from './runRequest'
 
 const IDLE_EVENT: AgentEvent = { phase: 'idle', step: 0, total: 0, label: '' }
-
-/**
- * A question nobody answers must not hang the run.
- *
- * Long enough that a user who walked away can come back and answer it, short
- * enough that a forgotten card does not leave a click-through window on screen
- * for the rest of the day. The agent has its own ceiling; this one is the host's.
- */
-const APPROVAL_TIMEOUT_MS = 5 * 60_000
-
-/**
- * How long after an approval the mouse is allowed to move without stopping the run.
- *
- * The hand is already on the mouse when it answers the question, and letting go of
- * the button moves it a few points. Without this grace, the run the user just
- * allowed would stop on the way back to the keyboard.
- */
-const APPROVAL_MOUSE_GRACE_MS = 1_200
-
-/**
- * How long the native watcher ignores an Escape that belongs to a refusal.
- *
- * Denying a question and stopping the run are both "Escape". The renderer's
- * keydown denies the question, and the same keystroke reaches the native watcher;
- * this window is just long enough to let that second copy arrive and be ignored.
- * It is not used for an approval: Escape after "Разрешить" is a new decision.
- */
-const APPROVAL_ESCAPE_GRACE_MS = 200
-
-/**
- * Why a question was refused, in the two languages it has to be said in.
- *
- * The same decision reaches two readers: the card, which speaks Russian to the
- * user, and the model, which receives the refusal as a tool result and reads
- * English (`AGENTS.md`, "Copy and tone"). Keeping both sentences in one value
- * is what stops them from drifting apart.
- */
-interface Refusal {
-  /** What the card shows: Russian, «ты». */
-  label: string
-  /** What the agent gets as the tool result: English, like all model-facing text. */
-  reason: string
-}
-
-/**
- * The user said no to the call the agent is blocked on.
- *
- * Not a stop: the agent receives the refusal as a failed call and takes another
- * step, so the run is still alive. The card's sentence names the one thing that
- * happened instead of claiming the whole run ended.
- */
-const REFUSED: Refusal = {
-  label: 'Действие отклонено.',
-  reason: 'The user declined the action.'
-}
-
-/** Nobody answered the question before the host's ceiling. */
-const NOT_CONFIRMED: Refusal = {
-  label: 'Подтверждение не получено.',
-  reason: 'The action was not confirmed by the user.'
-}
-
-/**
- * What the agent is told when the user stops the run on a pending question.
- *
- * Model-facing, so English: this string becomes the tool result the model reads
- * on its next step, and text the model reads is English by contract. The card's
- * own sentence is the `message` `stop()` publishes.
- */
-const CANCELLED_REASON = 'The run was cancelled by the user.'
-
-/**
- * Milliseconds, at one decimal.
- *
- * Not integers: most tool calls take a fraction of a millisecond, and rounding
- * them to 0 would make the cheap path look free — which is exactly the wrong
- * lesson to draw from a trace when a 476 ms tree walk sits next to it.
- */
-function ms(value: number): number {
-  return Math.round(value * 10) / 10
-}
-
-/** A phase's share of a total, as a whole percent; null when the total is 0. */
-function share(part: number, total: number): number | null {
-  return total > 0 ? Math.round((part / total) * 100) : null
-}
 
 /**
  * One line of streamed prose, cut to what the card can draw.
@@ -199,116 +79,6 @@ function share(part: number, total: number): number | null {
 function caption(text: string): string {
   const line = text.replace(/\s+/g, ' ').trim()
   return line.length > 120 ? `${line.slice(0, 117)}…` : line
-}
-
-/**
- * A Russian noun in the form the number demands.
- *
- * `3 шага` and `8 шагов` are the same sentence with different endings, and a
- * message that gets it wrong reads as broken at exactly the moment the user is
- * trying to work out whether to trust the failure.
- */
-function plural(count: number, one: string, few: string, many: string): string {
-  const mod10 = count % 10
-  const mod100 = count % 100
-  if (mod10 === 1 && mod100 !== 11) return one
-  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return few
-  return many
-}
-
-/**
- * The reasons the loop gives for ending a run without finishing it, as the
- * substrings it writes them with.
- *
- * The loop's diagnostics are English sentences assembled in Swift
- * ("the step budget ran out", "the model's reply was cut off at the token
- * limit"), and they are matched here rather than compared whole because each
- * one carries the numbers of the run it happened in. These strings are the
- * contract with the loop: change them only together with the Swift side.
- *
- * There are exactly three: `AgentLoop.finishRun` is the only caller of
- * `loopStopped`, and it has three call sites. A repeated call is not one of
- * them — the guard warns and lets the run continue (`loopWarned`), so a run
- * that repeats itself either recovers or ends on one of these.
- */
-const STOP_BUDGET = 'budget'
-const STOP_TOKEN_LIMIT = 'token limit'
-const STOP_RETURNING_TO_SCREEN = 'returning to a screen'
-
-/**
- * The fallback reason for a run that ended unfinished without saying why.
- *
- * Not one of the loop's diagnostics: it never sends this. It exists so a `done`
- * that contradicts itself — not complete, no stop event before it — is still
- * explained to the user rather than drawn as a success.
- */
-const UNKNOWN_STOP = 'incomplete'
-
-/**
- * Why the run ended without finishing, in the user's language.
- *
- * The loop's reasons are its own English diagnostics ("the step budget ran
- * out"), written for a log rather than for a person. Passing them through would
- * put a sentence about budgets in front of someone who asked to send a message —
- * and the loop's closing sentence on this path ("Stopped after 3 steps without
- * finishing the task") is worse still, because it reads like an answer.
- */
-function stopMessage(reason: string, total: number): string {
-  if (reason.includes(STOP_BUDGET)) {
-    return (
-      `Не успел за ${total} ${plural(total, 'шаг', 'шага', 'шагов')} — задача осталась ` +
-      'невыполненной. Увеличь лимит шагов в настройках или уточни запрос.'
-    )
-  }
-  if (reason.includes(STOP_TOKEN_LIMIT)) {
-    // Not the same problem as running out of steps: the run had budget left, but
-    // every answer was cut in half, so the model never got to say what it wanted
-    // to do. Raising the step limit would not help — the fix is the output
-    // length.
-    return (
-      'Остановился: ответ модели обрывался по лимиту длины. Увеличь максимум ' +
-      'токенов в настройках — задача осталась невыполненной.'
-    )
-  }
-  if (reason.includes(STOP_RETURNING_TO_SCREEN)) {
-    // Not the same as a repeated call: the run tried different things and kept
-    // arriving at the same screen. Raising the step limit would only buy more of
-    // the same, so the honest answer names the loop instead.
-    return (
-      'Остановился: несколько шагов подряд экран не менялся — задача пошла по кругу. ' +
-      'Задача осталась невыполненной.'
-    )
-  }
-  return 'Задача осталась невыполненной.'
-}
-
-/**
- * The provider settings, with enough output room for an agent step.
- *
- * `maxTokens` is the writer's number: it was picked for prose, where 1024 is a
- * generous answer. An agent step is a different shape — a sentence of reasoning
- * wrapped around a tool call whose arguments are nested JSON — and at 1024 the
- * reply gets cut off mid-call. The half-written call parses into no calls at all,
- * so the step arrives as an empty message and the run is thrown away.
- *
- * The floor is applied here rather than by changing the setting, so the writer
- * keeps its own budget and an existing 1024 in the user's settings cannot
- * resurrect the failure.
- */
-function withAgentBudget(provider: AgentProvider): AgentProvider {
-  if (provider.maxTokens >= AGENT_MIN_OUTPUT_TOKENS) return provider
-  return { ...provider, maxTokens: AGENT_MIN_OUTPUT_TOKENS }
-}
-
-/** The same rounding, applied to the phases a tool call may have reported. */
-function roundedTiming(timing: AgentToolTiming): Record<string, number> {
-  const fields: Record<string, number> = {}
-  if (timing.wallMs !== undefined) fields.wallMs = ms(timing.wallMs)
-  if (timing.treeMs !== undefined) fields.treeMs = ms(timing.treeMs)
-  if (timing.captureMs !== undefined) fields.captureMs = ms(timing.captureMs)
-  if (timing.encodeMs !== undefined) fields.encodeMs = ms(timing.encodeMs)
-  if (timing.imageBytes !== undefined) fields.imageBytes = timing.imageBytes
-  return fields
 }
 
 export function createAgentController(host: AgentHost) {
@@ -324,54 +94,26 @@ export function createAgentController(host: AgentHost) {
   /** Bumped by `stop()`; a run compares it and gives up. */
   let generation = 0
   let running = false
-  /** Mouse movements before this instant belong to the answer, not to a stop. */
-  let ignoreMouseUntil = 0
-  /** The same for the Escape that the renderer may have handled already. */
-  let ignoreEscapeUntil = 0
   /** The last event the card was told about. */
   let lastPublished: AgentEvent = IDLE_EVENT
 
   /** The run in flight, if any. */
-  let current: {
-    actions: AgentActionRow[]
-    step: number
-    total: number
-    /** Labels captured when a tool starts, paired with its result later. */
-    callLabels: Array<{ step: number; name: string; label: string }>
-    /**
-     * Why the loop gave up, when it did.
-     *
-     * The agent reports a stop and then ends the run anyway, so the two events
-     * arrive in that order: a run that hit its step budget still produces a
-     * `done` carrying the loop's last sentence. Without remembering the stop,
-     * that `done` is indistinguishable from success — and the card drew a green
-     * checkmark over a task it had not finished.
-     */
-    stopped: string | null
-    /**
-     * What the loop warned about but worked around.
-     *
-     * Kept for the same reason as `stopped`: the warning arrives mid-run, and the
-     * host asks once at the end. Unlike `stopped` it does not colour the verdict —
-     * the run went on, so its answer is still an answer.
-     */
-    notice: string | null
-    /**
-     * Whether the first streamed prose of this run has been traced.
-     *
-     * One event per run, not per delta: the point is the time to first token,
-     * and a trace that records every word turns a 3-second step into a thousand
-     * lines nobody reads.
-     */
-    firstToken: boolean
-    /** The question waiting for the user; null when nothing is being asked. */
-    pending: {
-      request: AgentToolRequest
-      timer: ReturnType<typeof setTimeout>
-      settle(allow: boolean, remember: boolean, refusal?: Refusal): void
-    } | null
-    finish(result: AgentRunResult): void
-  } | null = null
+  let current:
+    | (RunEventState & {
+        finish(result: AgentRunResult): void
+      })
+    | null = null
+
+  const approvals = createApprovalPrompt({
+    currentRun: () => current,
+    approve,
+    publish,
+    actionRows,
+    lastLabel: () => lastPublished.label,
+    setPassthrough: (active) => host.setPassthrough(active),
+    focus: () => host.focus?.(),
+    hasFocus: () => host.hasFocus?.()
+  })
 
   /**
    * Whether the mode can be used at all right now.
@@ -470,7 +212,6 @@ export function createAgentController(host: AgentHost) {
         stopped: null,
         notice: null,
         firstToken: false,
-        pending: null,
         finish: (result) => {
           if (settled) return
           settled = true
@@ -478,19 +219,6 @@ export function createAgentController(host: AgentHost) {
         }
       }
     })
-  }
-
-  /**
-   * Answers the pending question.
-   *
-   * Called from the card through IPC. Idempotent on purpose: a second click on
-   * a button that was already handled, or an Escape arriving in the same tick
-   * as an answer, must not decide twice.
-   */
-  function answer(id: string, allow: boolean, remember: boolean): void {
-    const pending = current?.pending
-    if (!pending || pending.request.id !== id) return
-    pending.settle(allow, remember)
   }
 
   /**
@@ -550,8 +278,7 @@ export function createAgentController(host: AgentHost) {
     const token = ++generation
     running = true
     activeTrace = runTrace
-    ignoreMouseUntil = 0
-    ignoreEscapeUntil = 0
+    approvals.resetGrace()
     const actions: AgentActionRow[] = []
     const total = settings.agent.maxSteps
     const provider = withAgentBudget(input.provider)
@@ -632,21 +359,7 @@ export function createAgentController(host: AgentHost) {
     // control back before the next click lands. Escape works always.
     watcher = watchForAbort(options.abortOnMouseMove ? 'mouse' : 'key', (reason) => {
       if (token !== generation) return
-      // Reaching for the answer is not taking control back. A question makes the
-      // card clickable, and the hand on the mouse is on its way to «Разрешить»;
-      // stopping the run there was the bug.
-      if (reason === 'mousemove' && (current?.pending || Date.now() < ignoreMouseUntil)) return
-      // An open question owns Escape. The focused card answers it itself; only
-      // when the user clicked away does the native watcher answer, so Escape
-      // cannot be swallowed by the app behind the question.
-      if (reason === 'escape' && current?.pending) {
-        if (host.hasFocus?.() !== false) return
-        current.pending.settle(false, false, REFUSED)
-        return
-      }
-      // The renderer may have answered the question a moment ago; its keydown
-      // reaches us in the same keystroke.
-      if (reason === 'escape' && Date.now() < ignoreEscapeUntil) return
+      if (approvals.consumeAbort(reason)) return
       trace('agent.abort', { reason })
       stop(reason === 'mousemove' ? 'Остановлено: ты взял мышь.' : 'Остановлено по Escape.')
     })
@@ -660,7 +373,17 @@ export function createAgentController(host: AgentHost) {
       // The wire response carries the stream. Avoid writing every growing
       // prefix a second time as the UI receives it.
       if (event.kind !== 'stream') runTrace.record(event.kind, event)
-      handleSidecarEvent(event)
+      if (current) {
+        handleRunEvent(current, event, {
+          publish,
+          publishProse,
+          actionRows,
+          present: (action) => host.present?.(action),
+          ask: approvals.ask,
+          settleRun,
+          lastLabel: () => lastPublished.label
+        })
+      }
     })
 
     return () => {
@@ -680,307 +403,11 @@ export function createAgentController(host: AgentHost) {
     host.setPassthrough(false)
   }
 
-  /** One event from the agent, as the card sees it. */
-  function handleSidecarEvent(event: AgentSidecarEvent): void {
-    const active = current
-    if (!active) return
-    switch (event.kind) {
-      case 'ready':
-        return
-      case 'step':
-        active.step = event.step
-        active.total = event.total || active.total
-        trace('agent.step', { step: event.step, total: active.total })
-        publish({
-          phase: 'acting',
-          step: event.step,
-          total: active.total,
-          label: lastPublished.label || 'Работаю',
-          actions: actionRows()
-        })
-        return
-      case 'stream':
-        // The same caption `publishProse` draws for the narration, but while the
-        // model is still writing it. This is what turns the first two seconds of
-        // every step from a spinner into the model's own words.
-        if (event.text.trim()) {
-          if (!active.firstToken) {
-            active.firstToken = true
-            trace('agent.firstToken', { step: active.step, chars: event.text.length })
-          }
-          publishProse(event.text, active.step, active.total)
-        }
-        return
-      case 'narration':
-        // The model's own sentence about what it is doing is a better caption
-        // than anything this file could invent from a tool name.
-        if (event.text.trim()) publishProse(event.text, active.step, active.total)
-        return
-      case 'tool':
-        // The start is recorded separately from the result so a call that never
-        // finished — cancelled mid-flight, or the process killed — still appears
-        // in the timeline as a call that began.
-        trace('agent.tool', { step: event.step, tool: event.name })
-        {
-          const label = describeCall({
-            id: '',
-            tool: event.name,
-            arguments: event.args,
-            fingerprint: '',
-            narration: event.narration
-          })
-          active.callLabels.push({ step: event.step, name: event.name, label })
-          publish({
-            phase: 'acting',
-            step: event.step,
-            total: active.total,
-            label,
-            actions: actionRows()
-          })
-        }
-        return
-      case 'present':
-        // A picture, not a phase: the card's caption and the run's verdict do
-        // not change. The host draws it and returns immediately, so the action
-        // that follows is not waiting for an animation.
-        host.present?.(event.presentation)
-        return
-      case 'stepTiming':
-        // The round trip, as the agent measured it. `promptBytes` and `history`
-        // are here because they explain the duration better than the duration
-        // does: a slow step on a small history is the network, the same step on
-        // a large one is the prompt.
-        trace('agent.llm', {
-          step: event.step,
-          llmMs: ms(event.timing.llmMs),
-          promptBytes: event.timing.promptBytes,
-          history: event.timing.history,
-          calls: event.timing.calls,
-          ...(event.timing.inputTokens === undefined ? {} : { inputTokens: event.timing.inputTokens }),
-          ...(event.timing.outputTokens === undefined ? {} : { outputTokens: event.timing.outputTokens })
-        })
-        return
-      case 'result': {
-        const pendingLabel = active.callLabels.findIndex(
-          (entry) => entry.step === event.step && entry.name === event.name
-        )
-        const label =
-          pendingLabel >= 0 ? active.callLabels.splice(pendingLabel, 1)[0].label : lastPublished.label || event.name
-        active.actions.push({
-          tool: event.name,
-          label,
-          ok: event.ok
-        })
-        // The phases are recorded separately because they have different fixes;
-        // a field that did not run is omitted rather than written as 0.
-        trace('agent.call', {
-          step: event.step,
-          tool: event.name,
-          ok: event.ok,
-          ...roundedTiming(event.timing)
-        })
-        publish({ phase: 'acting', step: event.step, total: active.total, actions: actionRows() })
-        return
-      }
-      case 'runReport':
-        trace('agent.report', {
-          steps: event.report.steps,
-          calls: event.report.calls,
-          failedCalls: event.report.failedCalls,
-          totalMs: ms(event.report.totalMs),
-          llmMs: ms(event.report.llmMs),
-          toolMs: ms(event.report.toolMs),
-          // The split that decides what to fix: waiting on the model versus
-          // working on the machine. Percentages rather than a second opinion on
-          // the raw numbers, because the ratio is the point.
-          modelShare: share(event.report.llmMs, event.report.totalMs)
-        })
-        if (event.report.table) trace('agent.timings', { table: event.report.table })
-        return
-      case 'approval':
-        ask(event.request)
-        return
-      case 'warning':
-        // The loop guard fired and the run goes on. Recorded because a run that
-        // needed the warning is a run that nearly failed, but it must not touch
-        // `stopped`: that field is the verdict, and a warning is not one.
-        //
-        // Kept on the run as well as traced, so the host can tell the user what
-        // the run had to work around — a refused screenshot is the case that
-        // exists today, and without this the answer simply arrives with no
-        // drawing and no explanation.
-        active.notice = event.reason
-        trace('agent.warned', { reason: event.reason, step: active.step })
-        return
-      case 'stopped':
-        // Recorded, not published. The agent says why it gave up and then ends
-        // the run anyway, so a `done` always follows — and a stop drawn as its
-        // own terminal state would be overwritten a tick later. The reason is
-        // kept for the `done` that is about to arrive.
-        active.stopped = event.reason
-        trace('agent.stopped', { reason: event.reason, step: active.step })
-        return
-      case 'done': {
-        // A run that gave up is not a run that finished. The verdict comes from
-        // the agent, which knows which exit it took; `active.stopped` is the
-        // fallback for the reason, because the stop event carries a more
-        // specific one than "it did not finish".
-        //
-        // The loop's closing sentence on this path is its own diagnostic
-        // ("Stopped after 3 steps without finishing the task"), not the model's,
-        // so it is not the answer — the card says what happened in the user's
-        // language instead.
-        const stopped = event.complete ? null : (active.stopped ?? UNKNOWN_STOP)
-        if (stopped !== null) {
-          const explanation = stopMessage(stopped, active.total)
-          publish({
-            phase: 'done',
-            completed: false,
-            step: active.step,
-            total: active.total,
-            label: explanation,
-            actions: actionRows(),
-            approval: null,
-            message: explanation
-          })
-          settleRun({ answer: '', actions: actionRows(), message: explanation, incomplete: true })
-          return
-        }
-        publish({
-          phase: 'done',
-          completed: true,
-          step: active.step,
-          total: active.total,
-          label: 'Готово',
-          actions: actionRows(),
-          approval: null
-        })
-        settleRun({ answer: event.answer, actions: actionRows() })
-        return
-      }
-      case 'cancelled':
-        publish({
-          phase: 'aborted',
-          step: active.step,
-          total: active.total,
-          label: '',
-          actions: actionRows(),
-          approval: null,
-          message: 'Остановлено.'
-        })
-        settleRun({ answer: '', actions: actionRows(), aborted: true, message: 'Остановлено.' })
-        return
-      case 'error':
-        publish({
-          phase: 'error',
-          step: active.step,
-          total: active.total,
-          label: '',
-          actions: actionRows(),
-          approval: null,
-          message: event.message
-        })
-        settleRun({ answer: '', actions: actionRows(), message: event.message })
-        return
-    }
-  }
-
-  /**
-   * Puts one question in front of the user and blocks the agent until answered.
-   *
-   * The card is made clickable for exactly as long as the question is open, and
-   * the agent is already blocked on the pipe — so nothing can be clicked behind
-   * the panel while the user is deciding.
-   */
-  function ask(request: AgentToolRequest): void {
-    const active = current
-    if (!active || active.pending) return
-    const decision = classifyCall(request, getSettings().agent.rememberedApprovals)
-    if (decision.kind === 'allow') {
-      approve(request.id, true)
-      return
-    }
-    if (decision.kind === 'deny') {
-      trace('agent.approval', { outcome: 'denied' })
-      // The model reads `reason` as a tool result, so it is English; the row the
-      // card lists keeps the user's language.
-      approve(request.id, false, decision.reason)
-      active.actions.push({ tool: request.tool, label: decision.label, ok: false })
-      publish({ phase: 'acting', actions: actionRows(), code: 'secret' })
-      return
-    }
-
-    trace('agent.approval', { outcome: 'asked', tool: request.tool })
-    host.setPassthrough(false)
-    // The card is clickable now; the keyboard should reach the answer too.
-    host.focus?.()
-    const settle = (allow: boolean, remember: boolean, refusal: Refusal = REFUSED): void => {
-      const pending = active.pending
-      if (!pending || pending.request.id !== request.id) return
-      clearTimeout(pending.timer)
-      active.pending = null
-      // Leaving the button moves the mouse; neither answer should turn that into
-      // a stop before the run has had a chance to act on the decision. Only a
-      // refusal shares its keystroke with the native watcher: the same Escape
-      // denies the question here and must not also stop the run that refusal
-      // already ended. An approval comes from Enter or a click, so an Escape
-      // after it is a new decision and stops the run.
-      ignoreMouseUntil = Date.now() + APPROVAL_MOUSE_GRACE_MS
-      ignoreEscapeUntil = allow ? 0 : Date.now() + APPROVAL_ESCAPE_GRACE_MS
-      if (allow && remember && request.fingerprint) {
-        // Stored as a digest, not as the agent's readable fingerprint: the
-        // settings file keeps a fixed-size, opaque list, and the readable form
-        // stays in the trace where it is useful.
-        const key = rememberKey(request.fingerprint)
-        const agent = getSettings().agent
-        if (!agent.rememberedApprovals.includes(key)) {
-          patchSettings({
-            agent: { ...agent, rememberedApprovals: [...agent.rememberedApprovals, key] }
-          })
-        }
-      }
-      approve(request.id, allow, allow ? undefined : refusal.reason)
-      // The panel had the mouse and the focus for a moment; the agent's next
-      // click must not land on it. That is true of a refusal as much as of an
-      // allow: the agent turns the refusal into a failed call and takes another
-      // step, so the run — and its clicks — continue either way.
-      host.setPassthrough(true)
-      // A refusal is not `aborted`: nothing stopped. The run goes on, so a
-      // terminal phase here would say "stopped" over work that is still
-      // happening — and leave the card in front of the window the agent was
-      // about to press.
-      publish({
-        phase: 'acting',
-        approval: null,
-        label: allow ? lastPublished.label : refusal.label,
-        actions: actionRows()
-      })
-    }
-    const timer = setTimeout(() => {
-      trace('agent.approval', { outcome: 'timeout', tool: request.tool })
-      settle(false, false, NOT_CONFIRMED)
-    }, APPROVAL_TIMEOUT_MS)
-    active.pending = { request, timer, settle }
-
-    publish({
-      phase: 'asking',
-      step: active.step,
-      total: active.total,
-      label: describeCall(request),
-      actions: actionRows(),
-      approval: request,
-      message: decision.detail
-    })
-  }
-
   /** Ends the run: the answer has arrived, or something went wrong. */
   function settleRun(result: AgentRunResult): void {
     const active = current
     if (!active) return
-    if (active.pending) {
-      clearTimeout(active.pending.timer)
-      active.pending = null
-    }
+    approvals.clearPending()
     active.finish(result)
   }
 
@@ -996,15 +423,7 @@ export function createAgentController(host: AgentHost) {
       activeTrace?.record('stop', { message })
     }
     generation += 1
-    ignoreMouseUntil = 0
-    ignoreEscapeUntil = 0
-    const active = current
-    if (active?.pending) {
-      const pending = active.pending
-      clearTimeout(pending.timer)
-      active.pending = null
-      approve(pending.request.id, false, CANCELLED_REASON)
-    }
+    approvals.cancel()
     sidecar.cancel()
     watcher?.stop()
     watcher = null
@@ -1032,58 +451,8 @@ export function createAgentController(host: AgentHost) {
     availability,
     run,
     stop,
-    answer,
+    answer: approvals.answer,
     dispose,
     last: () => lastPublished
   }
-}
-
-/**
- * How much of one earlier turn the agent needs.
- *
- * The whole point of the block is the noun the current request leaves out, and
- * that noun is almost always in the first sentences. The card already trims its
- * history; this is the second ceiling, because a long answer would otherwise be
- * paid for on every step of the run, not once.
- */
-const HISTORY_TURN_CHARS = 900
-
-/**
- * The task, as the agent reads it.
- *
- * The prompt is the request; the app and the window are where to look first. They
- * are stated as context and not as instructions on purpose — the agent decides
- * which app to touch by calling `get_app_state`, and telling it "the answer is in
- * this window" would be the host making a decision the screen is better placed to
- * make.
- *
- * Earlier turns are quoted only when there are some, and labelled as context: a
- * bare «сделай» has no meaning on its own, but the same word after «можно ли
- * ...? если да — сделай» does. The block is closed with «Текущая задача» so a
- * past request, still full of imperatives, is not read as one to act on now.
- */
-function taskText(input: AgentRunInput): string {
-  const lines: string[] = []
-  if (input.appName) lines.push(`Приложение: ${input.appName}`)
-  if (input.windowTitle) lines.push(`Окно: ${input.windowTitle}`)
-  if (lines.length > 0) lines.push('')
-
-  const history = input.history?.filter((entry) => entry.question.trim()) ?? []
-  if (history.length > 0) {
-    lines.push('Разговор до этого — контекст, чтобы понять, к чему относится текущая просьба:')
-    for (const entry of history) {
-      lines.push(`Пользователь: ${clipHistory(entry.question)}`)
-      if (entry.answer.trim()) lines.push(`Ответ: ${clipHistory(entry.answer)}`)
-    }
-    lines.push('')
-    lines.push('Текущая задача:')
-  }
-
-  lines.push(input.prompt.trim())
-  return lines.join('\n')
-}
-
-function clipHistory(text: string): string {
-  const line = text.replace(/\s+/g, ' ').trim()
-  return line.length > HISTORY_TURN_CHARS ? `${line.slice(0, HISTORY_TURN_CHARS - 1)}…` : line
 }
