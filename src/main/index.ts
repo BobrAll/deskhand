@@ -335,6 +335,9 @@ if (!app.requestSingleInstanceLock()) {
   // Dock icon and a Cmd+Tab entry instead of becoming a tray-only accessory that
   // macOS hides the moment focus moves elsewhere.
   void app.whenReady().then(() => {
+    // A dev run executes Electron.app, so the Dock shows Electron's atom
+    // instead of our icon. A packaged bundle takes icon.icns from Info.plist.
+    if (!app.isPackaged) app.dock?.setIcon(join(app.getAppPath(), 'build', 'icon-1024.png'))
     nativeTheme.themeSource = 'system'
     // A failure while wiring the UI must not leave the process half-initialised:
     // the app has no main window to report it, so an unhandled throw here just
