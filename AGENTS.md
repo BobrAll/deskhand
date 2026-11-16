@@ -11,6 +11,8 @@
 
 - Each independent task MUST use its own Git worktree, branch, and agent session.
 - Before editing, create a worktree with a new branch and move the session into it.
+- The worktree tool leaves the checkout on a detached HEAD: `worktree_create` returns a directory, not a branch, and `npm run worktree` then lists a commit hash instead of a name. Create the branch immediately — `git checkout -b <task-slug>` — before the first edit and before the first commit.
+- Name the branch after the task itself, in kebab-case: `auto-update`, `voice-warmup`, `settings-search`. The name must say what the work is about; a tool-generated name (`glowing-planet`, `shiny-rocket`) is not one, and neither is the task number alone.
 - Reuse the existing worktree when continuing the same task.
 - Never edit files outside the task's worktree or share a working directory with another coding agent.
 - If isolation fails, stop before editing.
@@ -19,7 +21,7 @@
 - Propose merging into `dev`. Never merge without explicit user approval.
 - After a successful merge into `dev`, delete the task branch and remove its worktree immediately — the approval to merge covers the cleanup, so do not ask again.
 - Never delete a worktree whose branch is not merged into `dev`.
-- Mechanically: `tools.opencode.worktree_create` for the worktree and `tools.opencode.session_move` to move the session into it. If those tools are unavailable, ask before touching files.
+- Mechanically: `tools.opencode.worktree_create` for the worktree, `git checkout -b <task-slug>` for its branch, and `tools.opencode.session_move` to move the session into it. If those tools are unavailable, ask before touching files.
 
 ## Copy and tone
 
