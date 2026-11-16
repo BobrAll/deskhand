@@ -170,6 +170,22 @@ export const CH = {
     test: 'voice:test'
   },
   /**
+   * Self-update: the settings window pulls and drives, the main process checks,
+   * downloads and swaps the bundle. Nothing happens without a click.
+   */
+  update: {
+    /** renderer -> main: the current UpdateState (the window mounts mid-flow). */
+    getState: 'update:get-state',
+    /** main -> renderer: the state changed. */
+    state: 'update:state',
+    /** renderer -> main: check for a new release now. */
+    check: 'update:check',
+    /** renderer -> main: download the found release. */
+    download: 'update:download',
+    /** renderer -> main: quit and swap in the downloaded bundle. */
+    install: 'update:install'
+  },
+  /**
    * Speech synthesis for the assistant's own voice.
    *
    * Separate from `voice`, which is the microphone: this one only turns text

@@ -44,8 +44,28 @@ function worktrees() {
     })
 }
 
+/** The commit subject, for a worktree that was never put on a branch. */
+function commitSubject(tree) {
+  try {
+    return git(tree.path, 'log', '-1', '--format=%s', 'HEAD').trim()
+  } catch {
+    return ''
+  }
+}
+
+/**
+ * What the picker shows.
+ *
+ * A worktree normally has a branch, and the branch name is the task name. One
+ * created and never branched shows a bare commit hash instead, which says
+ * nothing about the work — so the commit subject stands in for the missing
+ * name and the hash moves into brackets.
+ */
 function label(tree) {
-  return `${tree.branch ?? tree.head?.slice(0, 8) ?? 'bare'} · ${tree.path}`
+  if (tree.branch) return `${tree.branch} · ${tree.path}`
+  const sha = tree.head?.slice(0, 8) ?? 'bare'
+  const subject = commitSubject(tree)
+  return subject ? `${subject} (${sha}) · ${tree.path}` : `${sha} · ${tree.path}`
 }
 
 async function selectTarget(trees) {
@@ -235,7 +255,11 @@ async function main() {
   if (options.length) throw new Error('Используй npm run worktree -- [ветка или путь] [--dry-run].')
   const trees = worktrees()
   const source = trees[0].path
-  const target = (await selectTarget(trees)).path
+  const chosen = await selectTarget(trees)
+  const target = chosen.path
+  if (!chosen.branch) {
+    console.warn(`[worktree] ${target} на detached HEAD — назови задачу: git checkout -b <имя>`)
+  }
   const modules = join(target, 'node_modules')
   const sharedModules = join(source, 'node_modules')
   const localModules = lstatSync(modules, { throwIfNoEntry: false })

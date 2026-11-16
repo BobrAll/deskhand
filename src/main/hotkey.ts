@@ -54,7 +54,3 @@ export function unregisterHotkey(): void {
     registeredAccelerator = null
   }
 }
-
-export function currentHotkey(): string | null {
-  return registeredAccelerator
-}

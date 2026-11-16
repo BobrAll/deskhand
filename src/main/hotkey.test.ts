@@ -34,7 +34,7 @@ vi.mock('electron', () => ({
   }
 }))
 
-/** Fresh module per test: `current` is module state. */
+/** Fresh module per test: the claimed accelerator is module state. */
 async function loadHotkey(): Promise<typeof import('./hotkey')> {
   vi.resetModules()
   return import('./hotkey')
@@ -49,22 +49,21 @@ beforeEach(() => {
 
 describe('registerHotkey: the first binding', () => {
   it('claims the accelerator and reports it', async () => {
-    const { registerHotkey, currentHotkey } = await loadHotkey()
+    const { registerHotkey } = await loadHotkey()
     const handler = vi.fn()
 
     expect(registerHotkey('Alt+Space', handler)).toEqual({ ok: true, accelerator: 'Alt+Space' })
-    expect(currentHotkey()).toBe('Alt+Space')
     expect(shortcut.registered.has('Alt+Space')).toBe(true)
   })
 
   it('trims the accelerator before claiming it', async () => {
-    const { registerHotkey, currentHotkey } = await loadHotkey()
+    const { registerHotkey } = await loadHotkey()
     expect(registerHotkey('  Alt+Space  ', () => undefined).ok).toBe(true)
-    expect(currentHotkey()).toBe('Alt+Space')
+    expect(shortcut.registered.has('Alt+Space')).toBe(true)
   })
 
   it('refuses an empty combination without touching the OS', async () => {
-    const { registerHotkey, currentHotkey } = await loadHotkey()
+    const { registerHotkey } = await loadHotkey()
 
     expect(registerHotkey('   ', () => undefined)).toEqual({
       ok: false,
@@ -72,13 +71,12 @@ describe('registerHotkey: the first binding', () => {
       message: 'Комбинация не задана.'
     })
     expect(shortcut.calls).toEqual([])
-    expect(currentHotkey()).toBeNull()
   })
 })
 
 describe('registerHotkey: replacing a binding', () => {
   it('releases the previous accelerator before claiming the next one', async () => {
-    const { registerHotkey, currentHotkey } = await loadHotkey()
+    const { registerHotkey } = await loadHotkey()
     registerHotkey('Alt+Space', () => undefined)
     shortcut.calls.length = 0
 
@@ -87,11 +85,12 @@ describe('registerHotkey: replacing a binding', () => {
       { op: 'unregister', accelerator: 'Alt+Space' },
       { op: 'register', accelerator: 'Alt+Shift+Space' }
     ])
-    expect(currentHotkey()).toBe('Alt+Shift+Space')
+    expect(shortcut.registered.has('Alt+Shift+Space')).toBe(true)
+    expect(shortcut.registered.has('Alt+Space')).toBe(false)
   })
 
   it('keeps the old binding out of the OS when the new one is taken', async () => {
-    const { registerHotkey, currentHotkey } = await loadHotkey()
+    const { registerHotkey } = await loadHotkey()
     registerHotkey('Alt+Space', () => undefined)
     shortcut.taken.add('Cmd+Shift+K')
 
@@ -100,9 +99,8 @@ describe('registerHotkey: replacing a binding', () => {
     expect(result.ok).toBe(false)
     expect(result.message).toBe('Комбинация занята другим приложением или недопустима.')
     // The old one is released first, so the app is left with no binding rather
-    // than with a stale `current` pointing at something no longer claimed.
-    expect(shortcut.registered.has('Alt+Space')).toBe(false)
-    expect(currentHotkey()).toBeNull()
+    // than with a stale accelerator pointing at something no longer claimed.
+    expect(shortcut.registered.size).toBe(0)
   })
 
   it('treats re-registering the same live accelerator as a no-op', async () => {
@@ -117,7 +115,7 @@ describe('registerHotkey: replacing a binding', () => {
   it('re-registers the same accelerator when the OS lost it', async () => {
     const { registerHotkey } = await loadHotkey()
     registerHotkey('Alt+Space', () => undefined)
-    // macOS drops registrations on session switches; `current` then lies.
+    // macOS drops registrations on session switches; the cached accelerator then lies.
     shortcut.registered.clear()
 
     expect(registerHotkey('Alt+Space', () => undefined).ok).toBe(true)
@@ -125,35 +123,33 @@ describe('registerHotkey: replacing a binding', () => {
   })
 
   it('survives a throw from the OS and reports it as a refusal', async () => {
-    const { registerHotkey, currentHotkey } = await loadHotkey()
+    const { registerHotkey } = await loadHotkey()
     shortcut.throwOnRegister = true
 
     const result = registerHotkey('Alt+Space', () => undefined)
 
     expect(result.ok).toBe(false)
     expect(result.message).toBe('Комбинация занята другим приложением или недопустима.')
-    expect(currentHotkey()).toBeNull()
+    expect(shortcut.registered.size).toBe(0)
   })
 })
 
 describe('unregisterHotkey', () => {
   it('releases the binding and forgets it', async () => {
-    const { registerHotkey, unregisterHotkey, currentHotkey } = await loadHotkey()
+    const { registerHotkey, unregisterHotkey } = await loadHotkey()
     registerHotkey('Alt+Space', () => undefined)
 
     unregisterHotkey()
 
-    expect(shortcut.registered.has('Alt+Space')).toBe(false)
-    expect(currentHotkey()).toBeNull()
+    expect(shortcut.registered.size).toBe(0)
   })
 
   it('does nothing when nothing was registered', async () => {
-    const { unregisterHotkey, currentHotkey } = await loadHotkey()
+    const { unregisterHotkey } = await loadHotkey()
     shortcut.calls.length = 0
 
     unregisterHotkey()
 
     expect(shortcut.calls).toEqual([])
-    expect(currentHotkey()).toBeNull()
   })
 })

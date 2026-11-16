@@ -65,7 +65,7 @@ function binaryName(engine: 'whisper' | 'transcribe'): string {
 // ---------------------------------------------------------------------------
 
 /** `~/Library/Application Support/Deskhand/models` once installed. */
-export function modelsDir(): string {
+function modelsDir(): string {
   return join(app.getPath('userData'), 'models')
 }
 
@@ -196,12 +196,9 @@ export async function voiceStatus(): Promise<VoiceStatus> {
     ready: Boolean(binary && model.path),
     enabled: voice.enabled,
     detail,
-    modelPath: model.path,
     // What will actually transcribe. A selection that is not on disk is not a
     // selection, and the settings window shows this rather than the setting.
     activeModel: model.id,
-    binaryPath: binary,
-    modelsDir: modelsDir(),
     installed: await installedModels(),
     // Filled in by the controller: the tap lives there, not in this module.
     listenerError: null

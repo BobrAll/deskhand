@@ -169,6 +169,14 @@ function fakeDeps(): IpcDeps {
       failed: vi.fn(),
       setLevel: vi.fn()
     } as unknown as IpcDeps['voice'],
+    update: {
+      state: vi.fn(() => ({ phase: 'idle' })),
+      check: vi.fn(async () => undefined),
+      download: vi.fn(async () => undefined),
+      install: vi.fn(),
+      schedule: vi.fn(),
+      trayLine: vi.fn(() => null)
+    } as unknown as IpcDeps['update'],
     applyHotkey: vi.fn(() => true),
     applyLaunchAtLogin: vi.fn(),
     setRecording: vi.fn(),
@@ -207,7 +215,8 @@ const MAIN_TO_RENDERER = new Set<string>([
   CH.voice.transcript,
   CH.voice.downloadProgress,
   CH.tts.setupProgress,
-  CH.settings.navigate
+  CH.settings.navigate,
+  CH.update.state
 ])
 
 function wire(): void {

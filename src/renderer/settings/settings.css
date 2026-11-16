@@ -150,6 +150,49 @@ body,
   color: var(--text-dim);
 }
 
+/* ---- update block --------------------------------------------------------- */
+
+.side-update {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+  -webkit-app-region: no-drag;
+}
+
+.side-update button {
+  width: 100%;
+}
+
+.update-line {
+  font-size: 12px;
+  line-height: 1.35;
+  color: var(--text-dim);
+}
+
+.update-line.dim {
+  color: var(--text-faint);
+}
+
+.update-line.err {
+  color: var(--danger);
+}
+
+.update-progress {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--surface-strong);
+  overflow: hidden;
+}
+
+.update-progress > div {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 2px;
+  transition: width 200ms ease;
+}
+
 /* ---- content ------------------------------------------------------------ */
 
 .content {

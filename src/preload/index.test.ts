@@ -117,6 +117,7 @@ describe('preload: the exposed bridge', () => {
       'permissions',
       'settings',
       'tts',
+      'update',
       'voice'
     ])
   })

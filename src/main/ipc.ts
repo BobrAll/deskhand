@@ -21,6 +21,7 @@ import type {
 } from '@shared/types'
 import type { ActionResult, AppPickResult, SettingsBundle } from '@shared/api'
 import type { OverlayController } from './overlay'
+import type { UpdateController } from './update'
 import { applyHistorySettings } from './overlay/history'
 import type { VoiceController } from './voice'
 import { listProviderModels, testApiKey } from './llm/testKey'
@@ -159,6 +160,8 @@ export interface IpcDeps {
   overlay: OverlayController
   /** Push-to-talk: the keyboard tap and the whisper pipeline. */
   voice: VoiceController
+  /** Self-update: check, download and the bundle swap. */
+  update: UpdateController
   /** Re-registers the global hotkey; false means the combination is taken. */
   applyHotkey(accelerator: string): boolean
   applyLaunchAtLogin(enabled: boolean): void
@@ -238,6 +241,7 @@ export function registerIpc(deps: IpcDeps): void {
   registerVoiceHandlers(deps.voice)
   registerTtsHandlers()
   registerAgentHandlers(deps.overlay)
+  registerUpdateHandlers(deps.update)
 }
 
 // ---- the card ------------------------------------------------------------
@@ -499,4 +503,15 @@ function registerAgentHandlers(overlay: OverlayController): void {
     if (typeof id !== 'string' || !id) return
     overlay.answerAgent(id, allow === true, remember === true)
   })
+}
+
+// ---- self-update -----------------------------------------------------------
+// The settings window asks and renders; every step — the feed, the checksum,
+// the signature pin and the swap — happens here. A manual check reports its
+// failure through the state; an automatic one stays silent.
+function registerUpdateHandlers(update: UpdateController): void {
+  ipcMain.handle(CH.update.getState, () => update.state())
+  ipcMain.handle(CH.update.check, () => update.check(true))
+  ipcMain.handle(CH.update.download, () => update.download())
+  ipcMain.handle(CH.update.install, () => update.install())
 }

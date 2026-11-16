@@ -9,6 +9,7 @@ exports[`CH: the channel set is a wire protocol > keeps the size of every namesp
   "permissions": 4,
   "settings": 15,
   "tts": 9,
+  "update": 5,
   "voice": 15,
 }
 `;
@@ -254,6 +255,26 @@ exports[`CH: the channel set is a wire protocol > matches the snapshot 1`] = `
   [
     "voice.test",
     "voice:test",
+  ],
+  [
+    "update.getState",
+    "update:get-state",
+  ],
+  [
+    "update.state",
+    "update:state",
+  ],
+  [
+    "update.check",
+    "update:check",
+  ],
+  [
+    "update.download",
+    "update:download",
+  ],
+  [
+    "update.install",
+    "update:install",
   ],
   [
     "tts.speak",

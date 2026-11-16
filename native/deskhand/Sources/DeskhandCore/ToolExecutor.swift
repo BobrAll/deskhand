@@ -375,11 +375,6 @@ public final class ToolExecutor: @unchecked Sendable {
         args[key]?.doubleValue
     }
 
-    private func requireDouble(_ args: JSONValue, _ key: String) throws -> Double {
-        guard let value = args[key]?.doubleValue else { throw ToolError.missing(key) }
-        return value
-    }
-
     /// A model-supplied screenshot pixel, rejected before it reaches the
     /// mapper. `ToolSurface` documents these as pixels from the most recent
     /// screenshot, whose longest edge is `WindowCapture.defaultMaxDimension`,

@@ -6,13 +6,17 @@
  * hotkey must be registered only after `app.whenReady()`.
  */
 
-import { app, nativeTheme } from 'electron'
+import { app, BrowserWindow, nativeTheme, Notification, powerMonitor } from 'electron'
+import { join, resolve } from 'node:path'
+import { CH } from '@shared/ipc'
+import type { UpdateState } from '@shared/types'
 import { createOverlayController } from './overlay'
 import { createVoiceController } from './voice'
 import { createRecordingMode } from './recording'
 import { registerHotkey, unregisterHotkey } from './hotkey'
 import { registerIpc } from './ipc'
-import { createTray, destroyTray, refreshTray } from './tray'
+import { createTray, destroyTray, refreshTray, setTrayUpdateLine } from './tray'
+import { createUpdateController } from './update'
 import { destroyDrawing } from './drawing'
 import { setFieldLevel } from './fieldHighlight'
 import { destroyAgentCursor } from './agent/cursor'
@@ -64,6 +68,35 @@ const voice = createVoiceController({
   // by the bars while a turn runs, so nothing is drawn at the cursor any more.
   setVoice: (active) => overlay.setVoice(active),
   target: () => overlay.target()
+})
+
+/**
+ * Self-update. Broadcasts go to every window (only the settings page listens).
+ * In an unpackaged build the check and the download still run against the real
+ * feed and only the swap is refused, because there is no bundle to replace.
+ */
+let updateNotification: Notification | null = null
+const update = createUpdateController({
+  appVersion: () => app.getVersion(),
+  installedAppPath: () => (app.isPackaged ? resolve(app.getPath('exe'), '../../..') : null),
+  cacheDir: () => join(app.getPath('userData'), 'updates'),
+  notify: (title, body, onClick) => {
+    // Held until the next one: a garbage-collected notification loses its
+    // click handler before the user gets to press it.
+    updateNotification?.close()
+    updateNotification = new Notification({ title, body })
+    updateNotification.on('click', onClick)
+    updateNotification.show()
+  },
+  broadcast: (state: UpdateState) => {
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (!win.isDestroyed()) win.webContents.send(CH.update.state, state)
+    }
+  },
+  refreshTray,
+  openSettings: () => openSettingsWindow(),
+  onWake: (listener) => powerMonitor.on('resume', listener),
+  quit
 })
 
 function applyLaunchAtLogin(enabled: boolean): void {
@@ -206,6 +239,12 @@ function startDeferredServices(settings: AppSettings): void {
   )
   attempt(() => applyLaunchAtLogin(settings.launchAtLogin))
   attempt(reportStartupPermissions)
+  attempt(() => {
+    // The tray line is read at menu-build time; `refreshTray` on every state
+    // change is what makes an announced update appear in the menu bar.
+    setTrayUpdateLine(() => update.trayLine())
+    update.schedule()
+  })
 }
 
 function bootstrap(): void {
@@ -221,6 +260,7 @@ function bootstrap(): void {
   registerIpc({
     overlay,
     voice,
+    update,
     applyHotkey,
     applyLaunchAtLogin,
     setRecording,
@@ -295,6 +335,9 @@ if (!app.requestSingleInstanceLock()) {
   // Dock icon and a Cmd+Tab entry instead of becoming a tray-only accessory that
   // macOS hides the moment focus moves elsewhere.
   void app.whenReady().then(() => {
+    // A dev run executes Electron.app, so the Dock shows Electron's atom
+    // instead of our icon. A packaged bundle takes icon.icns from Info.plist.
+    if (!app.isPackaged) app.dock?.setIcon(join(app.getAppPath(), 'build', 'icon-1024.png'))
     nativeTheme.themeSource = 'system'
     // A failure while wiring the UI must not leave the process half-initialised:
     // the app has no main window to report it, so an unhandled throw here just
