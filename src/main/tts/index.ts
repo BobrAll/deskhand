@@ -24,7 +24,7 @@ import { createHash } from 'node:crypto'
 import { mkdir, readFile, readdir, stat, unlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { AppSettings, TtsSettings, TtsStatus } from '@shared/types'
-import { RECORDED, TTS_MAX_CHARS, sileroSpeaker, type TtsResult } from '@shared/tts'
+import { TTS_MAX_CHARS, sileroSpeaker, type TtsResult } from '@shared/tts'
 import { getTtsKey } from '../settings/secrets'
 import { getSettings } from '../settings/store'
 import { prefetchHints, resolvePronunciations } from './pronounce'
@@ -311,7 +311,6 @@ export function ttsStatus(): TtsStatus {
     voice: silero ? sileroSpeaker(settings.tts.sileroVoice) : settings.tts.voice,
     model: settings.tts.model,
     keyConfigured: Boolean(ttsKey()),
-    recordedVoice: RECORDED.voice,
     silero: silero ? { installed: sileroRuntimeReady() && sileroModelsReady() } : null
   }
 }

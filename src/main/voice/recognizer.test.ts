@@ -221,9 +221,9 @@ describe('resolveVoiceModel', () => {
     expect(await recognizer.voiceStatus()).toMatchObject({
       ready: true,
       activeModel: GIGAAM,
-      installed: [GIGAAM],
-      modelPath
+      installed: [GIGAAM]
     })
+    expect((await recognizer.resolveVoiceModel()).path).toBe(modelPath)
   })
 
   it('uses the configured model from the app directory', async () => {
@@ -267,7 +267,7 @@ describe('resolveVoiceModel', () => {
     state.sizes[larger] = 900
     state.settings.voice.model = 'ggml-custom.bin'
 
-    expect(await recognizer.voiceStatus()).toMatchObject({ activeModel: 'ggml-custom.bin', modelPath: path })
+    expect(await recognizer.voiceStatus()).toMatchObject({ activeModel: 'ggml-custom.bin' })
   })
 
   it('ignores files that are not `ggml-*.bin`', async () => {
@@ -292,7 +292,6 @@ describe('voiceStatus', () => {
     expect(status.ready).toBe(true)
     expect(status.enabled).toBe(true)
     expect(status.detail).toBeNull()
-    expect(status.modelsDir).toBe('/userdata/models')
     expect(status.installed).toEqual(['small-q5_1'])
     expect(status.listenerError).toBeNull()
   })
@@ -356,8 +355,7 @@ describe('transcribe', () => {
     expect(await recognizer.voiceStatus()).toMatchObject({
       ready: true,
       activeModel: GIGAAM,
-      installed: [GIGAAM],
-      modelPath: model
+      installed: [GIGAAM]
     })
     expect(await recognizer.transcribe({ wav: WAV })).toMatchObject({
       ok: true,
@@ -380,8 +378,7 @@ describe('transcribe', () => {
 
     expect(await recognizer.voiceStatus()).toMatchObject({
       ready: true,
-      activeModel: GIGAAM,
-      binaryPath: binary
+      activeModel: GIGAAM
     })
     expect(await recognizer.transcribe({ wav: WAV })).toMatchObject({ ok: true })
     expect(state.spawned[0]).toMatchObject({
@@ -397,7 +394,6 @@ describe('transcribe', () => {
     state.sizes['/userdata/models/ggml-small-q5_1.bin'] = 181
     expect(await recognizer.voiceStatus()).toMatchObject({
       ready: false,
-      modelPath: null,
       detail: expect.stringContaining('В приложении нет модели GigaAM')
     })
   })

@@ -139,8 +139,6 @@ export interface VoiceStatus {
   enabled: boolean
   /** Human-readable reason when `ready` is false. */
   detail: string | null
-  /** Model file that will actually be used, or null when none was found. */
-  modelPath: string | null
   /**
    * The model that will actually transcribe: a catalog id, the file name of an
    * imported model, or null when nothing on disk matches.
@@ -150,10 +148,6 @@ export interface VoiceStatus {
    * install claim a model it did not have.
    */
   activeModel: string | null
-  /** Recognizer binary that will actually be used. */
-  binaryPath: string | null
-  /** Where models are downloaded to. */
-  modelsDir: string
   /** Available bundled and downloaded catalog IDs, plus imported model filenames. */
   installed: string[]
   /** Set when the keyboard listener could not be started. */
@@ -187,8 +181,6 @@ export interface TtsStatus {
   model: string
   /** Whether an API key is stored for this endpoint. */
   keyConfigured: boolean
-  /** The voice the shipped recordings were made with; always available. */
-  recordedVoice: string
   /**
    * `silero` only: whether the local runtime and the model are on disk.
    *

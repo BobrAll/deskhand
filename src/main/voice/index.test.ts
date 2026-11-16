@@ -77,9 +77,6 @@ vi.mock('./recognizer', () => ({
   voiceStatus: async () => ({
     ready: state.ready,
     detail: null,
-    modelPath: '/m',
-    binaryPath: '/b',
-    modelsDir: '/d',
     installed: [],
     listenerError: null
   })
