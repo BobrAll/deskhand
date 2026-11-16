@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { UpdateState } from '@shared/types'
@@ -58,6 +58,12 @@ const DIGEST = 'a'.repeat(64)
 
 /** The controller's cache dir: real fs calls (`rm`, `mkdir`) run against it. */
 let cacheRoot = ''
+/**
+ * A writable stand-in for the app's install location. The controller checks
+ * that the install folder is writable, so the test cannot use the real
+ * `/Applications`: it does not exist on the Linux CI runner.
+ */
+let installedApp = ''
 
 interface FakeHost extends UpdateHost {
   states: UpdateState[]
@@ -74,7 +80,7 @@ type HostOverrides = Partial<Pick<UpdateHost, 'appVersion' | 'installedAppPath' 
 function fakeHost(overrides: HostOverrides = {}): FakeHost {
   const host: FakeHost = {
     appVersion: () => '0.1.0',
-    installedAppPath: () => '/Applications/Deskhand.app',
+    installedAppPath: () => installedApp,
     cacheDir: () => cacheRoot,
     notify: (title, body, onClick) => host.notifications.push({ title, body, onClick }),
     broadcast: (state) => host.states.push(state),
@@ -104,6 +110,9 @@ function stubDownload(): void {
 beforeEach(() => {
   vi.clearAllMocks()
   cacheRoot = mkdtempSync(join(tmpdir(), 'deskhand-update-'))
+  const installRoot = join(cacheRoot, 'Applications')
+  mkdirSync(installRoot, { recursive: true })
+  installedApp = join(installRoot, 'Deskhand.app')
   feed.fetchLatestRelease.mockResolvedValue(RELEASE)
   stubDownload()
 })
@@ -192,7 +201,7 @@ describe('update download', () => {
     expect(apply.unpackZip).toHaveBeenCalled()
     expect(apply.verifyUpdateApp).toHaveBeenCalledWith(
       join(cacheRoot, '0.2.0', 'unpacked', 'Deskhand.app'),
-      '/Applications/Deskhand.app'
+      installedApp
     )
   })
 
@@ -255,7 +264,7 @@ describe('update install', () => {
     expect(apply.startSwap).toHaveBeenCalledTimes(1)
     const script = apply.startSwap.mock.calls[0][0] as string
     expect(script).toContain(join(cacheRoot, '0.2.0', 'unpacked', 'Deskhand.app'))
-    expect(script).toContain('/Applications/.Deskhand.app.old')
+    expect(script).toContain(join(cacheRoot, 'Applications', '.Deskhand.app.old'))
     expect(host.quit).toHaveBeenCalledTimes(1)
   })
 
