@@ -9,15 +9,14 @@
  * checks later; a failed automatic check is silent and only a manual one
  * reports an error.
  *
- * Unpackaged builds (and `DESKHAND_UPDATE_MOCK=1`) run the same machine
- * against a simulated feed: same phases, same buttons, no network and no swap.
+ * Unpackaged builds run the same machine against the real feed: the update
+ * simply cannot be installed without a bundle, and `install` says so.
  */
 
 import { basename, dirname, join } from 'node:path'
 import { mkdir, rm } from 'node:fs/promises'
 import type { UpdateState } from '@shared/types'
 import {
-  bumpMinor,
   downloadToFile,
   fetchLatestRelease,
   fetchText,
@@ -33,8 +32,6 @@ const START_DELAY_MS = 10_000
 const CHECK_INTERVAL_MS = 6 * 60 * 60_000
 /** A wake only re-checks when the last attempt is older than this. */
 const WAKE_MIN_GAP_MS = 60 * 60_000
-const MOCK_STEPS = 8
-const MOCK_STEP_MS = 120
 
 /** The Electron-facing capabilities the controller needs, injected for tests. */
 export interface UpdateHost {
@@ -42,8 +39,6 @@ export interface UpdateHost {
   /** The running `.app` bundle when packaged; null in dev. */
   installedAppPath(): string | null
   cacheDir(): string
-  /** `DESKHAND_UPDATE_MOCK=1` forces the simulated feed in a packaged build. */
-  mockEnabled(): boolean
   notify(title: string, body: string, onClick: () => void): void
   broadcast(state: UpdateState): void
   refreshTray(): void
@@ -75,8 +70,7 @@ export function createUpdateController(host: UpdateHost): UpdateController {
     sizeBytes: null,
     message: null,
     retry: null,
-    upToDate: false,
-    mock: host.mockEnabled() || host.installedAppPath() === null
+    upToDate: false
   }
 
   /** The release the last successful check found; `download` uses its URLs. */
@@ -93,21 +87,12 @@ export function createUpdateController(host: UpdateHost): UpdateController {
     host.refreshTray()
   }
 
-  function mockRelease(): ReleaseInfo {
-    return {
-      version: bumpMinor(current),
-      zipUrl: 'mock://deskhand.zip',
-      shaUrl: 'mock://deskhand.zip.sha256',
-      sizeBytes: 148 * 1024 * 1024
-    }
-  }
-
   async function runCheck(manual: boolean): Promise<void> {
     if (state.phase === 'downloading' || state.phase === 'ready' || state.phase === 'checking') return
     const before = state
     set({ phase: 'checking', message: null, retry: null })
     try {
-      const release = state.mock ? mockRelease() : await fetchLatestRelease()
+      const release = await fetchLatestRelease()
       lastCheckAt = Date.now()
       if (!release) throw new Error('В релизе нет файла обновления.')
       if (!isNewerVersion(current, release.version)) {
@@ -150,29 +135,21 @@ export function createUpdateController(host: UpdateHost): UpdateController {
     const version = release.version
     set({ phase: 'downloading', progress: 0, message: null, retry: null })
     try {
-      if (state.mock) {
-        for (let step = 1; step <= MOCK_STEPS; step += 1) {
-          await new Promise((resolve) => setTimeout(resolve, MOCK_STEP_MS))
-          set({ progress: step / MOCK_STEPS })
-        }
-        stagedApp = 'mock://Deskhand.app'
-      } else {
-        const dir = join(host.cacheDir(), version)
-        await rm(dir, { recursive: true, force: true })
-        await mkdir(dir, { recursive: true })
-        const zip = join(dir, UPDATE_ZIP_NAME)
-        await downloadToFile(release.zipUrl, zip, (progress) => set({ progress }))
-        const expected = parseSha256(await fetchText(release.shaUrl))
-        if (!expected) throw new Error('В релизе нет контрольной суммы. Скачай обновление заново.')
-        if ((await fileSha256(zip)) !== expected) {
-          throw new Error('Контрольная сумма не совпала. Скачай обновление заново.')
-        }
-        const unpacked = join(dir, 'unpacked')
-        await unpackZip(zip, unpacked)
-        const appPath = join(unpacked, 'Deskhand.app')
-        await verifyUpdateApp(appPath, host.installedAppPath())
-        stagedApp = appPath
+      const dir = join(host.cacheDir(), version)
+      await rm(dir, { recursive: true, force: true })
+      await mkdir(dir, { recursive: true })
+      const zip = join(dir, UPDATE_ZIP_NAME)
+      await downloadToFile(release.zipUrl, zip, (progress) => set({ progress }))
+      const expected = parseSha256(await fetchText(release.shaUrl))
+      if (!expected) throw new Error('В релизе нет контрольной суммы. Скачай обновление заново.')
+      if ((await fileSha256(zip)) !== expected) {
+        throw new Error('Контрольная сумма не совпала. Скачай обновление заново.')
       }
+      const unpacked = join(dir, 'unpacked')
+      await unpackZip(zip, unpacked)
+      const appPath = join(unpacked, 'Deskhand.app')
+      await verifyUpdateApp(appPath, host.installedAppPath())
+      stagedApp = appPath
       set({ phase: 'ready', progress: null })
     } catch (error) {
       stagedApp = null
@@ -187,16 +164,15 @@ export function createUpdateController(host: UpdateHost): UpdateController {
 
   function runInstall(): void {
     if (state.phase !== 'ready' || !stagedApp) return
-    if (state.mock) {
-      host.notify(
-        'Учебное обновление',
-        'Так выглядит установка. Настоящая работает только в собранном приложении.',
-        () => undefined
-      )
+    const installed = host.installedAppPath()
+    if (!installed) {
+      set({
+        phase: 'error',
+        message: 'Обновление ставится только в собранном приложении.',
+        retry: null
+      })
       return
     }
-    const installed = host.installedAppPath()
-    if (!installed) return
     const paths = {
       stagedApp,
       installedApp: installed,

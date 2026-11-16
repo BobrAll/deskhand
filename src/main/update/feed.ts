@@ -51,15 +51,6 @@ export function isNewerVersion(current: string, candidate: string): boolean {
   return false
 }
 
-/** The plausible "next" version for the simulated dev feed. */
-export function bumpMinor(version: string): string {
-  const parts = versionParts(version)
-  parts[1] = (parts[1] ?? 0) + 1
-  parts.length = Math.max(parts.length, 2)
-  for (let i = 2; i < parts.length; i += 1) parts[i] = 0
-  return parts.join('.')
-}
-
 /**
  * Reads the GitHub `releases/latest` payload.
  *

@@ -69,14 +69,13 @@ interface FakeHost extends UpdateHost {
 }
 
 /** Host fields a test may replace; the spies are always fakes of their own. */
-type HostOverrides = Partial<Pick<UpdateHost, 'appVersion' | 'installedAppPath' | 'cacheDir' | 'mockEnabled'>>
+type HostOverrides = Partial<Pick<UpdateHost, 'appVersion' | 'installedAppPath' | 'cacheDir'>>
 
 function fakeHost(overrides: HostOverrides = {}): FakeHost {
   const host: FakeHost = {
     appVersion: () => '0.1.0',
     installedAppPath: () => '/Applications/Deskhand.app',
     cacheDir: () => cacheRoot,
-    mockEnabled: () => false,
     notify: (title, body, onClick) => host.notifications.push({ title, body, onClick }),
     broadcast: (state) => host.states.push(state),
     refreshTray: vi.fn(),
@@ -303,27 +302,22 @@ describe('schedule', () => {
   })
 })
 
-describe('mock mode (dev builds)', () => {
-  it('runs the same machine without network, swap or quit', async () => {
-    vi.useFakeTimers()
+describe('an unpackaged build', () => {
+  it('checks and downloads for real but refuses to swap without a bundle', async () => {
     const host = fakeHost({ installedAppPath: () => null })
     const update = createUpdateController(host)
-    expect(update.state().mock).toBe(true)
 
     await update.check(true)
-    expect(feed.fetchLatestRelease).not.toHaveBeenCalled()
+    expect(feed.fetchLatestRelease).toHaveBeenCalledTimes(1)
     expect(update.state().phase).toBe('available')
-    expect(update.state().latest).toBe('0.2.0')
-    expect(host.notifications).toHaveLength(1)
 
-    const downloading = update.download()
-    await vi.advanceTimersByTimeAsync(8 * 120 + 50)
-    await downloading
+    await update.download()
     expect(update.state().phase).toBe('ready')
 
     update.install()
     expect(apply.startSwap).not.toHaveBeenCalled()
     expect(host.quit).not.toHaveBeenCalled()
-    expect(host.notifications).toHaveLength(2)
+    expect(update.state().phase).toBe('error')
+    expect(update.state().message).toContain('собранном приложении')
   })
 })

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { bumpMinor, isNewerVersion, parseLatestRelease, parseSha256, UPDATE_ZIP_NAME } from './feed'
+import { isNewerVersion, parseLatestRelease, parseSha256, UPDATE_ZIP_NAME } from './feed'
 
 /** A `releases/latest` payload shaped like GitHub's, minus everything unused. */
 function releasePayload(tagName: string, assets: Array<{ name: string; size?: number }>): unknown {
@@ -30,13 +30,6 @@ describe('isNewerVersion', () => {
   it('treats junk parts as zero instead of throwing', () => {
     expect(isNewerVersion('0.1.0', '0.beta.0')).toBe(false)
     expect(isNewerVersion('', '0.0.1')).toBe(true)
-  })
-})
-
-describe('bumpMinor', () => {
-  it('produces the next minor for the simulated feed', () => {
-    expect(bumpMinor('0.1.0')).toBe('0.2.0')
-    expect(bumpMinor('1.2.3')).toBe('1.3.0')
   })
 })
 

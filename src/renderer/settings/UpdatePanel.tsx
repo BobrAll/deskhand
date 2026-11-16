@@ -38,7 +38,6 @@ export function UpdatePanel() {
 
   if (!state) return null
 
-  const mockNote = state.mock ? ' (демо)' : ''
   const percent = state.progress === null ? null : Math.round(state.progress * 100)
 
   return (
@@ -66,7 +65,6 @@ export function UpdatePanel() {
           <div className="update-line">
             Доступна версия {state.latest}
             {formatSize(state.sizeBytes)}
-            {mockNote}
           </div>
           <button className="primary" onClick={() => ask(() => window.deskhand.update.download())}>
             Обновить
@@ -85,9 +83,7 @@ export function UpdatePanel() {
 
       {state.phase === 'ready' && (
         <>
-          <div className="update-line">
-            Обновление {state.latest ?? ''} скачано{mockNote}
-          </div>
+          <div className="update-line">Обновление {state.latest ?? ''} скачано</div>
           <button className="primary" onClick={() => ask(() => window.deskhand.update.install())}>
             Перезапустить
           </button>

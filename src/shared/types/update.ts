@@ -24,6 +24,4 @@ export interface UpdateState {
   retry: 'check' | 'download' | null
   /** The last check ran through and found nothing newer. */
   upToDate: boolean
-  /** True when the whole flow is simulated (dev builds, `DESKHAND_UPDATE_MOCK=1`). */
-  mock: boolean
 }

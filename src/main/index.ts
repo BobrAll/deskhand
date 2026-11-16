@@ -79,7 +79,6 @@ const update = createUpdateController({
   appVersion: () => app.getVersion(),
   installedAppPath: () => (app.isPackaged ? resolve(app.getPath('exe'), '../../..') : null),
   cacheDir: () => join(app.getPath('userData'), 'updates'),
-  mockEnabled: () => process.env.DESKHAND_UPDATE_MOCK === '1',
   notify: (title, body, onClick) => {
     const notification = new Notification({ title, body })
     notification.on('click', onClick)
