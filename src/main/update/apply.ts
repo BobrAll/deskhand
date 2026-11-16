@@ -60,7 +60,12 @@ export async function verifyUpdateApp(newAppPath: string, installedAppPath: stri
   }
   if (installedAppPath) {
     const installedLeaf = await readDesignatedLeaf(installedAppPath)
-    if (installedLeaf && installedLeaf !== newLeaf) {
+    // An unsigned running app cannot vouch for anything: refusing beats
+    // accepting any certificate-signed zip just because the pin is missing.
+    if (!installedLeaf) {
+      throw new Error('Установленное приложение не подписано — обновление не проверить.')
+    }
+    if (installedLeaf !== newLeaf) {
       throw new Error('Сертификат обновления не совпадает с установленным приложением.')
     }
   }
@@ -82,8 +87,9 @@ export interface SwapPaths {
  *
  * Polls for the app's PID instead of sleeping a guess: the quit path runs its
  * own async teardown and the swap must not start while the bundle is still
- * mapped. On any failure the backup moves back, so the worst outcome is the
- * version the user already had.
+ * mapped. On a failed swap the backup moves back; either way the script ends
+ * by opening the bundle that is on disk, because the app has already quit and
+ * staying closed with only a log file is the worst outcome of all.
  */
 export function swapScript(paths: SwapPaths, pid: number): string {
   const quote = (value: string): string => `'${value.replace(/'/g, `'\\''`)}'`
@@ -93,11 +99,12 @@ export function swapScript(paths: SwapPaths, pid: number): string {
     `kill -0 ${pid} 2>/dev/null && { echo 'app never quit'; exit 1; }`,
     `rm -rf ${quote(paths.backupApp)}`,
     `if [ -e ${quote(paths.installedApp)} ]; then`,
-    `  mv ${quote(paths.installedApp)} ${quote(paths.backupApp)} || { echo 'backup failed'; exit 1; }`,
+    `  mv ${quote(paths.installedApp)} ${quote(paths.backupApp)} || { echo 'backup failed'; open ${quote(paths.installedApp)}; exit 1; }`,
     'fi',
     `if ! mv ${quote(paths.stagedApp)} ${quote(paths.installedApp)}; then`,
     `  echo 'swap failed, restoring'`,
     `  [ -e ${quote(paths.backupApp)} ] && mv ${quote(paths.backupApp)} ${quote(paths.installedApp)}`,
+    `  [ -e ${quote(paths.installedApp)} ] && open ${quote(paths.installedApp)}`,
     '  exit 1',
     'fi',
     `rm -rf ${quote(paths.backupApp)}`,

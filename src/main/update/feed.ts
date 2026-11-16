@@ -63,7 +63,9 @@ export function parseLatestRelease(payload: unknown): ReleaseInfo | null {
   const release = payload as { tag_name?: unknown; assets?: unknown }
   if (typeof release.tag_name !== 'string' || !Array.isArray(release.assets)) return null
   const version = release.tag_name.replace(/^v/i, '')
-  if (!/^\d+\.\d+/.test(version)) return null
+  // The version ends up in a cache directory that gets `rm -rf`'d and in UI
+  // text, so only a plain x.y.z is accepted — not `1.2/../..` dressed as a tag.
+  if (!/^\d+\.\d+\.\d+$/.test(version)) return null
 
   const assets = release.assets as unknown[]
   const asset = (name: string): { url: string; size: number | null } | null => {

@@ -55,6 +55,12 @@ describe('parseLatestRelease', () => {
     expect(parseLatestRelease({ tag_name: 'nightly', assets: [] })).toBeNull()
     expect(parseLatestRelease({ assets: BOTH_ASSETS })).toBeNull()
   })
+
+  it('accepts only a plain x.y.z version, so the cache path stays a version', () => {
+    expect(parseLatestRelease(releasePayload('v1.2/../..', BOTH_ASSETS))).toBeNull()
+    expect(parseLatestRelease(releasePayload('v0.2.0-rc1', BOTH_ASSETS))).toBeNull()
+    expect(parseLatestRelease(releasePayload('v1.2.3', BOTH_ASSETS))?.version).toBe('1.2.3')
+  })
 })
 
 describe('parseSha256', () => {

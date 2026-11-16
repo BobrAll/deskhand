@@ -14,6 +14,7 @@
  */
 
 import { basename, dirname, join } from 'node:path'
+import { accessSync, constants as fsConstants } from 'node:fs'
 import { mkdir, rm } from 'node:fs/promises'
 import type { UpdateState } from '@shared/types'
 import {
@@ -59,6 +60,21 @@ export interface UpdateController {
   trayLine(): { label: string; onClick: () => void } | null
 }
 
+/**
+ * The sentence the panel shows after a failed download.
+ *
+ * Our own failures (`apply.ts`, the checksum) are already Russian and worth
+ * showing; anything from a child process — `Command failed: codesign …`,
+ * `HTTP 404`, a timeout — stays in the log and the user gets one plain line,
+ * with no absolute paths leaked into the window.
+ */
+function downloadFailure(error: unknown): string {
+  const message = error instanceof Error ? error.message : ''
+  if (/[а-яА-Я]/.test(message)) return message
+  if (message) console.warn('[update] download failed:', message)
+  return 'Не удалось скачать обновление. Проверь интернет и попробуй ещё раз.'
+}
+
 export function createUpdateController(host: UpdateHost): UpdateController {
   const current = host.appVersion()
 
@@ -79,12 +95,18 @@ export function createUpdateController(host: UpdateHost): UpdateController {
   let stagedApp: string | null = null
   /** Versions already announced by a notification, so each nags once. */
   const announced = new Set<string>()
-  let lastCheckAt = 0
+  let lastCheckAt = Date.now()
+  /** One swap only: a second install click must not race the first script. */
+  let swapping = false
 
   function set(patch: Partial<UpdateState>): void {
+    const phaseMoved = patch.phase !== undefined && patch.phase !== state.phase
+    const versionMoved = patch.latest !== undefined && patch.latest !== state.latest
     state = { ...state, ...patch }
     host.broadcast(state)
-    host.refreshTray()
+    // Progress ticks fire four times a second; only a phase or version change
+    // alters the menu item, and rebuilding it on every tick is waste.
+    if (phaseMoved || versionMoved) host.refreshTray()
   }
 
   async function runCheck(manual: boolean): Promise<void> {
@@ -106,7 +128,7 @@ export function createUpdateController(host: UpdateHost): UpdateController {
       set({ phase: 'available', latest: release.version, sizeBytes: release.sizeBytes, upToDate: false })
       if (!announced.has(release.version)) {
         announced.add(release.version)
-        host.notify(`Deskhand ${release.version} доступен`, 'Открой настройки, чтобы обновить.', () =>
+        host.notify(`Версия ${release.version} доступна`, 'Открой настройки, чтобы обновить.', () =>
           host.openSettings()
         )
       }
@@ -156,19 +178,29 @@ export function createUpdateController(host: UpdateHost): UpdateController {
       set({
         phase: 'error',
         progress: null,
-        message: error instanceof Error && error.message ? error.message : 'Не удалось скачать обновление.',
+        message: downloadFailure(error),
         retry: 'download'
       })
     }
   }
 
   function runInstall(): void {
-    if (state.phase !== 'ready' || !stagedApp) return
+    if (swapping || state.phase !== 'ready' || !stagedApp) return
     const installed = host.installedAppPath()
     if (!installed) {
       set({
         phase: 'error',
         message: 'Обновление ставится только в собранном приложении.',
+        retry: null
+      })
+      return
+    }
+    try {
+      accessSync(dirname(installed), fsConstants.W_OK)
+    } catch {
+      set({
+        phase: 'error',
+        message: 'Нет прав на запись в папку приложения. Поставь обновление через install.sh.',
         retry: null
       })
       return
@@ -179,6 +211,7 @@ export function createUpdateController(host: UpdateHost): UpdateController {
       backupApp: join(dirname(installed), `.${basename(installed)}.old`),
       logFile: join(dirname(stagedApp), 'swap.log')
     }
+    swapping = true
     startSwap(swapScript(paths, process.pid))
     host.quit()
   }

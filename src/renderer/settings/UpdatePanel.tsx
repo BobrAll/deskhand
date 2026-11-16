@@ -6,7 +6,7 @@
  * only ask. Mounts mid-flow, so the first thing it does is pull the state.
  */
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { UpdateState } from '@shared/types'
 
 function formatSize(bytes: number | null): string {
@@ -16,16 +16,21 @@ function formatSize(bytes: number | null): string {
 
 export function UpdatePanel() {
   const [state, setState] = useState<UpdateState | null>(null)
+  /** A pushed state arrived before the initial `getState()` did. */
+  const pushed = useRef(false)
 
   useEffect(() => {
     let alive = true
     void window.deskhand.update
       .getState()
       .then((initial) => {
-        if (alive) setState(initial)
+        if (alive && !pushed.current) setState(initial)
       })
       .catch(() => undefined)
-    const unsubscribe = window.deskhand.update.onState(setState)
+    const unsubscribe = window.deskhand.update.onState((next) => {
+      pushed.current = true
+      setState(next)
+    })
     return () => {
       alive = false
       unsubscribe()
@@ -77,7 +82,7 @@ export function UpdatePanel() {
           <div className="update-progress" role="progressbar" aria-valuenow={percent ?? 0}>
             <div style={{ width: `${percent ?? 0}%` }} />
           </div>
-          <div className="update-line dim">Скачиваю… {percent === null ? '' : `${percent}%`}</div>
+          <div className="update-line dim">Скачиваю…{percent === null ? '' : ` ${percent}%`}</div>
         </>
       )}
 
@@ -93,17 +98,19 @@ export function UpdatePanel() {
       {state.phase === 'error' && (
         <>
           <div className="update-line err">{state.message ?? 'Не удалось обновить.'}</div>
-          <button
-            onClick={() =>
-              ask(
-                state.retry === 'download'
-                  ? () => window.deskhand.update.download()
-                  : () => window.deskhand.update.check()
-              )
-            }
-          >
-            Попробовать ещё раз
-          </button>
+          {state.retry && (
+            <button
+              onClick={() =>
+                ask(
+                  state.retry === 'download'
+                    ? () => window.deskhand.update.download()
+                    : () => window.deskhand.update.check()
+                )
+              }
+            >
+              Попробовать ещё раз
+            </button>
+          )}
         </>
       )}
     </div>

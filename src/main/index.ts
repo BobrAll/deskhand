@@ -71,18 +71,22 @@ const voice = createVoiceController({
 })
 
 /**
- * Self-update. Broadcasts go to every window (only the settings page listens),
- * and the whole flow degrades to a simulation when the app is not packaged —
- * same buttons, no network, no swap — so the UI is testable with `npm run dev`.
+ * Self-update. Broadcasts go to every window (only the settings page listens).
+ * In an unpackaged build the check and the download still run against the real
+ * feed and only the swap is refused, because there is no bundle to replace.
  */
+let updateNotification: Notification | null = null
 const update = createUpdateController({
   appVersion: () => app.getVersion(),
   installedAppPath: () => (app.isPackaged ? resolve(app.getPath('exe'), '../../..') : null),
   cacheDir: () => join(app.getPath('userData'), 'updates'),
   notify: (title, body, onClick) => {
-    const notification = new Notification({ title, body })
-    notification.on('click', onClick)
-    notification.show()
+    // Held until the next one: a garbage-collected notification loses its
+    // click handler before the user gets to press it.
+    updateNotification?.close()
+    updateNotification = new Notification({ title, body })
+    updateNotification.on('click', onClick)
+    updateNotification.show()
   },
   broadcast: (state: UpdateState) => {
     for (const win of BrowserWindow.getAllWindows()) {

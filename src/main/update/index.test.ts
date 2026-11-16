@@ -229,6 +229,18 @@ describe('update download', () => {
     expect(update.state().phase).toBe('idle')
     expect(feed.downloadToFile).not.toHaveBeenCalled()
   })
+
+  it('replaces a raw tool error with one Russian sentence', async () => {
+    feed.downloadToFile.mockRejectedValue(new Error('Command failed: curl -fL /Users/b/hidden/path'))
+    const { update } = await available()
+
+    await update.download()
+
+    const state = update.state()
+    expect(state.phase).toBe('error')
+    expect(state.message).toBe('Не удалось скачать обновление. Проверь интернет и попробуй ещё раз.')
+    expect(state.message).not.toContain('/Users')
+  })
 })
 
 describe('update install', () => {
@@ -256,6 +268,19 @@ describe('update install', () => {
 
     expect(apply.startSwap).not.toHaveBeenCalled()
     expect(host.quit).not.toHaveBeenCalled()
+  })
+
+  it('spawns one swap however many times install is clicked', async () => {
+    const host = fakeHost()
+    const update = createUpdateController(host)
+    await update.check(true)
+    await update.download()
+
+    update.install()
+    update.install()
+
+    expect(apply.startSwap).toHaveBeenCalledTimes(1)
+    expect(host.quit).toHaveBeenCalledTimes(1)
   })
 })
 
