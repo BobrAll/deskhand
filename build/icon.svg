@@ -1,7 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128" role="img" aria-labelledby="title desc">
-  <title id="title">Deskhand</title>
-  <desc id="desc">White cursor and blue smart-action spark on a dark rounded square.</desc>
-  <rect x="0" y="0" width="128" height="128" rx="28" fill="#171718"/>
-  <path d="M34 25 L34 99 Q34 102 37 103 Q39 104 41 102 L56 86 L67 108 Q69 112 73 110 L82 105 Q86 103 84 99 L73 77 L97 77 Q102 77 103 73 Q104 70 100 67 L40 24 Q36 21 34 25 Z" fill="#f3f3f4"/>
-  <path d="M88 23 C89.5 30.5 93.5 34.5 101 36 C93.5 37.5 89.5 41.5 88 49 C86.5 41.5 82.5 37.5 75 36 C82.5 34.5 86.5 30.5 88 23 Z" fill="#5b78ff"/>
-</svg>
