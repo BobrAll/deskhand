@@ -1,0 +1,41 @@
+name: CI
+
+on:
+  push:
+    branches: [dev]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Types, style, lint rules and the TypeScript suite. Runs on Linux because
+  # nothing in this half needs macOS.
+  typescript:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run check:ts
+
+  # The agent package's own suite. Swift style is checked by `npm run check`
+  # locally: swift-format ships with the Xcode toolchain, and its version on a
+  # hosted runner is not the one this repository was formatted with, so a style
+  # comparison there would report the toolchain, not the code.
+  swift:
+    runs-on: macos-15
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - run: swift test --package-path native/deskhand

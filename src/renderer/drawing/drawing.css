@@ -1,0 +1,107 @@
+html,
+body,
+#root {
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  overflow: hidden;
+  width: 100%;
+  height: 100%;
+  /* The layer must never intercept a click; the main process enforces this too. */
+  pointer-events: none;
+  user-select: none;
+  cursor: default;
+}
+
+.drawing-layer {
+  /* Fixed ink and glass for arbitrary content behind the window. */
+  --ink: #5b78ff;
+  --drawing-surface: rgba(20, 21, 26, 0.94);
+  --drawing-text: #f4f5f7;
+  --drawing-edge: rgba(255, 255, 255, 0.15);
+  --draw-time: 240ms;
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+
+.drawing-layer svg {
+  display: block;
+}
+
+.drawing-stroke,
+.drawing-head {
+  fill: none;
+  stroke: var(--ink);
+  stroke-width: 3.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  filter: drop-shadow(0 0 1px rgba(255, 255, 255, 0.9)) drop-shadow(0 1px 3px rgba(0, 0, 0, 0.42));
+}
+
+.drawing-stroke {
+  stroke-dasharray: 1;
+  animation: draw var(--draw-time) cubic-bezier(0.2, 0.9, 0.3, 1) var(--delay) both;
+}
+
+.drawing-head {
+  animation: appear 120ms ease-out calc(var(--delay) + var(--draw-time) - 40ms) both;
+}
+
+.drawing-label {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: max-content;
+  max-width: min(280px, calc(100% - 12px));
+  padding: 5px 9px;
+  border: 1px solid var(--drawing-edge);
+  border-radius: var(--radius-sm);
+  background: var(--drawing-surface);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.32);
+  color: var(--drawing-text);
+  font: 600 13px/1.35 var(--font);
+  overflow-wrap: anywhere;
+  animation: appear 140ms ease-out calc(var(--delay) + var(--draw-time) - 80ms) both;
+}
+
+@keyframes draw {
+  from {
+    stroke-dashoffset: 1;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+@keyframes appear {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+#root.leaving .drawing-layer {
+  animation: layer-out 160ms ease-in forwards;
+}
+
+@keyframes layer-out {
+  to {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .drawing-stroke,
+  .drawing-head,
+  .drawing-label,
+  #root.leaving .drawing-layer {
+    animation: none;
+  }
+
+  #root.leaving .drawing-layer {
+    opacity: 0;
+  }
+}

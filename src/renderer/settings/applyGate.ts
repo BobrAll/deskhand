@@ -1,0 +1,151 @@
+/**
+ * When the settings window is allowed to write, and what it says while it is not.
+ *
+ * The window has no «Сохранить»: every field is written as it is edited. That is
+ * what makes these rules load-bearing rather than cosmetic — a disagreement
+ * between the copy that decides "hold the write" and the copy that decides "fix
+ * the value up" does not throw, it produces a quiet write loop every 450 ms, or a
+ * field rewritten under the user's hands while they are still typing in it.
+ *
+ * Everything here is pure. The bounds of the token field come from
+ * `@shared/defaults`, where the store's own clamp reads them too: three copies of
+ * `64…8192` was exactly the disagreement this module exists to prevent.
+ */
+
+import type { AppSettings, ProviderId } from '@shared/types'
+import { PROVIDERS, SETTINGS_BOUNDS, normalizeBaseUrl, parseExtraBody } from '@shared/defaults'
+
+/**
+ * Values the settings window cannot store as they are, and what it says instead.
+ *
+ * These are not "invalid input" warnings in the usual sense — they are the cases
+ * where the normaliser on the other side would silently replace what is on screen
+ * (an empty prompt becomes the default one, a half-typed token count is clamped).
+ * The write waits until the user finishes editing the field.
+ */
+export const HOLD_REASON = {
+  baseUrl: 'Проверь адрес API — изменения не применены.',
+  maxTokens: `Максимум токенов: от ${SETTINGS_BOUNDS.maxTokens.min} до ${SETTINGS_BOUNDS.maxTokens.max}.`,
+  prompt: 'Пустой системный промпт оставлен прежним.',
+  hotkey: 'Горячая клавиша не задана.',
+  ttsBaseUrl: 'Проверь адрес сервиса синтеза — изменения не применены.',
+  extraBody: 'Проверь доп. параметры запроса — JSON не сохранён.'
+} as const
+
+/** The providers whose base URL override is not an address, and so cannot be stored. */
+export function invalidBaseUrlProviders(draft: AppSettings): ProviderId[] {
+  return PROVIDERS.filter((provider) => {
+    const value = draft.baseUrls[provider.id]
+    // Empty is not invalid: it means "use the official host".
+    return value.trim() !== '' && normalizeBaseUrl(value) === ''
+  }).map((provider) => provider.id)
+}
+
+/**
+ * The providers whose extra request body is not a JSON object.
+ *
+ * The textarea keeps half-typed JSON while the user edits it, but the store
+ * cannot keep it: the request builder would either throw mid-answer or silently
+ * drop the field. So an invalid value holds the write and is reverted to what is
+ * on disk, exactly like a base URL that is not an address.
+ */
+export function invalidExtraBodyProviders(draft: AppSettings): ProviderId[] {
+  return PROVIDERS.filter((provider) => parseExtraBody(draft.extraBody?.[provider.id]) === null).map(
+    (provider) => provider.id
+  )
+}
+
+/**
+ * Whether the synthesis endpoint is half-typed.
+ *
+ * Same rule as a provider URL: an empty field means "not configured", but text
+ * that is not an address would be silently dropped by the store, and a field
+ * that clears itself while it is being typed is worse than a held write.
+ */
+export function ttsBaseUrlInvalid(draft: AppSettings): boolean {
+  // The block may be absent in a draft built before it existed, or in a test
+  // fixture; "no block" means "not configured", not "invalid".
+  const value = draft.tts?.baseUrl?.trim() ?? ''
+  return value !== '' && normalizeBaseUrl(value) === ''
+}
+
+/** Whether a token count is one the store will keep as it is. */
+export function tokensInRange(value: number): boolean {
+  return Number.isFinite(value) && value >= SETTINGS_BOUNDS.maxTokens.min && value <= SETTINGS_BOUNDS.maxTokens.max
+}
+
+/**
+ * Why a write is being held, or `null` when nothing is.
+ *
+ * The order matters only in that the first reason is the one shown: an address
+ * that is not a URL is worth more attention than a token count mid-retype, and
+ * both are worth more than a prompt that has been emptied on the way to being
+ * rewritten.
+ */
+export function holdReasonFor(draft: AppSettings, invalidBaseUrls: ProviderId[]): string | null {
+  if (invalidBaseUrls.length > 0) return HOLD_REASON.baseUrl
+  if (ttsBaseUrlInvalid(draft)) return HOLD_REASON.ttsBaseUrl
+  // Checked across every provider, not only the selected one: the tab badge
+  // names the selected provider, but a broken body anywhere is still unwritable.
+  if (invalidExtraBodyProviders(draft).length > 0) return HOLD_REASON.extraBody
+  // Out of range, not merely odd: a cleared number field reads as 0 while the
+  // user is retyping it, and clamping that would rewrite the field under them.
+  if (!tokensInRange(draft.maxTokens)) return HOLD_REASON.maxTokens
+  if (!draft.systemPrompt.trim()) return HOLD_REASON.prompt
+  if (!draft.hotkey.trim()) return HOLD_REASON.hotkey
+  return null
+}
+
+/** Whether the draft holds anything that is not on disk yet. */
+export function hasUnsaved(
+  value: AppSettings,
+  bundle: { settings: AppSettings } | null,
+  written: string | null
+): boolean {
+  if (!bundle) return true
+  const snapshot = JSON.stringify(value)
+  return snapshot !== JSON.stringify(bundle.settings) && snapshot !== written
+}
+
+/**
+ * Whether a finished write covers the draft on screen.
+ *
+ * The store answers a write after a round trip, and the user may have typed since.
+ * Saying «Применено» for a snapshot the draft has moved past would claim the
+ * newest edit is on disk while it is still waiting for its own write — and would
+ * release the close hold during exactly that gap.
+ */
+export function writeCoversDraft(written: string, draft: AppSettings | null): boolean {
+  return draft !== null && JSON.stringify(draft) === written
+}
+
+/**
+ * The draft as it can actually be written, for the explicit paths (⌘S, closing).
+ *
+ * Revert incomplete fields to their saved values so normalization does not
+ * silently replace a half-typed value with a default.
+ */
+export function writableSettings(
+  value: AppSettings,
+  bundle: { settings: AppSettings } | null,
+  invalidBaseUrls: ProviderId[]
+): AppSettings {
+  const next = { ...value }
+  if (!bundle) return next
+
+  const onDisk = bundle.settings
+  if (invalidBaseUrls.length > 0) next.baseUrls = onDisk.baseUrls
+  if (ttsBaseUrlInvalid(next)) next.tts = { ...next.tts, baseUrl: onDisk.tts?.baseUrl ?? '' }
+  // Revert only the broken body, not the whole map: the other providers may hold
+  // edits that are perfectly writable.
+  const invalidExtraBody = invalidExtraBodyProviders(next)
+  if (invalidExtraBody.length > 0) {
+    const reverted = { ...next.extraBody }
+    for (const provider of invalidExtraBody) reverted[provider] = onDisk.extraBody?.[provider] ?? ''
+    next.extraBody = reverted
+  }
+  if (!tokensInRange(next.maxTokens)) next.maxTokens = onDisk.maxTokens
+  if (!next.systemPrompt.trim()) next.systemPrompt = onDisk.systemPrompt
+  if (!next.hotkey.trim()) next.hotkey = onDisk.hotkey
+  return next
+}

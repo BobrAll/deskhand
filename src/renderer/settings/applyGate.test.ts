@@ -1,0 +1,262 @@
+/**
+ * The rules that decide whether the settings window may write.
+ *
+ * A disagreement here does not throw. It either rewrites a field under the user's
+ * hands while they are typing in it, or it writes the same value on an autosave
+ * tick forever — so the cases below are the ones where the two halves of the rule
+ * (hold the write / fix the value up) have to agree.
+ */
+
+import { describe, expect, it } from 'vitest'
+import type { AppSettings } from '@shared/types'
+import { DEFAULT_SETTINGS, SETTINGS_BOUNDS } from '@shared/defaults'
+import {
+  HOLD_REASON,
+  hasUnsaved,
+  holdReasonFor,
+  invalidBaseUrlProviders,
+  invalidExtraBodyProviders,
+  tokensInRange,
+  writeCoversDraft,
+  writableSettings
+} from './applyGate'
+
+/** Settings as the window usually has them: valid everywhere. */
+function settings(overrides: Partial<AppSettings> = {}): AppSettings {
+  return { ...DEFAULT_SETTINGS, maxTokens: 2048, ...overrides }
+}
+
+describe('applyGate: the token bounds appear once', () => {
+  it('is 64 to 8192, inclusive', () => {
+    expect(SETTINGS_BOUNDS.maxTokens.min).toBe(64)
+    expect(SETTINGS_BOUNDS.maxTokens.max).toBe(8192)
+  })
+
+  it('accepts both ends and rejects what is outside them', () => {
+    expect(tokensInRange(SETTINGS_BOUNDS.maxTokens.min)).toBe(true)
+    expect(tokensInRange(SETTINGS_BOUNDS.maxTokens.max)).toBe(true)
+    expect(tokensInRange(SETTINGS_BOUNDS.maxTokens.min - 1)).toBe(false)
+    expect(tokensInRange(SETTINGS_BOUNDS.maxTokens.max + 1)).toBe(false)
+  })
+
+  it('rejects a field that is not a number at all', () => {
+    // A cleared number input reads as NaN before it reads as 0, and neither may
+    // reach the store.
+    expect(tokensInRange(Number.NaN)).toBe(false)
+    expect(tokensInRange(Number.POSITIVE_INFINITY)).toBe(false)
+  })
+
+  it('names the bounds in the message the card shows', () => {
+    expect(HOLD_REASON.maxTokens).toBe('Максимум токенов: от 64 до 8192.')
+  })
+})
+
+describe('applyGate: an address that is not an address', () => {
+  it('is not invalid when the field is empty', () => {
+    // Empty means "use the official host", which is the default state.
+    expect(invalidBaseUrlProviders(settings())).toEqual([])
+  })
+
+  it('is not invalid when it is a URL', () => {
+    const draft = settings({ baseUrls: { ...settings().baseUrls, openai: 'https://proxy.example/v1' } })
+
+    expect(invalidBaseUrlProviders(draft)).toEqual([])
+  })
+
+  it('is invalid when it is not one', () => {
+    const draft = settings({ baseUrls: { ...settings().baseUrls, openai: 'не адрес' } })
+
+    expect(invalidBaseUrlProviders(draft)).toEqual(['openai'])
+  })
+
+  it('is checked for every provider, not only the selected one', () => {
+    const draft = settings({
+      baseUrls: { ...settings().baseUrls, openai: 'мусор', anthropic: 'тоже мусор' }
+    })
+
+    expect(invalidBaseUrlProviders(draft).length).toBeGreaterThan(1)
+  })
+})
+
+describe('applyGate: an extra body that is not JSON', () => {
+  it('is not invalid when the field is empty', () => {
+    expect(invalidExtraBodyProviders(settings())).toEqual([])
+  })
+
+  it('is not invalid for a JSON object', () => {
+    const draft = settings({ extraBody: { ...settings().extraBody, openai: '{"reasoning_effort": "none"}' } })
+
+    expect(invalidExtraBodyProviders(draft)).toEqual([])
+  })
+
+  it('is invalid for broken JSON and for a JSON array', () => {
+    const broken = settings({ extraBody: { ...settings().extraBody, openai: '{"reasoning_effort":' } })
+    expect(invalidExtraBodyProviders(broken)).toEqual(['openai'])
+
+    const array = settings({ extraBody: { ...settings().extraBody, anthropic: '["thinking"]' } })
+    expect(invalidExtraBodyProviders(array)).toEqual(['anthropic'])
+  })
+
+  it('holds the write instead of letting the store drop the field', () => {
+    const draft = settings({ extraBody: { ...settings().extraBody, openai: '{' } })
+
+    expect(holdReasonFor(draft, [])).toBe(HOLD_REASON.extraBody)
+  })
+
+  it('reverts only the broken provider to what is on disk', () => {
+    const onDisk = settings({
+      extraBody: { ...settings().extraBody, openai: '{"stream": false}' }
+    })
+    const draft = settings({
+      extraBody: {
+        ...settings().extraBody,
+        openai: 'не json',
+        anthropic: '{"thinking": {"type": "disabled"}}'
+      }
+    })
+
+    const written = writableSettings(draft, { settings: onDisk }, [])
+
+    expect(written.extraBody.openai).toBe('{"stream": false}')
+    expect(written.extraBody.anthropic).toBe('{"thinking": {"type": "disabled"}}')
+  })
+})
+
+describe('applyGate: why a write is held', () => {
+  it('is not held on valid settings', () => {
+    expect(holdReasonFor(settings(), [])).toBeNull()
+  })
+
+  it('holds on an invalid base URL first', () => {
+    const draft = settings({ maxTokens: 1, systemPrompt: '' })
+
+    expect(holdReasonFor(draft, ['openai'])).toBe(HOLD_REASON.baseUrl)
+  })
+
+  it('holds a half-typed synthesis address instead of clearing the field', () => {
+    // The store normalises an address it cannot parse to an empty string, so
+    // writing mid-word would wipe the field the user is still typing in.
+    const draft = settings({ tts: { ...DEFAULT_SETTINGS.tts, baseUrl: 'speech.example/v1' } })
+    expect(holdReasonFor(draft, [])).toBe(HOLD_REASON.ttsBaseUrl)
+
+    const valid = settings({ tts: { ...DEFAULT_SETTINGS.tts, baseUrl: 'https://speech.example/v1' } })
+    expect(holdReasonFor(valid, [])).toBeNull()
+  })
+
+  it('holds a token count out of range, at both ends', () => {
+    expect(holdReasonFor(settings({ maxTokens: SETTINGS_BOUNDS.maxTokens.min - 1 }), [])).toBe(HOLD_REASON.maxTokens)
+    expect(holdReasonFor(settings({ maxTokens: SETTINGS_BOUNDS.maxTokens.max + 1 }), [])).toBe(HOLD_REASON.maxTokens)
+  })
+
+  it('does not hold a count exactly on a bound', () => {
+    expect(holdReasonFor(settings({ maxTokens: SETTINGS_BOUNDS.maxTokens.min }), [])).toBeNull()
+    expect(holdReasonFor(settings({ maxTokens: SETTINGS_BOUNDS.maxTokens.max }), [])).toBeNull()
+  })
+
+  it('holds an emptied prompt rather than letting the default replace it', () => {
+    expect(holdReasonFor(settings({ systemPrompt: '   ' }), [])).toBe(HOLD_REASON.prompt)
+  })
+
+  it('holds a missing hotkey', () => {
+    expect(holdReasonFor(settings({ hotkey: '  ' }), [])).toBe(HOLD_REASON.hotkey)
+  })
+})
+
+describe('applyGate: is there anything to write', () => {
+  it('says yes before the settings have loaded', () => {
+    expect(hasUnsaved(settings(), null, null)).toBe(true)
+  })
+
+  it('says no when the draft matches what is on disk', () => {
+    const draft = settings()
+
+    expect(hasUnsaved(draft, { settings: settings() }, null)).toBe(false)
+  })
+
+  it('says yes when the draft differs', () => {
+    expect(hasUnsaved(settings({ maxTokens: 4096 }), { settings: settings() }, null)).toBe(true)
+  })
+
+  it('says no when the difference is the one already written', () => {
+    // The store normalises a value, so the bundle never equals the draft; the
+    // snapshot of what was last sent is what stops the write loop.
+    const draft = settings({ maxTokens: 4096 })
+
+    expect(hasUnsaved(draft, { settings: settings() }, JSON.stringify(draft))).toBe(false)
+  })
+})
+
+describe('applyGate: did the write that just finished cover the draft', () => {
+  it('says yes when nothing was typed during the round trip', () => {
+    const draft = settings({ maxTokens: 4096 })
+
+    expect(writeCoversDraft(JSON.stringify(draft), draft)).toBe(true)
+  })
+
+  it('says no when a newer edit is waiting for its own write', () => {
+    // A slow save resolving after the next keystroke must not announce «Применено»
+    // for the older snapshot, and must not release the close hold.
+    const written = JSON.stringify(settings({ maxTokens: 4096 }))
+    const edited = settings({ maxTokens: 4097 })
+
+    expect(writeCoversDraft(written, edited)).toBe(false)
+  })
+
+  it('says no before a draft exists', () => {
+    expect(writeCoversDraft(JSON.stringify(settings()), null)).toBe(false)
+  })
+})
+
+describe('applyGate: the draft as it can be written', () => {
+  it('reverts a token count out of range to what is on disk', () => {
+    const onDisk = settings({ maxTokens: 1024 })
+    const draft = settings({ maxTokens: 0 })
+
+    expect(writableSettings(draft, { settings: onDisk }, []).maxTokens).toBe(1024)
+  })
+
+  it('reverts an invalid base URL to what is on disk', () => {
+    const onDisk = settings({ baseUrls: { ...settings().baseUrls, openai: 'https://ok.example/v1' } })
+    const draft = settings({ baseUrls: { ...settings().baseUrls, openai: 'мусор' } })
+
+    const written = writableSettings(draft, { settings: onDisk }, ['openai'])
+
+    expect(written.baseUrls.openai).toBe('https://ok.example/v1')
+  })
+
+  it('reverts an emptied prompt and hotkey to what is on disk', () => {
+    const onDisk = settings({ systemPrompt: 'Старый промпт', hotkey: 'Alt+Space' })
+    const draft = settings({ systemPrompt: '', hotkey: '' })
+
+    const written = writableSettings(draft, { settings: onDisk }, [])
+
+    expect(written.systemPrompt).toBe('Старый промпт')
+    expect(written.hotkey).toBe('Alt+Space')
+  })
+
+  it('leaves valid values alone', () => {
+    const draft = settings({ maxTokens: 4096, systemPrompt: 'Новый промпт' })
+
+    const written = writableSettings(draft, { settings: settings() }, [])
+
+    expect(written.maxTokens).toBe(4096)
+    expect(written.systemPrompt).toBe('Новый промпт')
+  })
+
+  it('does not touch the draft it was given', () => {
+    const draft = settings({ maxTokens: 0 })
+
+    writableSettings(draft, { settings: settings({ maxTokens: 1024 }) }, [])
+
+    expect(draft.maxTokens).toBe(0)
+  })
+
+  it('passes everything through before the settings have loaded', () => {
+    const draft = settings({ maxTokens: 0, systemPrompt: '' })
+
+    const written = writableSettings(draft, null, [])
+
+    expect(written.maxTokens).toBe(0)
+    expect(written.systemPrompt).toBe('')
+  })
+})

@@ -1,0 +1,265 @@
+/**
+ * Design tokens shared by the overlay, settings and onboarding renderers.
+ * Light/dark follows the system appearance (ТЗ §8).
+ *
+ * Palette and usage rules: `docs/style.md`. The short version is white text and
+ * the blue `--accent` on dark glass; new components take these tokens instead of
+ * inventing a hue of their own.
+ */
+
+:root {
+  color-scheme: light dark;
+
+  --font: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', Arial, sans-serif;
+  --mono: ui-monospace, 'SF Mono', Menlo, monospace;
+
+  --bg: rgba(30, 30, 32, 0.94);
+  --bg-solid: #171718;
+  --surface: rgba(255, 255, 255, 0.06);
+  --surface-strong: rgba(255, 255, 255, 0.11);
+  --border: rgba(255, 255, 255, 0.12);
+  --border-strong: rgba(255, 255, 255, 0.2);
+  --text: #f3f3f4;
+  --text-dim: rgba(243, 243, 244, 0.66);
+  --text-faint: rgba(243, 243, 244, 0.45);
+  --accent: #7b95ff;
+  --accent-strong: #6480ff;
+  --accent-soft: rgba(123, 149, 255, 0.18);
+  --danger: #ff6f6f;
+  --warning: #f3c26b;
+  --success: #6bd6a1;
+  --shadow: 0 24px 60px rgba(0, 0, 0, 0.5);
+  --radius: 14px;
+  --radius-sm: 9px;
+
+  /* Glass surface for the cursor card (see `overlay.css`). */
+  --glass-tint: rgba(34, 34, 37, 0.6);
+  --glass-sheen: rgba(255, 255, 255, 0.16);
+  --glass-edge: rgba(255, 255, 255, 0.14);
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: rgba(248, 248, 249, 0.97);
+    --bg-solid: #f7f7f8;
+    --surface: rgba(0, 0, 0, 0.045);
+    --surface-strong: rgba(0, 0, 0, 0.085);
+    --border: rgba(0, 0, 0, 0.11);
+    --border-strong: rgba(0, 0, 0, 0.2);
+    --text: #18181a;
+    --text-dim: rgba(24, 24, 26, 0.68);
+    --text-faint: rgba(24, 24, 26, 0.45);
+    --accent: #4a68f0;
+    --accent-strong: #3a55d6;
+    --accent-soft: rgba(74, 104, 240, 0.14);
+    --danger: #d64545;
+    --warning: #a8760f;
+    --success: #159c62;
+    --shadow: 0 24px 60px rgba(20, 24, 40, 0.2);
+
+    --glass-tint: rgba(200, 202, 206, 0.62);
+    --glass-sheen: rgba(255, 255, 255, 0.9);
+    --glass-edge: rgba(0, 0, 0, 0.09);
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--text);
+  font-family: var(--font);
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+}
+
+body.window {
+  background: var(--bg-solid);
+  overflow: auto;
+}
+
+button {
+  font: inherit;
+  font-size: 13px;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 6px 11px;
+  cursor: pointer;
+  transition:
+    background 120ms ease,
+    border-color 120ms ease,
+    transform 90ms ease;
+}
+
+button:hover:not(:disabled) {
+  background: var(--surface-strong);
+  border-color: var(--border-strong);
+}
+
+button:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+button.primary {
+  background: var(--accent);
+  border-color: transparent;
+  color: #fff;
+  font-weight: 600;
+}
+
+button.primary:hover:not(:disabled) {
+  background: var(--accent-strong);
+}
+
+button.ghost {
+  background: transparent;
+  border-color: transparent;
+  color: var(--text-dim);
+}
+
+button.ghost:hover:not(:disabled) {
+  background: var(--surface);
+  color: var(--text);
+}
+
+button.chip {
+  border-radius: 999px;
+  padding: 5px 12px;
+  font-size: 12.5px;
+}
+
+button.chip[data-active='true'] {
+  background: var(--accent-soft);
+  border-color: rgba(123, 149, 255, 0.45);
+  color: var(--text);
+}
+
+input,
+textarea,
+select {
+  font: inherit;
+  font-size: 13px;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  outline: none;
+  width: 100%;
+}
+
+input:focus,
+textarea:focus,
+select:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+textarea {
+  resize: vertical;
+  line-height: 1.45;
+}
+
+select option {
+  background: var(--bg-solid);
+  color: var(--text);
+}
+
+::-webkit-scrollbar {
+  width: 9px;
+  height: 9px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--surface-strong);
+  border-radius: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.hint {
+  color: var(--text-faint);
+  font-size: 12px;
+}
+
+.warn {
+  color: var(--warning);
+}
+
+.err {
+  color: var(--danger);
+}
+
+.ok {
+  color: var(--success);
+}
+/* Shared surfaces for the standalone windows. */
+body.window {
+  --window-rail: light-dark(#ebedf4, #1b1d24);
+  --window-panel: light-dark(#fff, #23252d);
+  --window-divider: light-dark(rgb(25 35 64 / 0.1), rgb(236 240 255 / 0.1));
+  --window-depth: 0 2px 8px light-dark(rgb(31 43 81 / 0.055), rgb(0 0 0 / 0.16));
+  --window-gutter: 32px;
+  background: light-dark(#f5f6fa, #18191f);
+  overflow: hidden;
+}
+
+.window-brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text);
+}
+
+.window-brand img {
+  flex: none;
+}
+
+.window-brand-name {
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.window-brand-subtitle {
+  margin-top: 2px;
+  color: var(--text-dim);
+  font-size: 11px;
+}
+
+body.window button.primary {
+  background: light-dark(#3d55d5, #95a7ff);
+  color: light-dark(#fff, #111529);
+}
+
+body.window button.primary:hover:not(:disabled) {
+  background: light-dark(#344bc2, #b0bdff);
+}
+
+:where(button, summary, a):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  body.window *,
+  body.window *::before,
+  body.window *::after {
+    transition-duration: 0s !important;
+    animation-duration: 0s !important;
+  }
+}

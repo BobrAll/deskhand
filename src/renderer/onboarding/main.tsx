@@ -1,0 +1,14 @@
+import { StrictMode } from 'react'
+import { createRoot } from 'react-dom/client'
+import { App } from './App'
+import '../styles/modelPicker.css'
+import './onboarding.css'
+
+const container = document.getElementById('root')
+if (!container) throw new Error('root element is missing')
+
+createRoot(container).render(
+  <StrictMode>
+    <App />
+  </StrictMode>
+)

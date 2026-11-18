@@ -1,0 +1,1103 @@
+/**
+ * The cursor card.
+ *
+ * A small rounded field that appears next to the pointer: one line for the
+ * question and the answer printed right under it. Everything else — context tags and
+ * the answer's secondary commands — is folded behind the chevron in
+ * `.bar`. Sized in the "compact" register on purpose: this is a control surface
+ * floating over someone else's app, not a window.
+ */
+
+html,
+body,
+#root {
+  background: transparent;
+  height: auto;
+  overflow: hidden;
+}
+
+/* Keep the tint as a single layer so its alpha controls the whole surface. */
+:root {
+  --panel: rgba(22, 22, 25, 0.72);
+  --panel-edge: rgba(255, 255, 255, 0.08);
+  --panel-drawing: rgba(30, 30, 33, 0.38);
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --panel: rgba(252, 253, 255, 0.66);
+    --panel-edge: rgba(0, 0, 0, 0.14);
+    --panel-drawing: rgba(200, 202, 206, 0.4);
+  }
+}
+
+.card {
+  margin: 0;
+  /* The resize edge is positioned against the card, not against the window. */
+  position: relative;
+  padding: 6px 8px;
+  isolation: isolate;
+  border: 1px solid transparent;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  /* 160 ms is the middle of the documented 120–200 ms window: long enough to
+     read as a fade rather than a pop, short enough not to lag behind the key
+     press that summons the card. The unfold matches it — one motion, one speed. */
+  animation: appear 160ms ease-out;
+  /* The whole glass is a handle. Text, controls and the answer opt out below:
+     a window that can only be grabbed by its top six points is a puzzle. */
+  -webkit-app-region: drag;
+  cursor: grab;
+}
+
+.card :is(textarea, button, input, a, .answer, .meta, .drawer, .foot, .agent, .agent-done, .grip) {
+  -webkit-app-region: no-drag;
+}
+
+/* Holding Option turns the whole card into a handle, including the field and
+   the answer. The plain drag stays off the text so typing and selecting keep
+   working; this is the escape hatch for "move it from here". */
+.card[data-drag-anywhere],
+.card[data-drag-anywhere] * {
+  -webkit-app-region: drag !important;
+  cursor: grab !important;
+}
+
+textarea.prompt {
+  cursor: text;
+}
+
+.card button,
+.card a {
+  cursor: pointer;
+}
+
+.card .answer {
+  cursor: text;
+}
+
+/* The panel is the window: its rounded corners are the window's own, so the
+   native vibrancy blur follows the same silhouette instead of showing a square
+   behind it. `-1px` reaches past the card's transparent border to the window
+   edge. The radius matches the mask macOS puts on a rounded window (9 pt), which
+   keeps the blur from peeking out at the corners. */
+.card::before {
+  content: '';
+  position: absolute;
+  inset: -1px;
+  z-index: -1;
+  pointer-events: none;
+  border: 1px solid var(--panel-edge);
+  border-radius: 9px;
+  background-color: var(--panel);
+  background-image: linear-gradient(
+    to bottom,
+    light-dark(rgb(255 255 255 / 0.16), rgb(255 255 255 / 0.08)),
+    transparent 26px
+  );
+  /* The window is `hasShadow: false` and is resized to exactly the card, so a
+     native or CSS outer shadow would be clipped away at the window edge. What
+     keeps the glass legible on a white document is the edge itself: the light
+     scheme draws it darker than before, and the inset line gives it depth. */
+  box-shadow: inset 0 0 2px rgb(0 0 0 / 0.16);
+  transition:
+    background-color 180ms ease-out,
+    border-color 180ms ease-out;
+}
+
+/**
+ * While the assistant is painting on the screen the card becomes a much thinner
+ * sheet of glass. The arrow exists to point at something *behind* the card, and
+ * an opaque panel parked on that very spot is what hides it. Under 40% the desktop
+ * shows through, so the target stays visible.
+ */
+.card[data-drawing]::before {
+  background-image: none;
+  box-shadow: none;
+  background-color: var(--panel-drawing);
+  border-color: color-mix(in srgb, var(--panel-edge) 55%, transparent);
+}
+
+/* A faint accent edge marks a request in progress. */
+.card[data-busy]::before {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--panel-edge));
+}
+
+@keyframes appear {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* ------------------------------------------------------------------ the line */
+
+.bar {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+/**
+ * Holds the chevron's place while there is no chevron.
+ *
+ * The card is on screen for a few hundred milliseconds before its session is
+ * collected, and it renders without the chevron then because there is nothing to
+ * unfold. The field is measured against a width that already includes a chevron,
+ * so the space has to be claimed by *something* — otherwise the text sits 22
+ * points further right and shifts left the instant the real chevron appears.
+ */
+.bar > .reserve {
+  flex: none;
+  width: 16px;
+  height: 16px;
+}
+
+/* The field is the card: no box of its own, no focus ring — the caret is the
+   cursor, and a second border inside this rectangle would only add noise. */
+textarea.prompt {
+  flex: 1;
+  min-width: 0;
+  field-sizing: content;
+  height: auto;
+  min-height: 17px;
+  max-height: 84px;
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  font-size: 13px;
+  line-height: 17px;
+  resize: none;
+  overflow-y: auto;
+  caret-color: var(--accent);
+  /**
+   * One line until the card has nothing left to give.
+   *
+   * The window is resized a frame after the keystroke that widens it, so a soft
+   * wrap landing inside that gap would add a second row and drop it again — a
+   * flicker of the card's height on every letter. Keeping the field on a single
+   * line and letting it overflow sideways for that one frame keeps the growth
+   * monotonic; `data-wrap` turns wrapping back on once `CARD_WIDTH` is reached and
+   * there is nowhere left to grow.
+   */
+  white-space: pre;
+  overflow-x: hidden;
+}
+
+textarea.prompt[data-wrap] {
+  white-space: pre-wrap;
+}
+
+textarea.prompt:focus {
+  border: none;
+  box-shadow: none;
+}
+
+textarea.prompt::placeholder {
+  color: var(--text-faint);
+}
+
+/**
+ * The one piece of chrome the card starts with. The field plus a 16px chevron:
+ * everything else in the panel (context tags and the action strip of an
+ * answer) hides behind it, so opening the card costs a single line of screen.
+ */
+button.toggle {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  margin-top: 1px;
+  padding: 0;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  border-color: transparent;
+  color: var(--text-faint);
+  transition:
+    color 90ms ease-out,
+    background 90ms ease-out;
+}
+
+button.toggle svg {
+  width: 9px;
+  height: 6px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  transition: transform 120ms ease-out;
+}
+
+button.toggle:hover:not(:disabled) {
+  background: var(--surface);
+  border-color: transparent;
+  color: var(--text);
+}
+
+/* Open: the chevron points up. Folded but with something to read (a warning, a
+   failure): it keeps the accent, so the one-line card still advertises it. */
+button.toggle[data-open],
+button.toggle[data-alert] {
+  color: var(--accent);
+}
+
+button.toggle[data-open] svg {
+  transform: rotate(180deg);
+}
+
+/* The mouse's way out. The same quiet register as the chevron: it is a door
+   out of a small panel, not a third thing to read. */
+button.close {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  margin-top: 1px;
+  padding: 0;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  border-color: transparent;
+  color: var(--text-faint);
+  transition:
+    color 90ms ease-out,
+    background 90ms ease-out;
+}
+
+button.close svg {
+  width: 9px;
+  height: 9px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+}
+
+button.close:hover:not(:disabled) {
+  background: var(--surface);
+  border-color: transparent;
+  color: var(--text);
+}
+
+/* While an answer streams the chevron gets company: a long answer that is
+   already wrong should not have to be waited out. */
+button.stop {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+}
+
+button.stop > span {
+  width: 7px;
+  height: 7px;
+  border-radius: 1.5px;
+  background: var(--text-dim);
+}
+
+button.stop:hover:not(:disabled) {
+  background: var(--surface);
+  border: none;
+}
+
+button.stop:hover:not(:disabled) > span {
+  background: var(--danger);
+}
+
+/*
+ * Hit areas.
+ *
+ * The controls are drawn at 16–18 pt so the card keeps its compact register, but
+ * a 16 pt square is below the 24 pt pointer target macOS expects. Each one grows
+ * an invisible `::before` instead of padding: the pseudo-element is taken out of
+ * flow, so the bar keeps its 6 pt gaps and the chrome width the main process
+ * clamps the window to stays exactly what `cardMetrics.test.ts` sums.
+ */
+button.toggle,
+button.close,
+button.stop {
+  position: relative;
+}
+
+button.toggle::before,
+button.close::before {
+  content: '';
+  position: absolute;
+  /* 24 × 28: four points sideways leave the 6 pt bar gap intact between two
+     neighbours, six vertically stay inside the card's own padding. */
+  inset: -6px -4px;
+  border-radius: var(--radius-sm);
+}
+
+/* 18 pt drawn, 24 pt to hit. */
+button.stop::before {
+  content: '';
+  position: absolute;
+  inset: -3px;
+  border-radius: var(--radius-sm);
+}
+
+/* The close button is the last thing in the bar, so its target reaches into the
+   card's own padding — and there it meets the resize edge. It wins that sliver
+   on purpose: a click aimed at the door must not resize the room. */
+button.close {
+  z-index: 1;
+}
+
+/* Everything under the field is indented to the text column, so the answer
+   lands exactly under the question. */
+.meta,
+.line,
+.answer,
+.foot {
+  margin-left: 12px;
+}
+
+/* The folded-away half of the card: whatever the chevron opens. */
+.drawer {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  animation: unfold 160ms ease-out;
+}
+
+@keyframes unfold {
+  from {
+    opacity: 0;
+    transform: translateY(-2px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* ------------------------------------------------------------ context strip */
+
+.meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  /* Tags sit on 15 pt lines; a wrapped row needs a hair of breathing room or the
+     pill borders of two rows touch. */
+  row-gap: 3px;
+  min-height: 18px;
+  font-size: 11px;
+  /* Small type over a light card needs more than `--text-faint`: the strip is
+     clickable, so it has to stay legible, not just quiet. */
+  color: color-mix(in srgb, var(--text) 62%, transparent);
+}
+
+/* The app name is the one item that may give way: at 342 pt with Текст, Экран, a
+   preview and Рисунок on the same row it shrinks to an ellipsis instead of
+   pushing the tags past the card's right edge. `min-width: 0` is what allows a
+   flex item to go below its text width. */
+.meta .app {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 110px;
+  margin-right: 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Tags stay at 11.5 px on purpose: this row answers "what does it see?", it is
+   not a toolbar. Hover is the only thing that reveals they are clickable. */
+button.tag {
+  padding: 1px 5px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: transparent;
+  font-size: 11.5px;
+  line-height: 15px;
+  color: color-mix(in srgb, var(--text) 62%, transparent);
+}
+
+button.tag:hover:not(:disabled) {
+  background: var(--surface);
+  border-color: var(--border);
+  color: var(--text-dim);
+}
+
+button.tag[data-on='true'] {
+  background: var(--accent-soft);
+  color: var(--text);
+}
+
+button.tag:disabled {
+  opacity: 0.4;
+}
+
+button.tag.clear {
+  color: var(--warning);
+}
+
+.thumb {
+  flex: none;
+  height: 17px;
+  width: auto;
+  max-width: 74px;
+  object-fit: cover;
+  border-radius: 4px;
+  border: 1px solid var(--border-strong);
+}
+
+/* Hidden preload target for the next live frame (see `LiveThumb`). */
+.thumb.probe {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* --------------------------------------------------------------- status rows */
+
+.line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11.5px;
+  line-height: 1.35;
+  color: var(--text-dim);
+}
+
+.line > span {
+  flex: 1;
+  min-width: 0;
+}
+
+.line[data-tone='warn'] {
+  color: var(--warning);
+}
+
+.line[data-tone='err'] {
+  color: var(--danger);
+}
+
+.transcript {
+  display: block;
+  max-height: 84px;
+  overflow-y: auto;
+  overflow-wrap: anywhere;
+}
+
+/* ------------------------------------------------------------------ агент */
+
+.agent {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-left: 12px;
+  margin-top: 6px;
+  padding: 6px 8px 2px;
+  border-top: 1px solid var(--border);
+}
+
+.agent[data-running] {
+  margin: 0;
+  padding: 2px 0;
+  border-top: 0;
+}
+
+.agent-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11.5px;
+  line-height: 1.3;
+  color: var(--text);
+}
+
+.agent-done {
+  padding-block: 2px;
+}
+
+.agent-check {
+  width: 12px;
+  height: 12px;
+  flex: none;
+  fill: none;
+  stroke: var(--success);
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.agent-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  animation: agent-step-in 150ms ease-out;
+}
+
+/* A stop control cannot live on the card while a plan is click-through; the
+   key that can is worth naming. */
+.agent-hint {
+  flex: none;
+  font-size: 10.5px;
+  color: var(--text-faint);
+  white-space: nowrap;
+}
+
+.agent-dot {
+  width: 6px;
+  height: 6px;
+  margin-inline: 3px;
+  border-radius: 50%;
+  background: var(--accent);
+  flex: none;
+}
+
+.agent[data-phase='error'] .agent-dot,
+.agent[data-phase='aborted'] .agent-dot {
+  background: var(--danger);
+}
+
+/* A run that ended without finishing is not a quiet finish. It is a phase of
+   `done` — that is the agent's word for "the loop is over" — so the colour has
+   to come from the verdict rather than from the phase, or a failed task would
+   show the same grey dot as a successful one. */
+.agent[data-mark='failed'] .agent-dot {
+  background: var(--danger);
+}
+
+.agent-ask {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 2px;
+  padding-top: 6px;
+  border-top: 1px solid color-mix(in srgb, var(--accent) 22%, transparent);
+}
+
+.agent-ask-title {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.agent-ask-hint {
+  font-size: 10.5px;
+  line-height: 1.35;
+  color: var(--text-faint);
+}
+
+.agent-ask-detail {
+  font-size: 10.5px;
+  line-height: 1.4;
+  color: var(--text-dim);
+  white-space: pre-wrap;
+  user-select: text;
+}
+
+.agent-ask-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.agent-ask-buttons button {
+  font: inherit;
+  font-size: 10.5px;
+  line-height: 1;
+  padding: 5px 9px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+  /* The window is click-through for the rest of the run; this is the one place
+     the pointer has to reach, so the hit area is explicit. */
+  pointer-events: auto;
+}
+
+.agent-ask-buttons button:hover {
+  background: var(--accent-soft);
+}
+
+.agent-allow {
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+  background: var(--accent-soft);
+}
+
+.agent-deny {
+  color: var(--text-dim);
+}
+
+@keyframes agent-step-in {
+  from {
+    opacity: 0.55;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .agent-label {
+    animation: none;
+  }
+}
+
+/* ------------------------------------------------------------------ the answer */
+
+.answer {
+  font-size: 14px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+  padding: 8px 2px 2px 0;
+  border-top: 1px solid var(--border);
+  max-height: 268px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  user-select: text;
+}
+
+.answer a {
+  color: var(--accent);
+}
+
+/*
+ * Markdown blocks. The card is small enough that headings cannot be much
+ * bigger than body text — a `#` here is a label, not a title — so the levels
+ * differ by a point and by weight rather than by scale.
+ */
+.answer p,
+.answer ul,
+.answer ol,
+.answer pre {
+  margin: 0;
+}
+
+.answer > * + * {
+  margin-top: 7px;
+}
+
+.answer strong {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.answer .md-heading {
+  font-weight: 600;
+  color: var(--text);
+  font-size: 14px;
+}
+
+.answer .md-heading[data-level='1'] {
+  font-size: 14.5px;
+}
+
+.answer code {
+  padding: 0 3px;
+  border-radius: 3px;
+  background: var(--surface);
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.answer pre {
+  padding: 5px 7px;
+  border-radius: 6px;
+  background: var(--surface);
+  overflow-x: auto;
+  white-space: pre;
+}
+
+.answer pre code {
+  padding: 0;
+  background: none;
+}
+
+.answer ul,
+.answer ol {
+  padding-left: 16px;
+}
+
+.answer hr {
+  height: 0;
+  margin: 6px 0;
+  border: none;
+  border-top: 1px solid var(--border);
+}
+
+/*
+ * The grid is drawn with horizontal rules only.
+ *
+ * The first version had a full cell grid on `--border`, and on a 400-point
+ * card that read as no grid at all: 12% white on the dark panel is a hint, not
+ * a line. Rather than turning every border up (which makes the table louder
+ * than the answer around it), the vertical lines are dropped and the two that
+ * carry meaning are strengthened — the frame and the header rule. That is also
+ * what keeps four columns legible in a card this narrow.
+ */
+.answer .md-table {
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+}
+
+.answer table {
+  /* Fill the card rather than the longest cell: a table that is wider than the
+     card has to be dragged sideways, and a card you drag is not a card you
+     read. The wrapper keeps the scroll as a last resort for a table with more
+     columns than the width can honestly hold. */
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.answer th,
+.answer td {
+  /* The answer itself is `pre-wrap`; a cell must not inherit that, or the
+     padding inside a row would be preserved as visible indentation. */
+  white-space: normal;
+  /* `anywhere`, not `break-word`: only this one lowers the cell's min-content
+     width, which is what lets a long identifier in one column stop dictating
+     the width of the whole table. */
+  overflow-wrap: anywhere;
+  padding: 3px 7px;
+  border: none;
+  text-align: left;
+  vertical-align: top;
+}
+
+.answer tr + tr td {
+  border-top: 1px solid var(--border);
+}
+
+.answer th {
+  font-weight: 600;
+  color: var(--text);
+  background: var(--surface-strong);
+  border-bottom: 1px solid var(--border-strong);
+}
+
+/* A 9px scrollbar would read as browser chrome inside a 360px card. */
+.answer::-webkit-scrollbar {
+  width: 5px;
+}
+
+.answer::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 999px;
+}
+
+.caret {
+  display: inline-block;
+  width: 5px;
+  height: 13px;
+  margin-left: 2px;
+  vertical-align: text-bottom;
+  background: var(--accent);
+  border-radius: 1px;
+  animation: blink 1s step-end infinite;
+}
+
+@keyframes blink {
+  50% {
+    opacity: 0;
+  }
+}
+
+/* -------------------------------------------------------------- action strip */
+
+.foot {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+}
+
+.answer-actions {
+  gap: 4px;
+}
+
+.answer-actions > button {
+  flex: none;
+  white-space: nowrap;
+}
+
+.spacer {
+  flex: 1;
+}
+
+/*
+ * The resize edge.
+ *
+ * It is a hit target, not a decoration: the card is transparent and has no
+ * native frame, so there is nothing else to grab. Seven points is the width of
+ * the card's own padding, which keeps it off the answer's scrollbar — a wider
+ * strip would turn a scroll gesture into a resize halfway down a long reply.
+ *
+ * The hint is a short line that only appears under the pointer. A permanent mark
+ * on the edge of a glass card reads as a scrollbar, and the discoverable path to
+ * the same result is the «Шире» button.
+ */
+.grip {
+  position: absolute;
+  top: 3px;
+  right: 0;
+  bottom: 3px;
+  width: 7px;
+  cursor: ew-resize;
+  background: transparent;
+  /* Without this the browser claims the drag for a text selection. */
+  touch-action: none;
+}
+
+/**
+ * The grab edge is 7 pt wide because wider would turn scrolling into resizing.
+ *
+ * It is the one control that does not grow an invisible target: the answer's
+ * scrollbar starts 8 pt in, and an 11 pt strip would take the outer 3 pt of the
+ * thumb — a vertical drag on the scrollbar would resize the card instead. The
+ * keyboard reaches the same edge with Tab, and «Шире» is the pointer path that
+ * does not depend on hitting 7 pt.
+ */
+.grip::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  right: 2px;
+  width: 2px;
+  height: 14px;
+  margin-top: -7px;
+  border-radius: 1px;
+  background: var(--text-dim);
+  opacity: 0;
+  transition: opacity 120ms ease-out;
+}
+
+.grip:hover::after,
+.grip:focus-visible::after,
+.grip[data-dragging]::after {
+  opacity: 0.55;
+}
+
+/* The edge is reachable with Tab, so the focus has to be visible on a 7px strip
+   that is otherwise only a hover hint. */
+.grip:focus-visible {
+  outline: 2px solid var(--text-dim);
+  outline-offset: -2px;
+  border-radius: 3px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .grip::after {
+    transition: none;
+  }
+}
+
+button.link {
+  padding: 1px 5px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  font-size: 11.5px;
+  line-height: 16px;
+  color: var(--text-dim);
+}
+
+button.link:hover:not(:disabled) {
+  background: var(--surface);
+  border: none;
+  color: var(--text);
+}
+
+button.link.primary {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+button.link.primary:hover:not(:disabled) {
+  background: var(--accent-soft);
+}
+
+/* Copy is the one action that confirms itself in place; a new line under the
+   card would survive long after the click and push everything around. The tint
+   and the check are the point — a green word alone disappears under the hover
+   that follows the click. */
+button.link[data-copied],
+button.link[data-copied]:hover:not(:disabled) {
+  color: var(--success);
+  background: color-mix(in srgb, var(--success) 14%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--success) 30%, transparent);
+}
+
+/* ---------------------------------------------------------- keyboard focus */
+
+/*
+ * The card used to have no visible focus at all: Tab moved from the field to the
+ * chevron to the close button and nothing followed. The settings window already
+ * rings its controls, so this is the same ring — accent, 2 px, 2 px of air —
+ * applied to the card's own buttons. `:focus-visible` only, so a pointer click
+ * stays quiet, and the outline sits outside the 16 pt box instead of changing
+ * it. The grip is excluded on purpose: at 7 pt wide an offset ring would spill
+ * out of the window, so it keeps its inset outline above.
+ */
+.card :is(button.toggle, button.close, button.stop, button.tag, button.link):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* ------------------------------------------------------- the listening card */
+
+/**
+ * While the microphone is open the card *is* the indicator: the field is replaced
+ * by five bars in the same glass, at the same place, at the same size. Nothing
+ * else appears on screen — no second window, no halo at the cursor.
+ *
+ * The bounce is a CSS animation on the compositor; the level only opens the whole
+ * cluster through one custom property with a short transition, because the meter
+ * arrives at ~10 Hz and would otherwise read as a stutter rather than a voice.
+ */
+.voice {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  /* Exactly the height of the field it replaces, so the card does not jump when
+     the turn starts or ends. */
+  height: 19px;
+  transform: scaleY(var(--amp, 0.8));
+  transform-origin: center;
+  transition: transform 120ms linear;
+}
+
+.voice i {
+  display: block;
+  width: 2px;
+  height: 11px;
+  border-radius: 1px;
+  background: var(--accent);
+  transform: scaleY(0.35);
+  transform-origin: center;
+  animation: voice-bar 760ms cubic-bezier(0.45, 0.05, 0.55, 0.95) infinite;
+}
+
+/* Uneven on purpose: an even stagger reads as a metronome. */
+.voice i:nth-child(2) {
+  animation-delay: 90ms;
+}
+.voice i:nth-child(3) {
+  animation-delay: 180ms;
+}
+.voice i:nth-child(4) {
+  animation-delay: 60ms;
+}
+.voice i:nth-child(5) {
+  animation-delay: 150ms;
+}
+
+/* Recognising: the microphone is closed, so a bounce would be a lie — one slow
+   wave travels left to right and the bars drop the accent. */
+.voice[data-phase='transcribing'] i {
+  background: var(--text-dim);
+  animation-duration: 1400ms;
+}
+.voice[data-phase='transcribing'] i:nth-child(2) {
+  animation-delay: 120ms;
+}
+.voice[data-phase='transcribing'] i:nth-child(3) {
+  animation-delay: 240ms;
+}
+.voice[data-phase='transcribing'] i:nth-child(4) {
+  animation-delay: 360ms;
+}
+.voice[data-phase='transcribing'] i:nth-child(5) {
+  animation-delay: 480ms;
+}
+
+@keyframes voice-bar {
+  0%,
+  100% {
+    transform: scaleY(0.3);
+  }
+  50% {
+    transform: scaleY(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .card,
+  .drawer {
+    animation: none;
+  }
+  /* The caret is the one indicator that a reply is still arriving; without the
+     blink it stays a solid mark instead of disappearing. */
+  .caret {
+    animation: none;
+    opacity: 1;
+  }
+  .voice {
+    transform: none;
+    transition-duration: 1ms;
+  }
+  .voice i {
+    animation: none;
+    transform: scaleY(0.55);
+  }
+}
+
+/* A voice turn is not a panel: the glass, the edge, the shadow and the padding all
+   go, and the bars are the whole thing — small, next to the pointer, where the
+   field used to be. */
+.card[data-voice] {
+  padding: 0;
+}
+
+.card[data-voice]::before {
+  content: none;
+}
+
+.card[data-voice] .voice {
+  /* Fills the window's minimum height, so the bars sit dead centre and nothing is
+     clipped by the resize. */
+  height: 31px;
+  /* Left-aligned, not centred: the window is wider than the bars for a native
+     reason (see CARD_VOICE_WIDTH), so centring would push them a third of the
+     way across the window and away from the pointer. */
+  justify-content: flex-start;
+  padding-left: 8px;
+}
+
+/* Quiet, local reading material; never an animated carousel over the workspace. */
+.waiting {
+  margin: 4px 0 2px 12px;
+  padding: 7px 9px;
+  border-left: 2px solid var(--panel-edge);
+  color: var(--text-dim);
+  font-size: 11px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.waiting-label {
+  font-weight: 500;
+}
+.waiting-caption {
+  display: block;
+  font-weight: 600;
+  margin-bottom: 3px;
+}

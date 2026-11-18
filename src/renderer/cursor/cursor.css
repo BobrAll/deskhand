@@ -1,0 +1,85 @@
+/* The agent layer paints over arbitrary content, using a fixed blue accent. */
+
+html,
+body,
+#root {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  background: transparent;
+  overflow: hidden;
+  /* The layer is a picture, not a control. The main process enforces this too. */
+  pointer-events: none;
+  user-select: none;
+  cursor: default;
+  -webkit-app-region: no-drag;
+}
+
+:root {
+  /* Deliberately not `--accent`: this layer sits on arbitrary content (a white
+     document, a dark editor, a photo), so it is the same hue a step brighter —
+     `--accent` disappears as a thin line on white. */
+  --cursor-accent: #5b78ff;
+  --cursor-text: #f4f5f7;
+}
+
+.screen-glow {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  transition: opacity 130ms ease-out;
+}
+
+.screen-glow::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(ellipse at top left, var(--cursor-text), transparent 60%),
+    radial-gradient(ellipse at bottom right, var(--cursor-text), transparent 55%), var(--cursor-accent);
+  box-shadow: inset 0 0 0 1px var(--cursor-accent);
+  /* The four masks combine into a perimeter that fades inward. */
+  --glow-width: 44px;
+  --edge-fade: black, rgb(0 0 0 / 0.78) 12%, rgb(0 0 0 / 0.3) 48%, transparent;
+  mask:
+    linear-gradient(to bottom, var(--edge-fade)) top / 100% var(--glow-width) no-repeat,
+    linear-gradient(to left, var(--edge-fade)) right / var(--glow-width) 100% no-repeat,
+    linear-gradient(to top, var(--edge-fade)) bottom / 100% var(--glow-width) no-repeat,
+    linear-gradient(to right, var(--edge-fade)) left / var(--glow-width) 100% no-repeat;
+  opacity: 0.93;
+}
+
+#root[data-visible='true'] .screen-glow {
+  opacity: 1;
+}
+
+#root[data-phase='acting'] .screen-glow::before,
+#root[data-phase='waiting'] .screen-glow::before {
+  animation: glow-breathe 3s ease-in-out infinite;
+}
+
+#root[data-visible='false'] .screen-glow::before {
+  animation-play-state: paused;
+}
+
+#root[data-visible='true'][data-phase='success'] .screen-glow {
+  opacity: 0.55;
+}
+
+@keyframes glow-breathe {
+  50% {
+    opacity: 0.72;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #root[data-phase='acting'] .screen-glow::before,
+  #root[data-phase='waiting'] .screen-glow::before {
+    animation: none;
+  }
+
+  .screen-glow {
+    transition: none;
+  }
+}

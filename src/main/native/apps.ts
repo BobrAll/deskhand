@@ -1,0 +1,161 @@
+/**
+ * Which application is in front, and how to bring another one there.
+ *
+ * The helper answers with a JSON object per call; this module maps that into
+ * the `RawFrontApp` shape the context collector and the overlay understand, and
+ * falls back to AppleScript for the identity-only questions osascript can answer.
+ */
+
+import {
+  flag,
+  mapBounds,
+  numberOf,
+  runHelper,
+  runOsascript,
+  HELPER_TIMEOUT_MS,
+  type HelperPayload
+} from './process'
+
+export interface RawFrontApp {
+  bundleId: string
+  name: string
+  pid: number
+  windowId: number | null
+  windowTitle: string | null
+  bounds: { x: number; y: number; width: number; height: number } | null
+  accessibility: boolean
+}
+
+/**
+ * A bundle id is placed inside an AppleScript string literal, and it is not
+ * trusted input: a quote ends the literal, and a backslash reinterprets the
+ * character after it (so `\"` would bring the quote back). Stripping both is
+ * safer than escaping, and a bundle id never contains either.
+ */
+function appleScriptLiteral(value: string): string {
+  return value.replace(/[\\"]/g, '')
+}
+
+function mapFront(payload: HelperPayload | null): RawFrontApp | null {
+  if (!payload?.ok) return null
+  const bundleId = typeof payload.bundleId === 'string' ? payload.bundleId : ''
+  const pid = numberOf(payload.pid)
+  if (pid === null) return null
+  return {
+    bundleId,
+    name: typeof payload.name === 'string' ? payload.name : bundleId,
+    pid,
+    windowId: numberOf(payload.windowId),
+    windowTitle: typeof payload.title === 'string' && payload.title ? payload.title : null,
+    bounds: mapBounds(payload.bounds),
+    accessibility: flag(payload.accessibility)
+  }
+}
+
+/** Re-read the focused window of the app under the overlay, without activating it. */
+export async function helperWindow(pid: number): Promise<RawFrontApp | null> {
+  if (!Number.isInteger(pid) || pid <= 0) return null
+  return mapFront(await runHelper(['window', String(pid)]))
+}
+
+/** Frontmost application plus its focused window, as seen by macOS. */
+export async function helperFrontWindow(): Promise<RawFrontApp | null> {
+  const mapped = mapFront(await runHelper(['front']))
+  if (mapped) return mapped
+
+  const bundleId = await runOsascript([
+    'tell application "System Events" to get bundle identifier of first application process whose frontmost is true'
+  ])
+  if (!bundleId) return null
+  const escaped = appleScriptLiteral(bundleId)
+  const name = await runOsascript([
+    `tell application "System Events" to get name of first application process whose bundle identifier is "${escaped}"`
+  ])
+  const pidRaw = await runOsascript([
+    `tell application "System Events" to get unix id of first application process whose bundle identifier is "${escaped}"`
+  ])
+  const pid = pidRaw ? Number(pidRaw) : Number.NaN
+  return {
+    bundleId,
+    name: name || bundleId,
+    pid: Number.isFinite(pid) ? pid : 0,
+    windowId: null,
+    windowTitle: null,
+    bounds: null,
+    accessibility: false
+  }
+}
+
+/**
+ * Which application is in front, without its window.
+ *
+ * The window half of `front` costs a cold Accessibility round trip (35-45 ms)
+ * plus an enumeration of every on-screen window. Callers that only need the
+ * identity of the application — the plan's working app, a focus guard — should
+ * not pay for a fact they do not read, and most of them do not.
+ */
+export async function helperFrontApplication(): Promise<RawFrontApp | null> {
+  return mapFront(await runHelper(['front-quick']))
+}
+
+/**
+ * Bundle ids of the applications that have a window on screen right now.
+ *
+ * `null` means the helper could not answer (missing binary, timeout, malformed
+ * payload). Callers deciding whether a screenshot is safe treat that as "the
+ * screen cannot be proven clean", not as "nothing is visible".
+ */
+export async function helperVisibleBundleIds(): Promise<string[] | null> {
+  const payload = await runHelper(['visible-apps'])
+  const ids = payload?.visibleBundleIds
+  if (payload?.ok !== true || !Array.isArray(ids)) return null
+  if (!ids.every((id): id is string => typeof id === 'string' && id.length > 0)) return null
+  return ids
+}
+
+/** Brings a previously remembered application back to the front. */
+export async function helperActivate(target: { bundleId: string; pid: number }, signal?: AbortSignal): Promise<boolean> {
+  if (signal) {
+    // Agent activation is bound to a specific process and cannot fall back to
+    // an uncancellable AppleScript.
+    return target.pid > 0 && (await runHelper(['activate', String(target.pid)], HELPER_TIMEOUT_MS, signal))?.ok === true
+  }
+  const byBundle = target.bundleId ? await runHelper(['activate', target.bundleId]) : null
+  if (byBundle?.ok) return true
+  if (target.pid > 0) {
+    const byPid = await runHelper(['activate', String(target.pid)])
+    if (byPid?.ok) return true
+  }
+  if (!target.bundleId) return false
+  const escaped = appleScriptLiteral(target.bundleId)
+  const result = await runOsascript([`tell application id "${escaped}" to activate`])
+  return result !== null
+}
+
+export interface RunningApp {
+  bundleId: string
+  name: string
+}
+
+/** Every regular (Dock-visible) app currently running, sorted by name. */
+export async function helperRunningApps(): Promise<RunningApp[]> {
+  const payload = await runHelper(['apps'])
+  if (payload?.ok && Array.isArray(payload.apps)) {
+    return (payload.apps as Array<Record<string, unknown>>)
+      .map((app) => ({
+        bundleId: typeof app.bundleId === 'string' ? app.bundleId : '',
+        name: typeof app.name === 'string' ? app.name : ''
+      }))
+      .filter((app) => app.bundleId && app.name)
+  }
+
+  const output = await runOsascript([
+    'tell application "System Events" to get bundle identifier of every application process whose background only is false'
+  ])
+  if (!output) return []
+  return output
+    .split(',')
+    .map((bundleId) => bundleId.trim())
+    .filter(Boolean)
+    .map((bundleId) => ({ bundleId, name: bundleId }))
+}

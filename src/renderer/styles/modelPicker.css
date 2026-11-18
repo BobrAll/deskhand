@@ -1,0 +1,251 @@
+/**
+ * The model picker shared by the settings window and the onboarding wizard.
+ *
+ * Search and list share one frame: the input is the header of the list it filters,
+ * not a separate setting above a native dropdown.
+ */
+
+.model-picker {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  overflow: hidden;
+}
+
+/* The input has no ring of its own: the whole picker is the focus target, and a
+   second outline inside the frame would read as a double border. */
+.model-picker:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.model-picker-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 9px;
+  border-bottom: 1px solid var(--border);
+}
+
+.model-picker-search input {
+  flex: 1;
+  min-width: 0;
+  padding: 3px 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  font-size: 12.5px;
+}
+
+.model-picker-search input:focus {
+  border-color: transparent;
+  box-shadow: none;
+}
+
+.model-picker-clear {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-faint);
+  font-size: 15px;
+  line-height: 1;
+}
+
+.model-picker-clear:hover:not(:disabled) {
+  background: var(--surface-strong);
+  border-color: transparent;
+  color: var(--text);
+}
+
+.model-picker-clear:focus-visible {
+  outline-offset: 1px;
+}
+
+.model-picker-cancel {
+  flex: none;
+  padding: 2px 4px;
+  border: 0;
+  background: none;
+  color: var(--text-dim);
+  font-size: 11.5px;
+}
+
+.model-picker-cancel:hover:not(:disabled) {
+  background: none;
+  border-color: transparent;
+  color: var(--text);
+}
+
+.model-picker-cancel:focus-visible {
+  outline-offset: 1px;
+}
+
+.model-picker-count {
+  flex: none;
+  color: var(--text-faint);
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.model-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 228px;
+  padding: 4px;
+  overflow-y: auto;
+}
+
+.model-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: none;
+  font-size: 12.5px;
+  line-height: 1.35;
+  text-align: left;
+}
+
+.model-option:hover:not(:disabled) {
+  background: var(--surface-strong);
+  border-color: transparent;
+}
+
+.model-option[aria-selected='true'] {
+  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+  background: var(--accent-soft);
+  font-weight: 600;
+}
+
+.model-option:focus-visible {
+  /* Inset: the list clips its children, so an outside ring loses its edge. */
+  outline-offset: -2px;
+}
+
+.model-option-id {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.model-option-check {
+  flex: none;
+  color: var(--accent);
+}
+
+.model-list-empty {
+  padding: 10px;
+  color: var(--text-faint);
+  font-size: 12px;
+}
+
+/* A completed choice: one row, not an open list that looks unanswered. */
+.model-picker-selected {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 9px 10px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  text-align: left;
+}
+
+.model-picker-selected:hover:not(:disabled) {
+  background: var(--surface-strong);
+  border-color: transparent;
+}
+
+.model-picker-selected:focus-visible {
+  outline-offset: -2px;
+}
+
+.model-picker-check {
+  flex: none;
+  color: var(--accent);
+  font-size: 12px;
+}
+
+.model-picker-selected-id {
+  flex: 1;
+  min-width: 0;
+  font-size: 12.5px;
+  font-weight: 550;
+  overflow-wrap: anywhere;
+}
+
+.model-picker-change {
+  flex: none;
+  color: var(--accent);
+  font-size: 11.5px;
+}
+
+.model-picker-selected:hover:not(:disabled) .model-picker-change {
+  color: var(--accent-strong);
+}
+
+.model-picker-note {
+  padding: 0 10px 9px;
+  color: var(--warning);
+  font-size: 11.5px;
+  line-height: 1.4;
+}
+
+/* The escape hatch from the catalogue: the same field, one explicit click. */
+.model-custom {
+  display: block;
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  border-top: 1px solid var(--border);
+  border-radius: 0;
+  background: transparent;
+  color: var(--accent);
+  font-size: 12.5px;
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+
+.model-custom:hover:not(:disabled) {
+  background: var(--surface-strong);
+  border-color: transparent;
+  border-top-color: var(--border);
+}
+
+.model-custom:focus-visible {
+  outline-offset: -2px;
+}
+
+/* Keeps the "no model" state the manual field used to allow. */
+.model-reset {
+  display: block;
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  border-top: 1px solid var(--border);
+  border-radius: 0;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 11.5px;
+  text-align: left;
+}
+
+.model-reset:hover:not(:disabled) {
+  background: var(--surface-strong);
+  border-color: transparent;
+  border-top-color: var(--border);
+  color: var(--text);
+}
+
+.model-reset:focus-visible {
+  outline-offset: -2px;
+}
